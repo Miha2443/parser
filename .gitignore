@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
+
+# Streamlit/Plotly артефакты
+.streamlit/secrets.toml
+
+# Производные данные (восстанавливаются из downloads/ через ETL)
+data/processed/
+
+# Бэкапы и устаревшие выгрузки
+data/raw/_archive/

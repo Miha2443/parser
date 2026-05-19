@@ -1,0 +1,11 @@
+pandas>=2.2
+pyarrow>=15
+openpyxl>=3.1
+xlrd>=2.0
+streamlit>=1.36
+plotly>=5.20
+kaleido==0.2.1  # 1.x требует системный Chrome — оставляем 0.2.x для PNG-экспорта
+pyyaml>=6.0
+# для парсера-загрузчика fedstat:
+selenium>=4.20
+requests>=2.32

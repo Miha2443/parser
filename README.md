@@ -7,10 +7,20 @@
 
 Поддерживаются переключатели **Год / Квартал / Месяц**, переключатель **За период / С начала года** для ЗП, multi-select месяцев и кварталов, выбор отраслей и регионов, экспорт таблиц в Excel/CSV и графиков в PNG.
 
-## Установка
+## Установка (Windows, Python 3.11–3.14)
 
-```bash
-pip install -r requirements.txt
+В командной строке Windows используйте `py -m pip`, а не `pip` — последний часто не в PATH:
+
+```cmd
+py -m pip install --upgrade pip
+py -m pip install -r requirements.txt
+```
+
+Если на Python 3.14 не ставится `kaleido` — это не критично, просто пропустите его
+(кнопка PNG-экспорта в дашборде не появится, всё остальное работает):
+
+```cmd
+py -m pip install pandas streamlit plotly openpyxl xlrd
 ```
 
 ## Использование
@@ -19,14 +29,15 @@ pip install -r requirements.txt
    - `*Среднемесячная номинальная начисленная заработная плата*.xls`
    - `*Индексы потребительских цен*часть1*.xls`
    - `*Индексы потребительских цен*часть2*.xls`
-2. Соберите витрину (Parquet):
-   ```bash
-   python pipeline/run_etl.py
+2. Соберите витрину (pickle):
+   ```cmd
+   py pipeline\run_etl.py
    ```
 3. Запустите дашборд:
-   ```bash
-   streamlit run app/Home.py
+   ```cmd
+   py -m streamlit run app\Home.py
    ```
+   Откройте http://localhost:8501
 
 ## Структура
 

@@ -35,7 +35,12 @@ def table_download_buttons(df: pd.DataFrame, *, name: str, key_prefix: str) -> N
 
 
 def chart_download_button(fig: go.Figure, *, name: str, key: str) -> None:
-    """PNG-экспорт графика. Использует kaleido (Plotly)."""
+    """PNG-экспорт графика через kaleido. Если пакета нет — тихо пропускаем."""
+    try:
+        import kaleido  # noqa: F401
+    except ImportError:
+        st.caption("PNG-экспорт недоступен — установите `kaleido==0.2.1`.")
+        return
     try:
         png_bytes = fig.to_image(format="png", width=1200, height=600, scale=2)
     except Exception as exc:  # noqa: BLE001

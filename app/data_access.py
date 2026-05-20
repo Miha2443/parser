@@ -12,7 +12,29 @@ MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 ]
+MONTH_SHORT_RU = [
+    "янв", "фев", "мар", "апр", "май", "июн",
+    "июл", "авг", "сен", "окт", "ноя", "дек",
+]
 QUARTER_NAMES_RU = ["I квартал", "II квартал", "III квартал", "IV квартал"]
+QUARTER_ROMAN = ["I", "II", "III", "IV"]
+
+
+def month_label(year: int, month: int) -> str:
+    """Подпись месяца на оси X: «янв 24»."""
+    return f"{MONTH_SHORT_RU[int(month) - 1]} {int(year) % 100:02d}"
+
+
+def quarter_label(year: int, quarter: int) -> str:
+    """Подпись квартала: «I кв 24»."""
+    return f"{QUARTER_ROMAN[int(quarter) - 1]} кв {int(year) % 100:02d}"
+
+
+def format_thousands(value: float, digits: int = 0) -> str:
+    """Русский формат: разделитель тысяч — неразрывный пробел."""
+    if pd.isna(value):
+        return ""
+    return f"{value:,.{digits}f}".replace(",", " ")
 
 
 @st.cache_data(show_spinner=False)

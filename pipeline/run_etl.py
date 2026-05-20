@@ -26,9 +26,10 @@ def find_latest(pattern: str) -> Path | None:
     return files[-1] if files else None
 
 
-def write_parquet(df: pd.DataFrame, name: str) -> Path:
-    path = DATA_PROCESSED / f"{name}.parquet"
-    df.to_parquet(path, index=False)
+def write_table(df: pd.DataFrame, name: str) -> Path:
+    """Сохраняет DataFrame в pickle (stdlib, без внешних зависимостей)."""
+    path = DATA_PROCESSED / f"{name}.pkl"
+    df.to_pickle(path)
     return path
 
 
@@ -42,7 +43,7 @@ def run() -> None:
     if salary_path:
         print(f"⚙️  ЗП: {salary_path.name}")
         salary_df = fedstat_salary.parse(salary_path)
-        out = write_parquet(salary_df, "employment_salary")
+        out = write_table(salary_df, "employment_salary")
         print(f"   ✓ {len(salary_df)} строк, годы {salary_df['year'].min()}–{salary_df['year'].max()}")
         print(f"   ✓ Записан {out}\n")
     else:
@@ -64,7 +65,7 @@ def run() -> None:
             subset=["indicator_id", "view", "region", "year", "month", "period_type"],
             keep="last",
         ).reset_index(drop=True)
-        out = write_parquet(ipc_df, "prices_ipc")
+        out = write_table(ipc_df, "prices_ipc")
         print(f"   ✓ {len(ipc_df)} строк, годы {ipc_df['year'].min()}–{ipc_df['year'].max()}")
         print(f"   ✓ Записан {out}\n")
     else:

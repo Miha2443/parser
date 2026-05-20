@@ -17,18 +17,18 @@ QUARTER_NAMES_RU = ["I квартал", "II квартал", "III квартал
 
 @st.cache_data(show_spinner=False)
 def load_salary() -> pd.DataFrame:
-    path = DATA_PROCESSED / "employment_salary.parquet"
+    path = DATA_PROCESSED / "employment_salary.pkl"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_parquet(path)
+    return pd.read_pickle(path)
 
 
 @st.cache_data(show_spinner=False)
 def load_ipc() -> pd.DataFrame:
-    path = DATA_PROCESSED / "prices_ipc.parquet"
+    path = DATA_PROCESSED / "prices_ipc.pkl"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_parquet(path)
+    return pd.read_pickle(path)
 
 
 def latest_loaded_at(df: pd.DataFrame) -> str:

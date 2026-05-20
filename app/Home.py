@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from app.audit import latest_data_badge
 from app.data_access import latest_loaded_at, latest_period, load_ipc, load_salary
 
 st.set_page_config(
@@ -12,7 +13,11 @@ st.set_page_config(
 )
 
 st.title("📊 Аналитика Москвы")
-st.caption("Тестовая версия дашборда — раздел «Занятость и заработная плата» и «Цены» (ИПЦ).")
+badge = latest_data_badge()
+st.caption(
+    ("Тестовая версия дашборда — разделы «Занятость и заработная плата» и «Цены».")
+    + (f" · {badge}" if badge else "")
+)
 
 salary = load_salary()
 ipc = load_ipc()
@@ -48,6 +53,8 @@ with col2:
         st.write(f"**Обновлено:** {latest_loaded_at(ipc)}")
         st.page_link("pages/2_ИПЦ.py", label="Открыть раздел →")
 
+st.markdown("---")
+st.page_link("pages/99_Обновления.py", label="🔄 Журнал обновлений ETL")
 st.markdown("---")
 st.markdown(
     """

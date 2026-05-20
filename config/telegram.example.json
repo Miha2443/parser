@@ -1,0 +1,5 @@
+{
+  "_comment": "Скопируйте в config/telegram.json и впишите свои token/chat_id. Реальный файл не коммитится — он в .gitignore.",
+  "token": "0000000000:AAAA-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "chat_id": "-1001234567890"
+}

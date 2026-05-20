@@ -14,3 +14,10 @@ data/processed/
 
 # Бэкапы и устаревшие выгрузки
 data/raw/_archive/
+
+# Состояние парсеров (актуально на машине, где запускается ETL)
+state/
+*.lock
+
+# Личные секреты — пример лежит в config/telegram.example.json
+config/telegram.json

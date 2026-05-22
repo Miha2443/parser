@@ -31,7 +31,15 @@ from pathlib import Path
 from urllib.parse import unquote, urljoin
 
 import requests
+import urllib3
 from bs4 import BeautifulSoup
+
+# Росстат использует сертификаты российского УЦ Минцифры, которых нет в
+# стандартном trust store Python. Поскольку мы GET-им только публичные
+# страницы и качаем xlsx (без передачи чувствительных данных), проверку
+# отключаем — иначе на Windows скрипт падает с SSLError каждый раз.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+VERIFY_SSL = False
 
 
 PAGE_SOURCES: dict[str, list[dict]] = {
@@ -124,7 +132,7 @@ def _find_date_near(a) -> str:
 def get_files_on_page(session: requests.Session, url: str) -> list[dict]:
     """Возвращает список {title, href, date} по всем xlsx/xls на странице."""
     print(f"  🌐 GET {url}")
-    resp = session.get(url, timeout=REQUEST_TIMEOUT, headers={"Referer": url})
+    resp = session.get(url, timeout=REQUEST_TIMEOUT, headers={"Referer": url}, verify=VERIFY_SSL)
     resp.raise_for_status()
     resp.encoding = resp.encoding or "utf-8"
     soup = BeautifulSoup(resp.text, "lxml" if _has_lxml() else "html.parser")
@@ -184,6 +192,7 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
             timeout=REQUEST_TIMEOUT,
             stream=True,
             headers={"Referer": referer},
+            verify=VERIFY_SSL,
         )
         resp.raise_for_status()
         save_path.parent.mkdir(parents=True, exist_ok=True)

@@ -38,19 +38,20 @@ def format_thousands(value: float, digits: int = 0) -> str:
 
 
 @st.cache_data(show_spinner=False)
+def load_indicator(indicator_id: str) -> pd.DataFrame:
+    """Универсальный загрузчик витрины по id из реестра."""
+    path = DATA_PROCESSED / f"{indicator_id}.pkl"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_pickle(path)
+
+
 def load_salary() -> pd.DataFrame:
-    path = DATA_PROCESSED / "employment_salary.pkl"
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_pickle(path)
+    return load_indicator("avg_salary")
 
 
-@st.cache_data(show_spinner=False)
 def load_ipc() -> pd.DataFrame:
-    path = DATA_PROCESSED / "prices_ipc.pkl"
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_pickle(path)
+    return load_indicator("ipc")
 
 
 def latest_loaded_at(df: pd.DataFrame) -> str:

@@ -24,8 +24,7 @@ from .common import (
     MONTHS,
     MONTH_NAME_BY_NUM,
     QUARTER_BY_MONTH,
-    REGION_CLEAN,
-    REGIONS_KEEP,
+    clean_region,
 )
 
 SECTION = "prices"
@@ -51,10 +50,8 @@ def parse(xls_path: Path) -> pd.DataFrame:
     for row_idx in range(5, len(df)):
         region_raw = df.iat[row_idx, 2]
         view_raw = df.iat[row_idx, 3]
-        if pd.isna(region_raw):
-            continue
-        region = REGION_CLEAN.get(str(region_raw).strip(), str(region_raw).strip())
-        if region not in REGIONS_KEEP:
+        region = clean_region(region_raw)
+        if region is None:
             continue
 
         view = str(view_raw).strip() if pd.notna(view_raw) else "Все товары и услуги"

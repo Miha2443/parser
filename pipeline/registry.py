@@ -33,12 +33,12 @@ INDICATORS: list[Indicator] = [
         title="Среднемесячная номинальная начисленная заработная плата",
         unit="руб",
         source="fedstat",
-        source_ids=["57824"],
+        source_ids=["43246", "57824"],
         parser="fedstat_salary",
         file_patterns=["*Среднемесячная номинальная начисленная заработная плата*.xls*"],
         page="1_Заработная_плата.py",
         ytd_mode="from_source",
-        description="fedstat 57824. Москва + РФ, отрасли «Всего» и «Строительство».",
+        description="fedstat 43246 (по 2016 г., 2011-2016) + 57824 (с 2017 г.). Москва + РФ, отрасли «Всего» и «Строительство».",
     ),
     Indicator(
         id="ipc",
@@ -46,15 +46,12 @@ INDICATORS: list[Indicator] = [
         title="Индексы потребительских цен на товары и услуги",
         unit="%",
         source="fedstat",
-        source_ids=["31074_часть1", "31074_часть2"],
+        source_ids=["31074"],
         parser="fedstat_ipc",
-        file_patterns=[
-            "*Индексы потребительских цен*часть1*.xls*",
-            "*Индексы потребительских цен*часть2*.xls*",
-        ],
+        file_patterns=["*Индексы потребительских цен*.xls*"],
         page="2_ИПЦ.py",
         ytd_mode="from_source",
-        description="fedstat 31074 (части 1 и 2). Москва + РФ, индекс к пред. месяцу и YTD к АППГ.",
+        description="fedstat 31074 (объединённая выгрузка 2011-2026). Москва + РФ, индекс к пред. месяцу и YTD к АППГ.",
     ),
 ]
 

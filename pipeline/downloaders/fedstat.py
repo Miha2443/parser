@@ -21,12 +21,21 @@ from pipeline.registry import Indicator
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
-    """Возвращает по одному самому свежему файлу на каждый паттерн."""
+    """Все файлы, попадающие под любой из паттернов, уникальные по resolved-пути.
+
+    Возвращаем все, а не только свежие: в переходный период (старая разделённая
+    выгрузка + новая объединённая) парсер должен видеть оба источника. Дубликаты
+    схлопываются `drop_duplicates` в оркестраторе.
+    """
+    seen: set[Path] = set()
     out: list[Path] = []
     for pat in patterns:
-        matches = sorted(DOWNLOADS_DIR.glob(pat))
-        if matches:
-            out.append(matches[-1])
+        for p in sorted(DOWNLOADS_DIR.glob(pat)):
+            r = p.resolve()
+            if r in seen:
+                continue
+            seen.add(r)
+            out.append(p)
     return out
 
 

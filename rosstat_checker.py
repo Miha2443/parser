@@ -96,17 +96,86 @@ def _new_session() -> requests.Session:
     return s
 
 
-def _link_title(a) -> str:
-    """Извлекает «человеческий» заголовок ссылки.
+_FILE_META_RE = re.compile(
+    r"\d+(?:[.,]\d+)?\s*(?:КБ|МБ|Кб|Мб|КИБ|байт|KB|MB|kb|mb|Kb|Mb)\b",
+    flags=re.IGNORECASE,
+)
+_FILE_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
+_FILE_EXT_RE = re.compile(r"\b(?:XLSX|XLS|PDF|DOCX|DOC|RAR|ZIP)\b", flags=re.IGNORECASE)
+_XLSX_HREF_RE = re.compile(r"\.xlsx?(\?|$)", flags=re.IGNORECASE)
 
-    Сначала текст <a>, иначе имя файла из href (декодированное)."""
+
+def _clean_label(raw: str) -> str:
+    """Убирает из строки технические токены (размер файла, дата, расширение)."""
+    s = _FILE_META_RE.sub(" ", raw)
+    s = _FILE_DATE_RE.sub(" ", s)
+    s = _FILE_EXT_RE.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip(" ,")
+
+
+def _siblings_text(a) -> str:
+    """Текст следующих siblings до следующего тега <a> (нужен когда родитель — общий контейнер списка)."""
+    parts = []
+    for sib in a.next_siblings:
+        if getattr(sib, "name", None) == "a":
+            break
+        if hasattr(sib, "get_text"):
+            parts.append(sib.get_text(" ", strip=True))
+        else:
+            parts.append(str(sib).strip())
+    return " ".join(p for p in parts if p)
+
+
+def _link_titles(a) -> list[str]:
+    """Все возможные источники «названия» ссылки.
+
+    На страницах Росстата визуальный заголовок («ВВП годы (с 1995 г.)») лежит
+    не внутри тега <a>, а в соседнем span/div. Собираем варианты из разных
+    мест и матчим по любому из них.
+    """
+    out: list[str] = []
+
     txt = (a.get_text() or "").strip()
-    if txt:
-        return txt
+    if txt and not _FILE_EXT_RE.fullmatch(txt):
+        out.append(txt)
+
+    for attr in ("title", "download", "aria-label"):
+        v = a.get(attr)
+        if v and v.strip():
+            out.append(v.strip())
+
     href = a.get("href") or ""
     base = href.rsplit("/", 1)[-1]
     base = unquote(base)
-    return Path(base).stem
+    if base:
+        out.append(Path(base).stem)
+
+    # Родитель — но только если он содержит не больше одной xlsx-ссылки
+    # (иначе получим «мега-title» из всех соседних файлов).
+    parent = a.parent
+    if parent is not None:
+        xlsx_in_parent = sum(
+            1 for x in parent.find_all("a", href=True)
+            if _XLSX_HREF_RE.search(x.get("href", ""))
+        )
+        if xlsx_in_parent <= 1:
+            label = _clean_label(parent.get_text(" ", strip=True))
+            if label:
+                out.append(label)
+
+    # Siblings до следующей xlsx-ссылки — для случая «иконки в ряд + общие тексты».
+    sib_text = _clean_label(_siblings_text(a))
+    if sib_text:
+        out.append(sib_text)
+
+    # Уникализируем, сохраняя порядок.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in out:
+        if t and t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return unique
 
 
 def _find_date_near(a) -> str:
@@ -147,8 +216,10 @@ def get_files_on_page(session: requests.Session, url: str) -> list[dict]:
         if absolute in seen_hrefs:
             continue
         seen_hrefs.add(absolute)
+        titles = _link_titles(a)
         items.append({
-            "title": _link_title(a),
+            "title": titles[0] if titles else absolute,
+            "titles": titles,
             "href": absolute,
             "date": _find_date_near(a),
         })
@@ -165,12 +236,21 @@ def _has_lxml() -> bool:
 
 
 def _match_source(items: list[dict], needle: str) -> dict | None:
-    """Возвращает первый item, title которого содержит подстроку needle (case-insensitive)."""
+    """Первый item, у которого любой из вариантов названия содержит needle."""
     n = needle.lower()
     for it in items:
-        if n in it["title"].lower():
-            return it
+        for t in it.get("titles") or [it.get("title", "")]:
+            if n in t.lower():
+                return it
     return None
+
+
+def _debug_print_items(items: list[dict], limit: int = 8) -> None:
+    """Печатает первые N найденных файлов с их вариантами названия и URL."""
+    print(f"     ─── что нашлось (первые {min(limit, len(items))}): ───")
+    for i, it in enumerate(items[:limit], 1):
+        print(f"      {i}. titles={it.get('titles')}")
+        print(f"         date={it.get('date')!r}  href={it.get('href')}")
 
 
 def _filename_for(title: str, href: str) -> str:
@@ -226,6 +306,7 @@ def run() -> list[Path]:
             print(f"  ❌ Не удалось загрузить страницу: {exc}\n")
             continue
 
+        matched_any = False
         for src in sources:
             key = src["key"]
             needle = src["title_contains"]
@@ -234,6 +315,7 @@ def run() -> list[Path]:
             if not match:
                 print(f"     ⚠️  не нашёл — пропускаю")
                 continue
+            matched_any = True
 
             remote_date = match["date"] or ""
             saved = state.get(key, {})
@@ -264,6 +346,8 @@ def run() -> list[Path]:
                 }
             # Маленькая пауза, чтобы не долбить Росстат подряд.
             time.sleep(0.5)
+        if not matched_any and items:
+            _debug_print_items(items)
         print()
 
     save_state(state)

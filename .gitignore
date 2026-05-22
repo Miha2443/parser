@@ -17,6 +17,7 @@ data/raw/_archive/
 
 # Состояние парсеров (актуально на машине, где запускается ETL)
 state/
+*_state.json
 *.lock
 
 # Личные секреты — пример лежит в config/telegram.example.json

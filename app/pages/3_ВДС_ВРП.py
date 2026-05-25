@@ -31,6 +31,21 @@ RF_COLOR = "#1f4e79"
 REST_COLOR = "#c8d2dc"
 INDUSTRY_PALETTE = px.colors.qualitative.Dark24
 DEFAULT_INDUSTRY = "Строительство"
+# Разделители для plotly: дробная часть — запятая, разряды — неразрывный пробел.
+RU_SEPARATORS = ", "
+
+
+def ru_num(value: float, decimals: int = 0) -> str:
+    """Русский формат числа: разряды через пробел, дробная часть через запятую (1 234,56)."""
+    try:
+        s = f"{float(value):,.{decimals}f}"
+    except (TypeError, ValueError):
+        return str(value)
+    return s.replace(",", " ").replace(".", ",")
+
+
+def _ru_fmt(decimals: int):
+    return lambda v: ru_num(v, decimals)
 
 
 def _persistent_industry_select(sections: list[str], *, key: str, label: str) -> list[str]:
@@ -104,6 +119,7 @@ def _two_region_chart(
         title=title, yaxis_title=yaxis, legend_title="",
         margin=dict(t=46 if title else 24, b=24), height=300,
         xaxis=dict(tickmode="linear", dtick=2),
+        separators=RU_SEPARATORS,
     )
     st.plotly_chart(fig, width="stretch")
 
@@ -111,7 +127,7 @@ def _two_region_chart(
         chart_download_button(fig, name=key, key=f"{key}_png")
         pivot = data.pivot_table(index="Показатель", columns="year", values="value", aggfunc="first")
         pivot.columns = [str(int(c)) for c in pivot.columns]
-        st.dataframe(pivot.style.format(f"{{:,.{decimals}f}}", na_rep="—"), width="stretch")
+        st.dataframe(pivot.style.format(_ru_fmt(decimals), na_rep="—"), width="stretch")
         table_download_buttons(
             data.rename(columns={"value": yaxis}), name=key, key_prefix=key
         )
@@ -135,22 +151,22 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         sub["val"] = sub["value"]
         unit_label = "%"
     else:
-        scale = 1e-3 if sub["unit"].iloc[0] == "млн руб" else 1.0
+        scale = 1e-6 if sub["unit"].iloc[0] == "млн руб" else 1e-3
         sub["val"] = sub["value"] * scale
-        unit_label = "млрд руб"
+        unit_label = "трлн руб"
 
     total = sub.groupby("year")["val"].sum()
     sel = sub[sub["view"].isin(chosen)].sort_values(["year", "view"]).copy()
     rest = (total - sel.groupby("year")["val"].sum().reindex(total.index).fillna(0)).clip(lower=0)
 
-    fmt = (lambda v: f"{v:.0f}%") if is_share else (lambda v: f"{v:,.0f}")
-    sel["_label"] = sel["val"].map(fmt)
     fig = px.bar(
-        sel, x="year", y="val", color="view", text="_label",
+        sel, x="year", y="val", color="view",
         color_discrete_sequence=INDUSTRY_PALETTE,
         labels={"year": "Год", "val": unit_label, "view": "Отрасль"},
     )
-    fig.update_traces(textposition="inside", insidetextanchor="middle", textfont_size=9)
+    bar_tt = "%{y:.0f}%" if is_share else "%{y:,.1f}"
+    fig.update_traces(texttemplate=bar_tt, textposition="inside",
+                      insidetextanchor="middle", textfont_size=9)
     rest_df = rest.reset_index()
     rest_df.columns = ["year", "val"]
     fig.add_bar(x=rest_df["year"], y=rest_df["val"], name="Остальные отрасли",
@@ -158,7 +174,7 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
     tot_df = total.reset_index()
     tot_df.columns = ["year", "val"]
     for year, top in zip(tot_df["year"], tot_df["val"]):
-        txt = "100%" if is_share else f"{top:,.0f}"
+        txt = "100%" if is_share else ru_num(top, 1)
         fig.add_annotation(x=year, y=top, text=txt, showarrow=False, yshift=9,
                            font=dict(size=10, color="#333"))
     headroom = float(total.max()) * 1.15 if len(total) else 1.0
@@ -167,6 +183,7 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         xaxis=dict(tickmode="linear", dtick=1, title="Год"),
         yaxis=dict(title=unit_label, range=[0, headroom]),
         uniformtext_minsize=7, uniformtext_mode="hide",
+        separators=RU_SEPARATORS,
     )
     st.plotly_chart(fig, width="stretch")
 
@@ -176,7 +193,7 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         disp.loc["Остальные отрасли"] = rest
         disp.loc["Всего"] = total
         disp.columns = [str(int(c)) for c in disp.columns]
-        st.dataframe(disp.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        st.dataframe(disp.style.format(_ru_fmt(1), na_rep="—"), width="stretch")
         table_download_buttons(
             sel[["year", "view", "region", "val"]].rename(columns={"val": unit_label}),
             name=key, key_prefix=key,
@@ -211,7 +228,8 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total
             mode="lines", line=dict(color="#444", dash="dash", width=2),
         )
     fig.update_layout(height=340, legend_title="", margin=dict(t=24, b=24),
-                      yaxis_title="%", xaxis=dict(tickmode="linear", dtick=1))
+                      yaxis_title="%", xaxis=dict(tickmode="linear", dtick=1),
+                      separators=RU_SEPARATORS)
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
@@ -220,7 +238,7 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total
         full = sub[sub["view"].isin(views)]
         pivot = full.pivot_table(index="view", columns="year", values="value", aggfunc="first")
         pivot.columns = [str(int(c)) for c in pivot.columns]
-        st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        st.dataframe(pivot.style.format(_ru_fmt(1), na_rep="—"), width="stretch")
         table_download_buttons(
             full[["year", "view", "region", "value", "unit"]].rename(columns={"value": "значение"}),
             name=key, key_prefix=key,
@@ -252,12 +270,11 @@ def main() -> None:
     _two_region_chart(
         df, msk_metric="vrp_per_capita", rf_metric="gdp_pc_total",
         msk_scale=1e-6, rf_scale=1e-6,
-        title=None,
+        title="В годовом выражении в текущих ценах",
         yaxis="млн руб/чел", msk_label="Москва (ВРП на душу)", rf_label="Россия (ВВП на душу)",
         decimals=2, key="na_block2", kind="bar",
     )
 
-    st.subheader("3. Индекс физического объема ВРП, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_index", rf_metric="gdp_index",
         msk_scale=1.0, rf_scale=1.0,
@@ -266,7 +283,6 @@ def main() -> None:
         decimals=1, key="na_block3",
     )
 
-    st.subheader("4. Индекс физического объема ВРП на душу населения, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_per_capita_index", rf_metric="gdp_pc_index",
         msk_scale=1.0, rf_scale=1.0,
@@ -275,7 +291,7 @@ def main() -> None:
         decimals=1, key="na_block4",
     )
 
-    st.subheader("5. Структура ВРП, млрд")
+    st.subheader("5. Структура ВРП, трлн")
     c1, c2 = st.columns(2)
     with c1:
         region5 = st.radio("Регион", [MSK, RF], key="b5_region", horizontal=True)

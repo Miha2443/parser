@@ -24,7 +24,7 @@ RF = "Российская Федерация"
 REGION_COLORS = {"Москва": "#c8102e", "Россия": "#1f4e79", RF: "#1f4e79"}
 
 
-def _two_region_line(
+def _two_region_chart(
     df: pd.DataFrame,
     *,
     msk_metric: str,
@@ -37,6 +37,7 @@ def _two_region_line(
     rf_label: str,
     decimals: int,
     key: str,
+    kind: str = "line",
 ) -> None:
     msk = df[(df["metric"] == msk_metric) & (df["region"] == MSK)][["year", "value"]].copy()
     msk["value"] = msk["value"] * msk_scale
@@ -49,11 +50,16 @@ def _two_region_line(
         st.info("Нет данных.")
         return
     data = data.sort_values(["Показатель", "year"])
-    fig = px.line(
-        data, x="year", y="value", color="Показатель", markers=True,
-        color_discrete_map={msk_label: "#c8102e", rf_label: "#1f4e79"},
+    color_map = {msk_label: "#c8102e", rf_label: "#1f4e79"}
+    common = dict(
+        x="year", y="value", color="Показатель",
+        color_discrete_map=color_map,
         labels={"year": "Год", "value": yaxis, "Показатель": ""},
     )
+    if kind == "bar":
+        fig = px.bar(data, barmode="group", **common)
+    else:
+        fig = px.line(data, markers=True, **common)
     fig.update_layout(
         title=title, yaxis_title=yaxis, legend_title="",
         margin=dict(t=60, b=40), height=440,
@@ -128,27 +134,27 @@ def main() -> None:
     st.caption(f"Обновлено: {latest_loaded_at(df)} · Источники: Росстат (национальные счета), Мосстат (ВРП)")
 
     st.header("1. Годовой объём (трлн руб)")
-    _two_region_line(
+    _two_region_chart(
         df, msk_metric="vrp_total", rf_metric="gdp_total",
         msk_scale=1e-6, rf_scale=1e-3,
         title="ВРП Москвы и ВВП России, трлн руб (в текущих ценах)",
         yaxis="трлн руб", msk_label="ВРП Москвы", rf_label="ВВП России",
-        decimals=1, key="na_block1",
+        decimals=1, key="na_block1", kind="bar",
     )
 
     st.divider()
     st.header("2. На душу населения (млн руб)")
-    _two_region_line(
+    _two_region_chart(
         df, msk_metric="vrp_per_capita", rf_metric="gdp_pc_total",
         msk_scale=1e-6, rf_scale=1e-6,
         title="ВРП/ВВП на душу населения, млн руб",
         yaxis="млн руб", msk_label="Москва (ВРП на душу)", rf_label="Россия (ВВП на душу)",
-        decimals=2, key="na_block2",
+        decimals=2, key="na_block2", kind="bar",
     )
 
     st.divider()
     st.header("3. Индекс физического объёма (% к пред. году)")
-    _two_region_line(
+    _two_region_chart(
         df, msk_metric="vrp_index", rf_metric="gdp_index",
         msk_scale=1.0, rf_scale=1.0,
         title="Индекс физического объёма ВРП/ВВП, % к предыдущему году",
@@ -158,7 +164,7 @@ def main() -> None:
 
     st.divider()
     st.header("4. Индекс физического объёма на душу (% к пред. году)")
-    _two_region_line(
+    _two_region_chart(
         df, msk_metric="vrp_per_capita_index", rf_metric="gdp_pc_index",
         msk_scale=1.0, rf_scale=1.0,
         title="Индекс физического объёма на душу населения, % к предыдущему году",

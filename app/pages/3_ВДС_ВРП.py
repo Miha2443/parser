@@ -1,14 +1,15 @@
 """Страница «ВВП / ВРП / ВДС» — национальные счета: Москва vs Россия.
 
 Окно данных — с 2011 г. Шесть компактных блоков друг под другом:
-  1. Годовой ВВП РФ / ВРП Москвы (трлн руб) — столбики.
-  2. На душу населения (млн руб) — столбики.
-  3. Индекс физ. объёма ВВП/ВРП (%) — линии.
+  1. ВРП Москвы и ВВП России (трлн руб) — столбики.
+  2. На душу населения (млн руб/чел) — столбики.
+  3. Индекс физ. объёма ВРП/ВВП (%) — линии.
   4. Индекс физ. объёма на душу (%) — линии.
-  5. Структура ВДС: доля выбранных отраслей в общем объёме (красным) vs остальное.
-  6. Индекс физ. объёма ВДС по выбранным отраслям (%) + линия «Всего».
+  5. Структура ВРП по отраслям (млрд руб / доля, %) — выбранные отрасли разным
+     цветом, остальное — серым.
+  6. Индекс физ. объёма ВДС по выбранным отраслям (%) + линия «Всего» (по галочке).
 
-Блоки 1-4 умеют показывать Москву, Россию или оба сразу. Выбор отраслей в
+Блоки 1-4: выбор регионов (Москва / РФ) мультиселектом. Выбор отраслей в
 блоках 5-6 сохраняется при переключении региона/режима.
 """
 from __future__ import annotations
@@ -28,6 +29,7 @@ RF = "Российская Федерация"
 MSK_COLOR = "#c8102e"
 RF_COLOR = "#1f4e79"
 REST_COLOR = "#c8d2dc"
+INDUSTRY_PALETTE = px.colors.qualitative.Dark24
 DEFAULT_INDUSTRY = "Строительство"
 
 
@@ -53,7 +55,7 @@ def _two_region_chart(
     rf_metric: str,
     msk_scale: float,
     rf_scale: float,
-    title: str,
+    title: str | None,
     yaxis: str,
     msk_label: str,
     rf_label: str,
@@ -72,16 +74,14 @@ def _two_region_chart(
         st.info("Нет данных.")
         return
 
-    view = st.radio(
-        "Регион", ["Вместе", MSK, "Россия"], horizontal=True, key=f"{key}_view",
-        label_visibility="collapsed",
+    regions = st.multiselect(
+        "Регионы", options=[MSK, RF], default=[MSK, RF],
+        key=f"{key}_regions", label_visibility="collapsed",
     )
-    if view == MSK:
-        data = data[data["Показатель"] == msk_label]
-    elif view == "Россия":
-        data = data[data["Показатель"] == rf_label]
+    keep = ([msk_label] if MSK in regions else []) + ([rf_label] if RF in regions else [])
+    data = data[data["Показатель"].isin(keep)]
     if data.empty:
-        st.info("Нет данных.")
+        st.info("Выберите хотя бы один регион.")
         return
 
     data = data.sort_values(["Показатель", "year"])
@@ -102,7 +102,7 @@ def _two_region_chart(
                           textposition="top center", textfont_size=9, cliponaxis=False)
     fig.update_layout(
         title=title, yaxis_title=yaxis, legend_title="",
-        margin=dict(t=46, b=24), height=300,
+        margin=dict(t=46 if title else 24, b=24), height=300,
         xaxis=dict(tickmode="linear", dtick=2),
     )
     st.plotly_chart(fig, width="stretch")
@@ -118,7 +118,7 @@ def _two_region_chart(
 
 
 def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) -> None:
-    """Блок 5: один столбец на год = весь объём ВДС; красным — доля выбранных отраслей."""
+    """Блок 5: столбец на год = весь объём ВДС; выбранные отрасли — цветом, остальное — серым."""
     sub = df[(df["metric"] == metric) & (df["region"] == region) & (df["view"] != "Всего")].copy()
     if sub.empty:
         st.info("Нет данных для выбранного региона.")
@@ -131,61 +131,60 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         return
 
     is_share = metric == "vds_structure"
-    unit = "%" if is_share else sub["unit"].iloc[0]
-    total = sub.groupby("year")["value"].sum().rename("total")
-    selected = sub[sub["view"].isin(chosen)].groupby("year")["value"].sum().rename("selected")
-    agg = pd.concat([total, selected], axis=1).fillna(0.0).reset_index()
-    agg["rest"] = (agg["total"] - agg["selected"]).clip(lower=0)
-    agg["pct"] = (agg["selected"] / agg["total"] * 100).where(agg["total"] > 0, 0.0)
-
     if is_share:
-        red_text = [f"{p:.0f}%" for p in agg["pct"]]
-        top_text = ["100%"] * len(agg)
+        sub["val"] = sub["value"]
+        unit_label = "%"
     else:
-        red_text = [f"{v:,.0f}<br>{p:.0f}%" for v, p in zip(agg["selected"], agg["pct"])]
-        top_text = [f"{t:,.0f}" for t in agg["total"]]
+        scale = 1e-3 if sub["unit"].iloc[0] == "млн руб" else 1.0
+        sub["val"] = sub["value"] * scale
+        unit_label = "млрд руб"
 
-    fig = go.Figure()
-    fig.add_bar(
-        x=agg["year"], y=agg["selected"], name="Выбранные отрасли",
-        marker_color=MSK_COLOR, text=red_text,
-        textposition="inside", insidetextanchor="middle",
-        textfont=dict(color="white", size=10),
+    total = sub.groupby("year")["val"].sum()
+    sel = sub[sub["view"].isin(chosen)].sort_values(["year", "view"]).copy()
+    rest = (total - sel.groupby("year")["val"].sum().reindex(total.index).fillna(0)).clip(lower=0)
+
+    fmt = (lambda v: f"{v:.0f}%") if is_share else (lambda v: f"{v:,.0f}")
+    sel["_label"] = sel["val"].map(fmt)
+    fig = px.bar(
+        sel, x="year", y="val", color="view", text="_label",
+        color_discrete_sequence=INDUSTRY_PALETTE,
+        labels={"year": "Год", "val": unit_label, "view": "Отрасль"},
     )
-    fig.add_bar(
-        x=agg["year"], y=agg["rest"], name="Остальные отрасли",
-        marker_color=REST_COLOR,
-    )
-    for year, top, txt in zip(agg["year"], agg["total"], top_text):
+    fig.update_traces(textposition="inside", insidetextanchor="middle", textfont_size=9)
+    rest_df = rest.reset_index()
+    rest_df.columns = ["year", "val"]
+    fig.add_bar(x=rest_df["year"], y=rest_df["val"], name="Остальные отрасли",
+                marker_color=REST_COLOR)
+    tot_df = total.reset_index()
+    tot_df.columns = ["year", "val"]
+    for year, top in zip(tot_df["year"], tot_df["val"]):
+        txt = "100%" if is_share else f"{top:,.0f}"
         fig.add_annotation(x=year, y=top, text=txt, showarrow=False, yshift=9,
                            font=dict(size=10, color="#333"))
-    headroom = float(agg["total"].max()) * 1.15 if len(agg) else 1.0
+    headroom = float(total.max()) * 1.15 if len(total) else 1.0
     fig.update_layout(
-        barmode="stack", height=340, legend_title="",
-        margin=dict(t=30, b=24),
+        barmode="stack", height=360, legend_title="", margin=dict(t=24, b=24),
         xaxis=dict(tickmode="linear", dtick=1, title="Год"),
-        yaxis=dict(title=unit, range=[0, headroom]),
+        yaxis=dict(title=unit_label, range=[0, headroom]),
+        uniformtext_minsize=7, uniformtext_mode="hide",
     )
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
         chart_download_button(fig, name=key, key=f"{key}_png")
-        show = agg.rename(columns={
-            "year": "Год", "total": "Всего", "selected": "Выбрано",
-            "rest": "Остальные", "pct": "Доля выбранного, %",
-        })
-        st.dataframe(
-            show.style.format({
-                "Всего": "{:,.1f}", "Выбрано": "{:,.1f}",
-                "Остальные": "{:,.1f}", "Доля выбранного, %": "{:.1f}",
-            }),
-            width="stretch", hide_index=True,
+        disp = sel.pivot_table(index="view", columns="year", values="val", aggfunc="first")
+        disp.loc["Остальные отрасли"] = rest
+        disp.loc["Всего"] = total
+        disp.columns = [str(int(c)) for c in disp.columns]
+        st.dataframe(disp.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            sel[["year", "view", "region", "val"]].rename(columns={"val": unit_label}),
+            name=key, key_prefix=key,
         )
-        table_download_buttons(show, name=key, key_prefix=key)
 
 
-def _industry_index_block(df: pd.DataFrame, *, region: str, key: str) -> None:
-    """Блок 6: индекс физобъёма ВДС по выбранным отраслям + линия «Всего»."""
+def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total: bool) -> None:
+    """Блок 6: индекс физобъёма ВДС по выбранным отраслям + линия «Всего» (по галочке)."""
     sub = df[(df["metric"] == "vds_index") & (df["region"] == region)].copy()
     if sub.empty:
         st.info("Нет данных для выбранного региона.")
@@ -206,12 +205,12 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str) -> None:
                       textposition="top center", textfont_size=9, cliponaxis=False)
 
     total = sub[sub["view"] == "Всего"].sort_values("year")
-    if not total.empty:
+    if show_total and not total.empty:
         fig.add_scatter(
             x=total["year"], y=total["value"], name="Всего по всем отраслям",
             mode="lines", line=dict(color="#444", dash="dash", width=2),
         )
-    fig.update_layout(height=340, legend_title="", margin=dict(t=30, b=24),
+    fig.update_layout(height=340, legend_title="", margin=dict(t=24, b=24),
                       yaxis_title="%", xaxis=dict(tickmode="linear", dtick=1))
     st.plotly_chart(fig, width="stretch")
 
@@ -240,43 +239,43 @@ def main() -> None:
     df = df[df["year"] >= 2011].copy()
     st.caption(f"Обновлено: {latest_loaded_at(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)")
 
-    st.subheader("1. Годовой объём (трлн руб)")
+    st.subheader("1. ВРП Москвы и ВВП России, трлн руб")
     _two_region_chart(
         df, msk_metric="vrp_total", rf_metric="gdp_total",
         msk_scale=1e-6, rf_scale=1e-3,
-        title="ВРП Москвы и ВВП России, трлн руб (в текущих ценах)",
+        title="В годовом выражении в текущих ценах",
         yaxis="трлн руб", msk_label="ВРП Москвы", rf_label="ВВП России",
         decimals=1, key="na_block1", kind="bar",
     )
 
-    st.subheader("2. На душу населения (млн руб)")
+    st.subheader("2. ВРП Москвы и ВВП РФ на душу населения, млн руб/чел")
     _two_region_chart(
         df, msk_metric="vrp_per_capita", rf_metric="gdp_pc_total",
         msk_scale=1e-6, rf_scale=1e-6,
-        title="ВРП/ВВП на душу населения, млн руб",
-        yaxis="млн руб", msk_label="Москва (ВРП на душу)", rf_label="Россия (ВВП на душу)",
+        title=None,
+        yaxis="млн руб/чел", msk_label="Москва (ВРП на душу)", rf_label="Россия (ВВП на душу)",
         decimals=2, key="na_block2", kind="bar",
     )
 
-    st.subheader("3. Индекс физического объёма (% к пред. году)")
+    st.subheader("3. Индекс физического объема ВРП, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_index", rf_metric="gdp_index",
         msk_scale=1.0, rf_scale=1.0,
-        title="Индекс физического объёма ВРП/ВВП, % к предыдущему году",
+        title=None,
         yaxis="%", msk_label="ВРП Москвы", rf_label="ВВП России",
         decimals=1, key="na_block3",
     )
 
-    st.subheader("4. Индекс физического объёма на душу (% к пред. году)")
+    st.subheader("4. Индекс физического объема ВРП на душу населения, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_per_capita_index", rf_metric="gdp_pc_index",
         msk_scale=1.0, rf_scale=1.0,
-        title="Индекс физического объёма на душу населения, % к предыдущему году",
+        title=None,
         yaxis="%", msk_label="Москва (на душу)", rf_label="Россия (на душу)",
         decimals=1, key="na_block4",
     )
 
-    st.subheader("5. Структура ВДС: доля выбранных отраслей")
+    st.subheader("5. Структура ВРП, млрд")
     c1, c2 = st.columns(2)
     with c1:
         region5 = st.radio("Регион", [MSK, RF], key="b5_region", horizontal=True)
@@ -285,9 +284,13 @@ def main() -> None:
     metric5 = "vds_value" if mode5 == "В рублях" else "vds_structure"
     _structure_block(df, metric=metric5, region=region5, key=f"na_block5_{region5}_{metric5}")
 
-    st.subheader("6. Индекс физического объёма ВДС по отраслям (%)")
-    region6 = st.radio("Регион", [MSK, RF], key="b6_region", horizontal=True)
-    _industry_index_block(df, region=region6, key=f"na_block6_{region6}")
+    st.subheader("6. Индекс физического объема ВРП по отраслям, %")
+    c3, c4 = st.columns(2)
+    with c3:
+        region6 = st.radio("Регион", [MSK, RF], key="b6_region", horizontal=True)
+    with c4:
+        show_total6 = st.checkbox("Показывать «Всего по всем отраслям»", value=True, key="b6_show_total")
+    _industry_index_block(df, region=region6, key=f"na_block6_{region6}", show_total=show_total6)
 
 
 main()

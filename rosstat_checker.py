@@ -10,9 +10,10 @@ requests + BeautifulSoup.
 1. GET, парсим HTML.
 2. Находим все ссылки на .xlsx (и .xls на случай переключения формата).
 3. Для каждой ссылки ищем рядом текст с датой формата DD.MM.YYYY.
-4. Для каждого источника из словаря PAGE_SOURCES ищем ссылку, title
-   которой содержит указанную подстроку (устойчиво к переименованиям
-   вроде "(14) (5)" в имени файла).
+4. Для каждого источника из PAGE_SOURCES ищем ссылку, у которой имя файла
+   в URL (или любой вариант заголовка) содержит одну из подстрок match_any.
+   Устойчиво к переименованиям вроде "(142)"/"(14)" в имени файла и к смене
+   года в конце транслитного имени (VVP_god_s1995-2025 → ...-2026).
 5. Сравниваем дату со state, при изменении — скачиваем.
 
 State хранится в `state/rosstat_state.json` (отдельно от fedstat — у
@@ -44,13 +45,17 @@ VERIFY_SSL = False
 
 PAGE_SOURCES: dict[str, list[dict]] = {
     "https://77.rosstat.gov.ru/folder/134924": [
-        {"key": "vrp_msk",       "title_contains": "ВРП с 1998 года"},
-        {"key": "vds_msk_s2016", "title_contains": "ВДС годы ОКВЭД2 (с 2016 г.)"},
+        # На Мосстате имена файлов кириллицей: «ВРП с 1998 года(142).xlsx» и т.п.
+        {"key": "vrp_msk",       "match_any": ["ВРП с 1998"]},
+        {"key": "vds_msk_s2016", "match_any": ["ВДС годы ОКВЭД2 (с 2016"]},
     ],
     "https://www.rosstat.gov.ru/statistics/accounts": [
-        {"key": "vvp_god",       "title_contains": "ВВП годы (с 1995 г.)"},
-        {"key": "vvp_na_dushu",  "title_contains": "ВВП на душу населения"},
-        {"key": "vds_rf_s2011",  "title_contains": "ВДС годы ОКВЭД2 (с 2011 г.)"},
+        # На Росстате актуальные файлы названы транслитом (VVP_god_s1995-2025.xlsx),
+        # год в конце меняется — матчим по префиксу. Кириллический вариант оставлен
+        # на случай, если когда-нибудь вернут читаемые имена.
+        {"key": "vvp_god",       "match_any": ["VVP_god_s1995", "ВВП годы (с 1995"]},
+        {"key": "vvp_na_dushu",  "match_any": ["VVP_na_dushu", "ВВП на душу населения"]},
+        {"key": "vds_rf_s2011",  "match_any": ["VDS_god_OKVED2_s2011", "ВДС годы ОКВЭД2 (с 2011"]},
     ],
 }
 
@@ -103,11 +108,13 @@ _FILE_META_RE = re.compile(
 _FILE_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
 _FILE_EXT_RE = re.compile(r"\b(?:XLSX|XLS|PDF|DOCX|DOC|RAR|ZIP)\b", flags=re.IGNORECASE)
 _XLSX_HREF_RE = re.compile(r"\.xlsx?(\?|$)", flags=re.IGNORECASE)
+_PUA_RE = re.compile(r"[\ue000-\uf8ff]")  # иконочные шрифты Росстата
 
 
 def _clean_label(raw: str) -> str:
-    """Убирает из строки технические токены (размер файла, дата, расширение)."""
-    s = _FILE_META_RE.sub(" ", raw)
+    """Убирает из строки технические токены (размер файла, дата, расширение, иконки)."""
+    s = _PUA_RE.sub(" ", raw)
+    s = _FILE_META_RE.sub(" ", s)
     s = _FILE_DATE_RE.sub(" ", s)
     s = _FILE_EXT_RE.sub(" ", s)
     return re.sub(r"\s+", " ", s).strip(" ,")
@@ -135,7 +142,11 @@ def _link_titles(a) -> list[str]:
     """
     out: list[str] = []
 
-    txt = (a.get_text() or "").strip()
+    # Убираем символы приватной области Unicode (иконочные шрифты, напр. \ue2c0).
+    def _strip_pua(s: str) -> str:
+        return re.sub(r"[\ue000-\uf8ff]", "", s).strip()
+
+    txt = _strip_pua(a.get_text() or "")
     if txt and not _FILE_EXT_RE.fullmatch(txt):
         out.append(txt)
 
@@ -235,12 +246,16 @@ def _has_lxml() -> bool:
         return False
 
 
-def _match_source(items: list[dict], needle: str) -> dict | None:
-    """Первый item, у которого любой из вариантов названия содержит needle."""
-    n = needle.lower()
+def _match_source(items: list[dict], needles) -> dict | None:
+    """Первый item, у которого любой вариант названия (или URL) содержит любую из needles."""
+    if isinstance(needles, str):
+        needles = [needles]
+    lowered = [n.lower() for n in needles]
     for it in items:
-        for t in it.get("titles") or [it.get("title", "")]:
-            if n in t.lower():
+        haystack = [t.lower() for t in (it.get("titles") or [it.get("title", "")])]
+        haystack.append(unquote(it.get("href", "")).lower())
+        for n in lowered:
+            if any(n in h for h in haystack):
                 return it
     return None
 
@@ -253,14 +268,19 @@ def _debug_print_items(items: list[dict], limit: int = 8) -> None:
         print(f"         date={it.get('date')!r}  href={it.get('href')}")
 
 
-def _filename_for(title: str, href: str) -> str:
-    """Имя сохраняемого файла: {YYYYMMDD}_{safe_title}.xlsx (как в fedstat_checker)."""
-    # Используем оригинальный заголовок (без расширения), нормализуем под FS.
-    base = title or Path(unquote(href.rsplit("/", 1)[-1])).stem
-    base = re.sub(r'[\\/*?:"<>|]', "", base).strip()
-    base = base[:120]
-    ext = ".xlsx" if ".xlsx" in href.lower() else ".xls"
-    return f"{datetime.now().strftime('%Y%m%d')}_{base}{ext}"
+def _filename_for(href: str) -> str:
+    """Имя сохраняемого файла: {YYYYMMDD}_{имя_из_url}.xlsx (как в fedstat_checker).
+
+    Берём имя из basename URL — оно всегда осмысленное и уникальное
+    (ВРП с 1998 года(142).xlsx / VVP_god_s1995-2025.xlsx). Текст ссылки <a>
+    использовать нельзя: там иконочный маркер «XLSX», из-за которого все
+    файлы получали одно имя и перезаписывали друг друга.
+    """
+    name = unquote(href.rsplit("/", 1)[-1])
+    p = Path(name)
+    stem = re.sub(r'[\\/*?:"<>|]', "", p.stem).strip()[:120]
+    ext = p.suffix.lower() or ".xlsx"
+    return f"{datetime.now().strftime('%Y%m%d')}_{stem}{ext}"
 
 
 def download_file(session: requests.Session, href: str, referer: str, save_path: Path) -> bool:
@@ -309,9 +329,9 @@ def run() -> list[Path]:
         matched_any = False
         for src in sources:
             key = src["key"]
-            needle = src["title_contains"]
-            print(f"  🔎 {key}: ищу «{needle}»")
-            match = _match_source(items, needle)
+            needles = src["match_any"]
+            print(f"  🔎 {key}: ищу {needles}")
+            match = _match_source(items, needles)
             if not match:
                 print(f"     ⚠️  не нашёл — пропускаю")
                 continue
@@ -334,7 +354,7 @@ def run() -> list[Path]:
             else:
                 print(f"     🔄 обновился: {saved_date} → {remote_date}")
 
-            filename = _filename_for(match["title"], match["href"])
+            filename = _filename_for(match["href"])
             save_path = DOWNLOAD_DIR / filename
             ok = download_file(session, match["href"], referer=url, save_path=save_path)
             if ok:

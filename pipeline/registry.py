@@ -68,9 +68,9 @@ INDICATORS: list[Indicator] = [
         source="rosstat",
         source_ids=["vvp_god"],
         parser="rosstat_gdp_year",
-        file_patterns=["*ВВП годы*1995*.xls*"],
+        file_patterns=["*VVP_god*.xls*", "*ВВП годы*1995*.xls*"],
         page="",
-        description="Росстат, страница statistics/accounts. Файл «ВВП годы (с 1995 г.).xlsx».",
+        description="Росстат, страница statistics/accounts. Файл VVP_god_s1995-*.xlsx (транслит).",
     ),
     Indicator(
         id="gdp_per_capita_rf",
@@ -80,9 +80,9 @@ INDICATORS: list[Indicator] = [
         source="rosstat",
         source_ids=["vvp_na_dushu"],
         parser="rosstat_gdp_per_capita",
-        file_patterns=["*ВВП на душу*.xls*"],
+        file_patterns=["*VVP_na_dushu*.xls*", "*ВВП на душу*.xls*"],
         page="",
-        description="Росстат, страница statistics/accounts. Файл «ВВП на душу населения.xlsx».",
+        description="Росстат, страница statistics/accounts. Файл VVP_na_dushu_s1995-*.xlsx (транслит).",
     ),
     Indicator(
         id="vrp_msk",
@@ -116,9 +116,9 @@ INDICATORS: list[Indicator] = [
         source="rosstat",
         source_ids=["vds_rf_s2011"],
         parser="rosstat_vds_rf",
-        file_patterns=["*ВДС годы ОКВЭД2*2011*.xls*"],
+        file_patterns=["*VDS_god_OKVED2_s2011*.xls*", "*ВДС годы ОКВЭД2*2011*.xls*"],
         page="",
-        description="Росстат, страница statistics/accounts. Файл «ВДС годы ОКВЭД2 (с 2011 г.).xlsx».",
+        description="Росстат, страница statistics/accounts. Файл VDS_god_OKVED2_s2011-*.xlsx (транслит).",
     ),
 ]
 

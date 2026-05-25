@@ -88,7 +88,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
 
         for src in page_keys:
             key = src["key"]
-            match = rc._match_source(items, src["title_contains"])
+            match = rc._match_source(items, src["match_any"])
             if not match:
                 continue
             remote_date = match["date"] or ""
@@ -100,7 +100,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             if remote_date and saved_date == remote_date:
                 continue
 
-            filename = rc._filename_for(match["title"], match["href"])
+            filename = rc._filename_for(match["href"])
             save_path = DOWNLOADS_DIR / filename
             if rc.download_file(session, match["href"], referer=url, save_path=save_path):
                 new_files.append(save_path)

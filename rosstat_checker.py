@@ -10,9 +10,10 @@ requests + BeautifulSoup.
 1. GET, парсим HTML.
 2. Находим все ссылки на .xlsx (и .xls на случай переключения формата).
 3. Для каждой ссылки ищем рядом текст с датой формата DD.MM.YYYY.
-4. Для каждого источника из словаря PAGE_SOURCES ищем ссылку, title
-   которой содержит указанную подстроку (устойчиво к переименованиям
-   вроде "(14) (5)" в имени файла).
+4. Для каждого источника из PAGE_SOURCES ищем ссылку, у которой имя файла
+   в URL (или любой вариант заголовка) содержит одну из подстрок match_any.
+   Устойчиво к переименованиям вроде "(142)"/"(14)" в имени файла и к смене
+   года в конце транслитного имени (VVP_god_s1995-2025 → ...-2026).
 5. Сравниваем дату со state, при изменении — скачиваем.
 
 State хранится в `state/rosstat_state.json` (отдельно от fedstat — у
@@ -31,18 +32,30 @@ from pathlib import Path
 from urllib.parse import unquote, urljoin
 
 import requests
+import urllib3
 from bs4 import BeautifulSoup
+
+# Росстат использует сертификаты российского УЦ Минцифры, которых нет в
+# стандартном trust store Python. Поскольку мы GET-им только публичные
+# страницы и качаем xlsx (без передачи чувствительных данных), проверку
+# отключаем — иначе на Windows скрипт падает с SSLError каждый раз.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+VERIFY_SSL = False
 
 
 PAGE_SOURCES: dict[str, list[dict]] = {
     "https://77.rosstat.gov.ru/folder/134924": [
-        {"key": "vrp_msk",       "title_contains": "ВРП с 1998 года"},
-        {"key": "vds_msk_s2016", "title_contains": "ВДС годы ОКВЭД2 (с 2016 г.)"},
+        # На Мосстате имена файлов кириллицей: «ВРП с 1998 года(142).xlsx» и т.п.
+        {"key": "vrp_msk",       "match_any": ["ВРП с 1998"]},
+        {"key": "vds_msk_s2016", "match_any": ["ВДС годы ОКВЭД2 (с 2016"]},
     ],
     "https://www.rosstat.gov.ru/statistics/accounts": [
-        {"key": "vvp_god",       "title_contains": "ВВП годы (с 1995 г.)"},
-        {"key": "vvp_na_dushu",  "title_contains": "ВВП на душу населения"},
-        {"key": "vds_rf_s2011",  "title_contains": "ВДС годы ОКВЭД2 (с 2011 г.)"},
+        # На Росстате актуальные файлы названы транслитом (VVP_god_s1995-2025.xlsx),
+        # год в конце меняется — матчим по префиксу. Кириллический вариант оставлен
+        # на случай, если когда-нибудь вернут читаемые имена.
+        {"key": "vvp_god",       "match_any": ["VVP_god_s1995", "ВВП годы (с 1995"]},
+        {"key": "vvp_na_dushu",  "match_any": ["VVP_na_dushu", "ВВП на душу населения"]},
+        {"key": "vds_rf_s2011",  "match_any": ["VDS_god_OKVED2_s2011", "ВДС годы ОКВЭД2 (с 2011"]},
     ],
 }
 
@@ -88,17 +101,92 @@ def _new_session() -> requests.Session:
     return s
 
 
-def _link_title(a) -> str:
-    """Извлекает «человеческий» заголовок ссылки.
+_FILE_META_RE = re.compile(
+    r"\d+(?:[.,]\d+)?\s*(?:КБ|МБ|Кб|Мб|КИБ|байт|KB|MB|kb|mb|Kb|Mb)\b",
+    flags=re.IGNORECASE,
+)
+_FILE_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
+_FILE_EXT_RE = re.compile(r"\b(?:XLSX|XLS|PDF|DOCX|DOC|RAR|ZIP)\b", flags=re.IGNORECASE)
+_XLSX_HREF_RE = re.compile(r"\.xlsx?(\?|$)", flags=re.IGNORECASE)
+_PUA_RE = re.compile(r"[\ue000-\uf8ff]")  # иконочные шрифты Росстата
 
-    Сначала текст <a>, иначе имя файла из href (декодированное)."""
-    txt = (a.get_text() or "").strip()
-    if txt:
-        return txt
+
+def _clean_label(raw: str) -> str:
+    """Убирает из строки технические токены (размер файла, дата, расширение, иконки)."""
+    s = _PUA_RE.sub(" ", raw)
+    s = _FILE_META_RE.sub(" ", s)
+    s = _FILE_DATE_RE.sub(" ", s)
+    s = _FILE_EXT_RE.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip(" ,")
+
+
+def _siblings_text(a) -> str:
+    """Текст следующих siblings до следующего тега <a> (нужен когда родитель — общий контейнер списка)."""
+    parts = []
+    for sib in a.next_siblings:
+        if getattr(sib, "name", None) == "a":
+            break
+        if hasattr(sib, "get_text"):
+            parts.append(sib.get_text(" ", strip=True))
+        else:
+            parts.append(str(sib).strip())
+    return " ".join(p for p in parts if p)
+
+
+def _link_titles(a) -> list[str]:
+    """Все возможные источники «названия» ссылки.
+
+    На страницах Росстата визуальный заголовок («ВВП годы (с 1995 г.)») лежит
+    не внутри тега <a>, а в соседнем span/div. Собираем варианты из разных
+    мест и матчим по любому из них.
+    """
+    out: list[str] = []
+
+    # Убираем символы приватной области Unicode (иконочные шрифты, напр. \ue2c0).
+    def _strip_pua(s: str) -> str:
+        return re.sub(r"[\ue000-\uf8ff]", "", s).strip()
+
+    txt = _strip_pua(a.get_text() or "")
+    if txt and not _FILE_EXT_RE.fullmatch(txt):
+        out.append(txt)
+
+    for attr in ("title", "download", "aria-label"):
+        v = a.get(attr)
+        if v and v.strip():
+            out.append(v.strip())
+
     href = a.get("href") or ""
     base = href.rsplit("/", 1)[-1]
     base = unquote(base)
-    return Path(base).stem
+    if base:
+        out.append(Path(base).stem)
+
+    # Родитель — но только если он содержит не больше одной xlsx-ссылки
+    # (иначе получим «мега-title» из всех соседних файлов).
+    parent = a.parent
+    if parent is not None:
+        xlsx_in_parent = sum(
+            1 for x in parent.find_all("a", href=True)
+            if _XLSX_HREF_RE.search(x.get("href", ""))
+        )
+        if xlsx_in_parent <= 1:
+            label = _clean_label(parent.get_text(" ", strip=True))
+            if label:
+                out.append(label)
+
+    # Siblings до следующей xlsx-ссылки — для случая «иконки в ряд + общие тексты».
+    sib_text = _clean_label(_siblings_text(a))
+    if sib_text:
+        out.append(sib_text)
+
+    # Уникализируем, сохраняя порядок.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in out:
+        if t and t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return unique
 
 
 def _find_date_near(a) -> str:
@@ -124,7 +212,7 @@ def _find_date_near(a) -> str:
 def get_files_on_page(session: requests.Session, url: str) -> list[dict]:
     """Возвращает список {title, href, date} по всем xlsx/xls на странице."""
     print(f"  🌐 GET {url}")
-    resp = session.get(url, timeout=REQUEST_TIMEOUT, headers={"Referer": url})
+    resp = session.get(url, timeout=REQUEST_TIMEOUT, headers={"Referer": url}, verify=VERIFY_SSL)
     resp.raise_for_status()
     resp.encoding = resp.encoding or "utf-8"
     soup = BeautifulSoup(resp.text, "lxml" if _has_lxml() else "html.parser")
@@ -139,8 +227,10 @@ def get_files_on_page(session: requests.Session, url: str) -> list[dict]:
         if absolute in seen_hrefs:
             continue
         seen_hrefs.add(absolute)
+        titles = _link_titles(a)
         items.append({
-            "title": _link_title(a),
+            "title": titles[0] if titles else absolute,
+            "titles": titles,
             "href": absolute,
             "date": _find_date_near(a),
         })
@@ -156,23 +246,41 @@ def _has_lxml() -> bool:
         return False
 
 
-def _match_source(items: list[dict], needle: str) -> dict | None:
-    """Возвращает первый item, title которого содержит подстроку needle (case-insensitive)."""
-    n = needle.lower()
+def _match_source(items: list[dict], needles) -> dict | None:
+    """Первый item, у которого любой вариант названия (или URL) содержит любую из needles."""
+    if isinstance(needles, str):
+        needles = [needles]
+    lowered = [n.lower() for n in needles]
     for it in items:
-        if n in it["title"].lower():
-            return it
+        haystack = [t.lower() for t in (it.get("titles") or [it.get("title", "")])]
+        haystack.append(unquote(it.get("href", "")).lower())
+        for n in lowered:
+            if any(n in h for h in haystack):
+                return it
     return None
 
 
-def _filename_for(title: str, href: str) -> str:
-    """Имя сохраняемого файла: {YYYYMMDD}_{safe_title}.xlsx (как в fedstat_checker)."""
-    # Используем оригинальный заголовок (без расширения), нормализуем под FS.
-    base = title or Path(unquote(href.rsplit("/", 1)[-1])).stem
-    base = re.sub(r'[\\/*?:"<>|]', "", base).strip()
-    base = base[:120]
-    ext = ".xlsx" if ".xlsx" in href.lower() else ".xls"
-    return f"{datetime.now().strftime('%Y%m%d')}_{base}{ext}"
+def _debug_print_items(items: list[dict], limit: int = 8) -> None:
+    """Печатает первые N найденных файлов с их вариантами названия и URL."""
+    print(f"     ─── что нашлось (первые {min(limit, len(items))}): ───")
+    for i, it in enumerate(items[:limit], 1):
+        print(f"      {i}. titles={it.get('titles')}")
+        print(f"         date={it.get('date')!r}  href={it.get('href')}")
+
+
+def _filename_for(href: str) -> str:
+    """Имя сохраняемого файла: {YYYYMMDD}_{имя_из_url}.xlsx (как в fedstat_checker).
+
+    Берём имя из basename URL — оно всегда осмысленное и уникальное
+    (ВРП с 1998 года(142).xlsx / VVP_god_s1995-2025.xlsx). Текст ссылки <a>
+    использовать нельзя: там иконочный маркер «XLSX», из-за которого все
+    файлы получали одно имя и перезаписывали друг друга.
+    """
+    name = unquote(href.rsplit("/", 1)[-1])
+    p = Path(name)
+    stem = re.sub(r'[\\/*?:"<>|]', "", p.stem).strip()[:120]
+    ext = p.suffix.lower() or ".xlsx"
+    return f"{datetime.now().strftime('%Y%m%d')}_{stem}{ext}"
 
 
 def download_file(session: requests.Session, href: str, referer: str, save_path: Path) -> bool:
@@ -184,6 +292,7 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
             timeout=REQUEST_TIMEOUT,
             stream=True,
             headers={"Referer": referer},
+            verify=VERIFY_SSL,
         )
         resp.raise_for_status()
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,14 +326,16 @@ def run() -> list[Path]:
             print(f"  ❌ Не удалось загрузить страницу: {exc}\n")
             continue
 
+        matched_any = False
         for src in sources:
             key = src["key"]
-            needle = src["title_contains"]
-            print(f"  🔎 {key}: ищу «{needle}»")
-            match = _match_source(items, needle)
+            needles = src["match_any"]
+            print(f"  🔎 {key}: ищу {needles}")
+            match = _match_source(items, needles)
             if not match:
                 print(f"     ⚠️  не нашёл — пропускаю")
                 continue
+            matched_any = True
 
             remote_date = match["date"] or ""
             saved = state.get(key, {})
@@ -243,7 +354,7 @@ def run() -> list[Path]:
             else:
                 print(f"     🔄 обновился: {saved_date} → {remote_date}")
 
-            filename = _filename_for(match["title"], match["href"])
+            filename = _filename_for(match["href"])
             save_path = DOWNLOAD_DIR / filename
             ok = download_file(session, match["href"], referer=url, save_path=save_path)
             if ok:
@@ -255,6 +366,8 @@ def run() -> list[Path]:
                 }
             # Маленькая пауза, чтобы не долбить Росстат подряд.
             time.sleep(0.5)
+        if not matched_any and items:
+            _debug_print_items(items)
         print()
 
     save_state(state)

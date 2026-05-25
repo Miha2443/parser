@@ -54,6 +54,19 @@ def load_ipc() -> pd.DataFrame:
     return load_indicator("ipc")
 
 
+NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf"]
+
+
+@st.cache_data(show_spinner=False)
+def load_national_accounts() -> pd.DataFrame:
+    """Объединённая витрина национальных счётов (ВВП/ВРП/ВДС, Москва + РФ)."""
+    frames = [load_indicator(i) for i in NA_INDICATORS]
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def latest_loaded_at(df: pd.DataFrame) -> str:
     if df.empty or "loaded_at" not in df.columns:
         return "—"

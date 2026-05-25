@@ -118,10 +118,11 @@ def _process_one(
         if df.empty:
             audit.skip(indicator.id, reason="парсер вернул пустой DataFrame")
             return
-        df = df.drop_duplicates(
-            subset=["indicator_id", "view", "region", "year", "month", "period_type"],
-            keep="last",
-        ).reset_index(drop=True)
+        dedup_keys = [
+            c for c in ["indicator_id", "view", "region", "year", "month", "period_type", "metric"]
+            if c in df.columns
+        ]
+        df = df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
         target = DATA_PROCESSED / f"{indicator.id}.pkl"
         df.to_pickle(target)
         audit.success(

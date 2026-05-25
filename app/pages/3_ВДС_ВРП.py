@@ -116,11 +116,13 @@ def _two_region_chart(
         fig.update_traces(mode="lines+markers+text", texttemplate=texttempl,
                           textposition="top center", textfont_size=9, cliponaxis=False)
     fig.update_layout(
-        title=title, yaxis_title=yaxis, legend_title="",
+        yaxis_title=yaxis, legend_title="",
         margin=dict(t=46 if title else 24, b=24), height=300,
         xaxis=dict(tickmode="linear", dtick=2),
         separators=RU_SEPARATORS,
     )
+    if title:
+        fig.update_layout(title=title)
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
@@ -275,6 +277,7 @@ def main() -> None:
         decimals=2, key="na_block2", kind="bar",
     )
 
+    st.subheader("3. Индекс физического объема ВРП, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_index", rf_metric="gdp_index",
         msk_scale=1.0, rf_scale=1.0,
@@ -283,6 +286,7 @@ def main() -> None:
         decimals=1, key="na_block3",
     )
 
+    st.subheader("4. Индекс физического объема ВРП на душу населения, % к пред. году")
     _two_region_chart(
         df, msk_metric="vrp_per_capita_index", rf_metric="gdp_pc_index",
         msk_scale=1.0, rf_scale=1.0,

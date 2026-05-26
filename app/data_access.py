@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 DATA_PROCESSED = Path(__file__).resolve().parent.parent / "data" / "processed"
+DATA_DERIVED = Path(__file__).resolve().parent.parent / "data" / "derived"
 
 MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -57,10 +58,28 @@ def load_ipc() -> pd.DataFrame:
 NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf", "vds_msk_legacy"]
 
 
+def _load_derived_na() -> list[pd.DataFrame]:
+    """Производные committed-витрины (CSV в data/derived/).
+
+    Сейчас тут расчёт ВДС Москвы в рублях за 2011-2015 (ВРП × доля): в
+    исходниках рублёвой разбивки по отраслям за эти годы нет, восстановлена
+    разово скриптом scripts/build_msk_vds_value_2011_2015.py.
+    """
+    out: list[pd.DataFrame] = []
+    if not DATA_DERIVED.exists():
+        return out
+    for csv in sorted(DATA_DERIVED.glob("*.csv")):
+        df = pd.read_csv(csv)
+        if "loaded_at" in df.columns:
+            df["loaded_at"] = pd.to_datetime(df["loaded_at"], errors="coerce")
+        out.append(df)
+    return out
+
+
 @st.cache_data(show_spinner=False)
 def load_national_accounts() -> pd.DataFrame:
     """Объединённая витрина национальных счётов (ВВП/ВРП/ВДС, Москва + РФ)."""
-    frames = [load_indicator(i) for i in NA_INDICATORS]
+    frames = [load_indicator(i) for i in NA_INDICATORS] + _load_derived_na()
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame()

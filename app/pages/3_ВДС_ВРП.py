@@ -142,7 +142,12 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         st.info("Нет данных для выбранного региона.")
         return
 
-    sections = sorted(sub["view"].unique())
+    # В выбор — только отрасли действующего ОКВЭД2 (2016+). Старые названия
+    # ОКВЭД-2007 (доли Москвы 2011-2015) в список не выводим, но в сумме по
+    # году они учитываются и оседают в «Остальные» — итог остаётся 100%.
+    sections = sorted(sub.loc[sub["year"] >= 2016, "view"].unique())
+    if not sections:
+        sections = sorted(sub["view"].unique())
     chosen = _persistent_industry_select(sections, key="b5_industries", label="Отрасли (разделы ОКВЭД)")
     if not chosen:
         st.info("Выберите хотя бы одну отрасль.")

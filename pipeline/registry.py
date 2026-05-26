@@ -120,6 +120,22 @@ INDICATORS: list[Indicator] = [
         page="",
         description="Росстат, страница statistics/accounts. Файл VDS_god_OKVED2_s2011-*.xlsx (транслит).",
     ),
+    Indicator(
+        id="vds_msk_legacy",
+        section="national_accounts",
+        title="Отраслевая структура ВДС Москвы, ОКВЭД-2007 (2011-2015)",
+        unit="%",
+        source="rosstat",
+        source_ids=["vrp_okved2007"],
+        parser="rosstat_vds_msk_legacy",
+        file_patterns=["*VRP_OKVED2007*.xls*", "*ВРП ОКВЭД 2007*.xls*"],
+        page="",
+        description=(
+            "Росстат statistics/accounts, файл «ВРП ОКВЭД 2007 (с 2004 г.)». "
+            "Листы «2. 2011»…«2. 2015» — доли ВДС Москвы (% к итогу) в старом "
+            "ОКВЭД-2007. Дополняет vds_structure Москвы за 2011-2015 (vds_msk даёт 2016+)."
+        ),
+    ),
 ]
 
 

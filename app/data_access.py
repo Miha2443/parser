@@ -54,7 +54,7 @@ def load_ipc() -> pd.DataFrame:
     return load_indicator("ipc")
 
 
-NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf"]
+NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf", "vds_msk_legacy"]
 
 
 @st.cache_data(show_spinner=False)

@@ -22,8 +22,14 @@ INDUSTRY_COLORS = {"Строительство": "#c8102e", "Всего": "#1f4e
 
 
 def aggregate_year(df: pd.DataFrame) -> pd.DataFrame:
-    """Годовое значение = YTD за декабрь (январь-декабрь)."""
-    annual = df[(df["period_type"] == "ytd") & (df["month"] == 12)].copy()
+    """Годовое значение = YTD за декабрь (январь-декабрь).
+
+    Плюс фиксированные годовые записи (period_type == "year") — ручные данные
+    за 2011-2012, которых нет в помесячной выгрузке.
+    """
+    ytd_dec = df[(df["period_type"] == "ytd") & (df["month"] == 12)]
+    static = df[df["period_type"] == "year"]
+    annual = pd.concat([ytd_dec, static], ignore_index=True)
     return annual[["year", "view", "region", "value"]]
 
 

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import requests
 
-from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT, STATE_DIR
+from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
 
 
@@ -63,7 +63,8 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     import rosstat_checker as rc  # type: ignore
 
     rc.DOWNLOAD_DIR = DOWNLOADS_DIR
-    rc.STATE_FILE = STATE_DIR / "rosstat_state.json"
+    # Единое состояние с standalone-чекером (py rosstat_checker.py).
+    rc.STATE_FILE = ROOT / "rosstat_state.json"
 
     state = rc.load_state()
     session = rc._new_session()

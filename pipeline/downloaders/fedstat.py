@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT, STATE_DIR
+from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
 
 
@@ -70,7 +70,9 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     import fedstat_checker as fc  # type: ignore
 
     fc.DOWNLOAD_DIR = DOWNLOADS_DIR
-    fc.STATE_FILE = STATE_DIR / "fedstat_state.json"
+    # Единое состояние с standalone-чекером (py fedstat_checker.py): один файл,
+    # где хранятся даты обновления данных на сайте — чтобы не качать дважды.
+    fc.STATE_FILE = ROOT / "fedstat_state.json"
 
     state = fc.load_state()
     driver = fc.create_driver()

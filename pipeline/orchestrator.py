@@ -73,15 +73,19 @@ def _downloader(source: str):
         return None
 
 
+def _files_newer(files: list[Path], target: Path) -> bool:
+    """True, если витрины ещё нет или хотя бы один исходник свежее неё (по mtime)."""
+    if not target.exists():
+        return True
+    t = target.stat().st_mtime
+    return any(p.exists() and p.stat().st_mtime > t for p in files)
+
+
 def _process_one(
     indicator: Indicator, audit: AuditRun, *, download: bool
 ) -> None:
     started = time.time()
     dl = _downloader(indicator.source)
-    files: list[Path] = []
-    prev_date = ""
-    new_date = ""
-
     if dl is None:
         audit.error(
             indicator.id,
@@ -89,31 +93,35 @@ def _process_one(
         )
         return
 
-    try:
-        if download and hasattr(dl, "fetch"):
+    new_files: list[Path] = []
+    prev_date = ""
+    new_date = ""
+    if download and hasattr(dl, "fetch"):
+        try:
             result = dl.fetch(indicator)
-            files = list(result.get("new_files") or [])
-            prev_date = result.get("prev_date", "")
-            new_date = result.get("new_date", "")
-        else:
-            files = list(dl.find_files(indicator))
-    except Exception as exc:
-        audit.error(indicator.id, exc, stage="download")
+        except Exception as exc:
+            audit.error(indicator.id, exc, stage="download")
+            return
+        new_files = list(result.get("new_files") or [])
+        prev_date = result.get("prev_date", "")
+        new_date = result.get("new_date", "")
+
+    # Парсим все локальные файлы по паттернам (часть1+часть2 и т.п.), а не только свежескачанные.
+    local_files = list(dl.find_files(indicator))
+    if not local_files:
+        audit.skip(indicator.id, reason="нет xls в downloads/", prev_date=prev_date, new_date=new_date)
         return
 
-    # Если ничего нового и витрина уже есть — skip; иначе используем последние локальные файлы.
-    if not files:
-        if download:
-            audit.skip(indicator.id, reason="не изменилось на источнике", prev_date=prev_date)
-            return
-        files = dl.find_files(indicator)
-        if not files:
-            audit.skip(indicator.id, reason="нет xls в downloads/")
-            return
+    target = DATA_PROCESSED / f"{indicator.id}.pkl"
+    # В режиме скачивания не пересобираем витрину зря: только если что-то скачали,
+    # витрины ещё нет или локальный файл свежее неё. `--skip-download` собирает всегда.
+    if download and not new_files and not _files_newer(local_files, target):
+        audit.skip(indicator.id, reason="не изменилось на источнике", prev_date=prev_date, new_date=new_date)
+        return
 
     try:
         parser = _parser_module(indicator.parser)
-        frames = [parser.parse(p) for p in files]
+        frames = [parser.parse(p) for p in local_files]
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         if df.empty:
             audit.skip(indicator.id, reason="парсер вернул пустой DataFrame")
@@ -123,12 +131,11 @@ def _process_one(
             if c in df.columns
         ]
         df = df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
-        target = DATA_PROCESSED / f"{indicator.id}.pkl"
         df.to_pickle(target)
         audit.success(
             indicator.id,
             rows=len(df),
-            files=[str(p.name) for p in files],
+            files=[str(p.name) for p in local_files],
             target=str(target.name),
             prev_date=prev_date,
             new_date=new_date,
@@ -137,7 +144,7 @@ def _process_one(
             year_max=int(df["year"].max()),
         )
     except Exception as exc:
-        audit.error(indicator.id, exc, stage="parse", files=[str(p) for p in files])
+        audit.error(indicator.id, exc, stage="parse", files=[str(p) for p in local_files])
 
 
 def run_all(*, download: bool = True) -> int:

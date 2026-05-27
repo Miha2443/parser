@@ -93,6 +93,11 @@ def load_salary() -> pd.DataFrame:
             df = pd.concat([df, extra], ignore_index=True)
     if df.empty:
         return df
+    # Derived-CSV нацсчётов оставляет month/quarter пустыми → колонка
+    # становится float; возвращаем целочисленный тип (квартал используется
+    # как индекс в подписях на странице ЗП).
+    for col in ("month", "quarter"):
+        df[col] = df[col].astype("Int64")
     return _add_january_ytd(df)
 
 

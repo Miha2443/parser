@@ -4,7 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from app.audit import latest_data_badge
-from app.data_access import latest_loaded_at, latest_period, load_ipc, load_salary
+from app.data_access import latest_loaded_at, load_ipc, load_salary
 
 st.set_page_config(
     page_title="Аналитика Москвы — дашборд",
@@ -24,10 +24,10 @@ ipc = load_ipc()
 
 st.markdown("### Доступные показатели")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
     with st.container(border=True):
-        st.markdown("#### 💼 Заработная плата")
+        st.markdown("#### Заработная плата")
         st.write("Среднемесячная номинальная начисленная заработная плата работающих в экономике.")
         st.write(
             f"**Регионы:** {', '.join(sorted(salary['region'].unique())) if not salary.empty else '—'}"
@@ -35,23 +35,24 @@ with col1:
         st.write(
             f"**Отрасли:** {', '.join(sorted(salary['view'].unique())) if not salary.empty else '—'}"
         )
-        st.write(f"**Период данных:** {latest_period(salary)}")
         st.write(f"**Обновлено:** {latest_loaded_at(salary)}")
         st.page_link("pages/1_Заработная_плата.py", label="Открыть раздел →")
 
 with col2:
     with st.container(border=True):
-        st.markdown("#### 💰 ИПЦ")
+        st.markdown("#### ИПЦ")
         st.write("Индексы потребительских цен на товары и услуги.")
         st.write(
             f"**Регионы:** {', '.join(sorted(ipc['region'].unique())) if not ipc.empty else '—'}"
         )
-        st.write(
-            f"**Тип индекса:** к предыдущему месяцу; с начала года к АППГ"
-        )
-        st.write(f"**Период данных:** {latest_period(ipc)}")
         st.write(f"**Обновлено:** {latest_loaded_at(ipc)}")
         st.page_link("pages/2_ИПЦ.py", label="Открыть раздел →")
+
+with col3:
+    with st.container(border=True):
+        st.markdown("#### ВРП и ВВП")
+        st.write("ВВП России, ВРП Москвы и валовая добавленная стоимость по отраслям.")
+        st.page_link("pages/3_ВРП_и_ВВП.py", label="Открыть раздел →")
 
 st.markdown("---")
 st.page_link("pages/99_Обновления.py", label="🔄 Журнал обновлений ETL")

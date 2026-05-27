@@ -22,7 +22,7 @@ import streamlit as st
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import latest_loaded_at, load_national_accounts
 
-st.set_page_config(page_title="ВВП/ВРП/ВДС — Аналитика Москвы", page_icon="📈", layout="wide")
+st.set_page_config(page_title="ВРП и ВВП — Аналитика Москвы", layout="wide")
 
 MSK = "Москва"
 RF = "Российская Федерация"
@@ -253,7 +253,7 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total
 
 
 def main() -> None:
-    st.title("📈 ВВП / ВРП / ВДС: Москва и Россия")
+    st.title("ВРП и ВВП")
     df = load_national_accounts()
     if df.empty:
         st.warning(

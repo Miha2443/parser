@@ -16,7 +16,7 @@ from app.data_access import (
     quarter_label,
 )
 
-st.set_page_config(page_title="Заработная плата — Аналитика Москвы", page_icon="💼", layout="wide")
+st.set_page_config(page_title="Заработная плата — Аналитика Москвы", layout="wide")
 
 INDUSTRY_COLORS = {"Строительство": "#c8102e", "Всего": "#1f4e79"}
 
@@ -252,7 +252,7 @@ def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool
 
 
 def main() -> None:
-    st.title("💼 Среднемесячная заработная плата")
+    st.title("Среднемесячная заработная плата")
     df = load_salary()
     if df.empty:
         st.warning(

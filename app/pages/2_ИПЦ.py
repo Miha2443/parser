@@ -15,7 +15,7 @@ from app.data_access import (
     quarter_label,
 )
 
-st.set_page_config(page_title="ИПЦ — Аналитика Москвы", page_icon="💰", layout="wide")
+st.set_page_config(page_title="ИПЦ — Аналитика Москвы", layout="wide")
 
 REGION_COLORS = {"Москва": "#c8102e", "Российская Федерация": "#1f4e79"}
 
@@ -196,7 +196,7 @@ def render_month_view(df: pd.DataFrame, regions: list[str], period_type: str) ->
 
 
 def main() -> None:
-    st.title("💰 Индексы потребительских цен")
+    st.title("Индексы потребительских цен")
     df = load_ipc()
     if df.empty:
         st.warning(

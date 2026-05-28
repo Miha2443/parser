@@ -16,14 +16,20 @@ from app.data_access import (
     quarter_label,
 )
 
-st.set_page_config(page_title="Заработная плата — Аналитика Москвы", page_icon="💼", layout="wide")
+st.set_page_config(page_title="Заработная плата — Аналитика Москвы", layout="wide")
 
 INDUSTRY_COLORS = {"Строительство": "#c8102e", "Всего": "#1f4e79"}
 
 
 def aggregate_year(df: pd.DataFrame) -> pd.DataFrame:
-    """Годовое значение = YTD за декабрь (январь-декабрь)."""
-    annual = df[(df["period_type"] == "ytd") & (df["month"] == 12)].copy()
+    """Годовое значение = YTD за декабрь (январь-декабрь).
+
+    Плюс фиксированные годовые записи (period_type == "year") — ручные данные
+    за 2011-2012, которых нет в помесячной выгрузке.
+    """
+    ytd_dec = df[(df["period_type"] == "ytd") & (df["month"] == 12)]
+    static = df[df["period_type"] == "year"]
+    annual = pd.concat([ytd_dec, static], ignore_index=True)
     return annual[["year", "view", "region", "value"]]
 
 
@@ -246,7 +252,7 @@ def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool
 
 
 def main() -> None:
-    st.title("💼 Среднемесячная заработная плата")
+    st.title("Среднемесячная заработная плата")
     df = load_salary()
     if df.empty:
         st.warning(

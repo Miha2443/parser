@@ -78,11 +78,13 @@ schtasks /Create /SC DAILY /ST 06:00 /TN "parser_etl" /TR "C:\cloud\scripts\upda
 
 ```
 app/                    Streamlit-приложение
-pipeline/               ETL: парсеры xls → Parquet
-data/processed/         Витрина (Parquet, не коммитится)
-downloads/              Сырые xls (вход)
-fedstat_checker.py      Существующий парсер-загрузчик (Selenium + requests)
-process_ipc.py          Старый DataLens-выход (оставлен на время миграции)
+pipeline/               ETL: парсеры xls → витрины pkl
+data/processed/         Витрины (pkl, не коммитится, пересобирается ETL)
+data/derived/           Производные данные (committed CSV)
+downloads/              Сырые xls с источников (вход)
+fedstat_checker.py      Загрузчик fedstat (Selenium + requests)
+rosstat_checker.py      Загрузчик rosstat (requests)
+_to_delete/             Карантин неподключённого (на ревизию перед удалением)
 ```
 
 ## Что дальше

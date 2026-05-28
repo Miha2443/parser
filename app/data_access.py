@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 DATA_PROCESSED = Path(__file__).resolve().parent.parent / "data" / "processed"
+DATA_DERIVED = Path(__file__).resolve().parent.parent / "data" / "derived"
 
 MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -46,21 +47,74 @@ def load_indicator(indicator_id: str) -> pd.DataFrame:
     return pd.read_pickle(path)
 
 
+@st.cache_data(show_spinner=False)
+def _load_derived() -> pd.DataFrame:
+    """Производные committed-витрины (CSV в data/derived/), не обновляемые ETL.
+
+    Сейчас тут:
+    - vds_msk_value_2011_2015.csv — ВДС Москвы в рублях за 2011-2015 (ВРП × доля);
+    - salary_2011_2012.csv — годовая зарплата Москвы/РФ за 2011-2012 (ручные данные).
+    """
+    if not DATA_DERIVED.exists():
+        return pd.DataFrame()
+    frames: list[pd.DataFrame] = []
+    for csv in sorted(DATA_DERIVED.glob("*.csv")):
+        df = pd.read_csv(csv)
+        if "loaded_at" in df.columns:
+            df["loaded_at"] = pd.to_datetime(df["loaded_at"], errors="coerce")
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _add_january_ytd(df: pd.DataFrame) -> pd.DataFrame:
+    """YTD за январь = значение за январь (с начала года к январю = сам январь).
+
+    В исходниках ЗП «период с начала года» начинается с «январь-февраль», т.е.
+    января в ytd нет. Достраиваем его из месячных данных, чтобы он был на
+    графиках «по месяцам с начала года».
+    """
+    jan = df[(df["period_type"] == "month") & (df["month"] == 1)].copy()
+    if jan.empty:
+        return df
+    jan["period_type"] = "ytd"
+    combined = pd.concat([df, jan], ignore_index=True)
+    return combined.drop_duplicates(
+        subset=["indicator_id", "view", "region", "year", "month", "period_type"],
+        keep="first",
+    ).reset_index(drop=True)
+
+
 def load_salary() -> pd.DataFrame:
-    return load_indicator("avg_salary")
+    df = load_indicator("avg_salary")
+    derived = _load_derived()
+    if not derived.empty:
+        extra = derived[derived["indicator_id"] == "avg_salary"]
+        if not extra.empty:
+            df = pd.concat([df, extra], ignore_index=True)
+    if df.empty:
+        return df
+    # Derived-CSV нацсчётов оставляет month/quarter пустыми → колонка
+    # становится float; возвращаем целочисленный тип (квартал используется
+    # как индекс в подписях на странице ЗП).
+    for col in ("month", "quarter"):
+        df[col] = df[col].astype("Int64")
+    return _add_january_ytd(df)
 
 
 def load_ipc() -> pd.DataFrame:
     return load_indicator("ipc")
 
 
-NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf"]
+NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf", "vds_msk_legacy"]
 
 
 @st.cache_data(show_spinner=False)
 def load_national_accounts() -> pd.DataFrame:
     """Объединённая витрина национальных счётов (ВВП/ВРП/ВДС, Москва + РФ)."""
     frames = [load_indicator(i) for i in NA_INDICATORS]
+    derived = _load_derived()
+    if not derived.empty:
+        frames.append(derived[derived["section"] == "national_accounts"])
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame()

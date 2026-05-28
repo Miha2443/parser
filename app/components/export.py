@@ -35,21 +35,30 @@ def table_download_buttons(df: pd.DataFrame, *, name: str, key_prefix: str) -> N
 
 
 def chart_download_button(fig: go.Figure, *, name: str, key: str) -> None:
-    """PNG-экспорт графика через kaleido. Если пакета нет — тихо пропускаем."""
+    """PNG-экспорт графика через kaleido.
+
+    Генерация PNG запускает headless-Chrome и занимает несколько секунд, поэтому
+    делается строго по требованию (по галочке), иначе тело каждого expander
+    блокировало бы отрисовку страницы на каждом перезапуске скрипта.
+    Быстрый клиентский PNG всегда доступен через значок камеры на самом графике.
+    """
+    if not st.checkbox("Сформировать PNG для скачивания", key=f"{key}_gen"):
+        return
     try:
         import kaleido  # noqa: F401
     except ImportError:
         st.caption("PNG-экспорт недоступен — установите `kaleido==0.2.1`.")
         return
-    try:
-        png_bytes = fig.to_image(format="png", width=1200, height=600, scale=2)
-    except Exception as exc:  # noqa: BLE001
-        st.caption(f"PNG-экспорт недоступен: {exc}")
-        return
+    with st.spinner("Готовлю PNG…"):
+        try:
+            png_bytes = fig.to_image(format="png", width=1200, height=600, scale=2)
+        except Exception as exc:  # noqa: BLE001
+            st.caption(f"PNG-экспорт недоступен: {exc}")
+            return
     st.download_button(
         "Скачать график (PNG)",
         data=png_bytes,
         file_name=f"{name}.png",
         mime="image/png",
-        key=key,
+        key=f"{key}_dl",
     )

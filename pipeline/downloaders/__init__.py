@@ -1,4 +1,4 @@
-"""Скачивающий слой. Обёртки над существующими fedstat_checker.py / domrf*.py.
+"""Скачивающий слой. Обёртки над существующими fedstat_checker.py / rosstat_checker.py.
 
 Каждый downloader экспортирует `fetch(indicator) -> dict` с полями:
     {

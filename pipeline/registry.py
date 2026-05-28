@@ -17,7 +17,7 @@ class Indicator:
     section: str
     title: str
     unit: str
-    source: str                 # "fedstat" / "domrf" / "domrf_mortgage"
+    source: str                 # "fedstat" / "rosstat"
     source_ids: Sequence[str]   # ID на источнике (для fedstat — ключ из INDICATORS словаря)
     parser: str                 # имя модуля в pipeline/parsers/
     file_patterns: Sequence[str]  # паттерны имени xls в downloads/ для поиска свежего файла

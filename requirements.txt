@@ -11,8 +11,8 @@ xlrd>=2.0       # чтение старых xls (fedstat выгружает в x
 # просто не появится в UI, остальное продолжит работать.
 kaleido==0.2.1
 
-# Для скриптов-загрузчиков fedstat / domrf (на машине, где они запускаются):
-# selenium>=4.20
-requests>=2.32          # rosstat_checker + опционально fedstat/domrf
+# Для скриптов-загрузчиков fedstat / nashdom / erzrf (на машине, где они запускаются):
+selenium>=4.20          # fedstat_checker + nashdom_checker + erzrf_checker
+requests>=2.32          # rosstat_checker + опционально fedstat
 beautifulsoup4>=4.12    # парсинг html-страниц Росстата/Мосстата
 lxml>=5                 # быстрый парсер HTML для BS4 (опционально, но рекомендуется)

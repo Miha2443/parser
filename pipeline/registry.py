@@ -17,7 +17,7 @@ class Indicator:
     section: str
     title: str
     unit: str
-    source: str                 # "fedstat" / "rosstat"
+    source: str                 # "fedstat" / "rosstat" / "nashdom" / "erzrf" / "manual"
     source_ids: Sequence[str]   # ID на источнике (для fedstat — ключ из INDICATORS словаря)
     parser: str                 # имя модуля в pipeline/parsers/
     file_patterns: Sequence[str]  # паттерны имени xls в downloads/ для поиска свежего файла
@@ -135,6 +135,91 @@ INDICATORS: list[Indicator] = [
             "Листы «2. 2011»…«2. 2015» — доли ВДС Москвы (% к итогу) в старом "
             "ОКВЭД-2007. Дополняет vds_structure Москвы за 2011-2015 (vds_msk даёт 2016+)."
         ),
+    ),
+    # ─── Волна 4: недвижимость ───────────────────────────────────────────
+    Indicator(
+        id="realty_monitoring_2_0",
+        section="realty",
+        title="Мониторинг новостроек 2.0",
+        unit="шт",
+        source="nashdom",
+        source_ids=["monitoring_2_0"],
+        parser="nashdom_monitoring_2_0",
+        file_patterns=["realty/nashdom/monitoring_2_0_*.xlsx"],
+        page="",
+        description="наш.дом.рф/аналитика/мониторинг-новостроек-2-0. Скачивается целиком ежедневно.",
+    ),
+    Indicator(
+        id="realty_rasprodannost",
+        section="realty",
+        title="Распроданность новостроек",
+        unit="%",
+        source="nashdom",
+        source_ids=["rasprodannost"],
+        parser="nashdom_rasprodannost",
+        file_patterns=["realty/nashdom/rasprodannost_*.json"],
+        page="",
+        description="наш.дом.рф/аналитика/распроданность-новостроек. DOM-скрейп, 5 классов (Все+Типовой+Комфорт+Бизнес+Элитный), ТОП-100+Все.",
+    ),
+    Indicator(
+        id="realty_kvartirografia",
+        section="realty",
+        title="Квартирография новостроек",
+        unit="%",
+        source="nashdom",
+        source_ids=["kvartirografia"],
+        parser="nashdom_kvartirografia",
+        file_patterns=["realty/nashdom/kvartirografia_*.json"],
+        page="",
+        description="наш.дом.рф/аналитика/квартирография-новостроек. DOM-скрейп, 5 классов, ТОП-100+Все.",
+    ),
+    Indicator(
+        id="realty_erzrf_top_rf",
+        section="realty",
+        title="ТОП застройщиков ЕРЗ (Россия)",
+        unit="м²",
+        source="erzrf",
+        source_ids=["top_rf"],
+        parser="erzrf_top",
+        file_patterns=["realty/erzrf/top_*_rf_*.xlsx"],
+        page="",
+        description="erzrf.ru/top-zastroyshchikov/. Сортировка «по объёму строительства» (default), регион Россия. Список SORTINGS в erzrf_checker.py расширяется по результату Шага 0.",
+    ),
+    Indicator(
+        id="realty_erzrf_top_msk",
+        section="realty",
+        title="ТОП застройщиков ЕРЗ (Москва)",
+        unit="м²",
+        source="erzrf",
+        source_ids=["top_msk"],
+        parser="erzrf_top",
+        file_patterns=["realty/erzrf/top_*_msk_*.xlsx"],
+        page="",
+        description="erzrf.ru/top-zastroyshchikov/. Сортировка «по объёму строительства», фильтр Москва.",
+    ),
+    Indicator(
+        id="realty_erzrf_cards",
+        section="realty",
+        title="Карточки ТОП-100 застройщиков ЕРЗ",
+        unit="—",
+        source="erzrf",
+        source_ids=["cards"],
+        parser="erzrf_cards",
+        file_patterns=["realty/erzrf/cards/*.json"],
+        page="",
+        description="erzrf.ru/zastroyschiki/<slug>. DOM-скрейп карточек: имя/регионы/Сдано-Перенос-Уточнение по годам/рейтинги.",
+    ),
+    Indicator(
+        id="realty_escrow_manual",
+        section="realty",
+        title="Наполненность счетов эскроу",
+        unit="млн руб",
+        source="manual",
+        source_ids=["escrow"],
+        parser="escrow_manual",
+        file_patterns=["realty/escrow_manual/*.xlsx"],
+        page="",
+        description="Файл кладётся вручную пользователем в data/raw/realty/escrow_manual/. Скачивателя нет.",
     ),
 ]
 

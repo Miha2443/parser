@@ -76,27 +76,20 @@ SORTINGS = [
     {"key": "skorost",             "label": "По скорости строительства"},
 ]
 
-# Регион — slug в пути URL. По факту 03.06.2026 РФ = `/rf`, regionKey=0.
-# Москва — нужно подтвердить (TODO: на первом запуске msk/Москвы посмотри URL,
-# и если он другой — поправь REGION_PATHS).
-REGION_PATHS = {
-    "rf":  "rf",
-    "msk": "msk",
-}
-
+# Регион — slug в пути URL. РФ имеет известный путь /rf, для Москвы URL
+# опытным путём отличается (наша попытка /msk перенаправляется обратно
+# на /rf). Поэтому Москва переключается кликом по дропдауну рядом с
+# заголовком «ТОП застройщиков РФ▼», после чего сохраняем итоговый URL.
 REGIONS = [
-    {"key": "rf",  "label": "РФ"},
-    {"key": "msk", "label": "г.Москва"},
+    {"key": "rf",  "label": "РФ",       "search": ""},
+    {"key": "msk", "label": "г.Москва", "search": "Москва"},
 ]
 
 
-def _build_top_url(region_key: str, sorting_key: str) -> str:
-    region_path = REGION_PATHS.get(region_key, "rf")
+def _build_top_url_rf(sorting_key: str) -> str:
+    """Прямой URL для РФ (известно по адресной строке пользователя)."""
     top_type = TOP_TYPES.get(sorting_key, 0)
-    # regionKey=0 включаем только для РФ (по факту наблюдаемого URL);
-    # для других регионов это число другое — полагаемся на путь и topType.
-    extra = "&regionKey=0" if region_key == "rf" else ""
-    return f"{BASE}/top-zastroyshchikov/{region_path}?topType={top_type}{extra}"
+    return f"{BASE}/top-zastroyshchikov/rf?topType={top_type}&regionKey=0"
 
 
 TOP_N_DEVELOPERS = 100
@@ -628,6 +621,107 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
         return False
 
 
+def _switch_region(driver, region: dict) -> str | None:
+    """Кликает дропдаун «РФ▼» рядом с заголовком и выбирает регион.
+
+    Возвращает URL-базу страницы после смены региона (без query-параметров)
+    или None при неудаче. Для region.key='rf' просто возвращает текущий
+    URL-base — переключение не нужно.
+    """
+    if region["key"] == "rf":
+        return driver.current_url.split("?")[0]
+
+    # 1) кликнуть триггер дропдауна (элемент с текстом текущего региона
+    # рядом с заголовком «ТОП застройщиков»)
+    opened = driver.execute_script(
+        """
+        const visible = e => e.offsetParent !== null;
+        const labels = ['РФ', 'Россия', 'г.Москва', 'Москва'];
+        const clean = t => (t || '').replace(/[▼▾▿⌄\\s]+$/g, '').trim();
+        const all = [...document.querySelectorAll('span, a, button, div')];
+        const candidates = all.filter(e => {
+            const t = clean(e.innerText);
+            return visible(e) && t.length < 25 && labels.includes(t);
+        });
+        // Предпочтение — кандидату внутри/рядом с h1 «ТОП застройщиков»
+        const h = [...document.querySelectorAll('h1, h2, h3')]
+            .find(e => /топ\\s*застройщиков/i.test(e.innerText));
+        let best = null;
+        if (h) {
+            for (const c of candidates) {
+                let p = c;
+                for (let i = 0; i < 6; i++) {
+                    if (!p) break;
+                    if (p === h || (p.contains && p.contains(h))) { best = c; break; }
+                    p = p.parentElement;
+                }
+                if (best) break;
+            }
+        }
+        if (!best) best = candidates[0];
+        if (best) {
+            best.scrollIntoView({block: 'center'});
+            best.click();
+            return {tag: best.tagName, text: best.innerText.substring(0, 50)};
+        }
+        return null;
+        """
+    )
+    if not opened:
+        print(f"     ⚠️  не нашёл dropdown региона")
+        return None
+    print(f"     · открыт dropdown: {opened.get('tag')} «{opened.get('text')}»")
+    time.sleep(1.5)
+
+    # 2) ввести в поиск
+    if region["search"]:
+        typed = False
+        for css in [
+            'input[placeholder*="егион" i]',
+            'input[placeholder*="айти" i]',
+            'input[placeholder*="оиск" i]',
+            'input[type="search"]',
+            'input[type="text"]:not([readonly])',
+        ]:
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, css)
+                for el in els:
+                    if el.is_displayed():
+                        el.clear()
+                        el.send_keys(region["search"])
+                        typed = True
+                        break
+                if typed:
+                    break
+            except WebDriverException:
+                continue
+        if not typed:
+            print(f"     ⚠️  не нашёл поле поиска в dropdown")
+        time.sleep(1.5)
+
+    # 3) кликнуть пункт «г.Москва»
+    clicked = driver.execute_script(
+        """
+        const target = arguments[0];
+        const visible = e => e.offsetParent !== null;
+        const el = [...document.querySelectorAll('span, li, a, button, div')]
+            .find(e => visible(e) && (e.innerText || '').trim() === target);
+        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return true; }
+        return false;
+        """,
+        region["label"],
+    )
+    if not clicked:
+        print(f"     ⚠️  не нашёл пункт «{region['label']}»")
+        return None
+
+    # 4) ждём смены URL
+    time.sleep(5)
+    new_url = driver.current_url.split("?")[0]
+    print(f"     · URL после смены региона: {new_url}")
+    return new_url
+
+
 def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) -> int:
     """Скроллит страницу вниз пока её высота продолжает расти.
 
@@ -666,16 +760,27 @@ def fetch_top(state: dict) -> list[Path]:
         for region in REGIONS:
             print(f"  🌐 регион: {region['key']} ({region['label']})")
 
-            # ── Снимок таблицы по дефолтной сортировке: для cards-обхода
-            url_default = _build_top_url(region["key"], "obyem_stroitelstva")
-            print(f"     URL: {url_default}")
-            driver.get(url_default)
+            # ── Стартуем с базовой страницы РФ (topType=0)
+            driver.get(_build_top_url_rf("obyem_stroitelstva"))
             time.sleep(5)
-
             if not _wait_for_top_content(driver):
-                print(f"     ⚠️  контент таблицы не появился за 30 сек")
-                _save_debug_snapshot(driver, f"top_{region['key']}_content_timeout")
+                print(f"     ⚠️  стартовая страница не загрузилась")
+                _save_debug_snapshot(driver, f"top_{region['key']}_start_timeout")
                 continue
+
+            # ── Для Москвы — переключение через дропдаун. Получаем итоговый
+            # URL-base, на котором останутся только query-параметры topType.
+            url_base = _switch_region(driver, region)
+            if not url_base:
+                _save_debug_snapshot(driver, f"top_{region['key']}_switch_failed")
+                continue
+
+            # После смены региона ждём контент заново
+            if region["key"] != "rf":
+                if not _wait_for_top_content(driver):
+                    print(f"     ⚠️  контент не появился после смены региона")
+                    _save_debug_snapshot(driver, f"top_{region['key']}_after_switch")
+                    continue
 
             link_count = _scroll_to_load_all(driver)
             print(f"     · после скролла ссылок /zastroyschiki/: {link_count}")
@@ -687,6 +792,7 @@ def fetch_top(state: dict) -> list[Path]:
                     json.dumps(
                         {
                             "region": region["key"],
+                            "url_base": url_base,
                             "scraped_at": datetime.now().isoformat(timespec="seconds"),
                             "developers": developers,
                         },
@@ -700,10 +806,12 @@ def fetch_top(state: dict) -> list[Path]:
             else:
                 _save_debug_snapshot(driver, f"top_{region['key']}_no_table")
 
-            # ── По всем 5 сортировкам качаем xlsx (URL-навигация)
+            # ── По всем 5 сортировкам качаем xlsx (URL-навигация на url_base)
             for sorting in SORTINGS:
                 print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
-                url = _build_top_url(region["key"], sorting["key"])
+                url = f"{url_base}?topType={TOP_TYPES[sorting['key']]}"
+                if region["key"] == "rf":
+                    url += "&regionKey=0"
                 driver.get(url)
                 time.sleep(4)
 

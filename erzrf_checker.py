@@ -76,20 +76,31 @@ SORTINGS = [
     {"key": "skorost",             "label": "По скорости строительства"},
 ]
 
-# Регион — slug в пути URL. РФ имеет известный путь /rf, для Москвы URL
-# опытным путём отличается (наша попытка /msk перенаправляется обратно
-# на /rf). Поэтому Москва переключается кликом по дропдауну рядом с
-# заголовком «ТОП застройщиков РФ▼», после чего сохраняем итоговый URL.
+# URL-параметры регионов получены опытным путём пользователем 03.06.2026.
+# РФ:    /top-zastroyshchikov/rf?regionKey=0&...
+# Москва: /top-zastroyshchikov/moskva?regionKey=143443001&region=moskva&...
 REGIONS = [
-    {"key": "rf",  "label": "РФ",       "search": ""},
-    {"key": "msk", "label": "г.Москва", "search": "Москва"},
+    {
+        "key": "rf",
+        "label": "РФ",
+        "path": "rf",
+        "extra_query": "regionKey=0",
+    },
+    {
+        "key": "msk",
+        "label": "г.Москва",
+        "path": "moskva",
+        "extra_query": "regionKey=143443001&region=moskva",
+    },
 ]
 
 
-def _build_top_url_rf(sorting_key: str) -> str:
-    """Прямой URL для РФ (известно по адресной строке пользователя)."""
+def _build_top_url(region: dict, sorting_key: str) -> str:
     top_type = TOP_TYPES.get(sorting_key, 0)
-    return f"{BASE}/top-zastroyshchikov/rf?topType={top_type}&regionKey=0"
+    return (
+        f"{BASE}/top-zastroyshchikov/{region['path']}"
+        f"?topType={top_type}&{region['extra_query']}"
+    )
 
 
 TOP_N_DEVELOPERS = 100
@@ -331,148 +342,6 @@ def _save_debug_snapshot(driver, tag: str) -> None:
         pass
 
 
-def _click_by_text(driver, text: str, *, tag_filter: tuple = ()) -> bool:
-    """Кликает первый видимый элемент с точно таким innerText."""
-    script = """
-        const target = arguments[0];
-        const tags = arguments[1] || [];
-        const all = [...document.querySelectorAll('*')];
-        const visible = e => e.offsetParent !== null;
-        const candidates = all.filter(e =>
-            visible(e) &&
-            e.innerText && e.innerText.trim() === target &&
-            (tags.length === 0 || tags.includes(e.tagName))
-        );
-        // приоритет — самый «глубокий» (без вложенных совпадений)
-        candidates.sort((a, b) =>
-            (b.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_CONTAINED_BY) ? -1 : 1
-        );
-        const el = candidates[0];
-        if (el) { el.click(); return true; }
-        return false;
-    """
-    return bool(driver.execute_script(script, text, list(tag_filter)))
-
-
-def _click_by_text_contains(driver, substring: str) -> bool:
-    script = """
-        const sub = arguments[0].toLowerCase();
-        const visible = e => e.offsetParent !== null;
-        const all = [...document.querySelectorAll('button, a, div, span, li')];
-        const cands = all.filter(e =>
-            visible(e) && e.innerText &&
-            e.innerText.toLowerCase().includes(sub) &&
-            e.innerText.length < 200
-        );
-        // самый короткий (точное совпадение лучше)
-        cands.sort((a, b) => a.innerText.length - b.innerText.length);
-        const el = cands[0];
-        if (el) { el.click(); return true; }
-        return false;
-    """
-    return bool(driver.execute_script(script, substring))
-
-
-def _set_region(driver, region: dict) -> bool:
-    """Открывает дропдаун региона рядом с заголовком ТОП застройщиков и выбирает регион.
-
-    По скрину 03.06.2026: рядом с «ТОП застройщиков РФ ▼» — клик открывает
-    окно с поиском, где можно ввести «Москва» и выбрать «г.Москва».
-    """
-    if not region["dropdown_value"]:
-        # «РФ» — это дефолт на странице, ничего не меняем.
-        return True
-
-    # Шаг 1: клик по «РФ» рядом с заголовком (или текущему региону).
-    # Пытаемся последовательно несколько кандидатов.
-    clicked = False
-    for txt in ("РФ", "Россия", "г.Москва", "Москва"):
-        if _click_by_text(driver, txt):
-            clicked = True
-            break
-    if not clicked:
-        # Fallback: ищем по стрелке/треугольнику возле «ТОП застройщиков»
-        clicked = bool(
-            driver.execute_script(
-                """
-                const h = [...document.querySelectorAll('h1,h2,h3')]
-                    .find(e => /топ\\s*застройщик/i.test(e.innerText));
-                if (!h) return false;
-                // Кликаем сам заголовок (часто это и есть кликабельный dropdown)
-                h.click();
-                return true;
-                """
-            )
-        )
-    if not clicked:
-        print(f"     ⚠️  не нашёл dropdown региона")
-        return False
-    time.sleep(1)
-
-    # Шаг 2: ищем search-input в открывшемся попапе
-    search_input = None
-    for css in [
-        'input[placeholder*="егион" i]',
-        'input[placeholder*="айти" i]',
-        'input[type="search"]',
-        'input[type="text"]:not([readonly])',
-    ]:
-        try:
-            inputs = driver.find_elements(By.CSS_SELECTOR, css)
-            visible = [i for i in inputs if i.is_displayed()]
-            if visible:
-                search_input = visible[-1]  # последний (попап вероятно поверх)
-                break
-        except WebDriverException:
-            continue
-
-    if search_input:
-        try:
-            search_input.clear()
-            search_input.send_keys(region["dropdown_value"])
-            time.sleep(1.5)
-        except WebDriverException:
-            pass
-
-    # Шаг 3: кликаем option_text
-    if not _click_by_text(driver, region["option_text"]):
-        # fallback: contains
-        if not _click_by_text_contains(driver, region["option_text"]):
-            print(f"     ⚠️  не нашёл пункт «{region['option_text']}»")
-            return False
-    time.sleep(2)
-    return True
-
-
-def _set_sorting(driver, sorting: dict) -> bool:
-    """Открывает дропдаун сортировки и выбирает нужную."""
-    # Дефолт на странице — «По объёму текущего строительства»
-    if sorting["key"] == "obyem_stroitelstva":
-        return True
-
-    # Шаг 1: клик по текущей сортировке (любому из вариантов)
-    clicked = False
-    for txt in [s["label"] for s in SORTINGS]:
-        if _click_by_text(driver, txt):
-            clicked = True
-            break
-    if not clicked:
-        # fallback: contains «по объёму»
-        clicked = _click_by_text_contains(driver, "По объёму")
-    if not clicked:
-        print(f"     ⚠️  не нашёл dropdown сортировки")
-        return False
-    time.sleep(1)
-
-    # Шаг 2: клик по нужному пункту
-    if not _click_by_text(driver, sorting["label"]):
-        if not _click_by_text_contains(driver, sorting["label"]):
-            print(f"     ⚠️  не нашёл пункт «{sorting['label']}»")
-            return False
-    time.sleep(3)
-    return True
-
-
 def _click_download_excel(driver) -> dict:
     """Кликает «ТОП-100» в блоке кнопок скачивания.
 
@@ -621,142 +490,6 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
         return False
 
 
-def _switch_region(driver, region: dict) -> str | None:
-    """Кликает дропдаун-триггер «РФ▼» рядом с h1 «ТОП застройщиков»,
-    в открывшемся попапе выбирает регион.
-
-    Возвращает URL-базу страницы после смены региона (без query-параметров)
-    или None при неудаче.
-    """
-    if region["key"] == "rf":
-        return driver.current_url.split("?")[0]
-
-    # 1) Найти и кликнуть триггер дропдауна.
-    # «РФ»-текст может быть во вложенном span, но click-handler висит
-    # на родителе. Поэтому поднимаемся вверх до элемента с
-    # cursor:pointer (или дефолтно — родитель найденного span).
-    opened = driver.execute_script(
-        """
-        const visible = e => e.offsetParent !== null;
-        const clean = t => (t || '').replace(/[▼▾▿⌄\\s]+$/g, '').trim();
-        const currentLabels = ['РФ', 'Россия'];  // что показано сейчас
-
-        const all = [...document.querySelectorAll('span, a, button, div')];
-        const cands = all.filter(e => visible(e) &&
-            currentLabels.includes(clean(e.innerText)) &&
-            (e.innerText || '').length < 25);
-
-        // Предпочтение — кандидату ВНУТРИ h1 «ТОП застройщиков»
-        const h = [...document.querySelectorAll('h1, h2, h3')]
-            .find(e => /топ\\s*застройщиков/i.test(e.innerText));
-        let inner = null;
-        if (h) {
-            inner = cands.find(c => h.contains(c));
-        }
-        if (!inner) inner = cands[0];
-        if (!inner) return null;
-
-        // Поднимаемся до элемента с cursor:pointer (реальный кликабельный
-        // триггер дропдауна). Максимум 4 уровня.
-        let trigger = inner;
-        for (let i = 0; i < 4; i++) {
-            const cs = getComputedStyle(trigger);
-            if (cs.cursor === 'pointer') break;
-            if (!trigger.parentElement) break;
-            trigger = trigger.parentElement;
-        }
-        trigger.scrollIntoView({block: 'center'});
-        trigger.click();
-        return {
-            inner_text: inner.innerText.substring(0, 30),
-            trigger_tag: trigger.tagName,
-            trigger_class: (trigger.className || '').substring(0, 80),
-        };
-        """
-    )
-    if not opened:
-        print(f"     ⚠️  не нашёл триггер дропдауна региона")
-        _save_debug_snapshot(driver, "switch_no_trigger")
-        return None
-    print(
-        f"     · клик по триггеру: {opened.get('trigger_tag')} «{opened.get('inner_text')}»"
-    )
-
-    # 2) Ждём появления «г.Москва» в DOM (как пункт открытого списка).
-    target_text = region["label"]
-    try:
-        WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script(
-                """
-                const target = arguments[0];
-                const visible = e => e.offsetParent !== null;
-                // Считаем что попап открылся, если на странице >=2
-                // видимых элементов с текстом target (один может быть
-                // в верхнем header, второй — в попапе) ИЛИ найден
-                // элемент в всплывающем оверлее.
-                const all = [...document.querySelectorAll('span, li, a, button, div')];
-                const visTargets = all.filter(e => visible(e) &&
-                    (e.innerText || '').trim() === target);
-                return visTargets.length >= 2 ||
-                    visTargets.some(e => {
-                        // признак попапа: position fixed/absolute у предка
-                        let p = e;
-                        for (let i = 0; i < 8; i++) {
-                            if (!p) break;
-                            const cs = getComputedStyle(p);
-                            if (cs.position === 'fixed' || cs.position === 'absolute') return true;
-                            p = p.parentElement;
-                        }
-                        return false;
-                    });
-                """,
-                target_text,
-            )
-        )
-    except TimeoutException:
-        print(f"     ⚠️  попап не появился (нет «{target_text}» в overlay)")
-        _save_debug_snapshot(driver, "switch_no_popup")
-        return None
-
-    # 3) Кликнуть «г.Москва» — выбираем ту копию что в попапе (с position
-    # absolute/fixed предком), а не статичную в шапке.
-    clicked = driver.execute_script(
-        """
-        const target = arguments[0];
-        const visible = e => e.offsetParent !== null;
-        const all = [...document.querySelectorAll('span, li, a, button, div')];
-        const matches = all.filter(e => visible(e) &&
-            (e.innerText || '').trim() === target);
-
-        // Предпочитаем тот, чей предок имеет position absolute/fixed (попап)
-        function inOverlay(el) {
-            let p = el;
-            for (let i = 0; i < 10; i++) {
-                if (!p) return false;
-                const cs = getComputedStyle(p);
-                if (cs.position === 'fixed' || cs.position === 'absolute') return true;
-                p = p.parentElement;
-            }
-            return false;
-        }
-        let pick = matches.find(inOverlay) || matches[0];
-        if (!pick) return false;
-        pick.scrollIntoView({block: 'center'});
-        pick.click();
-        return true;
-        """,
-        target_text,
-    )
-    if not clicked:
-        print(f"     ⚠️  не кликнул пункт «{target_text}»")
-        _save_debug_snapshot(driver, "switch_no_click")
-        return None
-
-    # 4) Ждём смены URL
-    time.sleep(5)
-    new_url = driver.current_url.split("?")[0]
-    print(f"     · URL после смены региона: {new_url}")
-    return new_url
 
 
 def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) -> int:
@@ -797,58 +530,10 @@ def fetch_top(state: dict) -> list[Path]:
         for region in REGIONS:
             print(f"  🌐 регион: {region['key']} ({region['label']})")
 
-            # ── Стартуем с базовой страницы РФ (topType=0)
-            driver.get(_build_top_url_rf("obyem_stroitelstva"))
-            time.sleep(5)
-            if not _wait_for_top_content(driver):
-                print(f"     ⚠️  стартовая страница не загрузилась")
-                _save_debug_snapshot(driver, f"top_{region['key']}_start_timeout")
-                continue
-
-            # ── Для Москвы — переключение через дропдаун. Получаем итоговый
-            # URL-base, на котором останутся только query-параметры topType.
-            url_base = _switch_region(driver, region)
-            if not url_base:
-                _save_debug_snapshot(driver, f"top_{region['key']}_switch_failed")
-                continue
-
-            # После смены региона ждём контент заново
-            if region["key"] != "rf":
-                if not _wait_for_top_content(driver):
-                    print(f"     ⚠️  контент не появился после смены региона")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_after_switch")
-                    continue
-
-            link_count = _scroll_to_load_all(driver)
-            print(f"     · после скролла ссылок /zastroyschiki/: {link_count}")
-
-            developers = _scrape_developers_from_table(driver)
-            if developers:
-                dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
-                dev_file.write_text(
-                    json.dumps(
-                        {
-                            "region": region["key"],
-                            "url_base": url_base,
-                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                            "developers": developers,
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-                print(f"     ✅ {dev_file.name} ({len(developers)} строк)")
-                new_files.append(dev_file)
-            else:
-                _save_debug_snapshot(driver, f"top_{region['key']}_no_table")
-
-            # ── По всем 5 сортировкам качаем xlsx (URL-навигация на url_base)
-            for sorting in SORTINGS:
+            for i, sorting in enumerate(SORTINGS):
+                url = _build_top_url(region, sorting["key"])
                 print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
-                url = f"{url_base}?topType={TOP_TYPES[sorting['key']]}"
-                if region["key"] == "rf":
-                    url += "&regionKey=0"
+                print(f"       URL: {url}")
                 driver.get(url)
                 time.sleep(4)
 
@@ -856,20 +541,40 @@ def fetch_top(state: dict) -> list[Path]:
                     print(f"       ⚠️  контент не появился")
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
                     continue
-                _scroll_to_load_all(driver)
 
-                # Снэпшот перед кликом — помогает увидеть, где была кнопка
-                _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_before_click")
+                # Скрапим список застройщиков один раз на регион
+                # (по первой сортировке)
+                if i == 0:
+                    link_count = _scroll_to_load_all(driver)
+                    print(f"       · ссылок /zastroyschiki/ после скролла: {link_count}")
+                    developers = _scrape_developers_from_table(driver)
+                    if developers:
+                        dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
+                        dev_file.write_text(
+                            json.dumps(
+                                {
+                                    "region": region["key"],
+                                    "url": url,
+                                    "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                                    "developers": developers,
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                        print(f"       ✅ {dev_file.name} ({len(developers)} строк)")
+                        new_files.append(dev_file)
 
                 before = set(DOWNLOAD_DIR.glob("*"))
                 click_info = _click_download_excel(driver)
                 if not click_info.get("clicked"):
-                    print(f"       ⚠️  кнопка скачивания не найдена")
+                    print(f"       ⚠️  кнопка «ТОП-100» не найдена")
+                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_no_button")
                     continue
                 print(
                     f"       клик: [{click_info.get('matched')}] "
-                    f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}» "
-                    f"href={(click_info.get('href') or '')[:80]}"
+                    f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
                 )
                 new_file = wait_for_download(
                     DOWNLOAD_DIR, before_snapshot=before, timeout=120

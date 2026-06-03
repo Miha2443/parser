@@ -622,100 +622,137 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
 
 
 def _switch_region(driver, region: dict) -> str | None:
-    """Кликает дропдаун «РФ▼» рядом с заголовком и выбирает регион.
+    """Кликает дропдаун-триггер «РФ▼» рядом с h1 «ТОП застройщиков»,
+    в открывшемся попапе выбирает регион.
 
     Возвращает URL-базу страницы после смены региона (без query-параметров)
-    или None при неудаче. Для region.key='rf' просто возвращает текущий
-    URL-base — переключение не нужно.
+    или None при неудаче.
     """
     if region["key"] == "rf":
         return driver.current_url.split("?")[0]
 
-    # 1) кликнуть триггер дропдауна (элемент с текстом текущего региона
-    # рядом с заголовком «ТОП застройщиков»)
+    # 1) Найти и кликнуть триггер дропдауна.
+    # «РФ»-текст может быть во вложенном span, но click-handler висит
+    # на родителе. Поэтому поднимаемся вверх до элемента с
+    # cursor:pointer (или дефолтно — родитель найденного span).
     opened = driver.execute_script(
         """
         const visible = e => e.offsetParent !== null;
-        const labels = ['РФ', 'Россия', 'г.Москва', 'Москва'];
         const clean = t => (t || '').replace(/[▼▾▿⌄\\s]+$/g, '').trim();
+        const currentLabels = ['РФ', 'Россия'];  // что показано сейчас
+
         const all = [...document.querySelectorAll('span, a, button, div')];
-        const candidates = all.filter(e => {
-            const t = clean(e.innerText);
-            return visible(e) && t.length < 25 && labels.includes(t);
-        });
-        // Предпочтение — кандидату внутри/рядом с h1 «ТОП застройщиков»
+        const cands = all.filter(e => visible(e) &&
+            currentLabels.includes(clean(e.innerText)) &&
+            (e.innerText || '').length < 25);
+
+        // Предпочтение — кандидату ВНУТРИ h1 «ТОП застройщиков»
         const h = [...document.querySelectorAll('h1, h2, h3')]
             .find(e => /топ\\s*застройщиков/i.test(e.innerText));
-        let best = null;
+        let inner = null;
         if (h) {
-            for (const c of candidates) {
-                let p = c;
-                for (let i = 0; i < 6; i++) {
-                    if (!p) break;
-                    if (p === h || (p.contains && p.contains(h))) { best = c; break; }
-                    p = p.parentElement;
-                }
-                if (best) break;
-            }
+            inner = cands.find(c => h.contains(c));
         }
-        if (!best) best = candidates[0];
-        if (best) {
-            best.scrollIntoView({block: 'center'});
-            best.click();
-            return {tag: best.tagName, text: best.innerText.substring(0, 50)};
+        if (!inner) inner = cands[0];
+        if (!inner) return null;
+
+        // Поднимаемся до элемента с cursor:pointer (реальный кликабельный
+        // триггер дропдауна). Максимум 4 уровня.
+        let trigger = inner;
+        for (let i = 0; i < 4; i++) {
+            const cs = getComputedStyle(trigger);
+            if (cs.cursor === 'pointer') break;
+            if (!trigger.parentElement) break;
+            trigger = trigger.parentElement;
         }
-        return null;
+        trigger.scrollIntoView({block: 'center'});
+        trigger.click();
+        return {
+            inner_text: inner.innerText.substring(0, 30),
+            trigger_tag: trigger.tagName,
+            trigger_class: (trigger.className || '').substring(0, 80),
+        };
         """
     )
     if not opened:
-        print(f"     ⚠️  не нашёл dropdown региона")
+        print(f"     ⚠️  не нашёл триггер дропдауна региона")
+        _save_debug_snapshot(driver, "switch_no_trigger")
         return None
-    print(f"     · открыт dropdown: {opened.get('tag')} «{opened.get('text')}»")
-    time.sleep(1.5)
+    print(
+        f"     · клик по триггеру: {opened.get('trigger_tag')} «{opened.get('inner_text')}»"
+    )
 
-    # 2) ввести в поиск
-    if region["search"]:
-        typed = False
-        for css in [
-            'input[placeholder*="егион" i]',
-            'input[placeholder*="айти" i]',
-            'input[placeholder*="оиск" i]',
-            'input[type="search"]',
-            'input[type="text"]:not([readonly])',
-        ]:
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, css)
-                for el in els:
-                    if el.is_displayed():
-                        el.clear()
-                        el.send_keys(region["search"])
-                        typed = True
-                        break
-                if typed:
-                    break
-            except WebDriverException:
-                continue
-        if not typed:
-            print(f"     ⚠️  не нашёл поле поиска в dropdown")
-        time.sleep(1.5)
+    # 2) Ждём появления «г.Москва» в DOM (как пункт открытого списка).
+    target_text = region["label"]
+    try:
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script(
+                """
+                const target = arguments[0];
+                const visible = e => e.offsetParent !== null;
+                // Считаем что попап открылся, если на странице >=2
+                // видимых элементов с текстом target (один может быть
+                // в верхнем header, второй — в попапе) ИЛИ найден
+                // элемент в всплывающем оверлее.
+                const all = [...document.querySelectorAll('span, li, a, button, div')];
+                const visTargets = all.filter(e => visible(e) &&
+                    (e.innerText || '').trim() === target);
+                return visTargets.length >= 2 ||
+                    visTargets.some(e => {
+                        // признак попапа: position fixed/absolute у предка
+                        let p = e;
+                        for (let i = 0; i < 8; i++) {
+                            if (!p) break;
+                            const cs = getComputedStyle(p);
+                            if (cs.position === 'fixed' || cs.position === 'absolute') return true;
+                            p = p.parentElement;
+                        }
+                        return false;
+                    });
+                """,
+                target_text,
+            )
+        )
+    except TimeoutException:
+        print(f"     ⚠️  попап не появился (нет «{target_text}» в overlay)")
+        _save_debug_snapshot(driver, "switch_no_popup")
+        return None
 
-    # 3) кликнуть пункт «г.Москва»
+    # 3) Кликнуть «г.Москва» — выбираем ту копию что в попапе (с position
+    # absolute/fixed предком), а не статичную в шапке.
     clicked = driver.execute_script(
         """
         const target = arguments[0];
         const visible = e => e.offsetParent !== null;
-        const el = [...document.querySelectorAll('span, li, a, button, div')]
-            .find(e => visible(e) && (e.innerText || '').trim() === target);
-        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return true; }
-        return false;
+        const all = [...document.querySelectorAll('span, li, a, button, div')];
+        const matches = all.filter(e => visible(e) &&
+            (e.innerText || '').trim() === target);
+
+        // Предпочитаем тот, чей предок имеет position absolute/fixed (попап)
+        function inOverlay(el) {
+            let p = el;
+            for (let i = 0; i < 10; i++) {
+                if (!p) return false;
+                const cs = getComputedStyle(p);
+                if (cs.position === 'fixed' || cs.position === 'absolute') return true;
+                p = p.parentElement;
+            }
+            return false;
+        }
+        let pick = matches.find(inOverlay) || matches[0];
+        if (!pick) return false;
+        pick.scrollIntoView({block: 'center'});
+        pick.click();
+        return true;
         """,
-        region["label"],
+        target_text,
     )
     if not clicked:
-        print(f"     ⚠️  не нашёл пункт «{region['label']}»")
+        print(f"     ⚠️  не кликнул пункт «{target_text}»")
+        _save_debug_snapshot(driver, "switch_no_click")
         return None
 
-    # 4) ждём смены URL
+    # 4) Ждём смены URL
     time.sleep(5)
     new_url = driver.current_url.split("?")[0]
     print(f"     · URL после смены региона: {new_url}")

@@ -147,19 +147,30 @@ def _ensure_logged_in(driver) -> bool:
         opened = driver.execute_script(
             """
             const visible = e => e.offsetParent !== null;
-            // 1) явная кнопка/ссылка с текстом «Войти» или title/aria
-            let all = [...document.querySelectorAll('button, a, div, span')];
-            let btn = all.find(e => visible(e) && e.innerText && e.innerText.trim() === 'Войти');
+            const re = /^\\s*(вход|войти)\\s*$/i;
+
+            // 1) точный title (как на скрине пользователя — tooltip «Вход»)
+            let btn = [...document.querySelectorAll('[title]')]
+                .find(e => visible(e) && re.test(e.getAttribute('title') || ''));
+
+            // 2) точный aria-label
             if (!btn) {
-                btn = all.find(e => visible(e) &&
-                    ((e.getAttribute('title')||'').match(/войти|вход/i) ||
-                     (e.getAttribute('aria-label')||'').match(/войти|вход/i)));
+                btn = [...document.querySelectorAll('[aria-label]')]
+                    .find(e => visible(e) && re.test(e.getAttribute('aria-label') || ''));
             }
-            // 2) иконка входа в шапке: SVG/icon-кнопка справа сверху
+
+            // 3) элемент в шапке с текстом «Войти»/«Вход» — НЕ ищем по всему
+            //    документу, иначе словим случайные кнопки в контенте.
             if (!btn) {
-                const headerBtns = [...document.querySelectorAll('header button, header a, [class*="header"] button, [class*="header"] a')];
-                btn = headerBtns.filter(visible).pop();
+                const header = document.querySelector(
+                    'header, [class*="header" i], [class*="Header"], [id*="header" i]'
+                );
+                if (header) {
+                    btn = [...header.querySelectorAll('button, a, div, span')]
+                        .find(e => visible(e) && e.innerText && re.test(e.innerText));
+                }
             }
+
             if (btn) { btn.click(); return true; }
             return false;
             """

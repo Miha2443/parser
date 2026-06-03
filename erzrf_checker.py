@@ -57,8 +57,17 @@ from pipeline.selenium_utils import create_chrome, wait_for_download
 BASE = "https://erzrf.ru"
 TOP_URL = f"{BASE}/top-zastroyshchikov"
 
-# Все 5 сортировок (заголовок дропдауна на странице).
-# `label` — текст пункта в дропдауне «По объёму текущего строительства ▼».
+# topType — URL-параметр erzrf для выбора сортировки (увидено в URL
+# 03.06.2026: `?regionKey=0&topType=0&date=260601`).
+TOP_TYPES = {
+    "obyem_stroitelstva":  0,   # По объёму текущего строительства (default)
+    "obyem_vvoda":         1,   # По объёму ввода
+    "nakopl_vvod":         2,   # По накопленному вводу
+    "potreb_kachestva":    3,   # По потребительским качествам
+    "skorost":             4,   # По скорости строительства
+}
+
+# Все 5 сортировок (по факту дают разные наборы колонок).
 SORTINGS = [
     {"key": "obyem_stroitelstva",  "label": "По объёму текущего строительства"},
     {"key": "obyem_vvoda",         "label": "По объёму ввода"},
@@ -67,12 +76,28 @@ SORTINGS = [
     {"key": "skorost",             "label": "По скорости строительства"},
 ]
 
-# Регионы. `dropdown_value` — что вводится в поиск дропдауна региона,
-# `option_text` — текст пункта который кликаем (точное совпадение).
+# Регион — slug в пути URL. По факту 03.06.2026 РФ = `/rf`, regionKey=0.
+# Москва — нужно подтвердить (TODO: на первом запуске msk/Москвы посмотри URL,
+# и если он другой — поправь REGION_PATHS).
+REGION_PATHS = {
+    "rf":  "rf",
+    "msk": "msk",
+}
+
 REGIONS = [
-    {"key": "rf",  "dropdown_value": "",        "option_text": "РФ"},
-    {"key": "msk", "dropdown_value": "Москва",  "option_text": "г.Москва"},
+    {"key": "rf",  "label": "РФ"},
+    {"key": "msk", "label": "г.Москва"},
 ]
+
+
+def _build_top_url(region_key: str, sorting_key: str) -> str:
+    region_path = REGION_PATHS.get(region_key, "rf")
+    top_type = TOP_TYPES.get(sorting_key, 0)
+    # regionKey=0 включаем только для РФ (по факту наблюдаемого URL);
+    # для других регионов это число другое — полагаемся на путь и topType.
+    extra = "&regionKey=0" if region_key == "rf" else ""
+    return f"{BASE}/top-zastroyshchikov/{region_path}?topType={top_type}{extra}"
+
 
 TOP_N_DEVELOPERS = 100
 DOWNLOAD_DIR = Path("data/raw/realty/erzrf")
@@ -456,22 +481,48 @@ def _set_sorting(driver, sorting: dict) -> bool:
 
 
 def _click_download_excel(driver) -> bool:
-    """Кликает кнопку «Скачать TOP в Excel» (или эквивалент)."""
+    """Кликает кнопку «Скачать TOP в Excel» (или эквивалент).
+
+    Кнопка может быть ниже таблицы — скроллим страницу до конца.
+    Также пробуем найти в подменю «Настроить фильтр»/«Поделиться».
+    """
+    # Скроллим вниз чтобы все ленивые элементы появились
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(1)
+
     return bool(
         driver.execute_script(
             """
             const visible = e => e.offsetParent !== null;
-            const all = [...document.querySelectorAll('button, a, div[class*="button"], div[class*="btn"], span')];
-            // 1) ищем кнопку с обоими словами «TOP» и «Excel»/«xlsx»
+            const all = [...document.querySelectorAll('button, a, div, span')];
+            // 1) кнопка с «TOP» и «Excel»/«xlsx»
             let btn = all.find(b => visible(b) && b.innerText &&
                 /top/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-            // 2) fallback: «Скачать» + «excel»
+            // 2) «Скачать» + «excel/xlsx»
             if (!btn) btn = all.find(b => visible(b) && b.innerText &&
                 /скачать/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-            // 3) fallback: просто «Скачать»
+            // 3) кнопка с иконкой и title/aria «Скачать»
+            if (!btn) {
+                btn = [...document.querySelectorAll('[title], [aria-label]')]
+                    .find(e => visible(e) && (
+                        /скачать.*excel|excel.*скачать|TOP.*Excel/i.test(
+                            (e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                        )
+                    ));
+            }
+            // 4) ссылка a[href] на xlsx
+            if (!btn) {
+                btn = [...document.querySelectorAll('a[href]')]
+                    .find(a => visible(a) && /\\.xlsx?(\\?|$)/i.test(a.href));
+            }
+            // 5) последний шанс: просто «Скачать»
             if (!btn) btn = all.find(b => visible(b) && b.innerText &&
-                /^скачать/i.test(b.innerText.trim()));
-            if (btn) { btn.click(); return true; }
+                /^\\s*скачать\\s*$/i.test(b.innerText.trim()));
+            if (btn) {
+                btn.scrollIntoView({block: 'center'});
+                btn.click();
+                return true;
+            }
             return false;
             """
         )
@@ -479,22 +530,57 @@ def _click_download_excel(driver) -> bool:
 
 
 def _scrape_developers_from_table(driver) -> list[dict]:
+    """Снимает таблицу ТОП в формате list[dict].
+
+    Устойчив к разным разметкам: настоящая <table>, [role="table"],
+    или div-сетка. Финальный fallback — собрать все ссылки
+    /zastroyschiki/<slug> на странице.
+    """
     return driver.execute_script(
         """
+        const visible = e => e.offsetParent !== null;
+
+        // 1) настоящая <table>
         const tables = [...document.querySelectorAll('table')]
-            .filter(t => t.offsetParent !== null && t.rows.length > 1);
-        const t = tables[0];
-        if (!t) return [];
+            .filter(t => visible(t) && t.rows.length > 1);
+        if (tables.length) {
+            const t = tables[0];
+            const out = [];
+            for (let i = 1; i < t.rows.length; i++) {
+                const row = t.rows[i];
+                const cells = [...row.cells].map(c => c.innerText.trim());
+                const link = row.querySelector('a[href*="/zastroyschiki/"]');
+                out.push({
+                    place: cells[0] || '',
+                    cells: cells,
+                    card_url: link ? link.href : null,
+                    name: link ? link.innerText.trim() : (cells[2] || cells[1] || ''),
+                });
+            }
+            return out;
+        }
+
+        // 2) fallback — собираем уникальные ссылки /zastroyschiki/<slug>
+        const seen = new Set();
         const out = [];
-        for (let i = 1; i < t.rows.length; i++) {
-            const row = t.rows[i];
-            const cells = [...row.cells].map(c => c.innerText.trim());
-            const link = row.querySelector('a[href*="/zastroyschiki/"]');
+        const links = [...document.querySelectorAll('a[href*="/zastroyschiki/"]')]
+            .filter(visible);
+        for (const a of links) {
+            const href = a.href;
+            const m = href.match(/\\/zastroyschiki\\/([^/?#]+)/);
+            if (!m) continue;
+            if (seen.has(href)) continue;
+            seen.add(href);
+            // ищем родительскую "строку" — div с несколькими детьми с текстом
+            let row = a.closest('tr, [role="row"], li, [class*="row" i]');
+            const cells = row
+                ? [...row.children].map(c => (c.innerText || '').trim())
+                : [];
             out.push({
-                place: cells[0] || '',
+                place: cells[0] || String(seen.size),
                 cells: cells,
-                card_url: link ? link.href : null,
-                name: link ? link.innerText.trim() : (cells[2] || cells[1] || ''),
+                card_url: href,
+                name: a.innerText.trim(),
             });
         }
         return out;
@@ -505,6 +591,27 @@ def _scrape_developers_from_table(driver) -> list[dict]:
 # ─────────────────────────────────────────────
 # TOP — скачивание xlsx + ссылок на карточки
 # ─────────────────────────────────────────────
+
+
+def _wait_for_top_content(driver, timeout: int = 30) -> bool:
+    """Ждёт появления данных в таблице ТОП.
+
+    erzrf может рендерить таблицу как настоящий <table>, как [role="table"]
+    или как набор div'ов. Поэтому ждём по контенту — строку «Застройщик»
+    или «Место в».
+    """
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: (
+                "Застройщик" in d.page_source
+                or "Место в" in d.page_source
+                or "ГК Самолет" in d.page_source
+                or "ПИК" in d.page_source
+            )
+        )
+        return True
+    except TimeoutException:
+        return False
 
 
 def fetch_top(state: dict) -> list[Path]:
@@ -520,28 +627,22 @@ def fetch_top(state: dict) -> list[Path]:
             print("  ❌ Без авторизации скачивание xlsx невозможно. Пропускаем TOP.")
             return []
 
+        date_str = datetime.now().strftime("%Y%m%d")
+
         for region in REGIONS:
-            print(f"  🌐 регион: {region['key']} ({region['option_text']})")
-            driver.get(TOP_URL)
+            print(f"  🌐 регион: {region['key']} ({region['label']})")
+
+            # ── Снимок таблицы по дефолтной сортировке: для cards-обхода
+            url_default = _build_top_url(region["key"], "obyem_stroitelstva")
+            print(f"     URL: {url_default}")
+            driver.get(url_default)
             time.sleep(5)
 
-            try:
-                WebDriverWait(driver, 30).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "table"))
-                )
-            except TimeoutException:
-                print(f"     ⚠️  таблица не появилась")
-                _save_debug_snapshot(driver, f"top_{region['key']}_table_timeout")
+            if not _wait_for_top_content(driver):
+                print(f"     ⚠️  контент таблицы не появился за 30 сек")
+                _save_debug_snapshot(driver, f"top_{region['key']}_content_timeout")
                 continue
 
-            # Применяем регион один раз для всего блока сортировок
-            if not _set_region(driver, region):
-                _save_debug_snapshot(driver, f"top_{region['key']}_region")
-                continue
-
-            date_str = datetime.now().strftime("%Y%m%d")
-
-            # Для региона снимаем таблицу с дефолтной сортировкой
             developers = _scrape_developers_from_table(driver)
             if developers:
                 dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
@@ -559,14 +660,21 @@ def fetch_top(state: dict) -> list[Path]:
                 )
                 print(f"     ✅ {dev_file.name} ({len(developers)} строк)")
                 new_files.append(dev_file)
+            else:
+                # Снэпшот всегда, чтобы видеть структуру страницы
+                _save_debug_snapshot(driver, f"top_{region['key']}_no_table")
 
-            # По всем 5 сортировкам качаем xlsx
+            # ── По всем 5 сортировкам качаем xlsx (URL-навигация)
             for sorting in SORTINGS:
-                print(f"     ▸ сортировка: {sorting['key']}")
-                if not _set_sorting(driver, sorting):
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_sort")
+                print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
+                url = _build_top_url(region["key"], sorting["key"])
+                driver.get(url)
+                time.sleep(4)
+
+                if not _wait_for_top_content(driver):
+                    print(f"       ⚠️  контент не появился")
+                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
                     continue
-                time.sleep(2)
 
                 before = set(DOWNLOAD_DIR.glob("*"))
                 if not _click_download_excel(driver):

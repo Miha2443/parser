@@ -481,68 +481,63 @@ def _set_sorting(driver, sorting: dict) -> bool:
 
 
 def _click_download_excel(driver) -> dict:
-    """Кликает кнопку скачивания xlsx. Возвращает диагностический dict.
+    """Кликает «ТОП-100» в блоке кнопок скачивания.
 
-    Кнопка может быть ниже таблицы — скроллим страницу до конца.
-    Также пробуем найти в подменю «Настроить фильтр»/«Поделиться».
+    По HTML 03.06.2026 на странице есть блок:
+        <span class="flex links" title="нажмите для формирования и
+              скачивания файла">
+            <span class="pointer">ТОП-20</span>
+            <span class="pointer">ТОП-50</span>
+            <span class="pointer">ТОП-100</span>
+            <span class="pointer">Весь список</span>
+        </span>
+    Кликаем «ТОП-100» — генерируется и скачивается xlsx именно ТОП-100.
     """
-    # Скроллим вниз чтобы все ленивые элементы появились
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(1)
 
     return driver.execute_script(
         """
+        const TARGET_LABEL = 'ТОП-100';
         const visible = e => e.offsetParent !== null;
-        const all = [...document.querySelectorAll('button, a, div, span')];
-        let btn = null;
-        let matched = 'none';
 
-        // 1) кнопка с «TOP» и «Excel»/«xlsx» в тексте
-        btn = all.find(b => visible(b) && b.innerText &&
-            /top/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-        if (btn) matched = 'text:top+excel';
-
-        // 2) «Скачать» + «excel/xlsx»
-        if (!btn) {
-            btn = all.find(b => visible(b) && b.innerText &&
-                /скачать/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-            if (btn) matched = 'text:скачать+excel';
-        }
-        // 3) кнопка с title/aria
-        if (!btn) {
-            btn = [...document.querySelectorAll('[title], [aria-label]')]
-                .find(e => visible(e) && (
-                    /скачать.*excel|excel.*скачать|TOP.*Excel/i.test(
-                        (e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
-                    )
-                ));
-            if (btn) matched = 'title/aria';
-        }
-        // 4) прямая ссылка a[href] на xlsx
-        if (!btn) {
-            btn = [...document.querySelectorAll('a[href]')]
-                .find(a => visible(a) && /\\.xlsx?(\\?|$)/i.test(a.href));
-            if (btn) matched = 'a[href=.xlsx]';
-        }
-        // 5) последний шанс — просто «Скачать» (опасно: может матчнуть что-то ещё)
-        if (!btn) {
-            btn = all.find(b => visible(b) && b.innerText &&
-                /^\\s*скачать\\s*$/i.test(b.innerText.trim()));
-            if (btn) matched = 'text:скачать';
+        // 1) основной путь: родитель с title содержит «формирования|скачивания»,
+        // ребёнок — span с текстом «ТОП-100»
+        const parents = [...document.querySelectorAll('[title]')]
+            .filter(e => visible(e) &&
+                /формирования|скачивания|скачать/i.test(e.getAttribute('title') || ''));
+        for (const p of parents) {
+            const target = [...p.querySelectorAll('span, button, a, div')]
+                .find(c => visible(c) && (c.innerText || '').trim() === TARGET_LABEL);
+            if (target) {
+                target.scrollIntoView({block: 'center'});
+                target.click();
+                return {
+                    clicked: true,
+                    matched: 'title-parent>' + TARGET_LABEL,
+                    tag: target.tagName,
+                    text: (target.innerText || '').substring(0, 100),
+                    html: target.outerHTML.substring(0, 300),
+                    parent_title: p.getAttribute('title') || '',
+                };
+            }
         }
 
-        if (btn) {
-            btn.scrollIntoView({block: 'center'});
-            btn.click();
+        // 2) fallback: любой видимый .pointer/span с текстом «ТОП-100»
+        const fallback = [...document.querySelectorAll('.pointer, span, a, button')]
+            .find(s => visible(s) && (s.innerText || '').trim() === TARGET_LABEL);
+        if (fallback) {
+            fallback.scrollIntoView({block: 'center'});
+            fallback.click();
             return {
                 clicked: true,
-                matched: matched,
-                tag: btn.tagName,
-                text: (btn.innerText || '').substring(0, 100),
-                html: btn.outerHTML.substring(0, 400),
-                href: btn.href || '',
+                matched: 'fallback:' + TARGET_LABEL,
+                tag: fallback.tagName,
+                text: (fallback.innerText || '').substring(0, 100),
+                html: fallback.outerHTML.substring(0, 300),
             };
         }
+
         return {clicked: false, matched: 'none'};
         """
     )

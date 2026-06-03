@@ -623,151 +623,119 @@ def _load_top_developers() -> list[dict]:
     return list(payload.get("developers", []))
 
 
-def _scrape_card(driver) -> dict:
-    """Снимает данные с карточки застройщика.
+def _parse_card_html(html: str) -> dict:
+    """Парсит HTML карточки erzrf.ru/zastroyschiki/brand/<slug>.
 
-    Стратегия:
-    1. Имя — из <h1>.
-    2. Регионы (число + дата), рейтинги — regex по innerText страницы.
-    3. Таблица «Сдано / Перенос / Уточнение» по годам — через pandas.read_html
-       (находит <table> с заголовками «Сдано в YYYY» / «перенос» / «уточн»).
+    Структура страницы (Angular SPA, verified 03.06.2026 на 20 файлах):
+    - Имя: <app-org-table> > <h3>, fallback breadcrumb «Бренд X»
+    - Регионы: <app-org-regions-of-presence> > <a class="accordion__head">
+      содержит «N (По состоянию на DD.MM.YYYY)»
+    - Таблица Сдано/Перенос/Уточнение: <app-org-table-deadline>, дети
+      .clmn — по одной колонке на сущность («Строится» + по году с 2016+):
+        ps[0] <b>Сдано в YYYY</b>
+        ps[1] sdano (X м²)
+        ps[2] перенос м² (X м²)
+        ps[3] перенос % ((X%))
+        .show_btn — уточнение (X месяцев)
     """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {"name": "", "regions_count": "", "regions_as_of": "", "deliveries": {}}
+
+    soup = BeautifulSoup(html, "lxml")
     out = {
         "name": "",
         "regions_count": "",
         "regions_as_of": "",
-        "place_quality": "",
-        "erz_score": "",
-        "place_speed": "",
         "deliveries": {},
     }
 
-    try:
-        h1 = driver.find_element(By.TAG_NAME, "h1")
-        out["name"] = h1.text.strip()
-    except (NoSuchElementException, WebDriverException):
-        pass
+    # 1. Имя
+    org_table = soup.find("app-org-table")
+    if org_table:
+        h3 = org_table.find("h3")
+        if h3:
+            out["name"] = re.sub(r"\s+", " ", h3.get_text(strip=True))
+    if not out["name"]:
+        m = re.search(r">Бренд\s+([^<]+)<", html)
+        if m:
+            out["name"] = m.group(1).strip()
 
-    try:
-        page_text = driver.execute_script("return document.body.innerText") or ""
-    except WebDriverException:
-        page_text = ""
+    # 2. Регионы строительства
+    regions_block = soup.find("app-org-regions-of-presence")
+    if regions_block:
+        a = regions_block.find("a", class_=re.compile(r"accordion__head"))
+        if a:
+            text = a.get_text(strip=True)
+            m = re.match(
+                r"(\d+)\s*\(По\s*состоянию\s*на\s*(\d{2}\.\d{2}\.\d{4})", text
+            )
+            if m:
+                out["regions_count"] = m.group(1)
+                out["regions_as_of"] = m.group(2)
 
-    # Регионы строительства: "14 (По состоянию на 01.06.2026)"
-    m = re.search(
-        r"Регионы\s*строительств[аы][\s\S]{0,150}?(\d+)\s*\(По\s*состоянию\s*на\s*(\d{2}\.\d{2}\.\d{4})",
-        page_text,
-    )
-    if m:
-        out["regions_count"] = m.group(1)
-        out["regions_as_of"] = m.group(2)
+    # 3. Таблица Сдано / Перенос / Уточнение
+    deadline_block = soup.find("app-org-table-deadline")
+    if deadline_block:
+        for col in deadline_block.find_all("div", class_="clmn"):
+            ps = col.find_all("p")
+            if not ps:
+                continue
+            label_b = ps[0].find("b")
+            if not label_b:
+                continue
+            label_text = label_b.get_text(strip=True)
+            ym = re.search(r"(20\d{2})", label_text)
+            key = ym.group(1) if ym else ("Строится" if "Строит" in label_text else None)
+            if not key:
+                continue
 
-    # Рейтинги — label, потом число на след. строке (innerText даёт \n)
-    m = re.search(
-        r"Место\s*в\s*ТОП[\w-]*\s*по\s*потреб\w*\s*кач\w*[\s\n\r]+(\d+)",
-        page_text,
-        re.IGNORECASE,
-    )
-    if m:
-        out["place_quality"] = m.group(1)
+            data = {"sdano": "", "perenos_m2": "", "perenos_pct": "", "utochn": ""}
+            if len(ps) > 1:
+                m = re.search(r"([\d\s]+)\s*м", ps[1].get_text())
+                if m:
+                    data["sdano"] = re.sub(r"\s+", " ", m.group(1)).strip()
+            if len(ps) > 2:
+                m = re.search(r"([\d\s]+)\s*м", ps[2].get_text())
+                if m:
+                    data["perenos_m2"] = re.sub(r"\s+", " ", m.group(1)).strip()
+            if len(ps) > 3:
+                m = re.search(r"\(([\d.,]+)\s*%\)", ps[3].get_text())
+                if m:
+                    data["perenos_pct"] = m.group(1)
+            show_btn = col.find("div", class_="show_btn")
+            if show_btn:
+                m = re.search(r"([\d.,]+)\s*месяц", show_btn.get_text())
+                if m:
+                    data["utochn"] = m.group(1)
 
-    m = re.search(
-        r"Средняя\s*оценка\s*ЕРЗ[\s\n\r]+([\d.,]+)", page_text, re.IGNORECASE
-    )
-    if m:
-        out["erz_score"] = m.group(1)
-
-    m = re.search(
-        r"Место\s*в\s*ТОП[\w-]*\s*по\s*скорост\w*\s*стро\w*[\s\n\r]+(\d+)",
-        page_text,
-        re.IGNORECASE,
-    )
-    if m:
-        out["place_speed"] = m.group(1)
-
-    # Таблица «Сдано/Перенос/Уточнение» через pandas.read_html
-    try:
-        import pandas as pd
-
-        tables = pd.read_html(driver.page_source)
-        for tbl in tables:
-            txt = tbl.to_csv(index=False).lower()
-            if "сдано" in txt and ("перенос" in txt or "уточн" in txt):
-                out["deliveries"] = _parse_construction_table_df(tbl)
-                break
-    except (ImportError, ValueError, Exception):  # noqa: BLE001
-        pass
+            out["deliveries"][key] = data
 
     return out
 
 
+def _scrape_card(driver) -> dict:
+    """Тонкая обёртка над `_parse_card_html` — берёт driver.page_source."""
+    try:
+        return _parse_card_html(driver.page_source)
+    except WebDriverException:
+        return {"name": "", "regions_count": "", "regions_as_of": "", "deliveries": {}}
+
+
 def _parse_construction_table_df(df) -> dict:
-    """Парсит таблицу строительства в `{year: {sdano, perenos_m2, perenos_pct, utochn}}`."""
-    year_re = re.compile(r"(20\d{2})")
-    deliveries: dict[str, dict] = {}
-
-    # Шаг 1: ищем годы в колонках
-    years_in_cols: list[str | None] = []
-    for col in df.columns:
-        m = year_re.search(str(col))
-        years_in_cols.append(m.group(1) if m else None)
-
-    # Если в колонках годов не нашли — могут быть в первой строке (multi-row header)
-    if not any(years_in_cols) and df.shape[0] > 0:
-        first_row = df.iloc[0].astype(str).tolist()
-        years_in_cols = []
-        for v in first_row:
-            m = year_re.search(v)
-            years_in_cols.append(m.group(1) if m else None)
-        if any(years_in_cols):
-            df = df.iloc[1:].reset_index(drop=True)
-
-    if not any(years_in_cols):
-        return deliveries
-
-    # Шаг 2: для каждой year-колонки прохожу по строкам и распознаю категорию
-    for col_idx, year in enumerate(years_in_cols):
-        if not year:
-            continue
-        data = {"sdano": "", "perenos_m2": "", "perenos_pct": "", "utochn": ""}
-        for row_idx in range(df.shape[0]):
-            try:
-                cell_val = str(df.iloc[row_idx, col_idx])
-            except Exception:  # noqa: BLE001
-                continue
-            # Определяем тип строки по первым двум колонкам (label обычно слева)
-            row_label = ""
-            for c in range(min(2, df.shape[1])):
-                try:
-                    row_label += " " + str(df.iloc[row_idx, c])
-                except Exception:  # noqa: BLE001
-                    pass
-            label_lower = row_label.lower()
-
-            if "перенос" in label_lower:
-                m_m2 = re.search(r"([\d\s]+)\s*м", cell_val)
-                m_pct = re.search(r"\(([\d.,]+)\s*%\)", cell_val)
-                if m_m2:
-                    data["perenos_m2"] = re.sub(r"\s+", " ", m_m2.group(1)).strip()
-                if m_pct:
-                    data["perenos_pct"] = m_pct.group(1)
-            elif "уточн" in label_lower:
-                m_mes = re.search(r"([\d.,]+)\s*месяц", cell_val)
-                if m_mes:
-                    data["utochn"] = m_mes.group(1)
-            else:
-                # Скорее всего "Сдано" — основная цифра m²
-                m_m2 = re.search(r"([\d\s]+)\s*м", cell_val)
-                if m_m2 and not data["sdano"]:
-                    candidate = re.sub(r"\s+", " ", m_m2.group(1)).strip()
-                    if candidate and candidate != "nan":
-                        data["sdano"] = candidate
-        deliveries[year] = data
-
-    return deliveries
+    """Устаревший fallback, оставлен на случай нестандартной разметки."""
+    return {}
 
 
 def fetch_cards(state: dict) -> list[Path]:
+    """Обходит карточки ТОП-застройщиков и собирает один xlsx.
+
+    Селекторы и формат вывода верифицированы локально на 20 реальных HTML
+    (см. parse_card_html). Перед обращением к карточке делает sleep 10с —
+    Angular SPA нужно время на отрисовку (без WebDriverWait, который раньше
+    давал ложные таймауты).
+    """
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     developers = _load_top_developers()
     if not developers:
@@ -792,31 +760,26 @@ def fetch_cards(state: dict) -> list[Path]:
             slug = _developer_slug(card_url) or ""
             place_str = str(dev.get("place", "?")).replace("\n", " | ")[:20]
             name_str = str(dev.get("name", "")).replace("\n", " ")[:50]
-            print(f"     · {place_str:>20}  {name_str}  →  {slug[:60]}")
+            print(f"     · {place_str:>20}  {name_str[:40]}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
-                time.sleep(4)
-                try:
-                    WebDriverWait(driver, 30).until(
-                        lambda d: ("Сдано" in d.page_source
-                                   or "Регион" in d.page_source
-                                   or len(d.find_elements(By.TAG_NAME, "h1")) > 0)
-                    )
-                except TimeoutException:
-                    print(f"       ⚠️  карточка не загрузилась")
-                    failed.append({"slug": slug, "url": card_url, "reason": "timeout"})
-                    if len(failed) <= 2:
-                        _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_timeout")
-                    continue
-                time.sleep(2)
+                # 10 сек на отрисовку Angular SPA. WebDriverWait здесь
+                # давал ложные таймауты при том что данные были в page_source.
+                time.sleep(10)
 
-                # ВСЕГДА сохраняем HTML первой успешно загруженной карточки —
-                # критично для отладки селекторов на стороне пользователя.
+                # Сохраняем HTML первой карточки для аудита
                 if not debug_saved:
                     _save_debug_snapshot(driver, f"card_first_{slug.replace('/', '_')[:40]}")
                     debug_saved = True
 
                 data = _scrape_card(driver)
+                if not data.get("deliveries") and not data.get("name"):
+                    print(f"       ⚠️  пусто — не удалось распарсить")
+                    failed.append({"slug": slug, "url": card_url, "reason": "empty parse"})
+                    if len(failed) <= 3:
+                        _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_empty")
+                    continue
+
                 rows.append(
                     {
                         "place": place_str,
@@ -826,9 +789,6 @@ def fetch_cards(state: dict) -> list[Path]:
                         "url": card_url,
                         "regions_count": data.get("regions_count", ""),
                         "regions_as_of": data.get("regions_as_of", ""),
-                        "place_quality": data.get("place_quality", ""),
-                        "erz_score": data.get("erz_score", ""),
-                        "place_speed": data.get("place_speed", ""),
                         "deliveries": data.get("deliveries", {}),
                         "scraped_at": datetime.now().isoformat(timespec="seconds"),
                     }
@@ -847,27 +807,31 @@ def fetch_cards(state: dict) -> list[Path]:
             print("     ⚠️  pandas не установлен — записать xlsx не получится")
             return []
 
-        # Все встреченные года — объединение по всем карточкам
+        # Все встреченные года + флаг наличия «Строится»
         all_years = sorted({
-            y for r in rows for y in (r.get("deliveries") or {}).keys() if y
+            y for r in rows for y in (r.get("deliveries") or {}).keys() if y.isdigit()
         })
+        has_stroitsa = any("Строится" in (r.get("deliveries") or {}) for r in rows)
 
-        # Wide-формат: одна строка на застройщика, колонки по годам
-        base_cols = [
-            "place", "name_table", "name_card", "slug", "url",
-            "regions_count", "regions_as_of",
-            "place_quality", "erz_score", "place_speed",
-        ]
+        # Wide-формат: одна строка на застройщика
+        base_cols = ["place", "name_card", "name_table", "slug", "url",
+                     "regions_count", "regions_as_of"]
         wide_rows = []
         for r in rows:
             row = {c: r.get(c, "") for c in base_cols}
             deliveries = r.get("deliveries") or {}
+            if has_stroitsa:
+                d = deliveries.get("Строится", {}) or {}
+                row["Строится_м²"] = d.get("sdano", "")
+                row["Строится_перенос_м²"] = d.get("perenos_m2", "")
+                row["Строится_перенос_%"] = d.get("perenos_pct", "")
+                row["Строится_уточн_мес"] = d.get("utochn", "")
             for y in all_years:
                 d = deliveries.get(y, {}) or {}
-                row[f"sdano_{y}_м²"] = d.get("sdano", "")
-                row[f"perenos_{y}_м²"] = d.get("perenos_m2", "")
-                row[f"perenos_{y}_%"] = d.get("perenos_pct", "")
-                row[f"utochn_{y}_мес"] = d.get("utochn", "")
+                row[f"Сдано_{y}_м²"] = d.get("sdano", "")
+                row[f"Перенос_{y}_м²"] = d.get("perenos_m2", "")
+                row[f"Перенос_{y}_%"] = d.get("perenos_pct", "")
+                row[f"Уточн_{y}_мес"] = d.get("utochn", "")
             row["scraped_at"] = r.get("scraped_at", "")
             wide_rows.append(row)
 

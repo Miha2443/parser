@@ -205,7 +205,7 @@ INDICATORS: list[Indicator] = [
         source="erzrf",
         source_ids=["cards"],
         parser="erzrf_cards",
-        file_patterns=["realty/erzrf/cards/*.json"],
+        file_patterns=["realty/erzrf/cards/cards_*.xlsx"],
         page="",
         description="erzrf.ru/zastroyschiki/<slug>. DOM-скрейп карточек: имя/регионы/Сдано-Перенос-Уточнение по годам/рейтинги.",
     ),

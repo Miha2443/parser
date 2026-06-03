@@ -111,7 +111,7 @@ CONFIG_FILE = Path("config/erzrf.json")
 PAGE_TIMEOUT = 60
 HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
 
-SLUG_RE = re.compile(r"/zastroyschiki/([^/?#]+)")
+SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 
 
 # ─────────────────────────────────────────────
@@ -687,26 +687,30 @@ def fetch_cards(state: dict) -> list[Path]:
         return []
 
     today = datetime.now().strftime("%d.%m.%Y")
-    cards_state = state.get("erzrf_cards", {}) if isinstance(state.get("erzrf_cards"), dict) else {}
+    date_str = datetime.now().strftime("%Y%m%d")
 
-    new_files: list[Path] = []
+    # Диагностика — печатаем первые 3 URL чтобы видеть формат
+    print(f"     · образцы card_url (первые 3):")
+    for dev in developers[:3]:
+        url = dev.get("card_url") or "(нет)"
+        print(f"       {url}")
+
+    summary_rows: list[dict] = []
+    deliveries_rows: list[dict] = []
+    failed: list[dict] = []
+
     driver = create_chrome(download_dir=CARDS_DIR, headless=HEADLESS)
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
-        # Карточки публичные — авторизация не требуется (если потребуется,
-        # вызвать _ensure_logged_in(driver) здесь).
+        # Если карточки потребуют логин — раскомментируй:
+        # if not _ensure_logged_in(driver):
+        #     return []
         for dev in developers[:TOP_N_DEVELOPERS]:
             card_url = dev.get("card_url")
             if not card_url:
                 continue
-            slug = _developer_slug(card_url)
-            if not slug:
-                continue
-            saved = cards_state.get(slug, {})
-            if isinstance(saved, dict) and saved.get("scraped_at_date") == today:
-                continue
-
-            print(f"     · {slug}")
+            slug = _developer_slug(card_url) or ""
+            print(f"     · {dev.get('place','?'):>3}. {dev.get('name','')[:40]}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
                 time.sleep(3)
@@ -716,28 +720,67 @@ def fetch_cards(state: dict) -> list[Path]:
                     )
                 except TimeoutException:
                     print(f"       ⚠️  карточка не загрузилась")
+                    failed.append({"slug": slug, "url": card_url, "reason": "timeout"})
+                    _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_timeout")
                     continue
                 data = _scrape_card(driver)
-                data["url"] = card_url
-                data["slug"] = slug
-                data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
-                target = CARDS_DIR / f"{slug}.json"
-                target.write_text(
-                    json.dumps(data, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
+                summary_rows.append(
+                    {
+                        "place": dev.get("place", ""),
+                        "name_table": dev.get("name", ""),
+                        "name_card": data.get("name", ""),
+                        "slug": slug,
+                        "url": card_url,
+                        "regions": "; ".join(data.get("regions") or []),
+                        "place_quality": (data.get("ratings") or {}).get("place_quality", ""),
+                        "erz_score": (data.get("ratings") or {}).get("erz_score", ""),
+                        "place_speed": (data.get("ratings") or {}).get("place_speed", ""),
+                        "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                    }
                 )
-                new_files.append(target)
-                cards_state[slug] = {
-                    "scraped_at_date": today,
-                    "name": data.get("name", ""),
-                }
+                deliveries = data.get("deliveries") or {}
+                for year, row in deliveries.items():
+                    if not isinstance(row, dict):
+                        continue
+                    flat = {"slug": slug, "name_card": data.get("name", ""), "year": year}
+                    for k, v in row.items():
+                        flat[str(k)] = v
+                    deliveries_rows.append(flat)
             except WebDriverException as exc:
                 print(f"       ❌ {exc}")
+                failed.append({"slug": slug, "url": card_url, "reason": str(exc)[:200]})
     finally:
         driver.quit()
 
-    if new_files:
-        state["erzrf_cards"] = cards_state
+    new_files: list[Path] = []
+
+    if summary_rows:
+        try:
+            import pandas as pd
+        except ImportError:
+            print("     ⚠️  pandas не установлен — записать xlsx не получится")
+            return []
+        target = CARDS_DIR / f"cards_{date_str}.xlsx"
+        with pd.ExcelWriter(target, engine="openpyxl") as writer:
+            pd.DataFrame(summary_rows).to_excel(writer, sheet_name="summary", index=False)
+            if deliveries_rows:
+                pd.DataFrame(deliveries_rows).to_excel(
+                    writer, sheet_name="deliveries", index=False
+                )
+            if failed:
+                pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
+        print(
+            f"     ✅ {target.name} "
+            f"(карточек: {len(summary_rows)}, годо-строк: {len(deliveries_rows)}, "
+            f"ошибок: {len(failed)})"
+        )
+        new_files.append(target)
+        state["erzrf_cards"] = {
+            "last_run": datetime.now().isoformat(timespec="seconds"),
+            "scraped": len(summary_rows),
+            "failed": len(failed),
+            "file": target.name,
+        }
     return new_files
 
 

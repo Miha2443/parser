@@ -65,7 +65,7 @@ REALTY_CLASSES = ["Все", "Типовой", "Комфорт", "Бизнес", 
 DOWNLOAD_DIR = Path("data/raw/realty/nashdom")
 STATE_FILE = Path("state/nashdom_state.json")
 PAGE_TIMEOUT = 60
-HEADLESS = True
+HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
 
@@ -118,13 +118,17 @@ def _read_report_date(driver) -> str | None:
 
 
 def _save_debug_snapshot(driver, tag: str) -> None:
-    """Сохраняет HTML-страницу в data/raw/realty/_debug/ для разбора селекторов."""
+    """Сохраняет HTML-страницу и скриншот в data/raw/realty/_debug/."""
     debug_dir = DOWNLOAD_DIR.parent / "_debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     (debug_dir / f"nashdom_{tag}_{ts}.html").write_text(
         driver.page_source, encoding="utf-8"
     )
+    try:
+        driver.save_screenshot(str(debug_dir / f"nashdom_{tag}_{ts}.png"))
+    except WebDriverException:
+        pass
 
 
 # ─────────────────────────────────────────────

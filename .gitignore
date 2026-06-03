@@ -20,5 +20,6 @@ state/
 *_state.json
 *.lock
 
-# Личные секреты — пример лежит в config/telegram.example.json
+# Личные секреты — примеры лежат в config/*.example.json
 config/telegram.json
+config/erzrf.json

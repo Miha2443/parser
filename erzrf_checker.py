@@ -480,8 +480,8 @@ def _set_sorting(driver, sorting: dict) -> bool:
     return True
 
 
-def _click_download_excel(driver) -> bool:
-    """Кликает кнопку «Скачать TOP в Excel» (или эквивалент).
+def _click_download_excel(driver) -> dict:
+    """Кликает кнопку скачивания xlsx. Возвращает диагностический dict.
 
     Кнопка может быть ниже таблицы — скроллим страницу до конца.
     Также пробуем найти в подменю «Настроить фильтр»/«Поделиться».
@@ -490,42 +490,61 @@ def _click_download_excel(driver) -> bool:
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(1)
 
-    return bool(
-        driver.execute_script(
-            """
-            const visible = e => e.offsetParent !== null;
-            const all = [...document.querySelectorAll('button, a, div, span')];
-            // 1) кнопка с «TOP» и «Excel»/«xlsx»
-            let btn = all.find(b => visible(b) && b.innerText &&
-                /top/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-            // 2) «Скачать» + «excel/xlsx»
-            if (!btn) btn = all.find(b => visible(b) && b.innerText &&
+    return driver.execute_script(
+        """
+        const visible = e => e.offsetParent !== null;
+        const all = [...document.querySelectorAll('button, a, div, span')];
+        let btn = null;
+        let matched = 'none';
+
+        // 1) кнопка с «TOP» и «Excel»/«xlsx» в тексте
+        btn = all.find(b => visible(b) && b.innerText &&
+            /top/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
+        if (btn) matched = 'text:top+excel';
+
+        // 2) «Скачать» + «excel/xlsx»
+        if (!btn) {
+            btn = all.find(b => visible(b) && b.innerText &&
                 /скачать/i.test(b.innerText) && /excel|xlsx/i.test(b.innerText));
-            // 3) кнопка с иконкой и title/aria «Скачать»
-            if (!btn) {
-                btn = [...document.querySelectorAll('[title], [aria-label]')]
-                    .find(e => visible(e) && (
-                        /скачать.*excel|excel.*скачать|TOP.*Excel/i.test(
-                            (e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
-                        )
-                    ));
-            }
-            // 4) ссылка a[href] на xlsx
-            if (!btn) {
-                btn = [...document.querySelectorAll('a[href]')]
-                    .find(a => visible(a) && /\\.xlsx?(\\?|$)/i.test(a.href));
-            }
-            // 5) последний шанс: просто «Скачать»
-            if (!btn) btn = all.find(b => visible(b) && b.innerText &&
+            if (btn) matched = 'text:скачать+excel';
+        }
+        // 3) кнопка с title/aria
+        if (!btn) {
+            btn = [...document.querySelectorAll('[title], [aria-label]')]
+                .find(e => visible(e) && (
+                    /скачать.*excel|excel.*скачать|TOP.*Excel/i.test(
+                        (e.getAttribute('title') || '') + ' ' + (e.getAttribute('aria-label') || '')
+                    )
+                ));
+            if (btn) matched = 'title/aria';
+        }
+        // 4) прямая ссылка a[href] на xlsx
+        if (!btn) {
+            btn = [...document.querySelectorAll('a[href]')]
+                .find(a => visible(a) && /\\.xlsx?(\\?|$)/i.test(a.href));
+            if (btn) matched = 'a[href=.xlsx]';
+        }
+        // 5) последний шанс — просто «Скачать» (опасно: может матчнуть что-то ещё)
+        if (!btn) {
+            btn = all.find(b => visible(b) && b.innerText &&
                 /^\\s*скачать\\s*$/i.test(b.innerText.trim()));
-            if (btn) {
-                btn.scrollIntoView({block: 'center'});
-                btn.click();
-                return true;
-            }
-            return false;
-            """
-        )
+            if (btn) matched = 'text:скачать';
+        }
+
+        if (btn) {
+            btn.scrollIntoView({block: 'center'});
+            btn.click();
+            return {
+                clicked: true,
+                matched: matched,
+                tag: btn.tagName,
+                text: (btn.innerText || '').substring(0, 100),
+                html: btn.outerHTML.substring(0, 400),
+                href: btn.href || '',
+            };
+        }
+        return {clicked: false, matched: 'none'};
+        """
     )
 
 
@@ -614,6 +633,26 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
         return False
 
 
+def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) -> int:
+    """Скроллит страницу вниз пока её высота продолжает расти.
+
+    Возвращает количество найденных ссылок /zastroyschiki/ после скролла —
+    полезный индикатор «сколько строк подгрузилось».
+    """
+    last_height = 0
+    for _ in range(max_scrolls):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(pause)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+    count = driver.execute_script(
+        "return document.querySelectorAll('a[href*=\"/zastroyschiki/\"]').length"
+    )
+    return int(count or 0)
+
+
 def fetch_top(state: dict) -> list[Path]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     new_files: list[Path] = []
@@ -643,6 +682,9 @@ def fetch_top(state: dict) -> list[Path]:
                 _save_debug_snapshot(driver, f"top_{region['key']}_content_timeout")
                 continue
 
+            link_count = _scroll_to_load_all(driver)
+            print(f"     · после скролла ссылок /zastroyschiki/: {link_count}")
+
             developers = _scrape_developers_from_table(driver)
             if developers:
                 dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
@@ -661,7 +703,6 @@ def fetch_top(state: dict) -> list[Path]:
                 print(f"     ✅ {dev_file.name} ({len(developers)} строк)")
                 new_files.append(dev_file)
             else:
-                # Снэпшот всегда, чтобы видеть структуру страницы
                 _save_debug_snapshot(driver, f"top_{region['key']}_no_table")
 
             # ── По всем 5 сортировкам качаем xlsx (URL-навигация)
@@ -675,17 +716,27 @@ def fetch_top(state: dict) -> list[Path]:
                     print(f"       ⚠️  контент не появился")
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
                     continue
+                _scroll_to_load_all(driver)
+
+                # Снэпшот перед кликом — помогает увидеть, где была кнопка
+                _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_before_click")
 
                 before = set(DOWNLOAD_DIR.glob("*"))
-                if not _click_download_excel(driver):
-                    print(f"       ⚠️  кнопка «Скачать TOP в Excel» не найдена")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_button")
+                click_info = _click_download_excel(driver)
+                if not click_info.get("clicked"):
+                    print(f"       ⚠️  кнопка скачивания не найдена")
                     continue
+                print(
+                    f"       клик: [{click_info.get('matched')}] "
+                    f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}» "
+                    f"href={(click_info.get('href') or '')[:80]}"
+                )
                 new_file = wait_for_download(
                     DOWNLOAD_DIR, before_snapshot=before, timeout=120
                 )
                 if new_file is None:
                     print(f"       ⚠️  xlsx не появился в папке за 120 сек")
+                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_after_click")
                     continue
                 target = (
                     DOWNLOAD_DIR

@@ -624,59 +624,147 @@ def _load_top_developers() -> list[dict]:
 
 
 def _scrape_card(driver) -> dict:
-    return driver.execute_script(
-        """
-        let name = '';
-        const h1 = document.querySelector('h1');
-        if (h1) name = h1.innerText.trim();
+    """Снимает данные с карточки застройщика.
 
-        let regions = [];
-        const headers = [...document.querySelectorAll('h2, h3, h4, div, span')];
-        for (const h of headers) {
-            if (h.innerText && /регион/i.test(h.innerText) && h.innerText.length < 80) {
-                const sib = h.nextElementSibling || h.parentElement;
-                if (sib) {
-                    const items = [...sib.querySelectorAll('li, a, span')]
-                        .map(e => e.innerText.trim())
-                        .filter(s => s && s.length < 80);
-                    if (items.length) { regions = items; break; }
-                }
-            }
-        }
+    Стратегия:
+    1. Имя — из <h1>.
+    2. Регионы (число + дата), рейтинги — regex по innerText страницы.
+    3. Таблица «Сдано / Перенос / Уточнение» по годам — через pandas.read_html
+       (находит <table> с заголовками «Сдано в YYYY» / «перенос» / «уточн»).
+    """
+    out = {
+        "name": "",
+        "regions_count": "",
+        "regions_as_of": "",
+        "place_quality": "",
+        "erz_score": "",
+        "place_speed": "",
+        "deliveries": {},
+    }
 
-        let deliveries = {};
-        const tables = [...document.querySelectorAll('table')];
-        for (const t of tables) {
-            const headerText = (t.rows[0] ? t.rows[0].innerText : '') + '';
-            if (/сдано|перенос|уточн/i.test(headerText)) {
-                const hdrs = [...t.rows[0].cells].map(c => c.innerText.trim());
-                for (let i = 1; i < t.rows.length; i++) {
-                    const cells = [...t.rows[i].cells].map(c => c.innerText.trim());
-                    const yearMatch = cells[0].match(/(20\\d{2})/);
-                    if (yearMatch) {
-                        const yr = yearMatch[1];
-                        const obj = {};
-                        hdrs.forEach((h, j) => { if (j > 0) obj[h] = cells[j] ?? ''; });
-                        deliveries[yr] = obj;
-                    }
-                }
-                break;
-            }
-        }
+    try:
+        h1 = driver.find_element(By.TAG_NAME, "h1")
+        out["name"] = h1.text.strip()
+    except (NoSuchElementException, WebDriverException):
+        pass
 
-        let ratings = {};
-        const all = [...document.querySelectorAll('*')];
-        for (const e of all) {
-            const t = (e.innerText || '').trim();
-            if (!t || t.length > 120) continue;
-            if (/место.+потреб/i.test(t)) ratings.place_quality = t;
-            if (/оценка\\s*ерз/i.test(t)) ratings.erz_score = t;
-            if (/место.+скорост/i.test(t)) ratings.place_speed = t;
-        }
+    try:
+        page_text = driver.execute_script("return document.body.innerText") or ""
+    except WebDriverException:
+        page_text = ""
 
-        return {name, regions, deliveries, ratings};
-        """
+    # Регионы строительства: "14 (По состоянию на 01.06.2026)"
+    m = re.search(
+        r"Регионы\s*строительств[аы][\s\S]{0,150}?(\d+)\s*\(По\s*состоянию\s*на\s*(\d{2}\.\d{2}\.\d{4})",
+        page_text,
     )
+    if m:
+        out["regions_count"] = m.group(1)
+        out["regions_as_of"] = m.group(2)
+
+    # Рейтинги — label, потом число на след. строке (innerText даёт \n)
+    m = re.search(
+        r"Место\s*в\s*ТОП[\w-]*\s*по\s*потреб\w*\s*кач\w*[\s\n\r]+(\d+)",
+        page_text,
+        re.IGNORECASE,
+    )
+    if m:
+        out["place_quality"] = m.group(1)
+
+    m = re.search(
+        r"Средняя\s*оценка\s*ЕРЗ[\s\n\r]+([\d.,]+)", page_text, re.IGNORECASE
+    )
+    if m:
+        out["erz_score"] = m.group(1)
+
+    m = re.search(
+        r"Место\s*в\s*ТОП[\w-]*\s*по\s*скорост\w*\s*стро\w*[\s\n\r]+(\d+)",
+        page_text,
+        re.IGNORECASE,
+    )
+    if m:
+        out["place_speed"] = m.group(1)
+
+    # Таблица «Сдано/Перенос/Уточнение» через pandas.read_html
+    try:
+        import pandas as pd
+
+        tables = pd.read_html(driver.page_source)
+        for tbl in tables:
+            txt = tbl.to_csv(index=False).lower()
+            if "сдано" in txt and ("перенос" in txt or "уточн" in txt):
+                out["deliveries"] = _parse_construction_table_df(tbl)
+                break
+    except (ImportError, ValueError, Exception):  # noqa: BLE001
+        pass
+
+    return out
+
+
+def _parse_construction_table_df(df) -> dict:
+    """Парсит таблицу строительства в `{year: {sdano, perenos_m2, perenos_pct, utochn}}`."""
+    year_re = re.compile(r"(20\d{2})")
+    deliveries: dict[str, dict] = {}
+
+    # Шаг 1: ищем годы в колонках
+    years_in_cols: list[str | None] = []
+    for col in df.columns:
+        m = year_re.search(str(col))
+        years_in_cols.append(m.group(1) if m else None)
+
+    # Если в колонках годов не нашли — могут быть в первой строке (multi-row header)
+    if not any(years_in_cols) and df.shape[0] > 0:
+        first_row = df.iloc[0].astype(str).tolist()
+        years_in_cols = []
+        for v in first_row:
+            m = year_re.search(v)
+            years_in_cols.append(m.group(1) if m else None)
+        if any(years_in_cols):
+            df = df.iloc[1:].reset_index(drop=True)
+
+    if not any(years_in_cols):
+        return deliveries
+
+    # Шаг 2: для каждой year-колонки прохожу по строкам и распознаю категорию
+    for col_idx, year in enumerate(years_in_cols):
+        if not year:
+            continue
+        data = {"sdano": "", "perenos_m2": "", "perenos_pct": "", "utochn": ""}
+        for row_idx in range(df.shape[0]):
+            try:
+                cell_val = str(df.iloc[row_idx, col_idx])
+            except Exception:  # noqa: BLE001
+                continue
+            # Определяем тип строки по первым двум колонкам (label обычно слева)
+            row_label = ""
+            for c in range(min(2, df.shape[1])):
+                try:
+                    row_label += " " + str(df.iloc[row_idx, c])
+                except Exception:  # noqa: BLE001
+                    pass
+            label_lower = row_label.lower()
+
+            if "перенос" in label_lower:
+                m_m2 = re.search(r"([\d\s]+)\s*м", cell_val)
+                m_pct = re.search(r"\(([\d.,]+)\s*%\)", cell_val)
+                if m_m2:
+                    data["perenos_m2"] = re.sub(r"\s+", " ", m_m2.group(1)).strip()
+                if m_pct:
+                    data["perenos_pct"] = m_pct.group(1)
+            elif "уточн" in label_lower:
+                m_mes = re.search(r"([\d.,]+)\s*месяц", cell_val)
+                if m_mes:
+                    data["utochn"] = m_mes.group(1)
+            else:
+                # Скорее всего "Сдано" — основная цифра m²
+                m_m2 = re.search(r"([\d\s]+)\s*м", cell_val)
+                if m_m2 and not data["sdano"]:
+                    candidate = re.sub(r"\s+", " ", m_m2.group(1)).strip()
+                    if candidate and candidate != "nan":
+                        data["sdano"] = candidate
+        deliveries[year] = data
+
+    return deliveries
 
 
 def fetch_cards(state: dict) -> list[Path]:
@@ -687,40 +775,28 @@ def fetch_cards(state: dict) -> list[Path]:
         return []
 
     date_str = datetime.now().strftime("%Y%m%d")
-
-    # Диагностика — печатаем первые 3 URL чтобы видеть формат
-    print(f"     · образцы card_url (первые 3):")
-    for dev in developers[:3]:
-        url = dev.get("card_url") or "(нет)"
-        print(f"       {url}")
-
-    summary_rows: list[dict] = []
-    deliveries_rows: list[dict] = []
+    rows: list[dict] = []
     failed: list[dict] = []
+    debug_saved = False
 
     driver = create_chrome(download_dir=CARDS_DIR, headless=HEADLESS)
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
-        # Карточки скорее всего за авторизацией (как и TOP — выяснилось 03.06.2026)
         if not _ensure_logged_in(driver):
-            print("  ⚠️  Без авторизации — продолжаем, но карточки могут не открыться")
+            print("  ⚠️  Без авторизации — карточки могут не открыться")
 
         for dev in developers[:TOP_N_DEVELOPERS]:
             card_url = dev.get("card_url")
             if not card_url:
                 continue
             slug = _developer_slug(card_url) or ""
-            # Однострочный лог: убираем переносы из place/name (DOM-сетка
-            # сваливает все ячейки в один text)
             place_str = str(dev.get("place", "?")).replace("\n", " | ")[:20]
             name_str = str(dev.get("name", "")).replace("\n", " ")[:50]
             print(f"     · {place_str:>20}  {name_str}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
-                time.sleep(4)  # Angular SPA — даём время на рендер
+                time.sleep(4)
                 try:
-                    # Ждём по содержимому, а не только h1/table — у Angular
-                    # шаблона маркер «Сдано» появляется после загрузки данных
                     WebDriverWait(driver, 30).until(
                         lambda d: ("Сдано" in d.page_source
                                    or "Регион" in d.page_source
@@ -729,33 +805,34 @@ def fetch_cards(state: dict) -> list[Path]:
                 except TimeoutException:
                     print(f"       ⚠️  карточка не загрузилась")
                     failed.append({"slug": slug, "url": card_url, "reason": "timeout"})
-                    if len(failed) <= 2:  # сохраняем снэпшот только первых 2
+                    if len(failed) <= 2:
                         _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_timeout")
                     continue
                 time.sleep(2)
+
+                # ВСЕГДА сохраняем HTML первой успешно загруженной карточки —
+                # критично для отладки селекторов на стороне пользователя.
+                if not debug_saved:
+                    _save_debug_snapshot(driver, f"card_first_{slug.replace('/', '_')[:40]}")
+                    debug_saved = True
+
                 data = _scrape_card(driver)
-                summary_rows.append(
+                rows.append(
                     {
                         "place": place_str,
                         "name_table": dev.get("name", ""),
                         "name_card": data.get("name", ""),
                         "slug": slug,
                         "url": card_url,
-                        "regions": "; ".join(data.get("regions") or []),
-                        "place_quality": (data.get("ratings") or {}).get("place_quality", ""),
-                        "erz_score": (data.get("ratings") or {}).get("erz_score", ""),
-                        "place_speed": (data.get("ratings") or {}).get("place_speed", ""),
+                        "regions_count": data.get("regions_count", ""),
+                        "regions_as_of": data.get("regions_as_of", ""),
+                        "place_quality": data.get("place_quality", ""),
+                        "erz_score": data.get("erz_score", ""),
+                        "place_speed": data.get("place_speed", ""),
+                        "deliveries": data.get("deliveries", {}),
                         "scraped_at": datetime.now().isoformat(timespec="seconds"),
                     }
                 )
-                deliveries = data.get("deliveries") or {}
-                for year, row in deliveries.items():
-                    if not isinstance(row, dict):
-                        continue
-                    flat = {"slug": slug, "name_card": data.get("name", ""), "year": year}
-                    for k, v in row.items():
-                        flat[str(k)] = v
-                    deliveries_rows.append(flat)
             except WebDriverException as exc:
                 print(f"       ❌ {exc}")
                 failed.append({"slug": slug, "url": card_url, "reason": str(exc)[:200]})
@@ -763,33 +840,52 @@ def fetch_cards(state: dict) -> list[Path]:
         driver.quit()
 
     new_files: list[Path] = []
-    # Пишем xlsx ВСЕГДА если есть хоть что-то (включая только failed) —
-    # пользователю проще диагностировать.
-    if summary_rows or failed:
+    if rows or failed:
         try:
             import pandas as pd
         except ImportError:
             print("     ⚠️  pandas не установлен — записать xlsx не получится")
             return []
+
+        # Все встреченные года — объединение по всем карточкам
+        all_years = sorted({
+            y for r in rows for y in (r.get("deliveries") or {}).keys() if y
+        })
+
+        # Wide-формат: одна строка на застройщика, колонки по годам
+        base_cols = [
+            "place", "name_table", "name_card", "slug", "url",
+            "regions_count", "regions_as_of",
+            "place_quality", "erz_score", "place_speed",
+        ]
+        wide_rows = []
+        for r in rows:
+            row = {c: r.get(c, "") for c in base_cols}
+            deliveries = r.get("deliveries") or {}
+            for y in all_years:
+                d = deliveries.get(y, {}) or {}
+                row[f"sdano_{y}_м²"] = d.get("sdano", "")
+                row[f"perenos_{y}_м²"] = d.get("perenos_m2", "")
+                row[f"perenos_{y}_%"] = d.get("perenos_pct", "")
+                row[f"utochn_{y}_мес"] = d.get("utochn", "")
+            row["scraped_at"] = r.get("scraped_at", "")
+            wide_rows.append(row)
+
         target = CARDS_DIR / f"cards_{date_str}.xlsx"
         with pd.ExcelWriter(target, engine="openpyxl") as writer:
-            if summary_rows:
-                pd.DataFrame(summary_rows).to_excel(writer, sheet_name="summary", index=False)
-            if deliveries_rows:
-                pd.DataFrame(deliveries_rows).to_excel(
-                    writer, sheet_name="deliveries", index=False
-                )
+            if wide_rows:
+                pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
             if failed:
                 pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
         print(
             f"     ✅ {target.name} "
-            f"(карточек: {len(summary_rows)}, годо-строк: {len(deliveries_rows)}, "
+            f"(карточек: {len(wide_rows)}, лет: {len(all_years)} {all_years}, "
             f"ошибок: {len(failed)})"
         )
         new_files.append(target)
         state["erzrf_cards"] = {
             "last_run": datetime.now().isoformat(timespec="seconds"),
-            "scraped": len(summary_rows),
+            "scraped": len(wide_rows),
             "failed": len(failed),
             "file": target.name,
         }

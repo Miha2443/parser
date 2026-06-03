@@ -1,32 +1,22 @@
 """
 nashdom_checker.py
 ------------------
-Скачивает данные с наш.дом.рф (3 источника):
+Скачивает данные из 3 источников «недвижимость»:
 
-1. **monitoring_2_0** — единый xlsx «Мониторинг новостроек 2.0», скачивается
-   через клик по кнопке «Скачать». Ежедневно — пользователь явно попросил
-   качать целиком, без сравнения дат.
+1. **monitoring_2_0** — Google Sheets, скачиваем целиком как xlsx через
+   export?format=xlsx (не Selenium, обычный requests).
+   https://docs.google.com/spreadsheets/d/<ID>/export?format=xlsx
 
-2. **rasprodannost** — DOM-скрейп страницы /аналитика/распроданность-новостроек.
-   5 срезов по фильтру «Класс недвижимости» (Все / Типовой / Комфорт / Бизнес /
-   Элитный). Глубина — все месяцы из пикера, но не раньше 2011-01.
+2. **rasprodannost** — DOM-скрейп
+   https://наш.дом.рф/аналитика/распроданность-стройготовность
+   с query-параметрами ?repYear=YYYY&repMonth=N&foCd=all&regionCd=all
 
-3. **kvartirografia** — DOM-скрейп страницы /аналитика/квартирография-новостроек.
-   То же: 5 классов, помесячно с 2011-01.
+3. **kvartirografia** — DOM-скрейп
+   https://наш.дом.рф/аналитика/квартирография
 
-Для rasprodannost / kvartirografia инкрементальная логика: читаем плашку
-«Отчёт по данным на ДД.ММ.ГГГГ» — если совпадает со state, ничего не качаем.
-Иначе обходим все 5 классов и сохраняем в JSON.
-
-State хранится в `state/nashdom_state.json`.
-
-Запуск:
+State хранится в `state/nashdom_state.json`. Запуск:
     py nashdom_checker.py                # все 3 источника
-    py nashdom_checker.py monitoring_2_0 # только один ключ
-
-Замечания по селекторам: URL и CSS-селекторы помечены `# TODO(verify):` —
-их следует уточнить на первом запуске в headed-режиме (`HEADLESS=False`),
-после чего обновить в файле.
+    py nashdom_checker.py monitoring_2_0 # один ключ
 """
 from __future__ import annotations
 
@@ -37,30 +27,36 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import quote
 
+import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from pipeline.selenium_utils import create_chrome, wait_for_download
+from pipeline.selenium_utils import create_chrome
 
 
 # ─────────────────────────────────────────────
 # КОНФИГ
 # ─────────────────────────────────────────────
 
-# Кириллический домен наш.дом.рф в punycode.
-BASE = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
+NASHDOM_BASE = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 
-# TODO(verify): URL-ы уточнить на первом запуске (могут быть редиректы).
-SOURCE_URLS = {
-    "monitoring_2_0": f"{BASE}/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D0%BC%D0%BE%D0%BD%D0%B8%D1%82%D0%BE%D1%80%D0%B8%D0%BD%D0%B3-%D0%BD%D0%BE%D0%B2%D0%BE%D1%81%D1%82%D1%80%D0%BE%D0%B5%D0%BA-2-0",
-    "rasprodannost": f"{BASE}/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D1%80%D0%B0%D1%81%D0%BF%D1%80%D0%BE%D0%B4%D0%B0%D0%BD%D0%BD%D0%BE%D1%81%D1%82%D1%8C-%D0%BD%D0%BE%D0%B2%D0%BE%D1%81%D1%82%D1%80%D0%BE%D0%B5%D0%BA",
-    "kvartirografia": f"{BASE}/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D0%BA%D0%B2%D0%B0%D1%80%D1%82%D0%B8%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D1%84%D0%B8%D1%8F-%D0%BD%D0%BE%D0%B2%D0%BE%D1%81%D1%82%D1%80%D0%BE%D0%B5%D0%BA",
-}
+# Google Sheets «Мониторинг 2.0» — публичная (или с доступом по ссылке).
+# export?format=xlsx без gid экспортирует все листы.
+GSHEETS_MONITORING_2_0_ID = "19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY"
+GSHEETS_EXPORT_URL = (
+    f"https://docs.google.com/spreadsheets/d/{GSHEETS_MONITORING_2_0_ID}"
+    "/export?format=xlsx"
+)
 
-REALTY_CLASSES = ["Все", "Типовой", "Комфорт", "Бизнес", "Элитный"]
+# наш.дом.рф URLs (с человекочитаемым путём — Chrome/Selenium сам
+# percent-encodes кириллицу при необходимости, и `quote()` гарантирует это
+# для requests).
+RASPRODANNOST_PATH = "аналитика/распроданность-стройготовность"
+KVARTIROGRAFIA_PATH = "аналитика/квартирография"
 
 DOWNLOAD_DIR = Path("data/raw/realty/nashdom")
 STATE_FILE = Path("state/nashdom_state.json")
@@ -68,6 +64,24 @@ PAGE_TIMEOUT = 60
 HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
+
+
+def _build_rasprodannost_url() -> str:
+    # repYear/repMonth = предыдущий месяц от сегодня (свежие данные).
+    today = datetime.now()
+    if today.month == 1:
+        rep_year, rep_month = today.year - 1, 12
+    else:
+        rep_year, rep_month = today.year, today.month - 1
+    path = quote(RASPRODANNOST_PATH)
+    return (
+        f"{NASHDOM_BASE}/{path}"
+        f"?repYear={rep_year}&repMonth={rep_month}&foCd=all&regionCd=all"
+    )
+
+
+def _build_kvartirografia_url() -> str:
+    return f"{NASHDOM_BASE}/{quote(KVARTIROGRAFIA_PATH)}"
 
 
 # ─────────────────────────────────────────────
@@ -88,16 +102,20 @@ def save_state(state: dict) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-# ─────────────────────────────────────────────
-# Общее
-# ─────────────────────────────────────────────
+def _save_debug_snapshot(driver, tag: str) -> None:
+    debug_dir = DOWNLOAD_DIR.parent / "_debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    (debug_dir / f"nashdom_{tag}_{ts}.html").write_text(
+        driver.page_source, encoding="utf-8"
+    )
+    try:
+        driver.save_screenshot(str(debug_dir / f"nashdom_{tag}_{ts}.png"))
+    except WebDriverException:
+        pass
 
 
 def _read_report_date(driver) -> str | None:
-    """Ищет на странице плашку «Отчёт по данным на ДД.ММ.ГГГГ».
-
-    Возвращает дату в формате DD.MM.YYYY или None если не нашёл.
-    """
     text = driver.execute_script(
         """
         const all = [...document.querySelectorAll('*')];
@@ -117,78 +135,52 @@ def _read_report_date(driver) -> str | None:
     return None
 
 
-def _save_debug_snapshot(driver, tag: str) -> None:
-    """Сохраняет HTML-страницу и скриншот в data/raw/realty/_debug/."""
-    debug_dir = DOWNLOAD_DIR.parent / "_debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    (debug_dir / f"nashdom_{tag}_{ts}.html").write_text(
-        driver.page_source, encoding="utf-8"
-    )
-    try:
-        driver.save_screenshot(str(debug_dir / f"nashdom_{tag}_{ts}.png"))
-    except WebDriverException:
-        pass
-
-
 # ─────────────────────────────────────────────
-# 1. Monitoring 2.0 — скачивание xlsx
+# 1. Monitoring 2.0 — Google Sheets export
 # ─────────────────────────────────────────────
 
 
 def fetch_monitoring_2_0(state: dict) -> list[Path]:
-    """Скачивает «Мониторинг 2.0» целиком (ежедневно)."""
+    """Скачивает Google Sheet целиком через export?format=xlsx."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    url = SOURCE_URLS["monitoring_2_0"]
-    print(f"  🌐 monitoring_2_0: {url}")
+    url = GSHEETS_EXPORT_URL
+    print(f"  🌐 monitoring_2_0 (Google Sheets export):")
+    print(f"     {url}")
 
-    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    new_files: list[Path] = []
     try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-        driver.get(url)
-        time.sleep(5)
+        # allow_redirects=True — Google делает 302 на сам файл; если же редирект
+        # идёт на accounts.google.com — это значит таблица закрыта и нужен логин.
+        r = requests.get(url, timeout=120, allow_redirects=True)
+    except requests.RequestException as exc:
+        print(f"  ❌ Не удалось скачать: {exc}")
+        return []
 
-        report_date = _read_report_date(driver) or ""
+    final_url = r.url
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "accounts.google.com" in final_url or "text/html" in ctype:
+        print(f"  ⚠️  Google вернул HTML (вероятно нужен логин или таблица закрыта).")
+        print(f"     final_url = {final_url}")
+        print(f"     content-type = {ctype}")
+        print(f"     Открой ссылку в браузере и в настройках доступа выбери")
+        print(f"     «Доступ всем у кого есть ссылка → Читатель».")
+        return []
+    if r.status_code != 200:
+        print(f"  ⚠️  HTTP {r.status_code}")
+        return []
 
-        before = set(DOWNLOAD_DIR.glob("*"))
+    date_str = datetime.now().strftime("%Y%m%d")
+    target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}.xlsx"
+    target.write_bytes(r.content)
+    size_kb = len(r.content) / 1024
+    print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
 
-        # TODO(verify): селектор кнопки «Скачать» уточнить на первом запуске.
-        clicked = driver.execute_script(
-            """
-            const buttons = [...document.querySelectorAll('button, a, div[class*="button"], div[class*="btn"]')];
-            const btn = buttons.find(b => b.innerText && /скачать/i.test(b.innerText));
-            if (btn) { btn.click(); return true; }
-            return false;
-            """
-        )
-        if not clicked:
-            print("  ⚠️  Кнопка «Скачать» не найдена")
-            _save_debug_snapshot(driver, "monitoring_2_0")
-            return []
-
-        new_file = wait_for_download(DOWNLOAD_DIR, before_snapshot=before, timeout=180)
-        if new_file is None:
-            print("  ⚠️  Файл не появился в папке за 180 сек")
-            return []
-
-        date_str = datetime.now().strftime("%Y%m%d")
-        target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}{new_file.suffix}"
-        if target.exists():
-            target.unlink()
-        new_file.rename(target)
-        print(f"  ✅ Сохранён: {target}")
-        new_files.append(target)
-        state["monitoring_2_0"] = {
-            "report_date": report_date,
-            "filename": target.name,
-            "downloaded_at": datetime.now().isoformat(timespec="seconds"),
-        }
-    except WebDriverException as exc:
-        print(f"  ❌ monitoring_2_0: {exc}")
-    finally:
-        driver.quit()
-    return new_files
+    state["monitoring_2_0"] = {
+        "downloaded_at": datetime.now().isoformat(timespec="seconds"),
+        "filename": target.name,
+        "size_bytes": len(r.content),
+        "source_url": url,
+    }
+    return [target]
 
 
 # ─────────────────────────────────────────────
@@ -196,54 +188,14 @@ def fetch_monitoring_2_0(state: dict) -> list[Path]:
 # ─────────────────────────────────────────────
 
 
-def _switch_class_filter(driver, realty_class: str) -> bool:
-    """Переключает фильтр «Класс недвижимости» на нужное значение.
-
-    Возвращает True если нашли и кликнули. На разных страницах виджет
-    может быть селектом, кнопками-чипами или дропдауном — JS-скрипт
-    охватывает основные варианты, но при изменении вёрстки понадобится
-    уточнить (см. TODO(verify) ниже).
-    """
-    # TODO(verify): селекторы фильтра уточнить на первом запуске.
-    return bool(
-        driver.execute_script(
-            """
-            const target = arguments[0];
-            const all = [...document.querySelectorAll('*')];
-            // 1. ищем <option> с нужным текстом
-            const opt = all.find(e => e.tagName === 'OPTION' && e.innerText.trim() === target);
-            if (opt) {
-                opt.selected = true;
-                opt.parentElement.dispatchEvent(new Event('change', {bubbles: true}));
-                return true;
-            }
-            // 2. ищем кликабельный элемент (button / li / div / span) с этим текстом
-            const btn = all.find(e =>
-                ['BUTTON','LI','DIV','SPAN','A'].includes(e.tagName) &&
-                e.innerText && e.innerText.trim() === target &&
-                e.offsetParent !== null
-            );
-            if (btn) { btn.click(); return true; }
-            return false;
-            """,
-            realty_class,
-        )
-    )
-
-
 def _extract_table(driver) -> list[dict]:
-    """Снимает основную таблицу страницы в виде list[dict].
-
-    Ищет первую видимую table или контейнер role="table". Возвращает
-    список строк, где ключи — текст ячеек шапки.
-    """
+    """Снимает основную таблицу страницы в виде list[dict]."""
     return driver.execute_script(
         """
         function pickTable() {
             const tables = [...document.querySelectorAll('table')]
                 .filter(t => t.offsetParent !== null && t.rows.length > 1);
             if (tables.length) return tables[0];
-            // fallback: контейнер с role=table (react-table)
             const rt = document.querySelector('[role="table"]');
             return rt;
         }
@@ -260,7 +212,7 @@ def _extract_table(driver) -> list[dict]:
             }
             return rows;
         }
-        // role="table" вариант: первая строка role=row с role=columnheader = шапка
+        // role="table" вариант
         const rows = [...t.querySelectorAll('[role="row"]')];
         if (!rows.length) return [];
         const headerCells = [...rows[0].querySelectorAll('[role="columnheader"], [role="cell"]')];
@@ -277,15 +229,9 @@ def _extract_table(driver) -> list[dict]:
     )
 
 
-def _scrape_table_source(
-    source_key: str, state: dict
-) -> list[Path]:
-    """Общий обход 5 классов недвижимости с сохранением в JSON.
-
-    Если плашка «Отчёт по данным на …» совпадает с прошлой — выходим без действий.
-    """
+def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
+    """Открывает URL, ждёт таблицу, сохраняет JSON в data/raw/realty/nashdom/."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    url = SOURCE_URLS[source_key]
     print(f"  🌐 {source_key}: {url}")
 
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
@@ -295,73 +241,49 @@ def _scrape_table_source(
         driver.get(url)
         time.sleep(5)
 
-        # Ждём появления таблицы. Если за 30 сек не дождались — снимаем дамп.
         try:
-            WebDriverWait(driver, 30).until(
+            WebDriverWait(driver, 45).until(
                 EC.presence_of_element_located(
                     (By.CSS_SELECTOR, 'table, [role="table"]')
                 )
             )
         except TimeoutException:
-            print(f"  ⚠️  {source_key}: таблица не появилась за 30 сек")
-            _save_debug_snapshot(driver, source_key)
+            print(f"  ⚠️  {source_key}: таблица не появилась за 45 сек")
+            _save_debug_snapshot(driver, f"{source_key}_no_table")
             return []
 
+        time.sleep(3)  # дать виджету дорендериться
         report_date = _read_report_date(driver) or ""
-        saved = state.get(source_key, {})
-        saved_date = saved.get("report_date") if isinstance(saved, dict) else None
+        if report_date:
+            print(f"     · отчёт на: {report_date}")
 
-        if report_date and saved_date == report_date:
-            print(f"  ✔️  {source_key}: без изменений ({report_date})")
+        rows = _extract_table(driver)
+        if not rows:
+            print(f"  ⚠️  {source_key}: таблица пустая")
+            _save_debug_snapshot(driver, f"{source_key}_empty_table")
             return []
 
         date_str = datetime.now().strftime("%Y%m%d")
-        files_for_state: list[str] = []
-
-        for realty_class in REALTY_CLASSES:
-            print(f"     · класс «{realty_class}»")
-            if realty_class != "Все":
-                ok = _switch_class_filter(driver, realty_class)
-                if not ok:
-                    print(f"       ⚠️  фильтр не переключился — пропускаем")
-                    continue
-                time.sleep(3)  # ждём ребилда таблицы после смены фильтра
-
-            rows = _extract_table(driver)
-            if not rows:
-                print(f"       ⚠️  таблица пустая после фильтра")
-                continue
-
-            class_slug = {
-                "Все": "all",
-                "Типовой": "tipovoi",
-                "Комфорт": "komfort",
-                "Бизнес": "biznes",
-                "Элитный": "elitnyi",
-            }[realty_class]
-            target = DOWNLOAD_DIR / f"{source_key}_{class_slug}_{date_str}.json"
-            payload = {
-                "source": source_key,
-                "realty_class": realty_class,
-                "report_date": report_date,
-                "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                "url": url,
-                "rows": rows,
-            }
-            target.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"       ✅ {target.name} ({len(rows)} строк)")
-            new_files.append(target)
-            files_for_state.append(target.name)
-
-        if new_files:
-            state[source_key] = {
-                "report_date": report_date,
-                "files": files_for_state,
-                "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            }
+        target = DOWNLOAD_DIR / f"{source_key}_{date_str}.json"
+        payload = {
+            "source": source_key,
+            "report_date": report_date,
+            "scraped_at": datetime.now().isoformat(timespec="seconds"),
+            "url": url,
+            "rows": rows,
+        }
+        target.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"  ✅ {target.name} ({len(rows)} строк)")
+        new_files.append(target)
+        state[source_key] = {
+            "report_date": report_date,
+            "filename": target.name,
+            "scraped_at": datetime.now().isoformat(timespec="seconds"),
+            "row_count": len(rows),
+        }
     except WebDriverException as exc:
         print(f"  ❌ {source_key}: {exc}")
     finally:
@@ -370,11 +292,11 @@ def _scrape_table_source(
 
 
 def fetch_rasprodannost(state: dict) -> list[Path]:
-    return _scrape_table_source("rasprodannost", state)
+    return _scrape_table_source("rasprodannost", _build_rasprodannost_url(), state)
 
 
 def fetch_kvartirografia(state: dict) -> list[Path]:
-    return _scrape_table_source("kvartirografia", state)
+    return _scrape_table_source("kvartirografia", _build_kvartirografia_url(), state)
 
 
 # ─────────────────────────────────────────────
@@ -395,7 +317,7 @@ def run(only: Iterable[str] | None = None) -> list[Path]:
     keys = list(only) if only else list(SOURCE_FUNCS.keys())
 
     print(f"\n{'='*60}")
-    print(f"наш.дом.рф | Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"наш.дом.рф / GSheets | Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Источники: {', '.join(keys)}")
     print(f"{'='*60}\n")
 
@@ -408,12 +330,12 @@ def run(only: Iterable[str] | None = None) -> list[Path]:
         try:
             new_files = func(state)
             all_new.extend(new_files)
-            save_state(state)  # сохраняем после каждого источника
+            save_state(state)
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ {key}: {exc}")
 
     print(f"\n{'='*60}")
-    print(f"наш.дом.рф | Итог: новых/обновлённых файлов — {len(all_new)}")
+    print(f"Итог: новых/обновлённых файлов — {len(all_new)}")
     for f in all_new:
         print(f"  • {f}")
     print(f"{'='*60}\n")

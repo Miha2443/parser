@@ -686,7 +686,6 @@ def fetch_cards(state: dict) -> list[Path]:
         print("  ⚠️  Нет файла top_developers_rf_*.json — сначала запусти fetch_top")
         return []
 
-    today = datetime.now().strftime("%d.%m.%Y")
     date_str = datetime.now().strftime("%Y%m%d")
 
     # Диагностика — печатаем первые 3 URL чтобы видеть формат
@@ -702,31 +701,42 @@ def fetch_cards(state: dict) -> list[Path]:
     driver = create_chrome(download_dir=CARDS_DIR, headless=HEADLESS)
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
-        # Если карточки потребуют логин — раскомментируй:
-        # if not _ensure_logged_in(driver):
-        #     return []
+        # Карточки скорее всего за авторизацией (как и TOP — выяснилось 03.06.2026)
+        if not _ensure_logged_in(driver):
+            print("  ⚠️  Без авторизации — продолжаем, но карточки могут не открыться")
+
         for dev in developers[:TOP_N_DEVELOPERS]:
             card_url = dev.get("card_url")
             if not card_url:
                 continue
             slug = _developer_slug(card_url) or ""
-            print(f"     · {dev.get('place','?'):>3}. {dev.get('name','')[:40]}  →  {slug[:60]}")
+            # Однострочный лог: убираем переносы из place/name (DOM-сетка
+            # сваливает все ячейки в один text)
+            place_str = str(dev.get("place", "?")).replace("\n", " | ")[:20]
+            name_str = str(dev.get("name", "")).replace("\n", " ")[:50]
+            print(f"     · {place_str:>20}  {name_str}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
-                time.sleep(3)
+                time.sleep(4)  # Angular SPA — даём время на рендер
                 try:
-                    WebDriverWait(driver, 20).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1, table"))
+                    # Ждём по содержимому, а не только h1/table — у Angular
+                    # шаблона маркер «Сдано» появляется после загрузки данных
+                    WebDriverWait(driver, 30).until(
+                        lambda d: ("Сдано" in d.page_source
+                                   or "Регион" in d.page_source
+                                   or len(d.find_elements(By.TAG_NAME, "h1")) > 0)
                     )
                 except TimeoutException:
                     print(f"       ⚠️  карточка не загрузилась")
                     failed.append({"slug": slug, "url": card_url, "reason": "timeout"})
-                    _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_timeout")
+                    if len(failed) <= 2:  # сохраняем снэпшот только первых 2
+                        _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_timeout")
                     continue
+                time.sleep(2)
                 data = _scrape_card(driver)
                 summary_rows.append(
                     {
-                        "place": dev.get("place", ""),
+                        "place": place_str,
                         "name_table": dev.get("name", ""),
                         "name_card": data.get("name", ""),
                         "slug": slug,
@@ -753,8 +763,9 @@ def fetch_cards(state: dict) -> list[Path]:
         driver.quit()
 
     new_files: list[Path] = []
-
-    if summary_rows:
+    # Пишем xlsx ВСЕГДА если есть хоть что-то (включая только failed) —
+    # пользователю проще диагностировать.
+    if summary_rows or failed:
         try:
             import pandas as pd
         except ImportError:
@@ -762,7 +773,8 @@ def fetch_cards(state: dict) -> list[Path]:
             return []
         target = CARDS_DIR / f"cards_{date_str}.xlsx"
         with pd.ExcelWriter(target, engine="openpyxl") as writer:
-            pd.DataFrame(summary_rows).to_excel(writer, sheet_name="summary", index=False)
+            if summary_rows:
+                pd.DataFrame(summary_rows).to_excel(writer, sheet_name="summary", index=False)
             if deliveries_rows:
                 pd.DataFrame(deliveries_rows).to_excel(
                     writer, sheet_name="deliveries", index=False

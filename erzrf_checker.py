@@ -118,10 +118,11 @@ def _load_credentials() -> dict | None:
 
 
 def _ensure_logged_in(driver) -> bool:
-    """Логинится через форму на erzrf.ru. Возвращает True при успехе.
+    """Логинится через модалку «Вход в аккаунт ЕРЗ» на erzrf.ru.
 
-    Креды читает из config/erzrf.json. Если файла нет — печатает warning
-    и возвращает False (вызывающий код сам решит, продолжать ли).
+    Креды читает из config/erzrf.json (поля email, password). Формат логина:
+    модальное окно открывается кликом по иконке/кнопке «Войти» в правом
+    верхнем углу шапки сайта (не отдельная /login страница).
     """
     creds = _load_credentials()
     if not creds:
@@ -130,37 +131,95 @@ def _ensure_logged_in(driver) -> bool:
         print("     и впиши email/password от erzrf.ru.")
         return False
 
-    login_url = creds.get("login_url") or f"{BASE}/login"
     email = creds.get("email") or ""
     password = creds.get("password") or ""
     if not email or not password:
         print("  ⚠️  В config/erzrf.json не заполнены email/password.")
         return False
 
-    print(f"  🔐 Логин на {login_url} как {email[:3]}***")
+    print(f"  🔐 Логин как {email[:3]}***")
     try:
-        driver.get(login_url)
+        # Шаг 1: открыть главную (там есть иконка «Войти» в шапке)
+        driver.get(BASE)
         time.sleep(3)
 
-        # TODO(verify): селекторы формы могут отличаться. Ищем максимально
-        # широко: input[type=email] или name содержит email/login/user;
-        # input[type=password]; submit-кнопку рядом.
+        # Шаг 2: кликнуть кнопку открытия модалки
+        opened = driver.execute_script(
+            """
+            const visible = e => e.offsetParent !== null;
+            // 1) явная кнопка/ссылка с текстом «Войти» или title/aria
+            let all = [...document.querySelectorAll('button, a, div, span')];
+            let btn = all.find(e => visible(e) && e.innerText && e.innerText.trim() === 'Войти');
+            if (!btn) {
+                btn = all.find(e => visible(e) &&
+                    ((e.getAttribute('title')||'').match(/войти|вход/i) ||
+                     (e.getAttribute('aria-label')||'').match(/войти|вход/i)));
+            }
+            // 2) иконка входа в шапке: SVG/icon-кнопка справа сверху
+            if (!btn) {
+                const headerBtns = [...document.querySelectorAll('header button, header a, [class*="header"] button, [class*="header"] a')];
+                btn = headerBtns.filter(visible).pop();
+            }
+            if (btn) { btn.click(); return true; }
+            return false;
+            """
+        )
+        if not opened:
+            print("  ⚠️  Не нашёл кнопку открытия модалки логина")
+            _save_debug_snapshot(driver, "login_open_button")
+            return False
+
+        # Шаг 3: дождаться появления модалки (по placeholder «Логин» или
+        # input с типом password, отсутствующим до клика).
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, 'input[type="password"]')
+                )
+            )
+        except TimeoutException:
+            print("  ⚠️  Модалка логина не появилась")
+            _save_debug_snapshot(driver, "login_modal_timeout")
+            return False
+        time.sleep(1)
+
+        # Шаг 4: найти поле логина. По скрину placeholder = «Логин или
+        # адрес электронной почты», иногда тип input может быть text/email.
         email_input = None
         for css in [
+            'input[placeholder*="огин" i]',  # «Логин»
+            'input[placeholder*="лектронной" i]',  # «электронной»
+            'input[placeholder*="mail" i]',
             'input[type="email"]',
-            'input[name*="email" i]',
             'input[name*="login" i]',
-            'input[name*="user" i]',
-            'input[id*="email" i]',
-            'input[id*="login" i]',
+            'input[name*="email" i]',
         ]:
             try:
-                el = driver.find_element(By.CSS_SELECTOR, css)
-                if el.is_displayed():
-                    email_input = el
+                els = driver.find_elements(By.CSS_SELECTOR, css)
+                visible = [e for e in els if e.is_displayed()]
+                if visible:
+                    email_input = visible[0]
                     break
-            except NoSuchElementException:
+            except WebDriverException:
                 continue
+
+        # Если не нашли по селектору — берём первый видимый text-input
+        # рядом с password-input (родитель/форма).
+        if email_input is None:
+            try:
+                pw = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+                form = pw
+                for _ in range(5):
+                    form = form.find_element(By.XPATH, "..")
+                    inputs = form.find_elements(
+                        By.CSS_SELECTOR, 'input[type="text"], input[type="email"], input:not([type])'
+                    )
+                    visible = [i for i in inputs if i.is_displayed()]
+                    if visible:
+                        email_input = visible[0]
+                        break
+            except WebDriverException:
+                pass
 
         password_input = None
         try:
@@ -169,34 +228,56 @@ def _ensure_logged_in(driver) -> bool:
             pass
 
         if not email_input or not password_input:
-            print("  ⚠️  Поля логина/пароля не найдены — проверь login_url")
-            _save_debug_snapshot(driver, "login")
+            print("  ⚠️  Поля логина/пароля не найдены в модалке")
+            _save_debug_snapshot(driver, "login_fields_not_found")
             return False
 
         email_input.clear()
         email_input.send_keys(email)
         password_input.clear()
         password_input.send_keys(password)
+        time.sleep(0.5)
 
-        # Сабмит: или нажать Enter в пароле, или найти кнопку
-        try:
-            password_input.send_keys(Keys.RETURN)
-        except WebDriverException:
-            pass
-        time.sleep(2)
+        # Шаг 5: кликнуть оранжевую кнопку «Войти» В МОДАЛКЕ.
+        clicked = driver.execute_script(
+            """
+            const visible = e => e.offsetParent !== null;
+            const pw = document.querySelector('input[type="password"]');
+            if (!pw) return false;
+            // поднимаемся к контейнеру модалки и ищем там кнопку «Войти»
+            let cont = pw;
+            for (let i = 0; i < 8; i++) {
+                cont = cont.parentElement;
+                if (!cont) break;
+                const btns = [...cont.querySelectorAll('button, a, div[class*="button"]')];
+                const btn = btns.find(b => visible(b) && b.innerText &&
+                    b.innerText.trim() === 'Войти');
+                if (btn) { btn.click(); return true; }
+            }
+            return false;
+            """
+        )
+        if not clicked:
+            # fallback — Enter в password
+            try:
+                password_input.send_keys(Keys.RETURN)
+            except WebDriverException:
+                pass
 
-        # Проверка: на странице исчезла форма логина, либо появилось имя
-        # пользователя. Считаем успех, если после редиректа URL изменился
-        # ИЛИ форма логина пропала.
+        # Шаг 6: проверка успеха — модалка закрылась, password-input
+        # больше не виден.
         try:
-            driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
-            # Форма ещё на месте — возможно ошибка кредов.
-            print("  ⚠️  После сабмита форма логина ещё видна — возможно неверные креды.")
-            _save_debug_snapshot(driver, "login_failed")
-            return False
-        except NoSuchElementException:
+            WebDriverWait(driver, 10).until_not(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, 'input[type="password"]')
+                )
+            )
             print("  ✅ Авторизация прошла")
             return True
+        except TimeoutException:
+            print("  ⚠️  Модалка не закрылась после сабмита — возможно неверные креды.")
+            _save_debug_snapshot(driver, "login_failed")
+            return False
 
     except WebDriverException as exc:
         print(f"  ❌ Ошибка авторизации: {exc}")

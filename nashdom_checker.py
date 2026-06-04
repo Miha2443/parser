@@ -292,41 +292,52 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     step_num = 0
     while pos < height + step_px:
         driver.execute_script(
-            f"const ls=document.querySelectorAll('div.list');"
-            f"if(ls[{list_index}]) {{"
-            f"  ls[{list_index}].scrollTop={pos};"
-            f"  ls[{list_index}].dispatchEvent(new Event('scroll', {{bubbles: true}}));"
-            f"}}"
+            """
+            const ls = document.querySelectorAll('div.list');
+            const idx = arguments[0];
+            const pos = arguments[1];
+            if (ls[idx]) {
+                ls[idx].scrollTop = pos;
+                ls[idx].dispatchEvent(new Event('scroll', {bubbles: true}));
+            }
+            """,
+            list_index,
+            pos,
         )
         time.sleep(pause)
         rows = driver.execute_script(
-            f"const ls=document.querySelectorAll('div.list');"
-            f"if(!ls[{list_index}]) return [];"
-            f"return [...ls[{list_index}].querySelectorAll('button.css-5nggi1')].map(b=>{{"
-            f"  const divs=[...b.querySelectorAll(':scope > div')];"
-            f"  const result = {{"
-            f"    name:(divs[0]?.innerText||'').trim(),"
-            f"    val1:(divs[1]?.innerText||'').trim(),"
-            f"    val2:(divs[2]?.innerText||'').trim(),"
-            f"    bars:[]"
-            f"  }};"
-            f"  // Sibling div.css-1r48qb0 содержит histogram-бары"
-            f"  let sib = b.nextElementSibling;"
-            f"  while (sib && !(sib.classList && sib.classList.contains('css-1r48qb0'))) {{"
-            f"    sib = sib.nextElementSibling;"
-            f"  }}"
-            f"  if (sib) {{"
-            f"    for (const bar of sib.querySelectorAll('.css-1xdcykx')) {{"
-            f"      const style = bar.getAttribute('style') || '';"
-            f"      const flexM = style.match(/flex-basis:\\s*([\\d.]+)%/);"
-            f"      const bgM = style.match(/background:\\s*(rgb[a]?\\([^)]+\\))/);"
-            f"      if (flexM && bgM) {{"
-            f"        result.bars.push({{pct: flexM[1], color: bgM[1]}});"
-            f"      }}"
-            f"    }}"
-            f"  }}"
-            f"  return result;"
-            f"}}).filter(r=>r.name);"
+            """
+            const idx = arguments[0];
+            const ls = document.querySelectorAll('div.list');
+            if (!ls[idx]) return [];
+            const FLEX_RE = /flex-basis:\\s*([\\d.]+)%/;
+            const BG_RE = /background:\\s*(rgb[a]?\\([^)]+\\))/;
+            return [...ls[idx].querySelectorAll('button.css-5nggi1')].map(b => {
+                const divs = [...b.querySelectorAll(':scope > div')];
+                const result = {
+                    name: (divs[0] && divs[0].innerText || '').trim(),
+                    val1: (divs[1] && divs[1].innerText || '').trim(),
+                    val2: (divs[2] && divs[2].innerText || '').trim(),
+                    bars: []
+                };
+                let sib = b.nextElementSibling;
+                while (sib && !(sib.classList && sib.classList.contains('css-1r48qb0'))) {
+                    sib = sib.nextElementSibling;
+                }
+                if (sib) {
+                    for (const bar of sib.querySelectorAll('.css-1xdcykx')) {
+                        const style = bar.getAttribute('style') || '';
+                        const flexM = style.match(FLEX_RE);
+                        const bgM = style.match(BG_RE);
+                        if (flexM && bgM) {
+                            result.bars.push({pct: flexM[1], color: bgM[1]});
+                        }
+                    }
+                }
+                return result;
+            }).filter(r => r.name);
+            """,
+            list_index,
         )
         new_in_step = 0
         for r in rows:
@@ -786,87 +797,6 @@ def _parse_kvartirografia(html: str, url: str) -> dict:
 
     return out
 
-
-def _switch_region_filter(driver, target_region: str) -> bool:
-    """Кликает дропдаун «Федеральный округ / Регион», выбирает регион.
-
-    target_region — текст для поиска в попапе (например «г.Москва»,
-    «Российская Федерация»).
-    """
-    # 1) Клик по дропдауну с текущим регионом
-    opened = driver.execute_script(
-        """
-        const visible = e => e.offsetParent !== null;
-        // Ищем <p>Федеральный округ / Регион</p>, поднимаемся к контейнеру
-        const labels = [...document.querySelectorAll('p')].filter(p =>
-            visible(p) && /федеральный\\s*округ/i.test(p.innerText || ''));
-        if (!labels.length) return null;
-        const labelP = labels[0];
-        // Парент labelP содержит дропдаун-кнопку
-        let cont = labelP.parentElement;
-        for (let i = 0; i < 3 && cont; i++) {
-            const btn = cont.querySelector('[tabindex="0"]');
-            if (btn && visible(btn)) {
-                btn.scrollIntoView({block: 'center'});
-                btn.click();
-                return {clicked: true};
-            }
-            cont = cont.parentElement;
-        }
-        return null;
-        """
-    )
-    if not opened:
-        return False
-    time.sleep(1.5)
-
-    # 2) В попапе ищем поиск и/или клик по нужному варианту
-    typed = False
-    if target_region:
-        for css in [
-            'input[placeholder*="оиск" i]',
-            'input[placeholder*="егион" i]',
-            'input[type="search"]',
-            'input[type="text"]:not([readonly])',
-        ]:
-            try:
-                els = driver.find_elements(By.CSS_SELECTOR, css)
-                for el in els:
-                    if el.is_displayed():
-                        el.clear()
-                        el.send_keys(target_region.replace("г.", "").strip())
-                        typed = True
-                        break
-                if typed:
-                    break
-            except WebDriverException:
-                continue
-        time.sleep(1.5)
-
-    # 3) Кликаем нужный вариант (точное совпадение → contains)
-    clicked = driver.execute_script(
-        """
-        const target = arguments[0];
-        const visible = e => e.offsetParent !== null;
-        // Точное совпадение
-        let el = [...document.querySelectorAll('div, span, li, button')]
-            .find(e => visible(e) && (e.innerText || '').trim() === target);
-        // Fallback: contains
-        if (!el) {
-            el = [...document.querySelectorAll('div, span, li, button')]
-                .find(e => visible(e) &&
-                    (e.innerText || '').trim().toLowerCase().includes(target.toLowerCase()) &&
-                    (e.innerText || '').length < 80);
-        }
-        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return true; }
-        return false;
-        """,
-        target_region,
-    )
-    if not clicked:
-        return False
-    time.sleep(4)  # ждём ребилда данных
-    return True
 
 
 def _parse_rasprodannost(html: str, url: str) -> dict:

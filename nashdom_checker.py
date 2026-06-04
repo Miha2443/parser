@@ -233,31 +233,46 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
     time.sleep(0.5)
 
 
-def _scroll_collect_list(driver, list_index: int, *, step_px: int = 200, pause: float = 0.4) -> list[dict]:
+KVART_REGIONS = [
+    {"key": "rf",  "label": "Российская Федерация", "search": "",       "click_label": "Российская Федерация"},
+    {"key": "msk", "label": "г.Москва",             "search": "Москва", "click_label": "г.Москва"},
+]
+
+
+def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: float = 0.25) -> list[dict]:
     """Прокручивает виртуальный список div.list[list_index] и собирает все строки.
 
-    Каждая строка имеет позицию `top: Kpx` (абсолютная), и Angular
-    рендерит только видимое окно (~17 строк за раз). При смене scrollTop
-    в DOM появляются новые row-узлы. Дедуплицируем по имени.
+    Скроллит ИНУТРИ div.list (контейнер с overflow:auto), даёт React
+    перерендерить window, ловит вновь появившиеся button.css-5nggi1,
+    дедуплицирует по имени. После каждого изменения scrollTop диспатчит
+    событие 'scroll' — на случай если React слушает событие, а не
+    реактивно реагирует на изменение свойства.
 
-    list_index: 0 — список девелоперов, 1 — список регионов
-    (порядок div.list на странице квартирографии).
+    Останавливается:
+    - когда 3 шага подряд не дают новых имён, ИЛИ
+    - когда scrollTop достигает scrollHeight
     """
     height = driver.execute_script(
         f"const ls=document.querySelectorAll('div.list');"
         f"return ls[{list_index}] ? ls[{list_index}].scrollHeight : 0;"
     )
     if not height:
+        print(f"       ⚠️  scrollHeight=0, нет списка")
         return []
-    print(f"       inner scrollHeight: {height}px")
+    expected = max(1, height // 19)  # каждая строка ~19px
+    print(f"       inner scrollHeight={height}px (≈{expected} строк)")
 
     seen: dict[str, dict] = {}
     pos = 0
     no_progress = 0
+    step_num = 0
     while pos < height + step_px:
         driver.execute_script(
             f"const ls=document.querySelectorAll('div.list');"
-            f"if(ls[{list_index}]) ls[{list_index}].scrollTop={pos};"
+            f"if(ls[{list_index}]) {{"
+            f"  ls[{list_index}].scrollTop={pos};"
+            f"  ls[{list_index}].dispatchEvent(new Event('scroll', {{bubbles: true}}));"
+            f"}}"
         )
         time.sleep(pause)
         rows = driver.execute_script(
@@ -281,6 +296,10 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 200, pause: 
                     "количество_шт": r["val2"].replace("\xa0", " "),
                 }
                 new_in_step += 1
+        step_num += 1
+        # Прогресс каждые 20 шагов
+        if step_num % 20 == 0:
+            print(f"         · шаг {step_num}, pos={pos}/{height}, собрано {len(seen)}/{expected}")
         if new_in_step == 0:
             no_progress += 1
             if no_progress >= 3:
@@ -289,7 +308,159 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 200, pause: 
             no_progress = 0
         pos += step_px
 
+    print(f"       финал: {len(seen)} строк за {step_num} шагов")
     return list(seen.values())
+
+
+def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
+    """Собирает все накопленные данные в xlsx с 4 листами."""
+    try:
+        import pandas as pd
+    except ImportError:
+        print("  ⚠️  pandas не установлен — xlsx не пишем")
+        return
+
+    apartments_rows, distribution_rows = [], []
+    developers_rows, regions_rows = [], []
+
+    for data in all_data:
+        rk = data.get("region_key", "")
+        rl = data.get("region", "")
+        rd = data.get("report_date", "")
+        for a in data.get("apartments", []):
+            apartments_rows.append({"region_key": rk, "region": rl, "report_date": rd, **a})
+        for d in data.get("distribution", []):
+            distribution_rows.append({"region_key": rk, "region": rl, "report_date": rd, **d})
+        for dev in data.get("developers", []):
+            developers_rows.append({"region_key": rk, "region": rl, "report_date": rd, **dev})
+        for reg in data.get("regions", []):
+            regions_rows.append({"region_key": rk, "region": rl, "report_date": rd, **reg})
+
+    with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
+        if apartments_rows:
+            pd.DataFrame(apartments_rows).to_excel(writer, sheet_name="apartments", index=False)
+        if distribution_rows:
+            pd.DataFrame(distribution_rows).to_excel(writer, sheet_name="distribution", index=False)
+        if developers_rows:
+            pd.DataFrame(developers_rows).to_excel(writer, sheet_name="developers", index=False)
+        if regions_rows:
+            pd.DataFrame(regions_rows).to_excel(writer, sheet_name="regions", index=False)
+
+
+def fetch_kvartirografia(state: dict) -> list[Path]:
+    """Квартирография по 2 регионам (РФ + Москва) с inner-scroll.
+
+    xlsx сохраняется ПОСЛЕ КАЖДОГО региона — даже если процесс
+    прерван на половине, у пользователя есть актуальный файл.
+    """
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    url = _build_kvartirografia_url()
+    print(f"  🌐 kvartirografia: {url}")
+
+    date_str = datetime.now().strftime("%Y%m%d")
+    target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
+    target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
+
+    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    all_data: list[dict] = []
+    new_files: list[Path] = []
+
+    def flush():
+        """Сохраняем текущее накопленное состояние в xlsx + json."""
+        if not all_data:
+            return
+        try:
+            _build_kvart_xlsx(all_data, target_xlsx)
+            target_json.write_text(
+                json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            sizes = {
+                "apartments": sum(len(d.get("apartments", [])) for d in all_data),
+                "distribution": sum(len(d.get("distribution", [])) for d in all_data),
+                "developers": sum(len(d.get("developers", [])) for d in all_data),
+                "regions": sum(len(d.get("regions", [])) for d in all_data),
+            }
+            print(f"     💾 {target_xlsx.name}: {sizes}")
+            if target_xlsx not in new_files:
+                new_files.append(target_xlsx)
+            if target_json not in new_files:
+                new_files.append(target_json)
+        except Exception as exc:  # noqa: BLE001
+            print(f"     ⚠️  ошибка при записи xlsx: {exc}")
+
+    try:
+        driver.set_page_load_timeout(PAGE_TIMEOUT)
+        driver.get(url)
+        time.sleep(6)
+        try:
+            WebDriverWait(driver, 45).until(
+                lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+            )
+        except TimeoutException:
+            print(f"  ⚠️  контент не появился за 45 сек")
+            _save_debug_snapshot(driver, "kvartirografia_no_content")
+            return []
+        time.sleep(3)
+
+        for region in KVART_REGIONS:
+            try:
+                print(f"     ── регион: {region['key']} ({region['label']})")
+                if region["search"]:
+                    ok = _switch_region_filter(
+                        driver,
+                        target_label=region["click_label"],
+                        search_query=region["search"],
+                    )
+                    if not ok:
+                        print(f"       ⚠️  не удалось переключить на {region['label']}")
+                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
+                        continue
+                    # Подождём чтобы данные перезагрузились
+                    time.sleep(5)
+
+                data = _parse_kvartirografia(driver.page_source, driver.current_url)
+                data["region_key"] = region["key"]
+
+                print(f"       devs (виртуальный список 0):")
+                data["developers"] = _scroll_collect_list(driver, list_index=0)
+                print(f"       regions (виртуальный список 1):")
+                data["regions"] = _scroll_collect_list(driver, list_index=1)
+
+                print(
+                    f"       · apartments={len(data['apartments'])}, "
+                    f"distribution={len(data['distribution'])}, "
+                    f"devs={len(data['developers'])}, regs={len(data['regions'])}"
+                )
+
+                _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
+                all_data.append(data)
+                # КРИТИЧНО: сохраняем xlsx ПОСЛЕ каждого региона
+                flush()
+
+            except Exception as exc:  # noqa: BLE001
+                # Любая ошибка внутри региона — сохраняем что есть и идём дальше
+                print(f"     ❌ ошибка при обработке {region['key']}: {exc}")
+                flush()
+    except KeyboardInterrupt:
+        print("\n  ⚠️  прерывание — сохраняю что собрано…")
+        flush()
+        raise
+    except WebDriverException as exc:
+        print(f"  ❌ {exc}")
+        flush()
+    finally:
+        try:
+            driver.quit()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if all_data:
+        state["kvartirografia"] = {
+            "scraped_at": datetime.now().isoformat(timespec="seconds"),
+            "regions": [r["key"] for r in KVART_REGIONS],
+            "file": target_xlsx.name,
+        }
+    return new_files
 
 
 def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
@@ -714,134 +885,6 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
     return _scrape_table_source("rasprodannost", _build_rasprodannost_url(), state)
 
 
-KVART_REGIONS = [
-    {"key": "rf",  "label": "Российская Федерация", "search": "",       "click_label": "Российская Федерация"},
-    {"key": "msk", "label": "г.Москва",             "search": "Москва", "click_label": "г.Москва"},
-]
-
-
-def fetch_kvartirografia(state: dict) -> list[Path]:
-    """Квартирография по 2 регионам (РФ + Москва) с inner-scroll по
-    девелоперам и регионам (виртуальные списки).
-    """
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    url = _build_kvartirografia_url()
-    print(f"  🌐 kvartirografia: {url}")
-
-    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    all_data: list[dict] = []
-    try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-        driver.get(url)
-        time.sleep(6)
-        try:
-            WebDriverWait(driver, 45).until(
-                lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
-            )
-        except TimeoutException:
-            print(f"  ⚠️  контент не появился за 45 сек")
-            _save_debug_snapshot(driver, "kvartirografia_no_content")
-            return []
-        time.sleep(3)
-
-        for region in KVART_REGIONS:
-            print(f"     ── регион: {region['key']} ({region['label']})")
-            if region["search"]:
-                # переключаем фильтр на Москву
-                ok = _switch_region_filter(
-                    driver,
-                    target_label=region["click_label"],
-                    search_query=region["search"],
-                )
-                if not ok:
-                    print(f"       ⚠️  не удалось переключить регион")
-                    _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
-                    continue
-
-            # Парсим статичную часть (apartments + distribution + region label + date)
-            data = _parse_kvartirografia(driver.page_source, driver.current_url)
-            data["region_key"] = region["key"]
-
-            # Inner-scroll по двум виртуальным спискам (девелоперы + регионы).
-            # На странице div.list появляется два раза в этом порядке.
-            print(f"       devs (виртуальный список 0):")
-            data["developers"] = _scroll_collect_list(driver, list_index=0)
-            print(f"         собрано: {len(data['developers'])}")
-            print(f"       regions (виртуальный список 1):")
-            data["regions"] = _scroll_collect_list(driver, list_index=1)
-            print(f"         собрано: {len(data['regions'])}")
-
-            print(
-                f"       · apartments={len(data['apartments'])}, "
-                f"distribution={len(data['distribution'])}, "
-                f"devs={len(data['developers'])}, regs={len(data['regions'])}"
-            )
-
-            # Снэпшот первого захода каждого региона
-            _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
-
-            all_data.append(data)
-    except WebDriverException as exc:
-        print(f"  ❌ {exc}")
-    finally:
-        driver.quit()
-
-    if not all_data:
-        return []
-
-    # Записываем xlsx с 4 листами + raw json
-    new_files: list[Path] = []
-    date_str = datetime.now().strftime("%Y%m%d")
-
-    try:
-        import pandas as pd
-    except ImportError:
-        print("  ⚠️  pandas не установлен — сохраняю только json")
-        target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
-        target_json.write_text(json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        return [target_json]
-
-    apartments_rows, distribution_rows = [], []
-    developers_rows, regions_rows = [], []
-
-    for data in all_data:
-        rk = data.get("region_key")
-        rl = data.get("region", "")
-        rd = data.get("report_date", "")
-        for a in data.get("apartments", []):
-            apartments_rows.append({"region_key": rk, "region": rl, "report_date": rd, **a})
-        for d in data.get("distribution", []):
-            distribution_rows.append({"region_key": rk, "region": rl, "report_date": rd, **d})
-        for dev in data.get("developers", []):
-            developers_rows.append({"region_key": rk, "region": rl, "report_date": rd, **dev})
-        for reg in data.get("regions", []):
-            regions_rows.append({"region_key": rk, "region": rl, "report_date": rd, **reg})
-
-    target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
-    with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
-        if apartments_rows:
-            pd.DataFrame(apartments_rows).to_excel(writer, sheet_name="apartments", index=False)
-        if distribution_rows:
-            pd.DataFrame(distribution_rows).to_excel(writer, sheet_name="distribution", index=False)
-        if developers_rows:
-            pd.DataFrame(developers_rows).to_excel(writer, sheet_name="developers", index=False)
-        if regions_rows:
-            pd.DataFrame(regions_rows).to_excel(writer, sheet_name="regions", index=False)
-    print(f"  ✅ {target_xlsx.name}")
-    print(f"     apartments: {len(apartments_rows)}, distribution: {len(distribution_rows)},")
-    print(f"     developers: {len(developers_rows)}, regions: {len(regions_rows)}")
-    new_files.append(target_xlsx)
-
-    target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
-    target_json.write_text(json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8")
-    new_files.append(target_json)
-
-    state["kvartirografia"] = {
-        "scraped_at": datetime.now().isoformat(timespec="seconds"),
-        "regions": [r["key"] for r in KVART_REGIONS],
-        "file": target_xlsx.name,
-    }
-    return new_files
 
 
 # ─────────────────────────────────────────────

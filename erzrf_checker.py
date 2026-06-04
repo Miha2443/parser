@@ -342,29 +342,29 @@ def _save_debug_snapshot(driver, tag: str) -> None:
         pass
 
 
-def _click_download_excel(driver) -> dict:
-    """Кликает «ТОП-100» в блоке кнопок скачивания.
+def _click_download_excel(driver, target_label: str = "Весь список") -> dict:
+    """Кликает кнопку скачивания xlsx (по умолчанию «Весь список»).
 
-    По HTML 03.06.2026 на странице есть блок:
-        <span class="flex links" title="нажмите для формирования и
-              скачивания файла">
+    HTML 03.06.2026:
+        <span class="flex links" title="нажмите для формирования и скачивания файла">
             <span class="pointer">ТОП-20</span>
             <span class="pointer">ТОП-50</span>
             <span class="pointer">ТОП-100</span>
             <span class="pointer">Весь список</span>
         </span>
-    Кликаем «ТОП-100» — генерируется и скачивается xlsx именно ТОП-100.
+    Передавай target_label="ТОП-100" если нужен ТОП-100, по умолчанию —
+    «Весь список» (вся выгрузка ~2900 застройщиков).
     """
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(1)
 
     return driver.execute_script(
         """
-        const TARGET_LABEL = 'ТОП-100';
+        const TARGET_LABEL = arguments[0];
         const visible = e => e.offsetParent !== null;
 
         // 1) основной путь: родитель с title содержит «формирования|скачивания»,
-        // ребёнок — span с текстом «ТОП-100»
+        // ребёнок — span/кнопка с точным текстом target
         const parents = [...document.querySelectorAll('[title]')]
             .filter(e => visible(e) &&
                 /формирования|скачивания|скачать/i.test(e.getAttribute('title') || ''));
@@ -385,7 +385,7 @@ def _click_download_excel(driver) -> dict:
             }
         }
 
-        // 2) fallback: любой видимый .pointer/span с текстом «ТОП-100»
+        // 2) fallback: любой видимый .pointer/span с этим текстом
         const fallback = [...document.querySelectorAll('.pointer, span, a, button')]
             .find(s => visible(s) && (s.innerText || '').trim() === TARGET_LABEL);
         if (fallback) {
@@ -401,7 +401,8 @@ def _click_download_excel(driver) -> dict:
         }
 
         return {clicked: false, matched: 'none'};
-        """
+        """,
+        target_label,
     )
 
 
@@ -492,6 +493,38 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
 
 
 
+def _collect_top_n_developers(driver, region: dict, n: int) -> list[dict]:
+    """Обходит страницы пагинации (по 20 на странице) и собирает первых N застройщиков.
+
+    На странице erzrf.ru/top-zastroyshchikov/<region>?topType=0&page=K
+    показывается ровно 20 строк. Чтобы взять ТОП-100, идём по страницам 1-5.
+    """
+    devs: list[dict] = []
+    pages_needed = (n + 19) // 20
+    for page_num in range(1, pages_needed + 1):
+        url = _build_top_url(region, "obyem_stroitelstva") + f"&page={page_num}"
+        print(f"     · страница {page_num}/{pages_needed}: {url}")
+        driver.get(url)
+        time.sleep(4)
+        if not _wait_for_top_content(driver):
+            print(f"       ⚠️  страница {page_num} не загрузилась")
+            _save_debug_snapshot(driver, f"top_{region['key']}_page{page_num}_timeout")
+            break
+        page_devs = _scrape_developers_from_table(driver)
+        if not page_devs:
+            print(f"       ⚠️  страница {page_num} пустая")
+            break
+        # На второй+ странице JS-скрейпер может вернуть тех же 20 что
+        # уже взяты. Дедуплицируем по card_url.
+        seen_urls = {d.get("card_url") for d in devs}
+        new = [d for d in page_devs if d.get("card_url") and d["card_url"] not in seen_urls]
+        devs.extend(new)
+        print(f"       + {len(new)} новых (всего {len(devs)})")
+        if len(devs) >= n or not new:
+            break
+    return devs[:n]
+
+
 def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) -> int:
     """Скроллит страницу вниз пока её высота продолжает расти.
 
@@ -530,7 +563,8 @@ def fetch_top(state: dict) -> list[Path]:
         for region in REGIONS:
             print(f"  🌐 регион: {region['key']} ({region['label']})")
 
-            for i, sorting in enumerate(SORTINGS):
+            # Шаг A: качаем «Весь список» по всем 5 сортировкам
+            for sorting in SORTINGS:
                 url = _build_top_url(region, sorting["key"])
                 print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
                 print(f"       URL: {url}")
@@ -542,34 +576,10 @@ def fetch_top(state: dict) -> list[Path]:
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
                     continue
 
-                # Скрапим список застройщиков один раз на регион
-                # (по первой сортировке)
-                if i == 0:
-                    link_count = _scroll_to_load_all(driver)
-                    print(f"       · ссылок /zastroyschiki/ после скролла: {link_count}")
-                    developers = _scrape_developers_from_table(driver)
-                    if developers:
-                        dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
-                        dev_file.write_text(
-                            json.dumps(
-                                {
-                                    "region": region["key"],
-                                    "url": url,
-                                    "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                                    "developers": developers,
-                                },
-                                ensure_ascii=False,
-                                indent=2,
-                            ),
-                            encoding="utf-8",
-                        )
-                        print(f"       ✅ {dev_file.name} ({len(developers)} строк)")
-                        new_files.append(dev_file)
-
                 before = set(DOWNLOAD_DIR.glob("*"))
-                click_info = _click_download_excel(driver)
+                click_info = _click_download_excel(driver, target_label="Весь список")
                 if not click_info.get("clicked"):
-                    print(f"       ⚠️  кнопка «ТОП-100» не найдена")
+                    print(f"       ⚠️  кнопка «Весь список» не найдена")
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_no_button")
                     continue
                 print(
@@ -577,10 +587,10 @@ def fetch_top(state: dict) -> list[Path]:
                     f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
                 )
                 new_file = wait_for_download(
-                    DOWNLOAD_DIR, before_snapshot=before, timeout=120
+                    DOWNLOAD_DIR, before_snapshot=before, timeout=180
                 )
                 if new_file is None:
-                    print(f"       ⚠️  xlsx не появился в папке за 120 сек")
+                    print(f"       ⚠️  xlsx не появился в папке за 180 сек")
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_after_click")
                     continue
                 target = (
@@ -592,6 +602,31 @@ def fetch_top(state: dict) -> list[Path]:
                 new_file.rename(target)
                 print(f"       ✅ {target.name}")
                 new_files.append(target)
+
+            # Шаг B: собираем ТОП-100 застройщиков пагинацией (5 страниц × 20)
+            # — это для fetch_cards (карточки нужны только по ТОП-100).
+            print(f"     ── Сбор ТОП-{TOP_N_DEVELOPERS} застройщиков для карточек:")
+            developers = _collect_top_n_developers(
+                driver, region, n=TOP_N_DEVELOPERS
+            )
+            if developers:
+                dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
+                dev_file.write_text(
+                    json.dumps(
+                        {
+                            "region": region["key"],
+                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                            "developers": developers,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                print(f"     ✅ {dev_file.name} ({len(developers)} застройщиков)")
+                new_files.append(dev_file)
+            else:
+                print(f"     ⚠️  не удалось собрать ТОП-{TOP_N_DEVELOPERS}")
     except WebDriverException as exc:
         print(f"  ❌ {exc}")
     finally:

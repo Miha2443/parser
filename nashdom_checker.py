@@ -65,6 +65,30 @@ HEADLESS = False  # TODO: переключить в True после первой
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
 
+# Русские месяцы → номер (для строк типа «3 июня 2026 года»)
+RUS_MONTHS = {
+    "январ": 1, "феврал": 2, "март": 3, "апрел": 4,
+    "ма": 5, "май": 5, "июн": 6, "июл": 7, "август": 8,
+    "сентябр": 9, "октябр": 10, "ноябр": 11, "декабр": 12,
+}
+
+
+def _parse_russian_date(text: str) -> str:
+    """«3 июня 2026 года» → «03.06.2026». Возвращает '' если не распарсилось."""
+    m = re.search(
+        r"(\d{1,2})\s+(январ|феврал|март|апрел|май|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*\s+(\d{4})",
+        text.lower(),
+    )
+    if not m:
+        return ""
+    day = int(m.group(1))
+    month_stem = m.group(2)
+    year = int(m.group(3))
+    month = RUS_MONTHS.get(month_stem, 0)
+    if not month:
+        return ""
+    return f"{day:02d}.{month:02d}.{year:04d}"
+
 
 def _build_rasprodannost_url() -> str:
     # repYear/repMonth = предыдущий месяц от сегодня (свежие данные).
@@ -121,7 +145,7 @@ def _read_report_date(driver) -> str | None:
         const all = [...document.querySelectorAll('*')];
         const el = all.find(e =>
             e.innerText &&
-            e.innerText.includes('данным на') &&
+            (e.innerText.includes('данным на') || e.innerText.includes('состоянию на')) &&
             e.innerText.length < 300
         );
         return el ? el.innerText : null;
@@ -132,6 +156,10 @@ def _read_report_date(driver) -> str | None:
     m = REPORT_DATE_RE.search(text)
     if m:
         return m.group(1)
+    # Русский формат «3 июня 2026 года»
+    rus = _parse_russian_date(text)
+    if rus:
+        return rus
     return None
 
 
@@ -188,49 +216,149 @@ def fetch_monitoring_2_0(state: dict) -> list[Path]:
 # ─────────────────────────────────────────────
 
 
-def _extract_table(driver) -> list[dict]:
-    """Снимает основную таблицу страницы в виде list[dict]."""
-    return driver.execute_script(
-        """
-        function pickTable() {
-            const tables = [...document.querySelectorAll('table')]
-                .filter(t => t.offsetParent !== null && t.rows.length > 1);
-            if (tables.length) return tables[0];
-            const rt = document.querySelector('[role="table"]');
-            return rt;
-        }
-        const t = pickTable();
-        if (!t) return [];
-        if (t.tagName === 'TABLE') {
-            const headers = [...t.rows[0].cells].map(c => c.innerText.trim());
-            const rows = [];
-            for (let i = 1; i < t.rows.length; i++) {
-                const cells = [...t.rows[i].cells].map(c => c.innerText.trim());
-                const obj = {};
-                headers.forEach((h, j) => obj[h || ('col_'+j)] = cells[j] ?? '');
-                rows.push(obj);
+def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
+    """Постепенный скролл — заставляет лениво-рендеримые таблицы появиться."""
+    for i in range(steps):
+        driver.execute_script(
+            f"window.scrollTo(0, document.body.scrollHeight * {(i + 1) / steps});"
+        )
+        time.sleep(pause)
+    driver.execute_script("window.scrollTo(0, 0);")
+    time.sleep(0.5)
+
+
+def _parse_kvartirografia(html: str, url: str) -> dict:
+    """Парсер квартирографии (наш.дом.рф/аналитика/квартирография).
+
+    Берёт:
+    - report_date из «Отчёт по данным на 3 июня 2026 года»
+    - apartments — кнопки с data-rooms (ONE/TWO/THREE/FOUR) + кнопка «Все квартиры»
+    - distribution — гистограмма «Распределение квартир по площади» (data-id)
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {}
+    soup = BeautifulSoup(html, "lxml")
+
+    out: dict = {
+        "report_date": "",
+        "region": "",
+        "apartments": [],
+        "distribution": [],
+        "url": url,
+    }
+
+    page_text = soup.get_text(" ", strip=True)
+    out["report_date"] = _parse_russian_date(page_text)
+    if "Российская Федерация" in page_text:
+        out["region"] = "Российская Федерация"
+
+    # apartments
+    type_btns = soup.find_all("button", attrs={"data-rooms": True})
+    all_btn = None
+    if type_btns:
+        for b in type_btns[0].parent.find_all("button"):
+            if "Все квартиры" in b.get_text():
+                all_btn = b
+                break
+
+    def parse_row(btn, room_type):
+        divs = btn.find_all("div", recursive=False)
+        texts = [d.get_text(strip=True) for d in divs]
+        if len(texts) >= 3:
+            return {
+                "тип": room_type or texts[0],
+                "количество_шт": texts[1].replace("\xa0", " "),
+                "площадь_тыс_м²": texts[2].replace("\xa0", " "),
             }
-            return rows;
-        }
-        // role="table" вариант
-        const rows = [...t.querySelectorAll('[role="row"]')];
-        if (!rows.length) return [];
-        const headerCells = [...rows[0].querySelectorAll('[role="columnheader"], [role="cell"]')];
-        const headers = headerCells.map(c => c.innerText.trim());
-        const out = [];
-        for (let i = 1; i < rows.length; i++) {
-            const cells = [...rows[i].querySelectorAll('[role="cell"], [role="gridcell"]')];
-            const obj = {};
-            headers.forEach((h, j) => obj[h || ('col_'+j)] = (cells[j]?.innerText || '').trim());
-            out.push(obj);
-        }
-        return out;
-        """
-    )
+        return None
+
+    if all_btn:
+        row = parse_row(all_btn, "Все квартиры")
+        if row:
+            out["apartments"].append(row)
+    for b in type_btns:
+        label = {
+            "ONE": "1 комнатные",
+            "TWO": "2 комнатные",
+            "THREE": "3 комнатные",
+            "FOUR": "4+ комнатные",
+        }.get(b.get("data-rooms"), b.get("data-rooms"))
+        row = parse_row(b, label)
+        if row:
+            out["apartments"].append(row)
+
+    # distribution (только уникальные data-id)
+    seen_ids = set()
+    for b in soup.find_all("button", attrs={"data-id": True}):
+        did = b.get("data-id", "")
+        if did in seen_ids:
+            continue
+        m = re.match(r"FROM_(\d+)_TO_(\d+)", did)
+        if m:
+            label = f"{m.group(1)}-{m.group(2)} м²"
+        else:
+            mm = re.match(r"FROM_(\d+)$", did) or re.match(r"MORE_(\d+)", did)
+            label = f"более {mm.group(1)} м²" if mm else did
+        first_span = b.find("span")
+        percent = first_span.get_text(strip=True) if first_span else ""
+        if percent:  # пустые проигнорируем
+            out["distribution"].append({"диапазон": label, "доля": percent})
+            seen_ids.add(did)
+
+    return out
+
+
+def _parse_rasprodannost(html: str, url: str) -> dict:
+    """Парсер распроданности (наш.дом.рф/аналитика/распроданность-стройготовность).
+
+    На этой странице структура может отличаться. Сейчас собираем максимум
+    общих данных: дата + регион + любые видимые таблицы (через div-grid
+    или через подсчёт kombинатов кнопок).
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {}
+    soup = BeautifulSoup(html, "lxml")
+
+    out: dict = {
+        "report_date": "",
+        "region": "",
+        "raw_text_sample": "",
+        "buttons_with_data": [],
+        "url": url,
+    }
+    page_text = soup.get_text(" ", strip=True)
+    out["report_date"] = _parse_russian_date(page_text)
+    if "Российская Федерация" in page_text:
+        out["region"] = "Российская Федерация"
+
+    # Берём первый ~1500 символов текста — пригодится для разбора структуры
+    out["raw_text_sample"] = page_text[:1500]
+
+    # Любые кнопки с data-* атрибутами (часто = строки div-grid)
+    for b in soup.find_all("button", attrs={"data-rooms": True}):
+        divs = b.find_all("div", recursive=False)
+        texts = [d.get_text(strip=True) for d in divs]
+        out["buttons_with_data"].append({
+            "type": "data-rooms",
+            "key": b.get("data-rooms"),
+            "cells": texts,
+        })
+
+    return out
+
+
+PARSERS = {
+    "rasprodannost": _parse_rasprodannost,
+    "kvartirografia": _parse_kvartirografia,
+}
 
 
 def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
-    """Открывает URL, ждёт таблицу, сохраняет JSON в data/raw/realty/nashdom/."""
+    """Открывает URL, ждёт контент, парсит, сохраняет JSON."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     print(f"  🌐 {source_key}: {url}")
 
@@ -241,48 +369,72 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
         driver.get(url)
         time.sleep(5)
 
+        # Ждём контент: текст «данным на» или «состоянию на» или
+        # появление data-rooms/data-id кнопок. <table> на этих страницах
+        # отсутствует — это div-сетка.
         try:
             WebDriverWait(driver, 45).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, 'table, [role="table"]')
+                lambda d: (
+                    "данным на" in d.page_source
+                    or "состоянию на" in d.page_source
+                    or "data-rooms" in d.page_source
+                    or "data-id" in d.page_source
                 )
             )
         except TimeoutException:
-            print(f"  ⚠️  {source_key}: таблица не появилась за 45 сек")
-            _save_debug_snapshot(driver, f"{source_key}_no_table")
+            print(f"  ⚠️  {source_key}: контент не появился за 45 сек")
+            _save_debug_snapshot(driver, f"{source_key}_no_content")
             return []
 
-        time.sleep(3)  # дать виджету дорендериться
+        # Скроллим — для подгрузки ленивых таблиц (девелоперы, регионы)
+        _scroll_through_page(driver)
+        time.sleep(2)
+
         report_date = _read_report_date(driver) or ""
         if report_date:
             print(f"     · отчёт на: {report_date}")
 
-        rows = _extract_table(driver)
-        if not rows:
-            print(f"  ⚠️  {source_key}: таблица пустая")
-            _save_debug_snapshot(driver, f"{source_key}_empty_table")
+        # Сохраняем дамп всегда (для аудита) — первый раз
+        snap_tag = f"{source_key}_ok"
+        debug_dir = DOWNLOAD_DIR.parent / "_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        (debug_dir / f"nashdom_{snap_tag}_{ts}.html").write_text(
+            driver.page_source, encoding="utf-8"
+        )
+
+        parser = PARSERS.get(source_key)
+        if parser is None:
+            print(f"  ⚠️  для {source_key} парсер не определён")
             return []
+        data = parser(driver.page_source, url)
+        data["report_date"] = data.get("report_date") or report_date
+        data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
+        data["source"] = source_key
+
+        # Эвристика «успешности» — есть ли в data что-то кроме мета
+        non_meta_keys = [k for k in data.keys()
+                         if k not in {"report_date", "scraped_at", "source", "url", "region", "raw_text_sample"}]
+        has_content = any(data.get(k) for k in non_meta_keys)
 
         date_str = datetime.now().strftime("%Y%m%d")
         target = DOWNLOAD_DIR / f"{source_key}_{date_str}.json"
-        payload = {
-            "source": source_key,
-            "report_date": report_date,
-            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            "url": url,
-            "rows": rows,
-        }
         target.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
+            json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        print(f"  ✅ {target.name} ({len(rows)} строк)")
+        summary = ", ".join(
+            f"{k}={len(v) if isinstance(v, list) else 'есть'}"
+            for k, v in data.items()
+            if k in non_meta_keys and v
+        ) or "пусто"
+        print(f"  {'✅' if has_content else '⚠️ '} {target.name} ({summary})")
         new_files.append(target)
         state[source_key] = {
-            "report_date": report_date,
+            "report_date": data.get("report_date", ""),
             "filename": target.name,
-            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            "row_count": len(rows),
+            "scraped_at": data["scraped_at"],
+            "has_content": has_content,
         }
     except WebDriverException as exc:
         print(f"  ❌ {source_key}: {exc}")

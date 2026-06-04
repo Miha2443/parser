@@ -231,11 +231,11 @@ KVART_REGIONS = [
 def _color_to_room(bg: str) -> str:
     """Маппит rgb/rgba цвет столбика гистограммы на тип комнат.
 
-    Цветовая схема наш.дом.рф (verified 04.06.2026):
-    - rgba(139, 197, 64) = #8BC540 green     → 1 комн
-    - rgba(78, 195, 224) = #4EC3E0 blue       → 2 комн
-    - rgba(7, 40, 51)    = #072833 dark navy → 3 комн
-    - rgb(228, 231, 232) = light gray         → 4+ комн
+    Цветовая схема наш.дом.рф (по button[data-rooms=*] color attr):
+    - rgba(139, 197, 64) = #8BC540 green        → 1 комн
+    - rgba(78, 195, 224) = #4EC3E0 blue          → 2 комн
+    - rgb(228, 231, 232) = light gray (#E4E7E8) → 3 комн (как #7A8386 в data-rooms="THREE")
+    - rgba(7, 40, 51)    = #072833 dark navy    → 4+ комн (color FOUR-button)
     """
     if not bg:
         return ""
@@ -243,9 +243,9 @@ def _color_to_room(bg: str) -> str:
         return "1комн"
     if "78, 195, 224" in bg:
         return "2комн"
-    if "7, 40, 51" in bg:
-        return "3комн"
     if "228, 231, 232" in bg:
+        return "3комн"
+    if "7, 40, 51" in bg:
         return "4+комн"
     return ""
 
@@ -328,7 +328,6 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
             """,
             list_index,
         )
-        new_in_step = 0
         for r in rows:
             if r["name"] not in seen:
                 # Маппим bars → 4 столбца долей по комнатности
@@ -343,17 +342,49 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
                     "площадь_тыс_м²": r["val2"].replace("\xa0", " "),
                     **shares,
                 }
-                new_in_step += 1
         step_num += 1
         if step_num % 20 == 0:
             print(f"         · шаг {step_num}, pos={pos}/{height}, собрано {len(seen)}/{expected}")
-        if new_in_step == 0:
-            no_progress += 1
-            if no_progress >= 3:
-                break
-        else:
-            no_progress = 0
+        # Идём ДО конца виртуального скролла (height + 2*step), не останавливаемся
+        # на отсутствии прогресса — некоторые батчи могут не дать новых имён,
+        # но дальше ещё есть. Уходим за пределы scrollHeight чтобы поймать
+        # последние rows которые рендерятся при scrollTop=max.
+        if pos > height + step_px * 2:
+            break
         pos += step_px
+
+    # Финальный «добив»: ставим scrollTop в самый конец чтобы поймать
+    # хвост, который мог не отрендериться при больших шагах.
+    driver.execute_script(
+        f"const ls=document.querySelectorAll('div.list');"
+        f"if(ls[{list_index}]) ls[{list_index}].scrollTop = ls[{list_index}].scrollHeight;"
+    )
+    time.sleep(pause * 2)
+    final_rows = driver.execute_script(
+        """
+        const idx = arguments[0];
+        const ls = document.querySelectorAll('div.list');
+        if (!ls[idx]) return [];
+        return [...ls[idx].querySelectorAll('button.css-5nggi1')].map(b => {
+            const divs = [...b.querySelectorAll(':scope > div')];
+            return {
+                name: (divs[0] && divs[0].innerText || '').trim(),
+                val1: (divs[1] && divs[1].innerText || '').trim(),
+                val2: (divs[2] && divs[2].innerText || '').trim()
+            };
+        }).filter(r => r.name);
+        """,
+        list_index,
+    )
+    for r in final_rows:
+        if r["name"] not in seen:
+            seen[r["name"]] = {
+                "наименование": r["name"],
+                "квартиры_тыс_шт": r["val1"].replace("\xa0", " "),
+                "площадь_тыс_м²": r["val2"].replace("\xa0", " "),
+                "доля_1комн_%": "", "доля_2комн_%": "",
+                "доля_3комн_%": "", "доля_4+комн_%": "",
+            }
 
     print(f"       финал: {len(seen)} строк за {step_num} шагов")
     return list(seen.values())
@@ -511,17 +542,47 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
 
 
 def _get_current_region_label(driver) -> str:
-    """Возвращает текущее значение фильтра «Регион» (текст в span.css-wjcl1w)."""
+    """Возвращает текущее значение фильтра «Регион».
+
+    Структура DOM:
+        <div class="css-2i68me">             <!-- контейнер фильтра Региона -->
+          <p>Федеральный округ / Регион</p>
+          <div class="css-t0lbh8">           <!-- dropdown -->
+            ...<span class="css-wjcl1w">текущий регион</span>...
+          </div>
+        </div>
+        <div class="css-2i68me">             <!-- контейнер фильтра Девелопер -->
+          <p>Девелопер</p>
+          ...<span class="css-wjcl1w">Все</span>...
+
+    Берём span ВНУТРИ дочернего контейнера <p>Федеральный округ.</p>,
+    а не из всего поддерева — иначе можем нацепить «Все» из дропдауна
+    Девелопера.
+    """
     return driver.execute_script(
         """
         const p = [...document.querySelectorAll('p')].find(e =>
             e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
         if (!p) return '';
-        let scope = p.parentElement;
-        for (let i = 0; i < 4 && scope; i++) {
-            const span = scope.querySelector('span.css-wjcl1w');
+        // Ищем span строго рядом — следующий sibling p или ближайший контейнер
+        // КОТОРЫЙ НЕ СОДЕРЖИТ слово «Девелопер» или другой следующий фильтр
+        let sib = p.nextElementSibling;
+        while (sib) {
+            // если в sib есть текст другого фильтра — мы вылезли за пределы
+            // нашего dropdown
+            const text = sib.innerText || '';
+            if (/^\\s*Девелопер|Объем\\s*строительства\\s*девелоперов|Класс\\s*недвижимости/i.test(text)) {
+                break;
+            }
+            const span = sib.querySelector('span.css-wjcl1w');
             if (span) return span.innerText.trim();
-            scope = scope.parentElement;
+            sib = sib.nextElementSibling;
+        }
+        // Fallback: parent's first span (но не из соседних дропдаунов)
+        const parent = p.parentElement;
+        if (parent) {
+            const span = parent.querySelector('span.css-wjcl1w');
+            if (span) return span.innerText.trim();
         }
         return '';
         """
@@ -791,15 +852,18 @@ def _parse_kvartirografia(html: str, url: str) -> dict:
 def _parse_rasprodannost(html: str, url: str) -> dict:
     """Парсер распроданности (наш.дом.рф/аналитика/распроданность-стройготовность).
 
-    Структура аналогична квартирографии — div-сетка с button.css-5nggi1
-    в виртуальных списках. На странице 5 секций:
-    «Федеральные округа / Регионы / Девелоперы /
-     Объём строительства девелоперов / Населённые пункты по численности».
-    Каждая строка имеет: наименование + Объём жил. строительства +
-    Распроданность + Стройготовность + Отношение Р/С.
+    На странице 6 настоящих <table>:
+    1. Федеральные округа
+    2. Регионы
+    3. Девелоперы
+    4. Объём строительства девелоперов (диапазоны: до 10 / 10-50 / 50-500 / 500-1000 / 1000+ тыс.кв.м)
+    5. Населённые пункты по численности (диапазоны: до 50 / 50-100 / 100-500 / 500-1000 / 1000+ тыс.чел)
+    6. Класс недвижимости (Типовой / Стандарт / Комфорт / Бизнес / Элитный)
 
-    Если данных нет (страница показывает «Нет данных» N+ раз),
-    возвращает empty=True и raw_text_sample.
+    Каждая таблица: name | Объём жил.строительства | Распроданность% | Стройготовность% | Отношение%
+
+    Топовые KPI (4 метрики): Объём жилищного строительства / Распроданность /
+    Отношение Р-к-С / Стройготовность — значения берутся из h5+number.
     """
     try:
         from bs4 import BeautifulSoup
@@ -809,36 +873,93 @@ def _parse_rasprodannost(html: str, url: str) -> dict:
 
     out: dict = {
         "report_date": "",
+        "report_period": "",
         "region": "",
         "url": url,
-        "empty": False,
-        "buttons_with_data": [],
+        "kpi": [],
+        "tables": {},   # section_name → list of rows
     }
     page_text = soup.get_text(" ", strip=True)
     out["report_date"] = _parse_russian_date(page_text)
+    # «Отчетный период Апрель 2026»
+    m_period = re.search(r"Отчетный период\s+([А-Яа-я]+ \d{4})", page_text)
+    if m_period:
+        out["report_period"] = m_period.group(1)
     if "Российская Федерация" in page_text:
         out["region"] = "Российская Федерация"
 
-    no_data_count = page_text.count("Нет данных")
-    btns = soup.find_all("button", class_="css-5nggi1")
-
-    # Любые строки .css-5nggi1 (если есть на странице)
-    for b in btns:
-        divs = b.find_all("div", recursive=False)
-        texts = [d.get_text(strip=True) for d in divs]
-        if not texts or not texts[0]:
+    # === Топовые 4 KPI: h5-заголовок + ближайшее число ===
+    # Используем substring-match с нормализацией &nbsp;
+    kpi_substrings = [
+        "Объем жилищного строительства",
+        "Распроданность",
+        "Отношение",
+        "Стройготовность",
+    ]
+    for h5 in soup.find_all("h5"):
+        title = h5.get_text(strip=True).replace("\xa0", " ")
+        if not any(t in title for t in kpi_substrings):
             continue
-        prev_h2 = b.find_previous("h2")
-        section = prev_h2.get_text(strip=True) if prev_h2 else ""
-        out["buttons_with_data"].append({
-            "section": section,
-            "cells": [t.replace("\xa0", " ") for t in texts],
-        })
+        # Ближайший <p class="styles__Number-..."> после h5
+        wrapper = h5.find_parent()
+        if not wrapper:
+            continue
+        num_p = wrapper.find("p", class_=re.compile(r"styles__Number"))
+        unit_p = wrapper.find("p", class_=re.compile(r"styles__SquareMeters"))
+        if num_p:
+            out["kpi"].append({
+                "название": title,
+                "значение": num_p.get_text(strip=True).replace("\xa0", " "),
+                "единица": unit_p.get_text(strip=True) if unit_p else "",
+            })
 
-    if no_data_count >= 4 and not out["buttons_with_data"]:
-        out["empty"] = True
-        out["reason"] = f"страница показывает «Нет данных» × {no_data_count}"
-        out["raw_text_sample"] = page_text[:1500]
+    # === Таблицы: 6 штук с одинаковыми колонками, секцию определяем по первой
+    # строке (название первой строки уникально для каждой таблицы) ===
+    section_by_first_cell = {
+        "Центральный ФО": "Федеральные округа",
+        "Северо-Западный ФО": "Федеральные округа",
+        "Город Москва": "Регионы",
+        "Краснодарский край": "Регионы",
+        "Самолет": "Девелоперы",
+        "ПИК": "Девелоперы",
+        "до 10": "Объём строительства девелоперов",
+        "до 50 тыс.": "Населённые пункты по численности",
+        "Типовой": "Класс недвижимости",
+        "Стандарт": "Класс недвижимости",
+    }
+
+    tables = soup.find_all("table")
+    for t in tables:
+        rows = t.find_all("tr")
+        if len(rows) < 2:
+            continue
+        # Шапка — th
+        headers = [th.get_text(" ", strip=True).replace("\xa0", " ") for th in rows[0].find_all("th")]
+        # Данные
+        data_rows = []
+        first_cell = ""
+        for tr in rows[1:]:
+            tds = [td.get_text(strip=True).replace("\xa0", " ") for td in tr.find_all("td")]
+            if not tds:
+                continue
+            if not first_cell:
+                first_cell = tds[0]
+            row = {"наименование": tds[0]}
+            # headers[0] обычно пустой, остальные — метрики
+            for i, v in enumerate(tds[1:], 1):
+                col_name = headers[i] if i < len(headers) and headers[i] else f"col_{i}"
+                row[col_name] = v
+            data_rows.append(row)
+
+        # Определить секцию
+        section = None
+        for prefix, sec in section_by_first_cell.items():
+            if first_cell.startswith(prefix):
+                section = sec
+                break
+        if not section:
+            section = f"unknown ({first_cell[:30]})"
+        out["tables"][section] = data_rows
 
     return out
 
@@ -936,7 +1057,113 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
 
 
 def fetch_rasprodannost(state: dict) -> list[Path]:
-    return _scrape_table_source("rasprodannost", _build_rasprodannost_url(), state)
+    """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
+    kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
+    """
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    url = _build_rasprodannost_url()
+    print(f"  🌐 rasprodannost: {url}")
+
+    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    new_files: list[Path] = []
+    try:
+        driver.set_page_load_timeout(PAGE_TIMEOUT)
+        driver.get(url)
+        time.sleep(5)
+        try:
+            WebDriverWait(driver, 45).until(
+                lambda d: "данным на" in d.page_source or "<table" in d.page_source
+            )
+        except TimeoutException:
+            print(f"  ⚠️  rasprodannost: контент не появился за 45 сек")
+            _save_debug_snapshot(driver, "rasprodannost_no_content")
+            return []
+
+        _scroll_through_page(driver)
+        time.sleep(3)
+
+        debug_dir = DOWNLOAD_DIR.parent / "_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        (debug_dir / f"nashdom_rasprodannost_ok_{ts}.html").write_text(
+            driver.page_source, encoding="utf-8"
+        )
+
+        data = _parse_rasprodannost(driver.page_source, url)
+        data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
+        data["source"] = "rasprodannost"
+
+        date_str = datetime.now().strftime("%Y%m%d")
+        target_json = DOWNLOAD_DIR / f"rasprodannost_{date_str}.json"
+        target_json.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        if not data.get("tables") and not data.get("kpi"):
+            print(f"  ⚠️  rasprodannost: данных нет на странице")
+            new_files.append(target_json)
+            state["rasprodannost"] = {
+                "report_date": data.get("report_date", ""),
+                "report_period": data.get("report_period", ""),
+                "filename": target_json.name,
+                "has_content": False,
+            }
+            return new_files
+
+        # === xlsx с несколькими листами ===
+        try:
+            import pandas as pd
+        except ImportError:
+            print("  ⚠️  pandas не установлен — только json")
+            new_files.append(target_json)
+            return new_files
+
+        target_xlsx = DOWNLOAD_DIR / f"rasprodannost_{date_str}.xlsx"
+        with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
+            # KPI лист
+            if data.get("kpi"):
+                kpi_df = pd.DataFrame(data["kpi"])
+                kpi_df.insert(0, "report_date", data.get("report_date", ""))
+                kpi_df.insert(1, "report_period", data.get("report_period", ""))
+                kpi_df.to_excel(writer, sheet_name="kpi", index=False)
+            # По одному листу на таблицу
+            sheet_name_map = {
+                "Федеральные округа": "fed_okruga",
+                "Регионы": "regions",
+                "Девелоперы": "developers",
+                "Объём строительства девелоперов": "by_dev_volume",
+                "Населённые пункты по численности": "by_population",
+                "Класс недвижимости": "by_class",
+            }
+            for section, rows in (data.get("tables") or {}).items():
+                if not rows:
+                    continue
+                sname = sheet_name_map.get(section, section[:30])
+                df = pd.DataFrame(rows)
+                df.insert(0, "section", section)
+                df.insert(1, "report_period", data.get("report_period", ""))
+                df.to_excel(writer, sheet_name=sname, index=False)
+        sizes = {
+            "kpi": len(data.get("kpi") or []),
+            **{k: len(v) for k, v in (data.get("tables") or {}).items()},
+        }
+        print(f"  ✅ {target_xlsx.name}: {sizes}")
+        new_files.extend([target_xlsx, target_json])
+
+        state["rasprodannost"] = {
+            "report_date": data.get("report_date", ""),
+            "report_period": data.get("report_period", ""),
+            "filename": target_xlsx.name,
+            "has_content": True,
+        }
+    except WebDriverException as exc:
+        print(f"  ❌ rasprodannost: {exc}")
+    finally:
+        try:
+            driver.quit()
+        except Exception:  # noqa: BLE001
+            pass
+    return new_files
 
 
 

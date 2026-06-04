@@ -224,7 +224,7 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
 
 KVART_REGIONS = [
     {"key": "rf",  "label": "Российская Федерация", "search": "",       "click_label": "Российская Федерация"},
-    {"key": "msk", "label": "г.Москва",             "search": "Москва", "click_label": "г.Москва"},
+    {"key": "msk", "label": "Город Москва",          "search": "Москва", "click_label": "Город Москва"},
 ]
 
 

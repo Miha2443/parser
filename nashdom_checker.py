@@ -239,18 +239,42 @@ KVART_REGIONS = [
 ]
 
 
+def _color_to_room(bg: str) -> str:
+    """Маппит rgb/rgba цвет столбика гистограммы на тип комнат.
+
+    Цветовая схема наш.дом.рф (verified 04.06.2026):
+    - rgba(139, 197, 64) = #8BC540 green     → 1 комн
+    - rgba(78, 195, 224) = #4EC3E0 blue       → 2 комн
+    - rgba(7, 40, 51)    = #072833 dark navy → 3 комн
+    - rgb(228, 231, 232) = light gray         → 4+ комн
+    """
+    if not bg:
+        return ""
+    if "139, 197, 64" in bg:
+        return "1комн"
+    if "78, 195, 224" in bg:
+        return "2комн"
+    if "7, 40, 51" in bg:
+        return "3комн"
+    if "228, 231, 232" in bg:
+        return "4+комн"
+    return ""
+
+
 def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: float = 0.25) -> list[dict]:
     """Прокручивает виртуальный список div.list[list_index] и собирает все строки.
 
-    Скроллит ИНУТРИ div.list (контейнер с overflow:auto), даёт React
-    перерендерить window, ловит вновь появившиеся button.css-5nggi1,
-    дедуплицирует по имени. После каждого изменения scrollTop диспатчит
-    событие 'scroll' — на случай если React слушает событие, а не
-    реактивно реагирует на изменение свойства.
+    Для каждой строки извлекает:
+    - наименование (девелопер / регион)
+    - квартиры_тыс_шт (val1)
+    - площадь_тыс_м² (val2)
+    - доли по комнатности (1/2/3/4+ — % из histogram bars в sibling div.css-1r48qb0)
 
-    Останавливается:
-    - когда 3 шага подряд не дают новых имён, ИЛИ
-    - когда scrollTop достигает scrollHeight
+    Скроллит ИНУТРИ div.list (контейнер с overflow:auto). После scrollTop
+    диспатчит 'scroll' event для React-state.
+
+    Останавливается когда 3 шага подряд не дают новых имён, либо
+    scrollTop достигает scrollHeight.
     """
     height = driver.execute_script(
         f"const ls=document.querySelectorAll('div.list');"
@@ -259,7 +283,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     if not height:
         print(f"       ⚠️  scrollHeight=0, нет списка")
         return []
-    expected = max(1, height // 19)  # каждая строка ~19px
+    expected = max(1, height // 19)
     print(f"       inner scrollHeight={height}px (≈{expected} строк)")
 
     seen: dict[str, dict] = {}
@@ -280,24 +304,47 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
             f"if(!ls[{list_index}]) return [];"
             f"return [...ls[{list_index}].querySelectorAll('button.css-5nggi1')].map(b=>{{"
             f"  const divs=[...b.querySelectorAll(':scope > div')];"
-            f"  return {{"
+            f"  const result = {{"
             f"    name:(divs[0]?.innerText||'').trim(),"
             f"    val1:(divs[1]?.innerText||'').trim(),"
-            f"    val2:(divs[2]?.innerText||'').trim()"
+            f"    val2:(divs[2]?.innerText||'').trim(),"
+            f"    bars:[]"
             f"  }};"
+            f"  // Sibling div.css-1r48qb0 содержит histogram-бары"
+            f"  let sib = b.nextElementSibling;"
+            f"  while (sib && !(sib.classList && sib.classList.contains('css-1r48qb0'))) {{"
+            f"    sib = sib.nextElementSibling;"
+            f"  }}"
+            f"  if (sib) {{"
+            f"    for (const bar of sib.querySelectorAll('.css-1xdcykx')) {{"
+            f"      const style = bar.getAttribute('style') || '';"
+            f"      const flexM = style.match(/flex-basis:\\s*([\\d.]+)%/);"
+            f"      const bgM = style.match(/background:\\s*(rgb[a]?\\([^)]+\\))/);"
+            f"      if (flexM && bgM) {{"
+            f"        result.bars.push({{pct: flexM[1], color: bgM[1]}});"
+            f"      }}"
+            f"    }}"
+            f"  }}"
+            f"  return result;"
             f"}}).filter(r=>r.name);"
         )
         new_in_step = 0
         for r in rows:
             if r["name"] not in seen:
+                # Маппим bars → 4 столбца долей по комнатности
+                shares = {"доля_1комн_%": "", "доля_2комн_%": "", "доля_3комн_%": "", "доля_4+комн_%": ""}
+                for bar in r.get("bars", []):
+                    room = _color_to_room(bar.get("color", ""))
+                    if room:
+                        shares[f"доля_{room}_%"] = bar.get("pct", "")
                 seen[r["name"]] = {
                     "наименование": r["name"],
-                    "площадь_тыс_м²": r["val1"].replace("\xa0", " "),
-                    "количество_шт": r["val2"].replace("\xa0", " "),
+                    "квартиры_тыс_шт": r["val1"].replace("\xa0", " "),
+                    "площадь_тыс_м²": r["val2"].replace("\xa0", " "),
+                    **shares,
                 }
                 new_in_step += 1
         step_num += 1
-        # Прогресс каждые 20 шагов
         if step_num % 20 == 0:
             print(f"         · шаг {step_num}, pos={pos}/{height}, собрано {len(seen)}/{expected}")
         if new_in_step == 0:
@@ -463,92 +510,171 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     return new_files
 
 
+def _get_current_region_label(driver) -> str:
+    """Возвращает текущее значение фильтра «Регион» (текст в span.css-wjcl1w)."""
+    return driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
+        if (!p) return '';
+        let scope = p.parentElement;
+        for (let i = 0; i < 4 && scope; i++) {
+            const span = scope.querySelector('span.css-wjcl1w');
+            if (span) return span.innerText.trim();
+            scope = scope.parentElement;
+        }
+        return '';
+        """
+    ) or ""
+
+
 def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
     """Переключает фильтр «Федеральный округ / Регион» на target_label.
 
-    target_label — точный текст пункта в попапе (например «г.Москва»)
-    search_query — что вводим в строку поиска (например «Москва»)
+    Стратегия:
+    1. Запоминаем текущее значение фильтра.
+    2. Клик на span с этим значением (нативно через Selenium).
+    3. Ждём появления нового input (попап с поиском).
+    4. Selenium .send_keys() в input (нативный набор, триггерит React).
+    5. WebDriverWait до появления элемента с target_label.
+    6. Клик на target_label (нативно).
+    7. WebDriverWait пока текущий label фильтра не сменится на target.
     """
-    # 1) Найти и кликнуть триггер дропдауна
-    opened = driver.execute_script(
-        """
-        const visible = e => e.offsetParent !== null;
-        // <p>Федеральный округ / Регион</p> рядом с дропдауном
-        const p = [...document.querySelectorAll('p')].find(e =>
-            visible(e) && /федеральный\\s*округ/i.test(e.innerText || ''));
-        if (!p) return {clicked: false, reason: 'no <p>Федеральный округ</p>'};
-        // Триггер обычно — соседний div с tabindex="0"
-        let scope = p.parentElement;
-        for (let i = 0; i < 4 && scope; i++) {
-            const trigger = scope.querySelector('[tabindex="0"]');
-            if (trigger && visible(trigger)) {
-                trigger.scrollIntoView({block: 'center'});
-                trigger.click();
-                return {clicked: true, tag: trigger.tagName, html: trigger.outerHTML.substring(0, 200)};
-            }
-            scope = scope.parentElement;
-        }
-        return {clicked: false, reason: 'tabindex=0 not found'};
-        """
-    )
-    if not opened or not opened.get("clicked"):
-        print(f"       ⚠️  не открыл фильтр: {opened}")
+    current = _get_current_region_label(driver)
+    print(f"       · текущий регион: «{current}»")
+    if not current:
+        print(f"       ⚠️  не нашёл текущее значение фильтра")
         return False
-    print(f"       · триггер: {opened.get('tag')}")
-    time.sleep(2)
+    if current == target_label:
+        return True
 
-    # 2) Ввести в поиск (если указан query). Ищем input КОТОРЫЙ ПОЯВИЛСЯ
-    # после клика — берём последний видимый text/search input на странице.
-    if search_query:
-        typed = driver.execute_script(
-            """
-            const q = arguments[0];
-            const inputs = [...document.querySelectorAll('input')].filter(i =>
-                i.offsetParent !== null &&
-                ['text', 'search', ''].includes((i.type || '').toLowerCase()) &&
-                !i.readOnly
-            );
-            // Предпочитаем тот что появился вверху всех (попап обычно выше)
-            const inp = inputs[inputs.length - 1] || inputs[0];
-            if (!inp) return false;
-            inp.focus();
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            setter.call(inp, q);
-            inp.dispatchEvent(new Event('input', {bubbles: true}));
-            inp.dispatchEvent(new Event('change', {bubbles: true}));
-            return {ok: true, placeholder: inp.placeholder || '', name: inp.name || ''};
-            """,
-            search_query,
+    # 1) Запоминаем существующие inputs до клика — чтобы найти новый
+    existing_inputs = driver.execute_script(
+        "return [...document.querySelectorAll('input')].length;"
+    ) or 0
+
+    # 2) Клик на span с текущим регионом (Selenium native click)
+    try:
+        # Прямой XPath на span с нужным текстом, чтобы взять именно его
+        spans = driver.find_elements(
+            By.XPATH,
+            f"//span[contains(@class,'css-wjcl1w') and normalize-space(text())='{current}']",
         )
-        print(f"       · ввод в поиск '{search_query}': {typed}")
-        time.sleep(1.5)
-
-    # 3) Клик по target_label
-    clicked = driver.execute_script(
-        """
-        const target = arguments[0];
-        const visible = e => e.offsetParent !== null;
-        // Точное совпадение в видимых элементах
-        let el = [...document.querySelectorAll('div, span, li, button, a')]
-            .find(e => visible(e) && (e.innerText || '').trim() === target &&
-                  (e.innerText || '').length < 100);
-        // Fallback: contains
-        if (!el) {
-            el = [...document.querySelectorAll('div, span, li, button, a')]
-                .find(e => visible(e) &&
-                    (e.innerText || '').trim().toLowerCase().includes(target.toLowerCase()) &&
-                    (e.innerText || '').length < 80);
-        }
-        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return {ok: true, text: el.innerText.substring(0, 80)}; }
-        return {ok: false};
-        """,
-        target_label,
-    )
-    print(f"       · клик пункта '{target_label}': {clicked}")
-    if not clicked or not clicked.get("ok"):
+        clicked = False
+        for span in spans:
+            if span.is_displayed():
+                # Поднимаемся до tabindex=0 родителя для надёжного клика
+                trigger = driver.execute_script(
+                    "let el = arguments[0];"
+                    "for (let i = 0; i < 4; i++) {"
+                    "  if (!el) break;"
+                    "  if (el.getAttribute && el.getAttribute('tabindex') === '0') return el;"
+                    "  el = el.parentElement;"
+                    "}"
+                    "return arguments[0];",
+                    span,
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
+                time.sleep(0.5)
+                trigger.click()
+                clicked = True
+                print(f"       · клик на trigger ({trigger.tag_name})")
+                break
+        if not clicked:
+            print(f"       ⚠️  не нашёл span «{current}» для клика")
+            return False
+    except WebDriverException as exc:
+        print(f"       ⚠️  ошибка клика по триггеру: {exc}")
         return False
-    time.sleep(5)  # ждём перерендера данных
-    return True
+
+    # 3) Ждём появления нового input (попап рендерится после клика)
+    try:
+        WebDriverWait(driver, 8).until(
+            lambda d: d.execute_script(
+                "return [...document.querySelectorAll('input')].length;"
+            ) > existing_inputs
+        )
+    except TimeoutException:
+        print(f"       ⚠️  попап с input не появился")
+        _save_debug_snapshot(driver, "region_switch_no_popup")
+        return False
+
+    # 4) Найти НОВЫЙ видимый input и ввести запрос
+    search_input = None
+    candidates = driver.find_elements(By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])')
+    for inp in reversed(candidates):  # с конца — самые свежие
+        try:
+            if inp.is_displayed() and inp.is_enabled():
+                search_input = inp
+                break
+        except WebDriverException:
+            continue
+    if not search_input:
+        print(f"       ⚠️  не нашёл input для поиска")
+        return False
+    try:
+        search_input.click()
+        search_input.clear()
+        if search_query:
+            search_input.send_keys(search_query)
+            print(f"       · ввёл в поиск: '{search_query}'")
+        time.sleep(2)  # фильтр в попапе обновляется
+    except WebDriverException as exc:
+        print(f"       ⚠️  не смог ввести в поиск: {exc}")
+        return False
+
+    # 5) Ждём появления target_label в видимых элементах попапа
+    try:
+        WebDriverWait(driver, 8).until(
+            lambda d: d.execute_script(
+                """
+                const target = arguments[0];
+                return [...document.querySelectorAll('div,span,li,button,a')]
+                    .some(e => e.offsetParent !== null &&
+                        (e.innerText||'').trim() === target);
+                """,
+                target_label,
+            )
+        )
+    except TimeoutException:
+        print(f"       ⚠️  пункт «{target_label}» не появился в попапе")
+        _save_debug_snapshot(driver, f"region_switch_no_option_{target_label}")
+        return False
+
+    # 6) Клик на target_label через Selenium (без JS)
+    clicked = False
+    candidates = driver.find_elements(
+        By.XPATH,
+        f"//*[normalize-space(text())='{target_label}']",
+    )
+    for el in candidates:
+        try:
+            if el.is_displayed():
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.3)
+                el.click()
+                clicked = True
+                print(f"       · клик на «{target_label}» ({el.tag_name})")
+                break
+        except WebDriverException:
+            continue
+    if not clicked:
+        print(f"       ⚠️  не смог кликнуть «{target_label}»")
+        return False
+
+    # 7) Ждём пока фильтр действительно сменится на target_label
+    try:
+        WebDriverWait(driver, 15).until(
+            lambda d: _get_current_region_label(d) == target_label
+        )
+        print(f"       ✅ регион сменился на «{target_label}»")
+        time.sleep(3)  # даём данным дорендериться
+        return True
+    except TimeoutException:
+        actual = _get_current_region_label(driver)
+        print(f"       ⚠️  фильтр не сменился (текущий: «{actual}»)")
+        _save_debug_snapshot(driver, "region_switch_no_change")
+        return False
 
 
 def _parse_kvartirografia(html: str, url: str) -> dict:

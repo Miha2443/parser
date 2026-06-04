@@ -233,6 +233,153 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
     time.sleep(0.5)
 
 
+def _scroll_collect_list(driver, list_index: int, *, step_px: int = 200, pause: float = 0.4) -> list[dict]:
+    """Прокручивает виртуальный список div.list[list_index] и собирает все строки.
+
+    Каждая строка имеет позицию `top: Kpx` (абсолютная), и Angular
+    рендерит только видимое окно (~17 строк за раз). При смене scrollTop
+    в DOM появляются новые row-узлы. Дедуплицируем по имени.
+
+    list_index: 0 — список девелоперов, 1 — список регионов
+    (порядок div.list на странице квартирографии).
+    """
+    height = driver.execute_script(
+        f"const ls=document.querySelectorAll('div.list');"
+        f"return ls[{list_index}] ? ls[{list_index}].scrollHeight : 0;"
+    )
+    if not height:
+        return []
+    print(f"       inner scrollHeight: {height}px")
+
+    seen: dict[str, dict] = {}
+    pos = 0
+    no_progress = 0
+    while pos < height + step_px:
+        driver.execute_script(
+            f"const ls=document.querySelectorAll('div.list');"
+            f"if(ls[{list_index}]) ls[{list_index}].scrollTop={pos};"
+        )
+        time.sleep(pause)
+        rows = driver.execute_script(
+            f"const ls=document.querySelectorAll('div.list');"
+            f"if(!ls[{list_index}]) return [];"
+            f"return [...ls[{list_index}].querySelectorAll('button.css-5nggi1')].map(b=>{{"
+            f"  const divs=[...b.querySelectorAll(':scope > div')];"
+            f"  return {{"
+            f"    name:(divs[0]?.innerText||'').trim(),"
+            f"    val1:(divs[1]?.innerText||'').trim(),"
+            f"    val2:(divs[2]?.innerText||'').trim()"
+            f"  }};"
+            f"}}).filter(r=>r.name);"
+        )
+        new_in_step = 0
+        for r in rows:
+            if r["name"] not in seen:
+                seen[r["name"]] = {
+                    "наименование": r["name"],
+                    "площадь_тыс_м²": r["val1"].replace("\xa0", " "),
+                    "количество_шт": r["val2"].replace("\xa0", " "),
+                }
+                new_in_step += 1
+        if new_in_step == 0:
+            no_progress += 1
+            if no_progress >= 3:
+                break
+        else:
+            no_progress = 0
+        pos += step_px
+
+    return list(seen.values())
+
+
+def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
+    """Переключает фильтр «Федеральный округ / Регион» на target_label.
+
+    target_label — точный текст пункта в попапе (например «г.Москва»)
+    search_query — что вводим в строку поиска (например «Москва»)
+    """
+    # 1) Найти и кликнуть триггер дропдауна
+    opened = driver.execute_script(
+        """
+        const visible = e => e.offsetParent !== null;
+        // <p>Федеральный округ / Регион</p> рядом с дропдауном
+        const p = [...document.querySelectorAll('p')].find(e =>
+            visible(e) && /федеральный\\s*округ/i.test(e.innerText || ''));
+        if (!p) return {clicked: false, reason: 'no <p>Федеральный округ</p>'};
+        // Триггер обычно — соседний div с tabindex="0"
+        let scope = p.parentElement;
+        for (let i = 0; i < 4 && scope; i++) {
+            const trigger = scope.querySelector('[tabindex="0"]');
+            if (trigger && visible(trigger)) {
+                trigger.scrollIntoView({block: 'center'});
+                trigger.click();
+                return {clicked: true, tag: trigger.tagName, html: trigger.outerHTML.substring(0, 200)};
+            }
+            scope = scope.parentElement;
+        }
+        return {clicked: false, reason: 'tabindex=0 not found'};
+        """
+    )
+    if not opened or not opened.get("clicked"):
+        print(f"       ⚠️  не открыл фильтр: {opened}")
+        return False
+    print(f"       · триггер: {opened.get('tag')}")
+    time.sleep(2)
+
+    # 2) Ввести в поиск (если указан query). Ищем input КОТОРЫЙ ПОЯВИЛСЯ
+    # после клика — берём последний видимый text/search input на странице.
+    if search_query:
+        typed = driver.execute_script(
+            """
+            const q = arguments[0];
+            const inputs = [...document.querySelectorAll('input')].filter(i =>
+                i.offsetParent !== null &&
+                ['text', 'search', ''].includes((i.type || '').toLowerCase()) &&
+                !i.readOnly
+            );
+            // Предпочитаем тот что появился вверху всех (попап обычно выше)
+            const inp = inputs[inputs.length - 1] || inputs[0];
+            if (!inp) return false;
+            inp.focus();
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(inp, q);
+            inp.dispatchEvent(new Event('input', {bubbles: true}));
+            inp.dispatchEvent(new Event('change', {bubbles: true}));
+            return {ok: true, placeholder: inp.placeholder || '', name: inp.name || ''};
+            """,
+            search_query,
+        )
+        print(f"       · ввод в поиск '{search_query}': {typed}")
+        time.sleep(1.5)
+
+    # 3) Клик по target_label
+    clicked = driver.execute_script(
+        """
+        const target = arguments[0];
+        const visible = e => e.offsetParent !== null;
+        // Точное совпадение в видимых элементах
+        let el = [...document.querySelectorAll('div, span, li, button, a')]
+            .find(e => visible(e) && (e.innerText || '').trim() === target &&
+                  (e.innerText || '').length < 100);
+        // Fallback: contains
+        if (!el) {
+            el = [...document.querySelectorAll('div, span, li, button, a')]
+                .find(e => visible(e) &&
+                    (e.innerText || '').trim().toLowerCase().includes(target.toLowerCase()) &&
+                    (e.innerText || '').length < 80);
+        }
+        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return {ok: true, text: el.innerText.substring(0, 80)}; }
+        return {ok: false};
+        """,
+        target_label,
+    )
+    print(f"       · клик пункта '{target_label}': {clicked}")
+    if not clicked or not clicked.get("ok"):
+        return False
+    time.sleep(5)  # ждём перерендера данных
+    return True
+
+
 def _parse_kvartirografia(html: str, url: str) -> dict:
     """Парсер квартирографии (наш.дом.рф/аналитика/квартирография).
 
@@ -568,17 +715,14 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
 
 
 KVART_REGIONS = [
-    {"key": "rf",  "label": "Российская Федерация", "filter_query": ""},
-    {"key": "msk", "label": "г.Москва",             "filter_query": "Москва"},
+    {"key": "rf",  "label": "Российская Федерация", "search": "",       "click_label": "Российская Федерация"},
+    {"key": "msk", "label": "г.Москва",             "search": "Москва", "click_label": "г.Москва"},
 ]
 
 
 def fetch_kvartirografia(state: dict) -> list[Path]:
-    """Квартирография по 2 регионам (РФ + Москва) с полным разбором:
-    типы квартир + распределение площади + по девелоперам + по регионам.
-
-    Результат — единый xlsx с листами apartments/distribution/developers/regions
-    (с колонкой `region` для разделения данных РФ vs Москва).
+    """Квартирография по 2 регионам (РФ + Москва) с inner-scroll по
+    девелоперам и регионам (виртуальные списки).
     """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = _build_kvartirografia_url()
@@ -598,34 +742,44 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
             print(f"  ⚠️  контент не появился за 45 сек")
             _save_debug_snapshot(driver, "kvartirografia_no_content")
             return []
-        time.sleep(2)
-        _scroll_through_page(driver)
-        time.sleep(2)
+        time.sleep(3)
 
         for region in KVART_REGIONS:
-            print(f"     · регион: {region['key']} ({region['label']})")
-            if region["filter_query"]:
-                ok = _switch_region_filter(driver, region["filter_query"])
+            print(f"     ── регион: {region['key']} ({region['label']})")
+            if region["search"]:
+                # переключаем фильтр на Москву
+                ok = _switch_region_filter(
+                    driver,
+                    target_label=region["click_label"],
+                    search_query=region["search"],
+                )
                 if not ok:
                     print(f"       ⚠️  не удалось переключить регион")
                     _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
                     continue
-                _scroll_through_page(driver)
-                time.sleep(2)
 
+            # Парсим статичную часть (apartments + distribution + region label + date)
             data = _parse_kvartirografia(driver.page_source, driver.current_url)
+            data["region_key"] = region["key"]
+
+            # Inner-scroll по двум виртуальным спискам (девелоперы + регионы).
+            # На странице div.list появляется два раза в этом порядке.
+            print(f"       devs (виртуальный список 0):")
+            data["developers"] = _scroll_collect_list(driver, list_index=0)
+            print(f"         собрано: {len(data['developers'])}")
+            print(f"       regions (виртуальный список 1):")
+            data["regions"] = _scroll_collect_list(driver, list_index=1)
+            print(f"         собрано: {len(data['regions'])}")
+
             print(
-                f"       apartments={len(data['apartments'])}, "
+                f"       · apartments={len(data['apartments'])}, "
                 f"distribution={len(data['distribution'])}, "
-                f"developers={len(data['developers'])}, "
-                f"regions={len(data['regions'])}"
+                f"devs={len(data['developers'])}, regs={len(data['regions'])}"
             )
 
-            # Снэпшот первого региона
-            if not any(d.get("region_key") == region["key"] for d in all_data):
-                _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
+            # Снэпшот первого захода каждого региона
+            _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
 
-            data["region_key"] = region["key"]
             all_data.append(data)
     except WebDriverException as exc:
         print(f"  ❌ {exc}")
@@ -635,7 +789,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     if not all_data:
         return []
 
-    # Записываем xlsx с 4 листами + raw json для аудита
+    # Записываем xlsx с 4 листами + raw json
     new_files: list[Path] = []
     date_str = datetime.now().strftime("%Y%m%d")
 
@@ -678,7 +832,6 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     print(f"     developers: {len(developers_rows)}, regions: {len(regions_rows)}")
     new_files.append(target_xlsx)
 
-    # raw json — для аудита и дебага
     target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
     target_json.write_text(json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8")
     new_files.append(target_json)

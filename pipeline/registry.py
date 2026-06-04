@@ -169,7 +169,7 @@ INDICATORS: list[Indicator] = [
         source="nashdom",
         source_ids=["kvartirografia"],
         parser="nashdom_kvartirografia",
-        file_patterns=["realty/nashdom/kvartirografia_*.json"],
+        file_patterns=["realty/nashdom/kvartirografia_*.xlsx"],
         page="",
         description="наш.дом.рф/аналитика/квартирография-новостроек. DOM-скрейп, 5 классов, ТОП-100+Все.",
     ),

@@ -91,16 +91,22 @@ def _parse_russian_date(text: str) -> str:
 
 
 def _build_rasprodannost_url() -> str:
-    # repYear/repMonth = предыдущий месяц от сегодня (свежие данные).
+    """repYear/repMonth — пред-предыдущий месяц.
+
+    Логика: данные за месяц публикуются с задержкой. У пользователя
+    «текущий» запрос — апрель 2026 (хотя сегодня июнь). Поэтому берём
+    -2 месяца от сегодня.
+    """
     today = datetime.now()
-    if today.month == 1:
-        rep_year, rep_month = today.year - 1, 12
-    else:
-        rep_year, rep_month = today.year, today.month - 1
+    month = today.month - 2
+    year = today.year
+    if month < 1:
+        month += 12
+        year -= 1
     path = quote(RASPRODANNOST_PATH)
     return (
         f"{NASHDOM_BASE}/{path}"
-        f"?repYear={rep_year}&repMonth={rep_month}&foCd=all&regionCd=all"
+        f"?repYear={year}&repMonth={month}&foCd=all&regionCd=all"
     )
 
 
@@ -230,10 +236,15 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
 def _parse_kvartirografia(html: str, url: str) -> dict:
     """Парсер квартирографии (наш.дом.рф/аналитика/квартирография).
 
-    Берёт:
+    Извлекает:
     - report_date из «Отчёт по данным на 3 июня 2026 года»
-    - apartments — кнопки с data-rooms (ONE/TWO/THREE/FOUR) + кнопка «Все квартиры»
+    - region из фильтра «Федеральный округ / Регион»
+    - apartments — кнопки data-rooms + кнопка «Все квартиры»
     - distribution — гистограмма «Распределение квартир по площади» (data-id)
+    - developers — «Объём строительства по девелоперам» (button.css-5nggi1
+      после h2 «по девелоперам»)
+    - regions — «Объём строительства по регионам» (button.css-5nggi1
+      после h2 «по регионам»)
     """
     try:
         from bs4 import BeautifulSoup
@@ -246,38 +257,37 @@ def _parse_kvartirografia(html: str, url: str) -> dict:
         "region": "",
         "apartments": [],
         "distribution": [],
+        "developers": [],
+        "regions": [],
         "url": url,
     }
 
     page_text = soup.get_text(" ", strip=True)
     out["report_date"] = _parse_russian_date(page_text)
-    if "Российская Федерация" in page_text:
+
+    # Регион из активного фильтра
+    region_p = soup.find("p", string=re.compile(r"Федеральный округ\s*/\s*Регион"))
+    if region_p and region_p.parent:
+        span = region_p.parent.find("span")
+        if span:
+            out["region"] = span.get_text(strip=True)
+    if not out["region"] and "Российская Федерация" in page_text:
         out["region"] = "Российская Федерация"
 
-    # apartments
+    # apartments (типы квартир)
     type_btns = soup.find_all("button", attrs={"data-rooms": True})
-    all_btn = None
     if type_btns:
         for b in type_btns[0].parent.find_all("button"):
             if "Все квартиры" in b.get_text():
-                all_btn = b
+                divs = b.find_all("div", recursive=False)
+                texts = [d.get_text(strip=True) for d in divs]
+                if len(texts) >= 3:
+                    out["apartments"].append({
+                        "тип": "Все квартиры",
+                        "количество_шт": texts[1].replace("\xa0", " "),
+                        "площадь_тыс_м²": texts[2].replace("\xa0", " "),
+                    })
                 break
-
-    def parse_row(btn, room_type):
-        divs = btn.find_all("div", recursive=False)
-        texts = [d.get_text(strip=True) for d in divs]
-        if len(texts) >= 3:
-            return {
-                "тип": room_type or texts[0],
-                "количество_шт": texts[1].replace("\xa0", " "),
-                "площадь_тыс_м²": texts[2].replace("\xa0", " "),
-            }
-        return None
-
-    if all_btn:
-        row = parse_row(all_btn, "Все квартиры")
-        if row:
-            out["apartments"].append(row)
     for b in type_btns:
         label = {
             "ONE": "1 комнатные",
@@ -285,37 +295,142 @@ def _parse_kvartirografia(html: str, url: str) -> dict:
             "THREE": "3 комнатные",
             "FOUR": "4+ комнатные",
         }.get(b.get("data-rooms"), b.get("data-rooms"))
-        row = parse_row(b, label)
-        if row:
-            out["apartments"].append(row)
+        divs = b.find_all("div", recursive=False)
+        texts = [d.get_text(strip=True) for d in divs]
+        if len(texts) >= 3:
+            out["apartments"].append({
+                "тип": label,
+                "количество_шт": texts[1].replace("\xa0", " "),
+                "площадь_тыс_м²": texts[2].replace("\xa0", " "),
+            })
 
-    # distribution (только уникальные data-id)
+    # distribution (гистограмма)
     seen_ids = set()
     for b in soup.find_all("button", attrs={"data-id": True}):
         did = b.get("data-id", "")
         if did in seen_ids:
             continue
-        m = re.match(r"FROM_(\d+)_TO_(\d+)", did)
-        if m:
-            label = f"{m.group(1)}-{m.group(2)} м²"
+        mm = re.match(r"FROM_(\d+)_TO_(\d+)", did)
+        if mm:
+            label = f"{mm.group(1)}-{mm.group(2)} м²"
         else:
             mm = re.match(r"FROM_(\d+)$", did) or re.match(r"MORE_(\d+)", did)
             label = f"более {mm.group(1)} м²" if mm else did
         first_span = b.find("span")
         percent = first_span.get_text(strip=True) if first_span else ""
-        if percent:  # пустые проигнорируем
+        if percent:
             out["distribution"].append({"диапазон": label, "доля": percent})
             seen_ids.add(did)
 
+    # developers + regions — определяем секцию по ближайшему предыдущему h2
+    for b in soup.find_all("button", class_="css-5nggi1"):
+        divs = b.find_all("div", recursive=False)
+        texts = [d.get_text(strip=True) for d in divs]
+        if len(texts) < 3:
+            continue
+        prev_h2 = b.find_previous("h2")
+        h2_text = prev_h2.get_text(strip=True) if prev_h2 else ""
+        row = {
+            "наименование": texts[0],
+            "площадь_тыс_м²": texts[1].replace("\xa0", " "),
+            "количество_шт": texts[2].replace("\xa0", " "),
+        }
+        if "по девелоперам" in h2_text:
+            out["developers"].append(row)
+        elif "по регионам" in h2_text:
+            out["regions"].append(row)
+
     return out
+
+
+def _switch_region_filter(driver, target_region: str) -> bool:
+    """Кликает дропдаун «Федеральный округ / Регион», выбирает регион.
+
+    target_region — текст для поиска в попапе (например «г.Москва»,
+    «Российская Федерация»).
+    """
+    # 1) Клик по дропдауну с текущим регионом
+    opened = driver.execute_script(
+        """
+        const visible = e => e.offsetParent !== null;
+        // Ищем <p>Федеральный округ / Регион</p>, поднимаемся к контейнеру
+        const labels = [...document.querySelectorAll('p')].filter(p =>
+            visible(p) && /федеральный\\s*округ/i.test(p.innerText || ''));
+        if (!labels.length) return null;
+        const labelP = labels[0];
+        // Парент labelP содержит дропдаун-кнопку
+        let cont = labelP.parentElement;
+        for (let i = 0; i < 3 && cont; i++) {
+            const btn = cont.querySelector('[tabindex="0"]');
+            if (btn && visible(btn)) {
+                btn.scrollIntoView({block: 'center'});
+                btn.click();
+                return {clicked: true};
+            }
+            cont = cont.parentElement;
+        }
+        return null;
+        """
+    )
+    if not opened:
+        return False
+    time.sleep(1.5)
+
+    # 2) В попапе ищем поиск и/или клик по нужному варианту
+    typed = False
+    if target_region:
+        for css in [
+            'input[placeholder*="оиск" i]',
+            'input[placeholder*="егион" i]',
+            'input[type="search"]',
+            'input[type="text"]:not([readonly])',
+        ]:
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, css)
+                for el in els:
+                    if el.is_displayed():
+                        el.clear()
+                        el.send_keys(target_region.replace("г.", "").strip())
+                        typed = True
+                        break
+                if typed:
+                    break
+            except WebDriverException:
+                continue
+        time.sleep(1.5)
+
+    # 3) Кликаем нужный вариант (точное совпадение → contains)
+    clicked = driver.execute_script(
+        """
+        const target = arguments[0];
+        const visible = e => e.offsetParent !== null;
+        // Точное совпадение
+        let el = [...document.querySelectorAll('div, span, li, button')]
+            .find(e => visible(e) && (e.innerText || '').trim() === target);
+        // Fallback: contains
+        if (!el) {
+            el = [...document.querySelectorAll('div, span, li, button')]
+                .find(e => visible(e) &&
+                    (e.innerText || '').trim().toLowerCase().includes(target.toLowerCase()) &&
+                    (e.innerText || '').length < 80);
+        }
+        if (el) { el.scrollIntoView({block: 'center'}); el.click(); return true; }
+        return false;
+        """,
+        target_region,
+    )
+    if not clicked:
+        return False
+    time.sleep(4)  # ждём ребилда данных
+    return True
 
 
 def _parse_rasprodannost(html: str, url: str) -> dict:
     """Парсер распроданности (наш.дом.рф/аналитика/распроданность-стройготовность).
 
-    На этой странице структура может отличаться. Сейчас собираем максимум
-    общих данных: дата + регион + любые видимые таблицы (через div-grid
-    или через подсчёт kombинатов кнопок).
+    Структура такая же, как у квартирографии — div-сетка. Для тех месяцев,
+    где данных нет, в HTML стоит «Нет данных» во всех блоках. Парсер
+    распознаёт это и возвращает empty=True.
     """
     try:
         from bs4 import BeautifulSoup
@@ -326,25 +441,30 @@ def _parse_rasprodannost(html: str, url: str) -> dict:
     out: dict = {
         "report_date": "",
         "region": "",
-        "raw_text_sample": "",
-        "buttons_with_data": [],
         "url": url,
+        "empty": False,
     }
     page_text = soup.get_text(" ", strip=True)
     out["report_date"] = _parse_russian_date(page_text)
     if "Российская Федерация" in page_text:
         out["region"] = "Российская Федерация"
 
-    # Берём первый ~1500 символов текста — пригодится для разбора структуры
-    out["raw_text_sample"] = page_text[:1500]
+    # Эвристика «нет данных»: страница многократно содержит «Нет данных»
+    no_data_count = page_text.count("Нет данных")
+    if no_data_count >= 4:
+        out["empty"] = True
+        out["reason"] = f"страница показывает «Нет данных» × {no_data_count}"
+        return out
 
-    # Любые кнопки с data-* атрибутами (часто = строки div-grid)
-    for b in soup.find_all("button", attrs={"data-rooms": True}):
+    # TODO: когда период с данными — расширить. Пока best-effort через
+    # тот же CSS-селектор кнопок что в kvartirografia.
+    out["buttons_with_data"] = []
+    for b in soup.find_all("button", class_="css-5nggi1"):
         divs = b.find_all("div", recursive=False)
         texts = [d.get_text(strip=True) for d in divs]
+        prev_h2 = b.find_previous("h2")
         out["buttons_with_data"].append({
-            "type": "data-rooms",
-            "key": b.get("data-rooms"),
+            "section": prev_h2.get_text(strip=True) if prev_h2 else "",
             "cells": texts,
         })
 
@@ -447,8 +567,128 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
     return _scrape_table_source("rasprodannost", _build_rasprodannost_url(), state)
 
 
+KVART_REGIONS = [
+    {"key": "rf",  "label": "Российская Федерация", "filter_query": ""},
+    {"key": "msk", "label": "г.Москва",             "filter_query": "Москва"},
+]
+
+
 def fetch_kvartirografia(state: dict) -> list[Path]:
-    return _scrape_table_source("kvartirografia", _build_kvartirografia_url(), state)
+    """Квартирография по 2 регионам (РФ + Москва) с полным разбором:
+    типы квартир + распределение площади + по девелоперам + по регионам.
+
+    Результат — единый xlsx с листами apartments/distribution/developers/regions
+    (с колонкой `region` для разделения данных РФ vs Москва).
+    """
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    url = _build_kvartirografia_url()
+    print(f"  🌐 kvartirografia: {url}")
+
+    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    all_data: list[dict] = []
+    try:
+        driver.set_page_load_timeout(PAGE_TIMEOUT)
+        driver.get(url)
+        time.sleep(6)
+        try:
+            WebDriverWait(driver, 45).until(
+                lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+            )
+        except TimeoutException:
+            print(f"  ⚠️  контент не появился за 45 сек")
+            _save_debug_snapshot(driver, "kvartirografia_no_content")
+            return []
+        time.sleep(2)
+        _scroll_through_page(driver)
+        time.sleep(2)
+
+        for region in KVART_REGIONS:
+            print(f"     · регион: {region['key']} ({region['label']})")
+            if region["filter_query"]:
+                ok = _switch_region_filter(driver, region["filter_query"])
+                if not ok:
+                    print(f"       ⚠️  не удалось переключить регион")
+                    _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
+                    continue
+                _scroll_through_page(driver)
+                time.sleep(2)
+
+            data = _parse_kvartirografia(driver.page_source, driver.current_url)
+            print(
+                f"       apartments={len(data['apartments'])}, "
+                f"distribution={len(data['distribution'])}, "
+                f"developers={len(data['developers'])}, "
+                f"regions={len(data['regions'])}"
+            )
+
+            # Снэпшот первого региона
+            if not any(d.get("region_key") == region["key"] for d in all_data):
+                _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
+
+            data["region_key"] = region["key"]
+            all_data.append(data)
+    except WebDriverException as exc:
+        print(f"  ❌ {exc}")
+    finally:
+        driver.quit()
+
+    if not all_data:
+        return []
+
+    # Записываем xlsx с 4 листами + raw json для аудита
+    new_files: list[Path] = []
+    date_str = datetime.now().strftime("%Y%m%d")
+
+    try:
+        import pandas as pd
+    except ImportError:
+        print("  ⚠️  pandas не установлен — сохраняю только json")
+        target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
+        target_json.write_text(json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return [target_json]
+
+    apartments_rows, distribution_rows = [], []
+    developers_rows, regions_rows = [], []
+
+    for data in all_data:
+        rk = data.get("region_key")
+        rl = data.get("region", "")
+        rd = data.get("report_date", "")
+        for a in data.get("apartments", []):
+            apartments_rows.append({"region_key": rk, "region": rl, "report_date": rd, **a})
+        for d in data.get("distribution", []):
+            distribution_rows.append({"region_key": rk, "region": rl, "report_date": rd, **d})
+        for dev in data.get("developers", []):
+            developers_rows.append({"region_key": rk, "region": rl, "report_date": rd, **dev})
+        for reg in data.get("regions", []):
+            regions_rows.append({"region_key": rk, "region": rl, "report_date": rd, **reg})
+
+    target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
+    with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
+        if apartments_rows:
+            pd.DataFrame(apartments_rows).to_excel(writer, sheet_name="apartments", index=False)
+        if distribution_rows:
+            pd.DataFrame(distribution_rows).to_excel(writer, sheet_name="distribution", index=False)
+        if developers_rows:
+            pd.DataFrame(developers_rows).to_excel(writer, sheet_name="developers", index=False)
+        if regions_rows:
+            pd.DataFrame(regions_rows).to_excel(writer, sheet_name="regions", index=False)
+    print(f"  ✅ {target_xlsx.name}")
+    print(f"     apartments: {len(apartments_rows)}, distribution: {len(distribution_rows)},")
+    print(f"     developers: {len(developers_rows)}, regions: {len(regions_rows)}")
+    new_files.append(target_xlsx)
+
+    # raw json — для аудита и дебага
+    target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
+    target_json.write_text(json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    new_files.append(target_json)
+
+    state["kvartirografia"] = {
+        "scraped_at": datetime.now().isoformat(timespec="seconds"),
+        "regions": [r["key"] for r in KVART_REGIONS],
+        "file": target_xlsx.name,
+    }
+    return new_files
 
 
 # ─────────────────────────────────────────────

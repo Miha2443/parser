@@ -91,23 +91,12 @@ def _parse_russian_date(text: str) -> str:
 
 
 def _build_rasprodannost_url() -> str:
-    """repYear/repMonth — пред-предыдущий месяц.
-
-    Логика: данные за месяц публикуются с задержкой. У пользователя
-    «текущий» запрос — апрель 2026 (хотя сегодня июнь). Поэтому берём
-    -2 месяца от сегодня.
+    """Распроданность — URL без query-параметров. Страница сама подберёт
+    свежий отчётный период (фиксированные repMonth/repYear ломали запрос:
+    страница показывала «Нет данных» даже для давно опубликованных периодов).
     """
-    today = datetime.now()
-    month = today.month - 2
-    year = today.year
-    if month < 1:
-        month += 12
-        year -= 1
     path = quote(RASPRODANNOST_PATH)
-    return (
-        f"{NASHDOM_BASE}/{path}"
-        f"?repYear={year}&repMonth={month}&foCd=all&regionCd=all"
-    )
+    return f"{NASHDOM_BASE}/{path}"
 
 
 def _build_kvartirografia_url() -> str:
@@ -802,9 +791,15 @@ def _parse_kvartirografia(html: str, url: str) -> dict:
 def _parse_rasprodannost(html: str, url: str) -> dict:
     """Парсер распроданности (наш.дом.рф/аналитика/распроданность-стройготовность).
 
-    Структура такая же, как у квартирографии — div-сетка. Для тех месяцев,
-    где данных нет, в HTML стоит «Нет данных» во всех блоках. Парсер
-    распознаёт это и возвращает empty=True.
+    Структура аналогична квартирографии — div-сетка с button.css-5nggi1
+    в виртуальных списках. На странице 5 секций:
+    «Федеральные округа / Регионы / Девелоперы /
+     Объём строительства девелоперов / Населённые пункты по численности».
+    Каждая строка имеет: наименование + Объём жил. строительства +
+    Распроданность + Стройготовность + Отношение Р/С.
+
+    Если данных нет (страница показывает «Нет данных» N+ раз),
+    возвращает empty=True и raw_text_sample.
     """
     try:
         from bs4 import BeautifulSoup
@@ -817,30 +812,33 @@ def _parse_rasprodannost(html: str, url: str) -> dict:
         "region": "",
         "url": url,
         "empty": False,
+        "buttons_with_data": [],
     }
     page_text = soup.get_text(" ", strip=True)
     out["report_date"] = _parse_russian_date(page_text)
     if "Российская Федерация" in page_text:
         out["region"] = "Российская Федерация"
 
-    # Эвристика «нет данных»: страница многократно содержит «Нет данных»
     no_data_count = page_text.count("Нет данных")
-    if no_data_count >= 4:
-        out["empty"] = True
-        out["reason"] = f"страница показывает «Нет данных» × {no_data_count}"
-        return out
+    btns = soup.find_all("button", class_="css-5nggi1")
 
-    # TODO: когда период с данными — расширить. Пока best-effort через
-    # тот же CSS-селектор кнопок что в kvartirografia.
-    out["buttons_with_data"] = []
-    for b in soup.find_all("button", class_="css-5nggi1"):
+    # Любые строки .css-5nggi1 (если есть на странице)
+    for b in btns:
         divs = b.find_all("div", recursive=False)
         texts = [d.get_text(strip=True) for d in divs]
+        if not texts or not texts[0]:
+            continue
         prev_h2 = b.find_previous("h2")
+        section = prev_h2.get_text(strip=True) if prev_h2 else ""
         out["buttons_with_data"].append({
-            "section": prev_h2.get_text(strip=True) if prev_h2 else "",
-            "cells": texts,
+            "section": section,
+            "cells": [t.replace("\xa0", " ") for t in texts],
         })
+
+    if no_data_count >= 4 and not out["buttons_with_data"]:
+        out["empty"] = True
+        out["reason"] = f"страница показывает «Нет данных» × {no_data_count}"
+        out["raw_text_sample"] = page_text[:1500]
 
     return out
 

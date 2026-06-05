@@ -605,18 +605,20 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  ошибка клика триггера: {exc}")
         return False
 
-    # 2) Ждём появления нового input
-    existing_inputs = driver.execute_script(
-        "return [...document.querySelectorAll('input')].length;"
+    # 2) Ждём появления нового ВИДИМОГО input (поп-ап рендерит search-input).
+    # Считаем именно offsetParent!==null inputs, потому что popup-search
+    # часто пре-рендерится скрытым в DOM и общий count не меняется.
+    existing_visible = driver.execute_script(
+        "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
     ) or 0
     try:
-        WebDriverWait(driver, 8).until(
+        WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
-                "return [...document.querySelectorAll('input')].length;"
-            ) > existing_inputs
+                "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
+            ) > existing_visible
         )
     except TimeoutException:
-        print(f"       ⚠️  попап (input) не появился")
+        print(f"       ⚠️  попап (видимый input) не появился")
         _save_debug_snapshot(driver, "region_switch_no_popup")
         return False
 
@@ -1103,15 +1105,15 @@ def _switch_region_rasprodannost(
         print(f"       ⚠️  не нашёл триггер региона: {exc}")
         return False
 
-    # 2) Ждём появления input
-    existing_inputs = driver.execute_script(
-        "return [...document.querySelectorAll('input')].length;"
+    # 2) Ждём появления нового ВИДИМОГО input (попап с поиском).
+    existing_visible = driver.execute_script(
+        "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
     ) or 0
     try:
-        WebDriverWait(driver, 8).until(
+        WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
-                "return [...document.querySelectorAll('input')].length;"
-            ) > existing_inputs
+                "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
+            ) > existing_visible
         )
     except TimeoutException:
         print(f"       ⚠️  попап не появился")

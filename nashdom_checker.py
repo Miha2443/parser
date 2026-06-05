@@ -1226,6 +1226,201 @@ RASPROD_REGIONS = [
 ]
 
 
+# ─────────────────────────────────────────────
+# Дата-пикер распроданности
+# ─────────────────────────────────────────────
+
+RUS_MONTHS_LIST = ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"]
+RUS_MONTHS_FULL = {
+    "Январь":1, "Февраль":2, "Март":3, "Апрель":4, "Май":5, "Июнь":6,
+    "Июль":7, "Август":8, "Сентябрь":9, "Октябрь":10, "Ноябрь":11, "Декабрь":12,
+}
+
+
+def _get_rasprod_current_period(driver) -> str:
+    """Текущий период из триггера дата-пикера (например «Апрель 2026»)."""
+    return driver.execute_script(
+        """
+        const el = document.querySelector(
+            '.styles__SelectWrapper-sc-9f1fzk-2 .styles__Value-sc-9f1fzk-0');
+        return el ? el.innerText.trim() : '';
+        """
+    ) or ""
+
+
+def _open_date_picker(driver) -> bool:
+    """Кликает на триггер дата-пикера. Возвращает True если YearPicker появился."""
+    try:
+        ok = driver.execute_script(
+            """
+            const tr = document.querySelector('.styles__SelectWrapper-sc-9f1fzk-2');
+            if (!tr) return false;
+            tr.click();
+            return true;
+            """
+        )
+        if not ok:
+            return False
+        WebDriverWait(driver, 5).until(
+            lambda d: d.execute_script(
+                "return !!document.querySelector('.styles__YearPicker-sc-1cm0se8-3');"
+            )
+        )
+        return True
+    except (TimeoutException, WebDriverException):
+        return False
+
+
+def _get_calendar_year(driver) -> int:
+    """Год в открытом календарном попапе. 0 если попап закрыт."""
+    return int(driver.execute_script(
+        """
+        const el = document.querySelector(
+            '.styles__YearPicker-sc-1cm0se8-3 .styles__Value-sc-1cm0se8-2');
+        return el ? parseInt(el.innerText) || 0 : 0;
+        """
+    ) or 0)
+
+
+def _click_prev_year(driver) -> bool:
+    """Клик на ◄ (1-я img в YearPicker)."""
+    return bool(driver.execute_script(
+        """
+        const yp = document.querySelector('.styles__YearPicker-sc-1cm0se8-3');
+        if (!yp) return false;
+        const imgs = yp.querySelectorAll('img');
+        if (!imgs.length) return false;
+        imgs[0].click();
+        return true;
+        """
+    ))
+
+
+def _navigate_calendar_to_year(driver, target_year: int, max_clicks: int = 15) -> bool:
+    """Кликает ◄ пока год не станет target_year."""
+    for _ in range(max_clicks):
+        current = _get_calendar_year(driver)
+        if current == 0:
+            return False
+        if current == target_year:
+            return True
+        if current < target_year:
+            return False  # нужен правый клик, но мы только ◄
+        if not _click_prev_year(driver):
+            return False
+        time.sleep(0.4)
+    return _get_calendar_year(driver) == target_year
+
+
+def _get_available_month_indices(driver) -> list[int]:
+    """Список индексов 0..11 — доступных (не disabled) кнопок месяцев."""
+    return driver.execute_script(
+        """
+        const btns = document.querySelectorAll(
+            '.styles__MonthsWrapper-sc-1cm0se8-5 button');
+        const out = [];
+        btns.forEach((b, i) => { if (!b.disabled) out.push(i); });
+        return out;
+        """
+    ) or []
+
+
+def _click_month_by_index(driver, idx: int) -> bool:
+    """Клик на кнопку месяца по индексу 0..11."""
+    return bool(driver.execute_script(
+        """
+        const idx = arguments[0];
+        const btns = document.querySelectorAll(
+            '.styles__MonthsWrapper-sc-1cm0se8-5 button');
+        if (idx < 0 || idx >= btns.length) return false;
+        if (btns[idx].disabled) return false;
+        btns[idx].click();
+        return true;
+        """,
+        idx,
+    ))
+
+
+def _switch_period(driver, year: int, month_idx: int) -> bool:
+    """Открывает календарь, навигирует к (year, month_idx), кликает месяц,
+    ждёт смены периода. Возвращает True если переключение прошло.
+    """
+    baseline = _get_rasprod_current_period(driver)
+    expected_period = f"{['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'][month_idx]} {year}"
+
+    if baseline == expected_period:
+        return True
+
+    if not _open_date_picker(driver):
+        print(f"       ⚠️  не открыл календарь")
+        return False
+    time.sleep(0.5)
+
+    if not _navigate_calendar_to_year(driver, year):
+        print(f"       ⚠️  не довёл год до {year}")
+        return False
+
+    avail = _get_available_month_indices(driver)
+    if month_idx not in avail:
+        print(f"       ⚠️  месяц {month_idx+1}/{year} disabled")
+        return False
+
+    if not _click_month_by_index(driver, month_idx):
+        print(f"       ⚠️  не кликнул месяц idx={month_idx}")
+        return False
+
+    # Ждём смены текста в триггере на ожидаемый период
+    try:
+        WebDriverWait(driver, 20).until(
+            lambda d: _get_rasprod_current_period(d) == expected_period
+        )
+        time.sleep(2)  # данные дорендериться
+        return True
+    except TimeoutException:
+        actual = _get_rasprod_current_period(driver)
+        print(f"       ⚠️  период не сменился: ждали «{expected_period}», текущий «{actual}»")
+        return False
+
+
+def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, int]]:
+    """Обходит года от year_to до year_from, собирает (year, month_idx)
+    для активных месяцев. Открывает календарь один раз, перемещается
+    стрелкой ◄.
+    """
+    if not _open_date_picker(driver):
+        print(f"     ⚠️  не открыл календарь для перечисления периодов")
+        return []
+    time.sleep(0.5)
+
+    periods: list[tuple[int, int]] = []
+    cur_year = _get_calendar_year(driver)
+    if cur_year == 0:
+        return []
+
+    # Идём от текущего года вниз до year_from
+    while cur_year >= year_from:
+        avail = _get_available_month_indices(driver)
+        for m_idx in sorted(avail, reverse=True):  # последние месяцы первыми
+            periods.append((cur_year, m_idx))
+        if cur_year <= year_from:
+            break
+        if not _click_prev_year(driver):
+            break
+        time.sleep(0.4)
+        new_year = _get_calendar_year(driver)
+        if new_year == cur_year:
+            break
+        cur_year = new_year
+
+    # Закрыть календарь (клик по body)
+    try:
+        driver.execute_script("document.body.click();")
+    except WebDriverException:
+        pass
+    time.sleep(0.5)
+    return periods
+
+
 def fetch_rasprodannost(state: dict) -> list[Path]:
     """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
     kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
@@ -1262,38 +1457,42 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             "Класс недвижимости": "by_class",
         }
         with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
-            # KPI лист: широкий формат с region_key и колонками-годами
+            # KPI лист: каждая строка = (region × период × KPI) + колонки по годам прогноза
             kpi_rows = []
             for d in all_data:
-                rk = d.get("region_key", "")
+                meta = {
+                    "region_key": d.get("region_key", ""),
+                    "year": d.get("year", ""),
+                    "month": d.get("month_num", ""),
+                    "month_name": d.get("month_name", ""),
+                    "report_period": d.get("report_period", ""),
+                }
                 for k in d.get("kpi", []):
-                    row = {
-                        "region_key": rk,
-                        "report_period": d.get("report_period", ""),
-                        "название": k["название"],
-                        "значение": k["значение"],
-                        "единица": k["единица"],
-                    }
-                    # Колонки по годам: год → значение
+                    row = {**meta,
+                           "название": k["название"],
+                           "значение": k["значение"],
+                           "единица": k["единица"]}
                     for y, v in (k.get("по_годам") or {}).items():
-                        row[y] = v
+                        row[f"прогноз_{y}"] = v
                     kpi_rows.append(row)
             if kpi_rows:
                 pd.DataFrame(kpi_rows).to_excel(writer, sheet_name="kpi", index=False)
 
-            # Объединённые таблицы (по region_key)
+            # Объединённые таблицы (region × period × section × row)
             tables_combined: dict[str, list[dict]] = {}
             for d in all_data:
-                rk = d.get("region_key", "")
+                meta = {
+                    "region_key": d.get("region_key", ""),
+                    "year": d.get("year", ""),
+                    "month": d.get("month_num", ""),
+                    "month_name": d.get("month_name", ""),
+                    "report_period": d.get("report_period", ""),
+                }
                 for section, rows in (d.get("tables") or {}).items():
                     for r in rows:
-                        rr = {
-                            "region_key": rk,
-                            "section": section,
-                            "report_period": d.get("report_period", ""),
-                            **r,
-                        }
-                        tables_combined.setdefault(section, []).append(rr)
+                        tables_combined.setdefault(section, []).append(
+                            {**meta, "section": section, **r}
+                        )
             for section, rows in tables_combined.items():
                 sname = sheet_name_map.get(section, section[:30])
                 pd.DataFrame(rows).to_excel(writer, sheet_name=sname, index=False)
@@ -1301,7 +1500,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             new_files.append(target_xlsx)
         if target_json not in new_files:
             new_files.append(target_json)
-        print(f"     💾 {target_xlsx.name} (regions={len(all_data)})")
+        print(f"     💾 {target_xlsx.name} (записей={len(all_data)})")
 
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
@@ -1321,6 +1520,8 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
         debug_dir = DOWNLOAD_DIR.parent / "_debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
 
+        YEAR_FROM = 2020  # самый ранний доступный год по данным пользователя
+
         for region in RASPROD_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
@@ -1336,22 +1537,33 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                     _scroll_through_page(driver)
                     time.sleep(2)
 
-                # снэпшот текущего региона
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                (debug_dir / f"nashdom_rasprodannost_{region['key']}_{ts}.html").write_text(
-                    driver.page_source, encoding="utf-8"
-                )
+                # Перечислим все доступные периоды (year, month_idx)
+                periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
+                print(f"       · доступных периодов: {len(periods)}")
 
-                data = _parse_rasprodannost(driver.page_source, driver.current_url)
-                data["region_key"] = region["key"]
-                data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
-                data["source"] = "rasprodannost"
-                print(
-                    f"       · KPI={len(data.get('kpi') or [])}, "
-                    f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
-                )
-                all_data.append(data)
-                flush()
+                for period_i, (year, m_idx) in enumerate(periods, 1):
+                    month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+                                  "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][m_idx]
+                    print(f"       ▸ {period_i}/{len(periods)}: {month_name} {year}")
+                    ok = _switch_period(driver, year, m_idx)
+                    if not ok:
+                        continue
+                    _scroll_through_page(driver)
+                    time.sleep(1.5)
+
+                    data = _parse_rasprodannost(driver.page_source, driver.current_url)
+                    data["region_key"] = region["key"]
+                    data["year"] = year
+                    data["month_num"] = m_idx + 1
+                    data["month_name"] = month_name
+                    data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
+                    data["source"] = "rasprodannost"
+                    print(
+                        f"          KPI={len(data.get('kpi') or [])}, "
+                        f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
+                    )
+                    all_data.append(data)
+                    flush()  # incremental save после каждого периода
             except Exception as exc:  # noqa: BLE001
                 print(f"     ❌ ошибка {region['key']}: {exc}")
                 flush()

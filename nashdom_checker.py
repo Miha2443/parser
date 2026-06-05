@@ -541,114 +541,74 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     return new_files
 
 
-def _get_current_region_label(driver) -> str:
-    """Возвращает текущее значение фильтра «Регион».
+def _get_all_apartments_count(driver) -> str:
+    """Читает значение «Все квартиры» из шапки apartments-блока.
 
-    Структура DOM:
-        <div class="css-2i68me">             <!-- контейнер фильтра Региона -->
-          <p>Федеральный округ / Регион</p>
-          <div class="css-t0lbh8">           <!-- dropdown -->
-            ...<span class="css-wjcl1w">текущий регион</span>...
-          </div>
-        </div>
-        <div class="css-2i68me">             <!-- контейнер фильтра Девелопер -->
-          <p>Девелопер</p>
-          ...<span class="css-wjcl1w">Все</span>...
-
-    Берём span ВНУТРИ дочернего контейнера <p>Федеральный округ.</p>,
-    а не из всего поддерева — иначе можем нацепить «Все» из дропдауна
-    Девелопера.
+    Возвращает count (например «2 438 972») или '' если не нашёл.
+    Используется как индикатор смены региона: после переключения данные
+    обновляются и количество «Все квартиры» становится другим.
     """
     return driver.execute_script(
         """
-        const p = [...document.querySelectorAll('p')].find(e =>
-            e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
-        if (!p) return '';
-        // Ищем span строго рядом — следующий sibling p или ближайший контейнер
-        // КОТОРЫЙ НЕ СОДЕРЖИТ слово «Девелопер» или другой следующий фильтр
-        let sib = p.nextElementSibling;
-        while (sib) {
-            // если в sib есть текст другого фильтра — мы вылезли за пределы
-            // нашего dropdown
-            const text = sib.innerText || '';
-            if (/^\\s*Девелопер|Объем\\s*строительства\\s*девелоперов|Класс\\s*недвижимости/i.test(text)) {
-                break;
-            }
-            const span = sib.querySelector('span.css-wjcl1w');
-            if (span) return span.innerText.trim();
-            sib = sib.nextElementSibling;
-        }
-        // Fallback: parent's first span (но не из соседних дропдаунов)
-        const parent = p.parentElement;
-        if (parent) {
-            const span = parent.querySelector('span.css-wjcl1w');
-            if (span) return span.innerText.trim();
-        }
-        return '';
+        const buttons = [...document.querySelectorAll('button')];
+        const btn = buttons.find(b =>
+            b.offsetParent !== null &&
+            b.innerText && b.innerText.includes('Все квартиры')
+        );
+        if (!btn) return '';
+        const divs = btn.querySelectorAll('div');
+        if (divs.length < 2) return '';
+        // divs[0] — лейбл «Все квартиры», divs[1] — количество, divs[2] — площадь
+        return (divs[1].innerText || '').trim();
         """
     ) or ""
 
 
 def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
-    """Переключает фильтр «Федеральный округ / Регион» на target_label.
+    """Переключает фильтр «Федеральный округ / Регион» в квартирографии.
 
-    Стратегия:
-    1. Запоминаем текущее значение фильтра.
-    2. Клик на span с этим значением (нативно через Selenium).
-    3. Ждём появления нового input (попап с поиском).
-    4. Selenium .send_keys() в input (нативный набор, триггерит React).
-    5. WebDriverWait до появления элемента с target_label.
-    6. Клик на target_label (нативно).
-    7. WebDriverWait пока текущий label фильтра не сменится на target.
+    Верификация — по СМЕНЕ данных (значения «Все квартиры»), а не по
+    тексту dropdown'а: оказалось что во время поппапа span текущего
+    региона недоступен для чтения / показывает не то.
     """
-    current = _get_current_region_label(driver)
-    print(f"       · текущий регион: «{current}»")
-    if not current:
-        print(f"       ⚠️  не нашёл текущее значение фильтра")
+    # 0) baseline данных
+    baseline = _get_all_apartments_count(driver)
+    print(f"       · baseline «Все квартиры»: {baseline}")
+    if not baseline:
+        print(f"       ⚠️  не нашёл baseline «Все квартиры», прерываю")
         return False
-    if current == target_label:
-        return True
 
-    # 1) Запоминаем существующие inputs до клика — чтобы найти новый
+    # 1) Клик на span с текущим регионом → tabindex=0 родитель
+    try:
+        # Берём любой span.css-wjcl1w который рядом с <p>Федеральный округ</p>
+        trigger = driver.execute_script(
+            """
+            const p = [...document.querySelectorAll('p')].find(e =>
+                e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
+            if (!p) return null;
+            // p.nextElementSibling — div.css-t0lbh8 (dropdown)
+            const dropdown = p.nextElementSibling;
+            if (!dropdown) return null;
+            // Внутри dropdown — div tabindex=0
+            const trigger = dropdown.querySelector('[tabindex="0"]');
+            return trigger;
+            """
+        )
+        if not trigger:
+            print(f"       ⚠️  не нашёл триггер dropdown'а региона")
+            return False
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
+        time.sleep(0.5)
+        trigger.click()
+        print(f"       · клик на trigger (tabindex=0)")
+    except WebDriverException as exc:
+        print(f"       ⚠️  ошибка клика триггера: {exc}")
+        return False
+
+    # 2) Ждём появления нового input
     existing_inputs = driver.execute_script(
         "return [...document.querySelectorAll('input')].length;"
     ) or 0
-
-    # 2) Клик на span с текущим регионом (Selenium native click)
-    try:
-        # Прямой XPath на span с нужным текстом, чтобы взять именно его
-        spans = driver.find_elements(
-            By.XPATH,
-            f"//span[contains(@class,'css-wjcl1w') and normalize-space(text())='{current}']",
-        )
-        clicked = False
-        for span in spans:
-            if span.is_displayed():
-                # Поднимаемся до tabindex=0 родителя для надёжного клика
-                trigger = driver.execute_script(
-                    "let el = arguments[0];"
-                    "for (let i = 0; i < 4; i++) {"
-                    "  if (!el) break;"
-                    "  if (el.getAttribute && el.getAttribute('tabindex') === '0') return el;"
-                    "  el = el.parentElement;"
-                    "}"
-                    "return arguments[0];",
-                    span,
-                )
-                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
-                time.sleep(0.5)
-                trigger.click()
-                clicked = True
-                print(f"       · клик на trigger ({trigger.tag_name})")
-                break
-        if not clicked:
-            print(f"       ⚠️  не нашёл span «{current}» для клика")
-            return False
-    except WebDriverException as exc:
-        print(f"       ⚠️  ошибка клика по триггеру: {exc}")
-        return False
-
-    # 3) Ждём появления нового input (попап рендерится после клика)
     try:
         WebDriverWait(driver, 8).until(
             lambda d: d.execute_script(
@@ -656,14 +616,16 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
             ) > existing_inputs
         )
     except TimeoutException:
-        print(f"       ⚠️  попап с input не появился")
+        print(f"       ⚠️  попап (input) не появился")
         _save_debug_snapshot(driver, "region_switch_no_popup")
         return False
 
-    # 4) Найти НОВЫЙ видимый input и ввести запрос
+    # 3) Ввести запрос
     search_input = None
-    candidates = driver.find_elements(By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])')
-    for inp in reversed(candidates):  # с конца — самые свежие
+    inputs = driver.find_elements(
+        By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])'
+    )
+    for inp in reversed(inputs):
         try:
             if inp.is_displayed() and inp.is_enabled():
                 search_input = inp
@@ -679,12 +641,12 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         if search_query:
             search_input.send_keys(search_query)
             print(f"       · ввёл в поиск: '{search_query}'")
-        time.sleep(2)  # фильтр в попапе обновляется
+        time.sleep(2)
     except WebDriverException as exc:
         print(f"       ⚠️  не смог ввести в поиск: {exc}")
         return False
 
-    # 5) Ждём появления target_label в видимых элементах попапа
+    # 4) Клик по target_label
     try:
         WebDriverWait(driver, 8).until(
             lambda d: d.execute_script(
@@ -698,24 +660,22 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
             )
         )
     except TimeoutException:
-        print(f"       ⚠️  пункт «{target_label}» не появился в попапе")
-        _save_debug_snapshot(driver, f"region_switch_no_option_{target_label}")
+        print(f"       ⚠️  пункт «{target_label}» не появился")
+        _save_debug_snapshot(driver, f"region_no_option_{target_label}")
         return False
 
-    # 6) Клик на target_label через Selenium (без JS)
-    clicked = False
     candidates = driver.find_elements(
-        By.XPATH,
-        f"//*[normalize-space(text())='{target_label}']",
+        By.XPATH, f"//*[normalize-space(text())='{target_label}']",
     )
+    clicked = False
     for el in candidates:
         try:
             if el.is_displayed():
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                 time.sleep(0.3)
                 el.click()
-                clicked = True
                 print(f"       · клик на «{target_label}» ({el.tag_name})")
+                clicked = True
                 break
         except WebDriverException:
             continue
@@ -723,18 +683,28 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  не смог кликнуть «{target_label}»")
         return False
 
-    # 7) Ждём пока фильтр действительно сменится на target_label
+    # 5) Закрыть попап кликом на body (на случай если попап не закрылся сам)
     try:
-        WebDriverWait(driver, 15).until(
-            lambda d: _get_current_region_label(d) == target_label
+        driver.execute_script("document.body.click();")
+    except WebDriverException:
+        pass
+
+    # 6) ВЕРИФИКАЦИЯ: ждём пока «Все квартиры» не сменится с baseline
+    try:
+        WebDriverWait(driver, 25).until(
+            lambda d: (
+                _get_all_apartments_count(d) != baseline
+                and _get_all_apartments_count(d) != ""
+            )
         )
-        print(f"       ✅ регион сменился на «{target_label}»")
-        time.sleep(3)  # даём данным дорендериться
+        new_count = _get_all_apartments_count(driver)
+        print(f"       ✅ данные сменились: {baseline} → {new_count}")
+        time.sleep(2)
         return True
     except TimeoutException:
-        actual = _get_current_region_label(driver)
-        print(f"       ⚠️  фильтр не сменился (текущий: «{actual}»)")
-        _save_debug_snapshot(driver, "region_switch_no_change")
+        actual = _get_all_apartments_count(driver)
+        print(f"       ⚠️  «Все квартиры» не сменилось (всё ещё «{actual}»)")
+        _save_debug_snapshot(driver, "region_switch_no_data_change")
         return False
 
 
@@ -888,30 +858,57 @@ def _parse_rasprodannost(html: str, url: str) -> dict:
     if "Российская Федерация" in page_text:
         out["region"] = "Российская Федерация"
 
-    # === Топовые 4 KPI: h5-заголовок + ближайшее число ===
-    # Используем substring-match с нормализацией &nbsp;
+    # === Топовые 4 KPI: h5-заголовок + общее значение + разбивка по годам ===
     kpi_substrings = [
         "Объем жилищного строительства",
         "Распроданность",
         "Отношение",
         "Стройготовность",
     ]
-    for h5 in soup.find_all("h5"):
+    # Собираем h5 и их позиции для определения границ KPI-секции
+    all_h5 = soup.find_all("h5")
+    for i, h5 in enumerate(all_h5):
         title = h5.get_text(strip=True).replace("\xa0", " ")
         if not any(t in title for t in kpi_substrings):
             continue
-        # Ближайший <p class="styles__Number-..."> после h5
+        # Ищем родительский контейнер KPI и извлекаем общее значение
         wrapper = h5.find_parent()
         if not wrapper:
             continue
+        # Поднимаемся до контейнера KPI-блока (содержит и Number и SVG)
+        for _ in range(4):
+            if wrapper and wrapper.find("svg"):
+                break
+            wrapper = wrapper.parent
+        if not wrapper:
+            continue
+
         num_p = wrapper.find("p", class_=re.compile(r"styles__Number"))
         unit_p = wrapper.find("p", class_=re.compile(r"styles__SquareMeters"))
-        if num_p:
-            out["kpi"].append({
-                "название": title,
-                "значение": num_p.get_text(strip=True).replace("\xa0", " "),
-                "единица": unit_p.get_text(strip=True) if unit_p else "",
-            })
+        kpi_entry = {
+            "название": title,
+            "значение": num_p.get_text(strip=True).replace("\xa0", " ") if num_p else "",
+            "единица": unit_p.get_text(strip=True) if unit_p else "",
+            "по_годам": {},
+        }
+
+        # Разбивка по годам: <tspan> внутри SVG
+        # Сначала идут годы (2026, 2027, ..., 2031+), потом значения
+        tspans = [t.get_text(strip=True).replace("\xa0", " ") for t in wrapper.find_all("tspan")]
+        years = [t for t in tspans if re.match(r"^20\d{2}\+?$", t)]
+        # Уникальные годы в порядке появления
+        seen_y = []
+        for y in years:
+            if y not in seen_y:
+                seen_y.append(y)
+        # Значения — tspan-ы не похожие на год
+        values = [t for t in tspans if not re.match(r"^20\d{2}\+?$", t)]
+        # Сопоставляем по позиции (первые N значений = первые N годам)
+        for j, y in enumerate(seen_y):
+            if j < len(values):
+                kpi_entry["по_годам"][y] = values[j]
+
+        out["kpi"].append(kpi_entry)
 
     # === Таблицы: 6 штук с одинаковыми колонками, секцию определяем по первой
     # строке (название первой строки уникально для каждой таблицы) ===
@@ -1056,20 +1053,245 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
     return new_files
 
 
+def _get_rasprod_kpi_value(driver, kpi_substring: str) -> str:
+    """Читает текущее значение KPI «Объем жилищного строительства» и т.п.
+    Используется для верификации смены региона.
+    """
+    return driver.execute_script(
+        """
+        const sub = arguments[0];
+        const h5s = [...document.querySelectorAll('h5')];
+        const h5 = h5s.find(h => h.offsetParent !== null &&
+            (h.innerText || '').replace(/\\u00a0/g, ' ').includes(sub));
+        if (!h5) return '';
+        let scope = h5.parentElement;
+        for (let i = 0; i < 5 && scope; i++) {
+            const num = scope.querySelector('p[class*="styles__Number"]');
+            if (num) return num.innerText.trim();
+            scope = scope.parentElement;
+        }
+        return '';
+        """,
+        kpi_substring,
+    ) or ""
+
+
+def _switch_region_rasprodannost(
+    driver, target_label: str, search_query: str = ""
+) -> bool:
+    """Переключает фильтр региона на странице распроданности.
+
+    DOM на rasprodannost ДРУГАЯ (styles__Container-...). id='regionSelect'
+    у контейнера. Верификация — по СМЕНЕ KPI «Объем жилищного строительства».
+    """
+    baseline = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
+    print(f"       · baseline объём: {baseline}")
+    if not baseline:
+        print(f"       ⚠️  не нашёл baseline KPI")
+        return False
+
+    # 1) Клик на триггер #regionSelect [tabindex=0]
+    try:
+        trigger = driver.find_element(
+            By.CSS_SELECTOR, '#regionSelect [tabindex="0"]'
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
+        time.sleep(0.5)
+        trigger.click()
+        print(f"       · клик на trigger #regionSelect")
+    except WebDriverException as exc:
+        print(f"       ⚠️  не нашёл триггер региона: {exc}")
+        return False
+
+    # 2) Ждём появления input
+    existing_inputs = driver.execute_script(
+        "return [...document.querySelectorAll('input')].length;"
+    ) or 0
+    try:
+        WebDriverWait(driver, 8).until(
+            lambda d: d.execute_script(
+                "return [...document.querySelectorAll('input')].length;"
+            ) > existing_inputs
+        )
+    except TimeoutException:
+        print(f"       ⚠️  попап не появился")
+        _save_debug_snapshot(driver, "rasprod_region_no_popup")
+        return False
+
+    # 3) Ввести запрос
+    inputs = driver.find_elements(
+        By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])'
+    )
+    search_input = None
+    for inp in reversed(inputs):
+        try:
+            if inp.is_displayed() and inp.is_enabled():
+                search_input = inp
+                break
+        except WebDriverException:
+            continue
+    if not search_input:
+        print(f"       ⚠️  не нашёл input для поиска")
+        return False
+    try:
+        search_input.click()
+        search_input.clear()
+        if search_query:
+            search_input.send_keys(search_query)
+            print(f"       · ввёл в поиск: '{search_query}'")
+        time.sleep(2)
+    except WebDriverException as exc:
+        print(f"       ⚠️  не смог ввести в поиск: {exc}")
+        return False
+
+    # 4) Клик по target_label
+    try:
+        WebDriverWait(driver, 8).until(
+            lambda d: d.execute_script(
+                """
+                const target = arguments[0];
+                return [...document.querySelectorAll('div,span,li,button,a')]
+                    .some(e => e.offsetParent !== null &&
+                        (e.innerText||'').trim() === target);
+                """,
+                target_label,
+            )
+        )
+    except TimeoutException:
+        print(f"       ⚠️  пункт «{target_label}» не появился")
+        _save_debug_snapshot(driver, f"rasprod_region_no_option_{target_label}")
+        return False
+
+    candidates = driver.find_elements(
+        By.XPATH, f"//*[normalize-space(text())='{target_label}']"
+    )
+    clicked = False
+    for el in candidates:
+        try:
+            if el.is_displayed():
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.3)
+                el.click()
+                clicked = True
+                print(f"       · клик на «{target_label}»")
+                break
+        except WebDriverException:
+            continue
+    if not clicked:
+        print(f"       ⚠️  не смог кликнуть «{target_label}»")
+        return False
+
+    try:
+        driver.execute_script("document.body.click();")
+    except WebDriverException:
+        pass
+
+    # 5) Верификация: KPI должен смениться
+    try:
+        WebDriverWait(driver, 25).until(
+            lambda d: (
+                _get_rasprod_kpi_value(d, "Объем жилищного строительства") != baseline
+                and _get_rasprod_kpi_value(d, "Объем жилищного строительства") != ""
+            )
+        )
+        new_val = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
+        print(f"       ✅ данные сменились: {baseline} → {new_val}")
+        time.sleep(2)
+        return True
+    except TimeoutException:
+        actual = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
+        print(f"       ⚠️  KPI не сменился (всё ещё «{actual}»)")
+        _save_debug_snapshot(driver, "rasprod_region_no_data_change")
+        return False
+
+
+RASPROD_REGIONS = [
+    {"key": "rf",  "label": "Все",        "search": "",       "click_label": "Все"},
+    {"key": "msk", "label": "Город Москва","search": "Москва", "click_label": "Город Москва"},
+]
+
+
 def fetch_rasprodannost(state: dict) -> list[Path]:
     """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
     kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
+
+    Обходит 2 региона (РФ + Москва).
     """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = _build_rasprodannost_url()
     print(f"  🌐 rasprodannost: {url}")
+    date_str = datetime.now().strftime("%Y%m%d")
+    target_xlsx = DOWNLOAD_DIR / f"rasprodannost_{date_str}.xlsx"
+    target_json = DOWNLOAD_DIR / f"rasprodannost_{date_str}.json"
 
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    all_data: list[dict] = []
     new_files: list[Path] = []
+
+    def flush():
+        if not all_data:
+            return
+        target_json.write_text(
+            json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        try:
+            import pandas as pd
+        except ImportError:
+            return
+        sheet_name_map = {
+            "Федеральные округа": "fed_okruga",
+            "Регионы": "regions",
+            "Девелоперы": "developers",
+            "Объём строительства девелоперов": "by_dev_volume",
+            "Населённые пункты по численности": "by_population",
+            "Класс недвижимости": "by_class",
+        }
+        with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
+            # KPI лист: широкий формат с region_key и колонками-годами
+            kpi_rows = []
+            for d in all_data:
+                rk = d.get("region_key", "")
+                for k in d.get("kpi", []):
+                    row = {
+                        "region_key": rk,
+                        "report_period": d.get("report_period", ""),
+                        "название": k["название"],
+                        "значение": k["значение"],
+                        "единица": k["единица"],
+                    }
+                    # Колонки по годам: год → значение
+                    for y, v in (k.get("по_годам") or {}).items():
+                        row[y] = v
+                    kpi_rows.append(row)
+            if kpi_rows:
+                pd.DataFrame(kpi_rows).to_excel(writer, sheet_name="kpi", index=False)
+
+            # Объединённые таблицы (по region_key)
+            tables_combined: dict[str, list[dict]] = {}
+            for d in all_data:
+                rk = d.get("region_key", "")
+                for section, rows in (d.get("tables") or {}).items():
+                    for r in rows:
+                        rr = {
+                            "region_key": rk,
+                            "section": section,
+                            "report_period": d.get("report_period", ""),
+                            **r,
+                        }
+                        tables_combined.setdefault(section, []).append(rr)
+            for section, rows in tables_combined.items():
+                sname = sheet_name_map.get(section, section[:30])
+                pd.DataFrame(rows).to_excel(writer, sheet_name=sname, index=False)
+        if target_xlsx not in new_files:
+            new_files.append(target_xlsx)
+        if target_json not in new_files:
+            new_files.append(target_json)
+        print(f"     💾 {target_xlsx.name} (regions={len(all_data)})")
+
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
         driver.get(url)
-        time.sleep(5)
+        time.sleep(6)
         try:
             WebDriverWait(driver, 45).until(
                 lambda d: "данным на" in d.page_source or "<table" in d.page_source
@@ -1078,86 +1300,60 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             print(f"  ⚠️  rasprodannost: контент не появился за 45 сек")
             _save_debug_snapshot(driver, "rasprodannost_no_content")
             return []
-
         _scroll_through_page(driver)
         time.sleep(3)
 
         debug_dir = DOWNLOAD_DIR.parent / "_debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        (debug_dir / f"nashdom_rasprodannost_ok_{ts}.html").write_text(
-            driver.page_source, encoding="utf-8"
-        )
 
-        data = _parse_rasprodannost(driver.page_source, url)
-        data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
-        data["source"] = "rasprodannost"
+        for region in RASPROD_REGIONS:
+            try:
+                print(f"     ── регион: {region['key']} ({region['label']})")
+                if region["search"]:
+                    ok = _switch_region_rasprodannost(
+                        driver,
+                        target_label=region["click_label"],
+                        search_query=region["search"],
+                    )
+                    if not ok:
+                        print(f"       ⚠️  не удалось переключить, пропускаю")
+                        continue
+                    _scroll_through_page(driver)
+                    time.sleep(2)
 
-        date_str = datetime.now().strftime("%Y%m%d")
-        target_json = DOWNLOAD_DIR / f"rasprodannost_{date_str}.json"
-        target_json.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+                # снэпшот текущего региона
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                (debug_dir / f"nashdom_rasprodannost_{region['key']}_{ts}.html").write_text(
+                    driver.page_source, encoding="utf-8"
+                )
 
-        if not data.get("tables") and not data.get("kpi"):
-            print(f"  ⚠️  rasprodannost: данных нет на странице")
-            new_files.append(target_json)
-            state["rasprodannost"] = {
-                "report_date": data.get("report_date", ""),
-                "report_period": data.get("report_period", ""),
-                "filename": target_json.name,
-                "has_content": False,
-            }
-            return new_files
-
-        # === xlsx с несколькими листами ===
-        try:
-            import pandas as pd
-        except ImportError:
-            print("  ⚠️  pandas не установлен — только json")
-            new_files.append(target_json)
-            return new_files
-
-        target_xlsx = DOWNLOAD_DIR / f"rasprodannost_{date_str}.xlsx"
-        with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
-            # KPI лист
-            if data.get("kpi"):
-                kpi_df = pd.DataFrame(data["kpi"])
-                kpi_df.insert(0, "report_date", data.get("report_date", ""))
-                kpi_df.insert(1, "report_period", data.get("report_period", ""))
-                kpi_df.to_excel(writer, sheet_name="kpi", index=False)
-            # По одному листу на таблицу
-            sheet_name_map = {
-                "Федеральные округа": "fed_okruga",
-                "Регионы": "regions",
-                "Девелоперы": "developers",
-                "Объём строительства девелоперов": "by_dev_volume",
-                "Населённые пункты по численности": "by_population",
-                "Класс недвижимости": "by_class",
-            }
-            for section, rows in (data.get("tables") or {}).items():
-                if not rows:
-                    continue
-                sname = sheet_name_map.get(section, section[:30])
-                df = pd.DataFrame(rows)
-                df.insert(0, "section", section)
-                df.insert(1, "report_period", data.get("report_period", ""))
-                df.to_excel(writer, sheet_name=sname, index=False)
-        sizes = {
-            "kpi": len(data.get("kpi") or []),
-            **{k: len(v) for k, v in (data.get("tables") or {}).items()},
-        }
-        print(f"  ✅ {target_xlsx.name}: {sizes}")
-        new_files.extend([target_xlsx, target_json])
+                data = _parse_rasprodannost(driver.page_source, driver.current_url)
+                data["region_key"] = region["key"]
+                data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
+                data["source"] = "rasprodannost"
+                print(
+                    f"       · KPI={len(data.get('kpi') or [])}, "
+                    f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
+                )
+                all_data.append(data)
+                flush()
+            except Exception as exc:  # noqa: BLE001
+                print(f"     ❌ ошибка {region['key']}: {exc}")
+                flush()
 
         state["rasprodannost"] = {
-            "report_date": data.get("report_date", ""),
-            "report_period": data.get("report_period", ""),
+            "report_period": (all_data[0] if all_data else {}).get("report_period", ""),
             "filename": target_xlsx.name,
-            "has_content": True,
+            "regions": [r["key"] for r in RASPROD_REGIONS],
+            "has_content": bool(all_data),
         }
+    except KeyboardInterrupt:
+        print("\n  ⚠️  прерывание — сохраняю собранное")
+        flush()
+        raise
     except WebDriverException as exc:
         print(f"  ❌ rasprodannost: {exc}")
+        flush()
     finally:
         try:
             driver.quit()

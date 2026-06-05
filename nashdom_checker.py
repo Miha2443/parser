@@ -1299,6 +1299,35 @@ def _click_prev_year(driver) -> bool:
     ))
 
 
+def _click_next_year(driver) -> bool:
+    """Клик на ► (2-я img в YearPicker). Если справа disabled — клик ничего не сделает."""
+    return bool(driver.execute_script(
+        """
+        const yp = document.querySelector('.styles__YearPicker-sc-1cm0se8-3');
+        if (!yp) return false;
+        const imgs = yp.querySelectorAll('img');
+        if (imgs.length < 2) return false;
+        imgs[1].click();
+        return true;
+        """
+    ))
+
+
+def _navigate_to_latest_year(driver, max_clicks: int = 15) -> int:
+    """Кликает ► пока год не перестанет расти. Возвращает год."""
+    for _ in range(max_clicks):
+        current = _get_calendar_year(driver)
+        if current == 0:
+            return 0
+        if not _click_next_year(driver):
+            return current
+        time.sleep(0.4)
+        new_year = _get_calendar_year(driver)
+        if new_year == current:
+            return current
+    return _get_calendar_year(driver)
+
+
 def _navigate_calendar_to_year(driver, target_year: int, max_clicks: int = 15) -> bool:
     """Кликает ◄ пока год не станет target_year."""
     for _ in range(max_clicks):
@@ -1394,6 +1423,12 @@ def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, i
         print(f"     ⚠️  не открыл календарь для перечисления периодов")
         return []
     time.sleep(0.5)
+
+    # КРИТИЧНО: сначала идём в самый свежий доступный год (►), так как
+    # календарь может быть «застрял» на старом году после прошлой
+    # итерации (например после обхода РФ закончили на 2020).
+    latest_year = _navigate_to_latest_year(driver)
+    print(f"     · перешли к самому свежему году: {latest_year}")
 
     periods: list[tuple[int, int]] = []
     cur_year = _get_calendar_year(driver)

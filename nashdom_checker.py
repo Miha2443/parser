@@ -1329,7 +1329,7 @@ def _navigate_to_latest_year(driver, max_clicks: int = 15) -> int:
 
 
 def _navigate_calendar_to_year(driver, target_year: int, max_clicks: int = 15) -> bool:
-    """Кликает ◄ пока год не станет target_year."""
+    """Навигирует к target_year обеими стрелками ◄/► по необходимости."""
     for _ in range(max_clicks):
         current = _get_calendar_year(driver)
         if current == 0:
@@ -1337,9 +1337,11 @@ def _navigate_calendar_to_year(driver, target_year: int, max_clicks: int = 15) -
         if current == target_year:
             return True
         if current < target_year:
-            return False  # нужен правый клик, но мы только ◄
-        if not _click_prev_year(driver):
-            return False
+            if not _click_next_year(driver):
+                return False
+        else:  # current > target_year
+            if not _click_prev_year(driver):
+                return False
         time.sleep(0.4)
     return _get_calendar_year(driver) == target_year
 

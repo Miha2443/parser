@@ -1096,8 +1096,12 @@ def _switch_region_rasprodannost(
 ) -> bool:
     """Переключает фильтр региона на странице распроданности.
 
-    DOM на rasprodannost ДРУГАЯ (styles__Container-...). id='regionSelect'
-    у контейнера. Верификация — по СМЕНЕ KPI «Объем жилищного строительства».
+    Использует тот же подход что и для kvartirografia после фикса:
+    попап рендерится в position:fixed оверлее, offsetParent === null,
+    поэтому ждём НАПРЯМУЮ по input[placeholder="Поиск по названию"]
+    и кликаем на родительскую div-строку для надёжного триггера React-handler.
+
+    Верификация — по СМЕНЕ KPI «Объем жилищного строительства».
     """
     baseline = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
     print(f"       · baseline объём: {baseline}")
@@ -1105,103 +1109,102 @@ def _switch_region_rasprodannost(
         print(f"       ⚠️  не нашёл baseline KPI")
         return False
 
-    # 1) Клик на триггер #regionSelect [tabindex=0]
+    # 1) Клик на триггер #regionSelect [tabindex=0] — через JS (надёжнее для SPA)
     try:
-        trigger = driver.find_element(
-            By.CSS_SELECTOR, '#regionSelect [tabindex="0"]'
+        opened = driver.execute_script(
+            """
+            const tr = document.querySelector('#regionSelect [tabindex="0"]');
+            if (!tr) return false;
+            tr.scrollIntoView({block: 'center'});
+            tr.click();
+            return true;
+            """
         )
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
-        time.sleep(0.5)
-        trigger.click()
+        if not opened:
+            print(f"       ⚠️  не нашёл триггер #regionSelect")
+            return False
         print(f"       · клик на trigger #regionSelect")
     except WebDriverException as exc:
-        print(f"       ⚠️  не нашёл триггер региона: {exc}")
+        print(f"       ⚠️  ошибка клика триггера: {exc}")
         return False
 
-    # 2) Ждём появления нового ВИДИМОГО input (попап с поиском).
-    existing_visible = driver.execute_script(
-        "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
-    ) or 0
+    # 2) Ждём search-input ПО PLACEHOLDER (не по offsetParent —
+    # попап в fixed-оверлее)
     try:
         WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
-                "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
-            ) > existing_visible
+                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+            )
         )
     except TimeoutException:
-        print(f"       ⚠️  попап не появился")
+        print(f"       ⚠️  search-input попапа не появился")
         _save_debug_snapshot(driver, "rasprod_region_no_popup")
         return False
+    time.sleep(0.5)
 
-    # 3) Ввести запрос
-    inputs = driver.find_elements(
-        By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])'
-    )
-    search_input = None
-    for inp in reversed(inputs):
-        try:
-            if inp.is_displayed() and inp.is_enabled():
-                search_input = inp
-                break
-        except WebDriverException:
-            continue
-    if not search_input:
-        print(f"       ⚠️  не нашёл input для поиска")
-        return False
-    try:
-        search_input.click()
-        search_input.clear()
-        if search_query:
-            search_input.send_keys(search_query)
-            print(f"       · ввёл в поиск: '{search_query}'")
+    # 3) Ввести запрос через native setter + dispatchEvent (для React state)
+    if search_query:
+        ok = driver.execute_script(
+            """
+            const q = arguments[0];
+            const inp = document.querySelector('input[placeholder="Поиск по названию"]');
+            if (!inp) return false;
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(inp, q);
+            inp.dispatchEvent(new Event('input', {bubbles: true}));
+            inp.dispatchEvent(new Event('change', {bubbles: true}));
+            return true;
+            """,
+            search_query,
+        )
+        print(f"       · ввёл в поиск: '{search_query}' (ok={ok})")
         time.sleep(2)
-    except WebDriverException as exc:
-        print(f"       ⚠️  не смог ввести в поиск: {exc}")
-        return False
 
-    # 4) Клик по target_label
+    # 4) Дождаться появления target_label и кликнуть по div-родителю span
+    # (там висит React-handler чекбокса)
     try:
-        WebDriverWait(driver, 8).until(
+        WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
                 """
                 const target = arguments[0];
-                return [...document.querySelectorAll('div,span,li,button,a')]
-                    .some(e => e.offsetParent !== null &&
-                        (e.innerText||'').trim() === target);
+                return [...document.querySelectorAll('span')]
+                    .some(s => (s.innerText || '').trim() === target);
                 """,
                 target_label,
             )
         )
     except TimeoutException:
-        print(f"       ⚠️  пункт «{target_label}» не появился")
+        print(f"       ⚠️  пункт «{target_label}» не появился в попапе")
         _save_debug_snapshot(driver, f"rasprod_region_no_option_{target_label}")
         return False
 
-    candidates = driver.find_elements(
-        By.XPATH, f"//*[normalize-space(text())='{target_label}']"
+    clicked = driver.execute_script(
+        """
+        const target = arguments[0];
+        const span = [...document.querySelectorAll('span')]
+            .find(s => (s.innerText || '').trim() === target);
+        if (!span) return false;
+        // Кликаем по родителю-row (содержит чекбокс + span).
+        let row = span.parentElement;
+        if (!row) row = span;
+        row.scrollIntoView({block: 'center'});
+        row.click();
+        return true;
+        """,
+        target_label,
     )
-    clicked = False
-    for el in candidates:
-        try:
-            if el.is_displayed():
-                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                time.sleep(0.3)
-                el.click()
-                clicked = True
-                print(f"       · клик на «{target_label}»")
-                break
-        except WebDriverException:
-            continue
+    print(f"       · клик на «{target_label}» (ok={clicked})")
     if not clicked:
-        print(f"       ⚠️  не смог кликнуть «{target_label}»")
         return False
 
+    # 5) Закрыть попап
+    time.sleep(1)
     try:
         driver.execute_script("document.body.click();")
     except WebDriverException:
         pass
 
-    # 5) Верификация: KPI должен смениться
+    # 6) Верификация: KPI должен смениться
     try:
         WebDriverWait(driver, 25).until(
             lambda d: (

@@ -541,6 +541,19 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     return new_files
 
 
+def _get_current_region_label(driver) -> str:
+    """Возвращает текущее значение фильтра «Регион» (для поиска span'а на котором кликать)."""
+    return driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
+        if (!p || !p.nextElementSibling) return '';
+        const span = p.nextElementSibling.querySelector('span.css-wjcl1w');
+        return span ? span.innerText.trim() : '';
+        """
+    ) or ""
+
+
 def _get_all_apartments_count(driver) -> str:
     """Читает значение «Все квартиры» из шапки apartments-блока.
 
@@ -558,56 +571,66 @@ def _get_all_apartments_count(driver) -> str:
         if (!btn) return '';
         const divs = btn.querySelectorAll('div');
         if (divs.length < 2) return '';
-        // divs[0] — лейбл «Все квартиры», divs[1] — количество, divs[2] — площадь
         return (divs[1].innerText || '').trim();
         """
     ) or ""
 
 
 def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
-    """Переключает фильтр «Федеральный округ / Регион» в квартирографии.
+    """Переключает фильтр «Федеральный округ / Регион» на target_label.
 
-    Верификация — по СМЕНЕ данных (значения «Все квартиры»), а не по
-    тексту dropdown'а: оказалось что во время поппапа span текущего
-    региона недоступен для чтения / показывает не то.
+    Клик-логика восстановлена из версии 7f91e6c (которая, по подтверждению
+    пользователя, ОТКРЫВАЛА попап и кликала Москву — но проваливалась
+    на верификации). Верификация — по смене «Все квартиры».
     """
-    # 0) baseline данных
     baseline = _get_all_apartments_count(driver)
     print(f"       · baseline «Все квартиры»: {baseline}")
     if not baseline:
-        print(f"       ⚠️  не нашёл baseline «Все квартиры», прерываю")
+        print(f"       ⚠️  не нашёл baseline «Все квартиры»")
         return False
 
-    # 1) Клик на span с текущим регионом → tabindex=0 родитель
+    current = _get_current_region_label(driver)
+    print(f"       · текущий регион: «{current}»")
+    if not current:
+        # Если не нашли, пробуем стандартное значение
+        current = "Российская Федерация"
+    if current == target_label:
+        return True
+
+    # 1) Клик на span с текущим значением (XPath по точному тексту),
+    # затем подъём к [tabindex='0'] родителю для надёжного клика.
     try:
-        # Берём любой span.css-wjcl1w который рядом с <p>Федеральный округ</p>
-        trigger = driver.execute_script(
-            """
-            const p = [...document.querySelectorAll('p')].find(e =>
-                e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
-            if (!p) return null;
-            // p.nextElementSibling — div.css-t0lbh8 (dropdown)
-            const dropdown = p.nextElementSibling;
-            if (!dropdown) return null;
-            // Внутри dropdown — div tabindex=0
-            const trigger = dropdown.querySelector('[tabindex="0"]');
-            return trigger;
-            """
+        spans = driver.find_elements(
+            By.XPATH,
+            f"//span[contains(@class,'css-wjcl1w') and normalize-space(text())='{current}']",
         )
-        if not trigger:
-            print(f"       ⚠️  не нашёл триггер dropdown'а региона")
+        clicked = False
+        for span in spans:
+            if span.is_displayed():
+                trigger = driver.execute_script(
+                    "let el = arguments[0];"
+                    "for (let i = 0; i < 4; i++) {"
+                    "  if (!el) break;"
+                    "  if (el.getAttribute && el.getAttribute('tabindex') === '0') return el;"
+                    "  el = el.parentElement;"
+                    "}"
+                    "return arguments[0];",
+                    span,
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
+                time.sleep(0.5)
+                trigger.click()
+                clicked = True
+                print(f"       · клик на trigger ({trigger.tag_name})")
+                break
+        if not clicked:
+            print(f"       ⚠️  не нашёл span «{current}» для клика")
             return False
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
-        time.sleep(0.5)
-        trigger.click()
-        print(f"       · клик на trigger (tabindex=0)")
     except WebDriverException as exc:
         print(f"       ⚠️  ошибка клика триггера: {exc}")
         return False
 
-    # 2) Ждём появления нового ВИДИМОГО input (поп-ап рендерит search-input).
-    # Считаем именно offsetParent!==null inputs, потому что popup-search
-    # часто пре-рендерится скрытым в DOM и общий count не меняется.
+    # 2) Ждём появления нового ВИДИМОГО input (попап с поиском)
     existing_visible = driver.execute_script(
         "return [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null).length;"
     ) or 0
@@ -623,10 +646,10 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         return False
 
     # 3) Ввести запрос
-    search_input = None
     inputs = driver.find_elements(
         By.CSS_SELECTOR, 'input[type="text"], input[type="search"], input:not([type])'
     )
+    search_input = None
     for inp in reversed(inputs):
         try:
             if inp.is_displayed() and inp.is_enabled():
@@ -662,7 +685,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
             )
         )
     except TimeoutException:
-        print(f"       ⚠️  пункт «{target_label}» не появился")
+        print(f"       ⚠️  пункт «{target_label}» не появился в попапе")
         _save_debug_snapshot(driver, f"region_no_option_{target_label}")
         return False
 
@@ -676,8 +699,8 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                 time.sleep(0.3)
                 el.click()
-                print(f"       · клик на «{target_label}» ({el.tag_name})")
                 clicked = True
+                print(f"       · клик на «{target_label}» ({el.tag_name})")
                 break
         except WebDriverException:
             continue
@@ -685,13 +708,13 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  не смог кликнуть «{target_label}»")
         return False
 
-    # 5) Закрыть попап кликом на body (на случай если попап не закрылся сам)
+    # 5) Закрыть попап кликом по body (если он не закрылся сам)
     try:
         driver.execute_script("document.body.click();")
     except WebDriverException:
         pass
 
-    # 6) ВЕРИФИКАЦИЯ: ждём пока «Все квартиры» не сменится с baseline
+    # 6) ВЕРИФИКАЦИЯ: ждём смены «Все квартиры»
     try:
         WebDriverWait(driver, 25).until(
             lambda d: (

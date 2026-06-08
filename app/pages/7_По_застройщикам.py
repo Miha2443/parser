@@ -169,19 +169,20 @@ with cols_top[1]:
         )
 
 
-# === Топ KPI карточки ===
+# === Данные ===
 rv_dev = find_dev_rows(mon.get("rv", pd.DataFrame()), "Группа компаний", sel_key)
 oks_dev = find_dev_rows(mon.get("oks", pd.DataFrame()), "Группа компаний", sel_key)
 cat_cols = [f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]
-total_rv = float(rv_dev[cat_cols].sum().sum()) if not rv_dev.empty else 0
-total_oks = float(oks_dev[cat_cols].sum().sum()) if not oks_dev.empty else 0
 
-last_year_int = mon.get("max_year")
-last_year_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == last_year_int] if last_year_int and not rv_dev.empty else pd.DataFrame()
+last_year_int = mon.get("max_year")  # 2026
+prev_year_int = last_year_int - 1 if last_year_int else None  # 2025
+last_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == last_year_int] if last_year_int and not rv_dev.empty else pd.DataFrame()
+prev_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == prev_year_int] if prev_year_int and not rv_dev.empty else pd.DataFrame()
 
-# Ввод с 2016 — из ERZRF top по сортировке "накопленный ввод с 2016"
-def erzrf_nakopl(region: str) -> float | None:
-    df = erzrf_top.get("nakopl_vvod", {}).get(region)
+
+def erzrf_value(sorting: str, region: str, value_substr: str = "Введено") -> float | None:
+    """Достать число из ERZRF top для текущего застройщика."""
+    df = erzrf_top.get(sorting, {}).get(region)
     if df is None or df.empty:
         return None
     name_col = next((c for c in df.columns if "Наименование" in str(c)), None)
@@ -190,125 +191,122 @@ def erzrf_nakopl(region: str) -> float | None:
     rows = find_dev_rows(df, name_col, sel_key)
     if rows.empty:
         return None
-    # Колонка "Введено, м²"
-    val_col = next((c for c in df.columns if "Введено" in str(c) and "м²" in str(c)), None)
+    val_col = next((c for c in df.columns if value_substr in str(c) and "м²" in str(c)), None)
     if not val_col:
         return None
     return float(pd.to_numeric(rows[val_col].iloc[0], errors="coerce") or 0)
 
 
-vvod_rf = erzrf_nakopl("rf")
-vvod_msk = erzrf_nakopl("msk")
-vvod_other = (vvod_rf - vvod_msk) if (vvod_rf is not None and vvod_msk is not None) else None
-
-cols_kpi = st.columns(4)
-cols_kpi[0].metric(
-    "Введено с 2016 (РФ)",
-    f"{ru_num((vvod_rf or 0)/1000)} тыс. м²" if vvod_rf else "—",
-    help="Накопленный ввод по ERZRF",
-)
-cols_kpi[1].metric(
-    "В Москве с 2016",
-    f"{ru_num((vvod_msk or 0)/1000)} тыс. м²" if vvod_msk else "—",
-)
-cols_kpi[2].metric(
-    f"В строительстве (Москва)",
-    f"{ru_num(total_oks/1000)} тыс. м²",
-    help="Monitoring 2.0 / Реестр ОКС",
-)
-cols_kpi[3].metric(
-    "В других регионах с 2016",
-    f"{ru_num((vvod_other or 0)/1000)} тыс. м²" if vvod_other is not None else "—",
-    help="РФ − Москва (ERZRF)",
-)
+def other_regions_pct(sorting: str) -> str:
+    """% площади у застройщика в других регионах (РФ − Москва) / РФ."""
+    rf_val = erzrf_value(sorting, "rf")
+    msk_val = erzrf_value(sorting, "msk")
+    if rf_val is None or msk_val is None or rf_val <= 0:
+        return "—"
+    other = max(rf_val - msk_val, 0)
+    pct = other / rf_val * 100
+    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
 
 
 # === 3 donut диаграммы ===
-st.markdown("### Структура ввода и строительства по типу площади (Москва)")
+st.markdown("### Структура ввода по типу площади (Москва)")
 pie_cols = st.columns(3)
 
 with pie_cols[0]:
-    # Ввод с 2016 — берём данные из monitoring (РВ) — это Москва
-    cats = categorize_sum(rv_dev)
-    subtitle = ""
-    if vvod_other is not None and vvod_msk is not None and vvod_msk > 0:
-        share_msk = vvod_msk / (vvod_msk + vvod_other) * 100
-        subtitle = f"В других регионах: {ru_num((vvod_other)/1000)} тыс. м² ({100-share_msk:.0f}%)"
-    render_donut(cats, "Ввод с 2016 г.", subtitle)
+    render_donut(
+        categorize_sum(rv_dev),
+        "Ввод с 2016 г.",
+        f"В других регионах: {other_regions_pct('nakopl_vvod')}",
+    )
 
 with pie_cols[1]:
     render_donut(
-        categorize_sum(last_year_rv) if not last_year_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
-        f"Ввод за {last_year_int} г." if last_year_int else "Ввод за последний год",
+        categorize_sum(prev_rv) if not prev_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
+        f"Ввод за {prev_year_int} г." if prev_year_int else "Ввод за пред. год",
+        f"В других регионах: {other_regions_pct('obyem_vvoda')}",
     )
 
 with pie_cols[2]:
     render_donut(
-        categorize_sum(oks_dev),
-        "В строительстве",
+        categorize_sum(last_rv) if not last_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
+        f"Ввод за {last_year_int} г." if last_year_int else "Ввод за последний год",
+        f"В других регионах: {other_regions_pct('obyem_vvoda')}",
     )
 
 
-# === Динамика ввода по годам + правый блок ===
+# === Динамика ввода по годам ===
 st.markdown(f"### Динамика ввода в Москве — {sel_canon}")
-left, right = st.columns([3, 1])
+if rv_dev.empty:
+    st.info("Нет данных по введённым объектам")
+else:
+    by_year = rv_dev.groupby("Год ввода по Мосстату")[cat_cols].sum().reset_index()
+    by_year = by_year.sort_values("Год ввода по Мосстату")
+    by_year["Год ввода по Мосстату"] = by_year["Год ввода по Мосстату"].astype(int).astype(str)
+
+    fig = go.Figure()
+    for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
+        vals = by_year[f"{CAT_COL_PREFIX}{key}"] / 1000.0
+        fig.add_trace(go.Bar(
+            x=by_year["Год ввода по Мосстату"], y=vals,
+            name=lbl, marker_color=color,
+            text=[ru_num(v) if v > 0 else "" for v in vals],
+            textposition="inside",
+            hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=380,
+        margin=dict(l=0, r=0, t=10, b=0),
+        xaxis_title="Год ввода", yaxis_title="тыс. м²",
+        legend=dict(orientation="h", y=-0.15),
+    )
+    st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
+
+
+# === В строительстве (donut слева) + Распроданность/готовность (справа) ===
+st.markdown("### В строительстве и распроданность")
+left, right = st.columns([2, 1])
 
 with left:
-    if rv_dev.empty:
-        st.info("Нет данных по введённым объектам")
-    else:
-        by_year = rv_dev.groupby("Год ввода по Мосстату")[cat_cols].sum().reset_index()
-        by_year = by_year.sort_values("Год ввода по Мосстату")
-        by_year["Год ввода по Мосстату"] = by_year["Год ввода по Мосстату"].astype(int).astype(str)
-
-        fig = go.Figure()
-        for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
-            vals = by_year[f"{CAT_COL_PREFIX}{key}"] / 1000.0
-            fig.add_trace(go.Bar(
-                x=by_year["Год ввода по Мосстату"], y=vals,
-                name=lbl, marker_color=color,
-                text=[ru_num(v) if v > 0 else "" for v in vals],
-                textposition="inside",
-                hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
-            ))
-        fig.update_layout(
-            barmode="stack", height=380,
-            margin=dict(l=0, r=0, t=10, b=0),
-            xaxis_title="Год ввода", yaxis_title="тыс. м²",
-            legend=dict(orientation="h", y=-0.15),
-        )
-        st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
+    render_donut(
+        categorize_sum(oks_dev),
+        "В строительстве (Москва)",
+    )
 
 with right:
-    st.markdown("#### Распроданность / готовность")
-    # Найти строку в rasprodannost developers за последний период
+    st.markdown("#### Распроданность / стройготовность")
     rasprod_dev_df = rasprod.get("developers")
-    if rasprod_dev_df is not None and not rasprod_dev_df.empty:
+    if rasprod_dev_df is not None and not rasprod_dev_df.empty and "наименование" in rasprod_dev_df.columns:
         rows = find_dev_rows(rasprod_dev_df, "наименование", sel_key)
+        latest_period = rasprod.get("latest_period")
+        if latest_period and not rows.empty:
+            ly, lm = latest_period
+            rows = rows[(rows["year"] == ly) & (rows["month"] == lm)]
         if not rows.empty:
-            latest_period = rasprod.get("latest_period")
-            if latest_period:
-                ly, lm = latest_period
-                rows = rows[(rows["year"] == ly) & (rows["month"] == lm)]
-            if not rows.empty:
-                r = rows.iloc[0]
-                # Колонки могут иметь &nbsp;
-                cols_metrics = {c: c for c in r.index
-                                if any(k in str(c) for k in
-                                       ["Распроданность", "Стройготовность", "Отношение"])}
-                for raw_col, _ in cols_metrics.items():
-                    val = r.get(raw_col)
-                    name = "Распроданность" if "Распроданность" in raw_col \
-                        else "Стройготовность" if "Стройготовность" in raw_col \
-                        else "Отношение Р/С"
-                    if val is not None and not pd.isna(val):
-                        st.metric(name, str(val))
-            else:
-                st.info("Нет данных за последний период")
+            r = rows.iloc[0]
+            # Берём только _num колонки чтобы не дублировать
+            metric_map = [
+                ("Распроданность", "Распроданность"),
+                ("Стройготовность", "Стройготовность"),
+                ("Отношение распроданности к стройготовности",
+                 "Отношение распроданности к стройготовности"),
+            ]
+            shown = 0
+            for substr, label in metric_map:
+                num_col = next((c for c in r.index
+                                if c.endswith("_num") and substr in c), None)
+                if not num_col:
+                    continue
+                val = r.get(num_col)
+                if val is None or pd.isna(val):
+                    continue
+                st.metric(label, f"{float(val):.0f}%")
+                shown += 1
+            if shown == 0:
+                st.info("Нет метрик за последний период")
         else:
             st.info("Застройщик не найден в распроданности")
     else:
-        st.info("Распроданность не загружена")
+        st.info("Распроданность не загружена (положи rasprodannost_*.xlsx в data/raw/realty/nashdom/)")
 
 
 # === Квартирография: таблица типов ===

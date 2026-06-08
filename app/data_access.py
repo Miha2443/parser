@@ -283,28 +283,75 @@ def load_monitoring_2_0() -> dict:
     rv = pd.read_excel(latest, sheet_name="Реестр РВ")
     oks = pd.read_excel(latest, sheet_name="Реестр ОКС")
 
-    # Категории площадей по правилам:
-    # Жилая = Жилая площадь (если Группировка==Жилье)
-    # Нежилая в жилых = Общая − Жилая (если Группировка==Жилье)
-    # Нежилые здания = Общая (если Группировка==Нежилье)
-    def categorize(df):
+    # Категории площадей — 4 группы:
+    # РВ (Отрасли + Группировка):
+    #   Жилое = Жилая (Отрасли=Жилые объекты AND Группировка=Жилье)
+    #   МОП = Общая - Жилая (Отрасли=Жилые объекты AND Группировка=Жилье)
+    #   Нежилое в жилом = Общая (Отрасли=Жилые объекты AND Группировка=Нежилье)
+    #     — 1-е этажи МКД, паркинги внутри ЖК
+    #   Нежилое отдельное = Общая (Отрасли != Жилые объекты)
+    #     — соцобъекты, офисы, отдельно стоящие
+    # ОКС (Назначение + Подтип объекта — Отрасли в ОКС нет):
+    #   Жилое = Жилая (Назначение=Жилье)
+    #   МОП = Общая - Жилая (Назначение=Жилье)
+    #   Нежилое в жилом = Общая (Назначение=Нежилье AND Подтип IN {МПТ, Подземный паркинг, Кладовые})
+    #   Нежилое отдельное = Общая (всё остальное Нежилье — Социалка, Прочие, Отд.паркинг)
+    def categorize_rv(df):
         df = df.copy()
-        df["category_жилая"] = 0.0
-        df["category_нежилая_в_жилых"] = 0.0
-        df["category_нежилые_здания"] = 0.0
-        if "Группировка" in df.columns and "Общая площадь" in df.columns:
-            df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
-            df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
-            is_zhile = df["Группировка"] == "Жилье"
-            df.loc[is_zhile, "category_жилая"] = df.loc[is_zhile, "Жилая площадь"]
-            df.loc[is_zhile, "category_нежилая_в_жилых"] = (
-                df.loc[is_zhile, "Общая площадь"] - df.loc[is_zhile, "Жилая площадь"]
-            ).clip(lower=0)
-            df.loc[~is_zhile, "category_нежилые_здания"] = df.loc[~is_zhile, "Общая площадь"]
+        df["category_жилое"] = 0.0
+        df["category_моп"] = 0.0
+        df["category_нежилое_в_жилом"] = 0.0
+        df["category_нежилое_отдельное"] = 0.0
+        if "Общая площадь" not in df.columns:
+            return df
+        df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
+        df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
+        is_zh_otrasl = df.get("Отрасли", "") == "Жилые объекты"
+        is_zh_grp = df.get("Группировка", "") == "Жилье"
+        is_nzh_grp = df.get("Группировка", "") == "Нежилье"
+        # Жилое + МОП (только в жилых отраслях и жилой группировке)
+        mask_zh = is_zh_otrasl & is_zh_grp
+        df.loc[mask_zh, "category_жилое"] = df.loc[mask_zh, "Жилая площадь"]
+        df.loc[mask_zh, "category_моп"] = (
+            df.loc[mask_zh, "Общая площадь"] - df.loc[mask_zh, "Жилая площадь"]
+        ).clip(lower=0)
+        # Нежилое в жилом (1-е этажи, паркинги в ЖК)
+        mask_nzh_in_zh = is_zh_otrasl & is_nzh_grp
+        df.loc[mask_nzh_in_zh, "category_нежилое_в_жилом"] = df.loc[mask_nzh_in_zh, "Общая площадь"]
+        # Нежилое отдельное (отрасли не жилые)
+        mask_nzh_alone = ~is_zh_otrasl
+        df.loc[mask_nzh_alone, "category_нежилое_отдельное"] = df.loc[mask_nzh_alone, "Общая площадь"]
         return df
 
-    rv = categorize(rv)
-    oks = categorize(oks)
+    def categorize_oks(df):
+        df = df.copy()
+        df["category_жилое"] = 0.0
+        df["category_моп"] = 0.0
+        df["category_нежилое_в_жилом"] = 0.0
+        df["category_нежилое_отдельное"] = 0.0
+        if "Общая площадь" not in df.columns:
+            return df
+        df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
+        df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
+        naznachenie = df.get("Назначение", "")
+        podtip = df.get("Подтип объекта", "")
+        # Жилое + МОП
+        is_zh = naznachenie == "Жилье"
+        df.loc[is_zh, "category_жилое"] = df.loc[is_zh, "Жилая площадь"]
+        df.loc[is_zh, "category_моп"] = (
+            df.loc[is_zh, "Общая площадь"] - df.loc[is_zh, "Жилая площадь"]
+        ).clip(lower=0)
+        # Нежилое в жилом (парковки/кладовые внутри ЖК)
+        in_complex_subtypes = {"МПТ", "Подземный паркинг", "Кладовые помещения"}
+        is_nzh_in_zh = (naznachenie == "Нежилье") & podtip.isin(in_complex_subtypes)
+        df.loc[is_nzh_in_zh, "category_нежилое_в_жилом"] = df.loc[is_nzh_in_zh, "Общая площадь"]
+        # Нежилое отдельное (соцобъекты, прочие, отдельные паркинги)
+        is_nzh_alone = (naznachenie == "Нежилье") & ~podtip.isin(in_complex_subtypes)
+        df.loc[is_nzh_alone, "category_нежилое_отдельное"] = df.loc[is_nzh_alone, "Общая площадь"]
+        return df
+
+    rv = categorize_rv(rv)
+    oks = categorize_oks(oks)
 
     # Группа компаний может содержать смесь типов — приводим к str
     devs_rv = set(str(x) for x in rv["Группа компаний"].dropna().unique())
@@ -322,6 +369,108 @@ def load_monitoring_2_0() -> dict:
         "min_year": min_year,
         "max_year": max_year,
     }
+
+
+# ─────────────────────────────────────────────
+# ERZRF (top + cards)
+# ─────────────────────────────────────────────
+
+ERZRF_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "erzrf",
+    Path(__file__).resolve().parent.parent / "erzrf",
+    Path(__file__).resolve().parent.parent / "nashdom",  # на всякий случай
+]
+
+
+def _normalize_developer_name(name: str) -> str:
+    """Приводит имя застройщика к каноническому ключу для матчинга между источниками.
+
+    «ГК Самолет» / «Самолет» / «САМОЛЕТ» / «Группа компаний Самолет» → «самолет».
+    """
+    if name is None or (isinstance(name, float) and pd.isna(name)):
+        return ""
+    s = str(name).strip().lower()
+    # Удаляем юридические/группировочные префиксы
+    for prefix in [
+        "группа компаний ", "гк ", "ао ", "пао ", "ооо ", "зао ",
+        "холдинг ", "ук ", "пик-", "тк ", "пкф ",
+    ]:
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    # Убираем кавычки и лишние пробелы
+    s = s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
+    s = " ".join(s.split())
+    return s
+
+
+@st.cache_data(show_spinner=False)
+def load_erzrf_top() -> dict:
+    """Читает ERZRF TOP-файлы (5 сортировок × 2 региона).
+
+    Файлы ожидаются в data/raw/realty/erzrf/ или ./erzrf/:
+      top_obyem_stroitelstva_rf_*.xlsx
+      top_obyem_stroitelstva_msk_*.xlsx
+      top_obyem_vvoda_rf_*.xlsx
+      top_obyem_vvoda_msk_*.xlsx
+      top_nakopl_vvod_rf_*.xlsx
+      top_nakopl_vvod_msk_*.xlsx
+      top_potreb_kachestva_rf_*.xlsx
+      top_skorost_rf_*.xlsx
+
+    Возвращает dict[sort_key] → dict[region] → DataFrame.
+    Плюс: 'all_developers' — union наименований по всем файлам,
+    с нормализованным ключом для матчинга.
+    """
+    sortings = ["obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod",
+                "potreb_kachestva", "skorost"]
+    regions = ["rf", "msk"]
+    result: dict = {}
+    all_names = set()
+    for sorting in sortings:
+        result[sorting] = {}
+        for reg in regions:
+            files = []
+            for base in ERZRF_PATHS:
+                if base.exists():
+                    files.extend(sorted(base.glob(f"top_{sorting}_{reg}_*.xlsx")))
+            if not files:
+                continue
+            latest = max(files, key=lambda p: p.stat().st_mtime)
+            try:
+                df = pd.read_excel(latest)
+                result[sorting][reg] = df
+                # Имя в колонке «Наименование, регион» (для большинства) или «Наименование»
+                name_col = next((c for c in df.columns
+                                 if "Наименование" in str(c)), None)
+                if name_col:
+                    for v in df[name_col].dropna().unique():
+                        all_names.add(str(v).strip())
+            except Exception:  # noqa: BLE001
+                pass
+
+    result["all_developers"] = sorted(all_names)
+    return result
+
+
+@st.cache_data(show_spinner=False)
+def load_erzrf_cards() -> pd.DataFrame:
+    """Читает свежий cards_*.xlsx (sheet 'cards').
+
+    Возвращает DataFrame с колонками включая 'name_card', 'slug',
+    'regions_count' и Сдано/Перенос/Уточн по годам.
+    """
+    files = []
+    for base in ERZRF_PATHS:
+        if base.exists():
+            files.extend(sorted(base.rglob("cards_*.xlsx")))
+    if not files:
+        return pd.DataFrame()
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    try:
+        return pd.read_excel(latest, sheet_name="cards")
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
 
 
 RASPROD_PATHS = [

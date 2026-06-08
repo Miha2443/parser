@@ -138,3 +138,105 @@ def latest_period(df: pd.DataFrame) -> str:
     last_year = int(months_only["year"].max())
     last_month = int(months_only[months_only["year"] == last_year]["month"].max())
     return f"январь–{MONTH_NAMES_RU[last_month - 1]} {last_year}"
+
+
+# ─────────────────────────────────────────────
+# Квартирография (наш.дом.рф)
+# ─────────────────────────────────────────────
+
+KVART_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "nashdom",
+    Path(__file__).resolve().parent.parent / "nashdom",
+]
+
+
+def _parse_kvart_number(value) -> float | None:
+    """«2 439 665» → 2439665; «48» → 48; «<1» → 0.5; «-» → None."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("\xa0", "").replace(" ", "")
+    if not s or s in ("-", "—"):
+        return None
+    if s.startswith("<"):
+        return 0.5  # «< 1» — приближение для сортировки
+    s = s.replace("%", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_kvartirografia() -> dict:
+    """Загружает свежий kvartirografia_<date>.json.
+
+    Возвращает dict с ключами:
+      'apartments' / 'distribution' / 'developers' / 'regions' — DataFrames
+      'report_date': str (DD.MM.YYYY)
+      'regions_available': list[str] — ['rf', 'msk'] обычно
+
+    Каждый DataFrame имеет колонку `region_key`. Числовые значения
+    преобразованы из строк («2 439 665» → 2439665.0) в колонки с суффиксом `_num`.
+    Оригинальные строковые колонки сохраняются для отображения «как на сайте».
+    """
+    import json
+    files = []
+    for base in KVART_PATHS:
+        if base.exists():
+            files.extend(sorted(base.glob("kvartirografia_*.json")))
+    if not files:
+        return {
+            "apartments": pd.DataFrame(),
+            "distribution": pd.DataFrame(),
+            "developers": pd.DataFrame(),
+            "regions": pd.DataFrame(),
+            "report_date": "",
+            "regions_available": [],
+        }
+    # Самый свежий по mtime
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    data = json.loads(latest.read_text(encoding="utf-8"))
+
+    apartments_rows, distribution_rows = [], []
+    developers_rows, regions_rows = [], []
+    report_date = ""
+    region_keys: list[str] = []
+    for d in data:
+        rk = d.get("region_key", "")
+        if rk and rk not in region_keys:
+            region_keys.append(rk)
+        if not report_date:
+            report_date = d.get("report_date", "")
+        for a in d.get("apartments", []):
+            apartments_rows.append({"region_key": rk, **a})
+        for x in d.get("distribution", []):
+            distribution_rows.append({"region_key": rk, **x})
+        for x in d.get("developers", []):
+            developers_rows.append({"region_key": rk, **x})
+        for x in d.get("regions", []):
+            regions_rows.append({"region_key": rk, **x})
+
+    def _df(rows, num_cols):
+        df = pd.DataFrame(rows)
+        for c in num_cols:
+            if c in df.columns:
+                df[f"{c}_num"] = df[c].apply(_parse_kvart_number)
+        return df
+
+    apartments = _df(apartments_rows, ["количество_шт", "площадь_тыс_м²"])
+    distribution = _df(distribution_rows, ["доля"])
+    devs_regs_cols = [
+        "квартиры_тыс_шт", "площадь_тыс_м²",
+        "доля_1комн_%", "доля_2комн_%", "доля_3комн_%", "доля_4+комн_%",
+    ]
+    developers = _df(developers_rows, devs_regs_cols)
+    regions = _df(regions_rows, devs_regs_cols)
+
+    return {
+        "apartments": apartments,
+        "distribution": distribution,
+        "developers": developers,
+        "regions": regions,
+        "report_date": report_date,
+        "regions_available": region_keys,
+    }

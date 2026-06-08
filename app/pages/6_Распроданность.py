@@ -120,7 +120,7 @@ kpi_titles = [
     ("Объем жилищного строительства", "Объём жил. строительства", "тыс. м²", 0),
     ("Распроданность", "Распроданность", "%", 0),
     ("Стройготовность", "Стройготовность", "%", 0),
-    ("Отношение", "Отношение Р / С", "%", 0),
+    ("Отношение", "Отношение распроданности к стройготовности", "%", 0),
 ]
 for i, (substr, short_title, unit_label, digits) in enumerate(kpi_titles):
     with kpi_cols[i]:
@@ -178,35 +178,57 @@ if not time_series.empty:
     )
     time_series = time_series.sort_values("period")
 
-    # 4 линии — одна на KPI
-    fig = go.Figure()
+    # График 1: только Объём жилищного строительства (большие значения, тыс. м²)
+    vol_ts = time_series[time_series["название"].str.contains("Объем жилищного", na=False)]
+    if not vol_ts.empty:
+        st.markdown("**Объём жилищного строительства, тыс. м²**")
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Scatter(
+            x=vol_ts["period"], y=vol_ts["значение_num"],
+            mode="lines+markers",
+            line=dict(color=COLOR_VOLUME, width=2),
+            marker=dict(size=4),
+            name="Объём строительства",
+            hovertemplate="%{x|%b %Y}<br>%{y:,.0f} тыс. м²<extra></extra>",
+        ))
+        fig_vol.update_layout(
+            height=320,
+            margin=dict(l=0, r=0, t=10, b=0),
+            xaxis_title="",
+            yaxis_title="",
+            hovermode="x unified",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
+    # График 2: 3 процентных KPI на одной оси
+    st.markdown("**Распроданность · Стройготовность · Отношение, %**")
+    fig_pct = go.Figure()
     for substr, short_title, unit_label, _ in kpi_titles:
+        if "Объем" in substr:
+            continue
         ts = time_series[time_series["название"].str.contains(substr, na=False)]
         if ts.empty:
             continue
         name = ts["название"].iloc[0].strip()
         color = KPI_COLORS.get(name, "#666")
-        fig.add_trace(go.Scatter(
+        fig_pct.add_trace(go.Scatter(
             x=ts["period"], y=ts["значение_num"],
             mode="lines+markers",
             name=short_title,
             line=dict(color=color, width=2),
             marker=dict(size=4),
-            hovertemplate=(
-                "<b>" + short_title + "</b><br>"
-                "%{x|%b %Y}<br>"
-                "%{y} " + unit_label + "<extra></extra>"
-            ),
+            hovertemplate="<b>" + short_title + "</b><br>%{x|%b %Y}<br>%{y}%<extra></extra>",
         ))
-    fig.update_layout(
-        height=400,
-        margin=dict(l=0, r=0, t=20, b=0),
+    fig_pct.update_layout(
+        height=380,
+        margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title="",
         yaxis_title="",
         hovermode="x unified",
         legend=dict(orientation="h", y=-0.15),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_pct, use_container_width=True)
 
 
 # === 6 таблиц ===

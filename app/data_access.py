@@ -246,6 +246,84 @@ def load_kvartirografia() -> dict:
 # Распроданность (наш.дом.рф)
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+# Мониторинг 2.0 (наш.дом.рф) — реестр ОКС + РВ
+# ─────────────────────────────────────────────
+
+MONITORING_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "nashdom",
+    Path(__file__).resolve().parent.parent / "nashdom",
+]
+
+
+@st.cache_data(show_spinner=False)
+def load_monitoring_2_0() -> dict:
+    """Загружает свежий monitoring_2_0_<date>.xlsx (Google Sheets export).
+
+    Возвращает:
+      'rv': DataFrame реестра РВ (введённые объекты, Год ввода по Мосстату)
+      'oks': DataFrame реестра ОКС (объекты в строительстве)
+      'developers': sorted list[str] — уникальные «Группа компаний» из обоих листов
+      'min_year' / 'max_year': диапазон годов ввода
+    """
+    files = []
+    for base in MONITORING_PATHS:
+        if base.exists():
+            files.extend(sorted(base.glob("monitoring_2_0_*.xlsx")))
+    if not files:
+        return {
+            "rv": pd.DataFrame(),
+            "oks": pd.DataFrame(),
+            "developers": [],
+            "min_year": None,
+            "max_year": None,
+        }
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+
+    rv = pd.read_excel(latest, sheet_name="Реестр РВ")
+    oks = pd.read_excel(latest, sheet_name="Реестр ОКС")
+
+    # Категории площадей по правилам:
+    # Жилая = Жилая площадь (если Группировка==Жилье)
+    # Нежилая в жилых = Общая − Жилая (если Группировка==Жилье)
+    # Нежилые здания = Общая (если Группировка==Нежилье)
+    def categorize(df):
+        df = df.copy()
+        df["category_жилая"] = 0.0
+        df["category_нежилая_в_жилых"] = 0.0
+        df["category_нежилые_здания"] = 0.0
+        if "Группировка" in df.columns and "Общая площадь" in df.columns:
+            df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
+            df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
+            is_zhile = df["Группировка"] == "Жилье"
+            df.loc[is_zhile, "category_жилая"] = df.loc[is_zhile, "Жилая площадь"]
+            df.loc[is_zhile, "category_нежилая_в_жилых"] = (
+                df.loc[is_zhile, "Общая площадь"] - df.loc[is_zhile, "Жилая площадь"]
+            ).clip(lower=0)
+            df.loc[~is_zhile, "category_нежилые_здания"] = df.loc[~is_zhile, "Общая площадь"]
+        return df
+
+    rv = categorize(rv)
+    oks = categorize(oks)
+
+    # Группа компаний может содержать смесь типов — приводим к str
+    devs_rv = set(str(x) for x in rv["Группа компаний"].dropna().unique())
+    devs_oks = set(str(x) for x in oks["Группа компаний"].dropna().unique())
+    developers = sorted(devs_rv | devs_oks)
+
+    years = rv["Год ввода по Мосстату"].dropna()
+    min_year = int(years.min()) if not years.empty else None
+    max_year = int(years.max()) if not years.empty else None
+
+    return {
+        "rv": rv,
+        "oks": oks,
+        "developers": developers,
+        "min_year": min_year,
+        "max_year": max_year,
+    }
+
+
 RASPROD_PATHS = [
     Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "nashdom",
     Path(__file__).resolve().parent.parent / "nashdom",

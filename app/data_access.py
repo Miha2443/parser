@@ -240,3 +240,103 @@ def load_kvartirografia() -> dict:
         "report_date": report_date,
         "regions_available": region_keys,
     }
+
+
+# ─────────────────────────────────────────────
+# Распроданность (наш.дом.рф)
+# ─────────────────────────────────────────────
+
+RASPROD_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "nashdom",
+    Path(__file__).resolve().parent.parent / "nashdom",
+]
+RASPROD_TABLE_SHEETS = ["fed_okruga", "regions", "developers", "by_dev_volume", "by_population", "by_class"]
+
+
+def _parse_rasprod_number(value) -> float | None:
+    """Парсит «119 346 тыс. м²» → 119346; «31%» → 31; «34 105 939» → 34105939."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    s = str(value).strip().replace("\xa0", " ")
+    if not s or s in ("-", "—", "nan"):
+        return None
+    # Убираем единицы измерения
+    for unit in ["тыс. м²", "млн руб", "тыс. шт", "%", "тыс."]:
+        s = s.replace(unit, "")
+    s = s.strip().replace(" ", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_rasprodannost() -> dict:
+    """Загружает свежий rasprodannost_<date>.xlsx.
+
+    Возвращает dict:
+      'kpi': DataFrame со столбцами region_key/year/month/month_name/report_period/
+             название/значение/значение_num/единица/прогноз_2026..2031+ (числовые тоже)
+      'fed_okruga' / 'regions' / 'developers' / 'by_dev_volume' / 'by_population' /
+      'by_class': DataFrames с region_key/year/month/section/наименование/
+             Объем жил. строительства/Распроданность/Стройготовность/Отношение
+             + соответствующие _num колонки
+      'regions_available': list[str] — ['rf', 'msk']
+      'periods': list[(year, month)] отсортированных
+      'latest_period': (year, month) последний доступный
+    """
+    files = []
+    for base in RASPROD_PATHS:
+        if base.exists():
+            files.extend(sorted(base.glob("rasprodannost_*.xlsx")))
+    if not files:
+        return {
+            "kpi": pd.DataFrame(),
+            **{s: pd.DataFrame() for s in RASPROD_TABLE_SHEETS},
+            "regions_available": [],
+            "periods": [],
+            "latest_period": None,
+        }
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+
+    xl = pd.ExcelFile(latest)
+    out: dict = {"regions_available": [], "periods": [], "latest_period": None}
+
+    # KPI
+    if "kpi" in xl.sheet_names:
+        df = pd.read_excel(latest, sheet_name="kpi")
+        df["значение_num"] = df["значение"].apply(_parse_rasprod_number)
+        for col in df.columns:
+            if col.startswith("прогноз_"):
+                df[f"{col}_num"] = df[col].apply(_parse_rasprod_number)
+        out["kpi"] = df
+    else:
+        out["kpi"] = pd.DataFrame()
+
+    # 6 таблиц
+    metric_cols = ["Объем жил. строительства", "Распроданность", "Стройготовность",
+                   "Отношение распроданности  к\xa0стройготовности",
+                   "Отношение распроданности к стройготовности"]
+    for sheet in RASPROD_TABLE_SHEETS:
+        if sheet not in xl.sheet_names:
+            out[sheet] = pd.DataFrame()
+            continue
+        df = pd.read_excel(latest, sheet_name=sheet)
+        for col in df.columns:
+            if any(m in col for m in metric_cols):
+                df[f"{col}_num"] = df[col].apply(_parse_rasprod_number)
+        out[sheet] = df
+
+    # Собираем мета из KPI листа (там все периоды есть)
+    if not out["kpi"].empty:
+        kdf = out["kpi"]
+        regions = sorted(kdf["region_key"].dropna().unique().tolist())
+        out["regions_available"] = regions
+        periods = sorted(set(
+            (int(r["year"]), int(r["month"]))
+            for _, r in kdf.iterrows()
+            if pd.notna(r.get("year")) and pd.notna(r.get("month"))
+        ))
+        out["periods"] = periods
+        out["latest_period"] = periods[-1] if periods else None
+    return out

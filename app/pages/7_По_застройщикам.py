@@ -111,16 +111,48 @@ if not mon_devs:
     )
     st.stop()
 
+# Порядок в селекторе: сначала топ ERZRF по объёму строительства РФ
+# (так Самолет/ПИК/ДОГМА идут первыми вместо «ФОНД СВЯТОСЛАВА ФЕДОРОВА»
+# который алфавитно был наверху из-за кавычек). Если девелопера нет в топе —
+# идёт ниже алфавитно.
+def _build_ordered_devs(mon_names: list[str]) -> list[str]:
+    mon_by_key = {norm(n): n for n in mon_names}
+    ordered: list[str] = []
+    used_keys: set[str] = set()
+    # 1) По топу ERZRF
+    top_df = erzrf_top.get("obyem_stroitelstva", {}).get("rf")
+    if top_df is not None and not top_df.empty:
+        name_col = next((c for c in top_df.columns if "Наименование" in str(c)), None)
+        place_col = next((c for c in top_df.columns
+                          if str(c).strip().lower() in ("место", "место ")), None)
+        if name_col:
+            df = top_df.sort_values(place_col) if place_col else top_df
+            for raw in df[name_col].dropna():
+                k = norm(str(raw))
+                if k in used_keys:
+                    continue
+                if k in mon_by_key:
+                    ordered.append(mon_by_key[k])
+                    used_keys.add(k)
+    # 2) Остальные monitoring (которых нет в топе) — алфавитно
+    rest = [n for k, n in mon_by_key.items() if k not in used_keys]
+    ordered.extend(sorted(rest))
+    return ordered
+
+
+ordered_devs = _build_ordered_devs(mon_devs)
+
 st.title("Профиль застройщика")
 
 cols_top = st.columns([3, 2])
 with cols_top[0]:
     sel_canon = st.selectbox(
         "Группа компаний",
-        sorted(mon_devs),
+        ordered_devs,
         key="dev_select_full",
-        help=f"{len(mon_devs)} групп компаний (источник: Мониторинг 2.0). "
-             f"Данные из ERZRF / rasprod / квартирографии подтягиваются по похожему имени.",
+        help=f"{len(ordered_devs)} групп компаний. Порядок: топ ERZRF по объёму "
+             f"строительства РФ → дальше остальные алфавитно. "
+             f"Данные подтягиваются из 5 источников по нормализованному имени.",
     )
 sel_key = norm(sel_canon)
 

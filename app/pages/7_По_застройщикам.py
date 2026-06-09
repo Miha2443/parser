@@ -485,7 +485,13 @@ else:
                 r = msk_rows.iloc[0] if not msk_rows.empty else rows.iloc[0]
             else:
                 r = rows.iloc[0]
-            total = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
+            # На сайте наш.дом.рф числа в ШТУКАХ (с разделителями тысяч —
+            # «42 100 квартир»). В нашем kvart-файле колонка хранится как
+            # «тыс. шт» — поэтому домножаем на 1000 чтобы единицы совпали
+            # со страницей 5 (Квартирография по девелоперу) и сайтом.
+            total_th = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
+            total = total_th * 1000.0  # шт
+            area_th = float(r.get("площадь_тыс_м²_num") or 0)
             rooms = {}
             for k in ["1комн", "2комн", "3комн", "4+комн"]:
                 pct = r.get(f"доля_{k}_%_num")
@@ -495,12 +501,12 @@ else:
                     rooms[k] = (None, None)
             kvart_table = pd.DataFrame([
                 {"Тип квартир": "Все",
-                 "Количество, тыс. шт": total if total else None,
+                 "Количество, шт": total if total else None,
                  "Доля, %": 100.0 if total else None,
-                 "Площадь, тыс. м²": r.get("площадь_тыс_м²_num")},
+                 "Площадь, тыс. м²": area_th if area_th else None},
                 *[
                     {"Тип квартир": label,
-                     "Количество, тыс. шт": rooms[k][1],
+                     "Количество, шт": rooms[k][1],
                      "Доля, %": rooms[k][0],
                      "Площадь, тыс. м²": None}
                     for k, label in [
@@ -514,14 +520,19 @@ else:
                 column_config={
                     "Доля, %": st.column_config.ProgressColumn(
                         format="%.0f%%", min_value=0, max_value=100),
-                    "Количество, тыс. шт": st.column_config.NumberColumn(format="%.1f"),
+                    "Количество, шт": st.column_config.NumberColumn(format="%d"),
                     "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.0f"),
                 },
             )
+            region_label = "г.Москва" if (
+                "region_key" in rows.columns
+                and not rows[rows["region_key"] == "msk"].empty
+            ) else "Российская Федерация"
             st.caption(
-                "Количество = всего × долю % (точных per-dev данных нет — "
-                "запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia` "
-                "чтобы спарсить точные числа).")
+                f"Источник: наш.дом.рф/квартирография ({region_label}). "
+                f"Количество = всего × долю %. Для точных чисел по комнатности "
+                f"запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`."
+            )
         else:
             st.info(f"«{sel_canon}» не найден в данных квартирографии")
     else:

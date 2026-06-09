@@ -21,6 +21,7 @@ State хранится в `state/nashdom_state.json`. Запуск:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -400,6 +401,7 @@ def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
 
     apartments_rows, distribution_rows = [], []
     developers_rows, regions_rows = [], []
+    per_dev_rows = []  # точные числа на каждого девелопера
 
     for data in all_data:
         rk = data.get("region_key", "")
@@ -413,6 +415,26 @@ def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
             developers_rows.append({"region_key": rk, "region": rl, "report_date": rd, **dev})
         for reg in data.get("regions", []):
             regions_rows.append({"region_key": rk, "region": rl, "report_date": rd, **reg})
+        # Per-dev exact apartments (НОВОЕ)
+        for pd_row in data.get("apartments_per_dev", []):
+            apt = pd_row.get("apartments", {}) or {}
+            per_dev_rows.append({
+                "region_key": rk,
+                "region": rl,
+                "report_date": rd,
+                "наименование": pd_row.get("наименование", ""),
+                "источник_имя_monitoring": pd_row.get("monitoring_name", ""),
+                "Все_количество_шт": (apt.get("all") or {}).get("count", ""),
+                "Все_площадь_тыс_м²": (apt.get("all") or {}).get("area", ""),
+                "1комн_количество_шт": (apt.get("ONE") or {}).get("count", ""),
+                "1комн_площадь_тыс_м²": (apt.get("ONE") or {}).get("area", ""),
+                "2комн_количество_шт": (apt.get("TWO") or {}).get("count", ""),
+                "2комн_площадь_тыс_м²": (apt.get("TWO") or {}).get("area", ""),
+                "3комн_количество_шт": (apt.get("THREE") or {}).get("count", ""),
+                "3комн_площадь_тыс_м²": (apt.get("THREE") or {}).get("area", ""),
+                "4+комн_количество_шт": (apt.get("FOUR") or {}).get("count", ""),
+                "4+комн_площадь_тыс_м²": (apt.get("FOUR") or {}).get("area", ""),
+            })
 
     with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
         if apartments_rows:
@@ -423,6 +445,9 @@ def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
             pd.DataFrame(developers_rows).to_excel(writer, sheet_name="developers", index=False)
         if regions_rows:
             pd.DataFrame(regions_rows).to_excel(writer, sheet_name="regions", index=False)
+        if per_dev_rows:
+            pd.DataFrame(per_dev_rows).to_excel(
+                writer, sheet_name="apartments_per_dev", index=False)
 
 
 def fetch_kvartirografia(state: dict) -> list[Path]:
@@ -430,6 +455,19 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
 
     xlsx сохраняется ПОСЛЕ КАЖДОГО региона — даже если процесс
     прерван на половине, у пользователя есть актуальный файл.
+
+    Per-developer обход (НОВОЕ):
+      После основного сбора для региона дополнительно проходит по
+      списку ГК из monitoring_2_0_*.xlsx, переключает фильтр
+      «Девелопер» на каждого и парсит точное количество квартир
+      (1/2/3/4+ комн) — данные сохраняются в sheet apartments_per_dev.
+
+      Управление:
+        KVART_PER_DEV=0        — выключить (по умолчанию включено)
+        KVART_PER_DEV_LIMIT=N  — обработать только первые N (для отладки)
+
+      Длительность: ~5-7 сек на девелопера × ~400 девелоперов × 2 региона
+      ≈ 70-90 минут. Каждые 10 девелоперов делается flush в xlsx.
     """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = _build_kvartirografia_url()
@@ -514,6 +552,58 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 all_data.append(data)
                 # КРИТИЧНО: сохраняем xlsx ПОСЛЕ каждого региона
                 flush()
+
+                # === Per-developer обход (НОВОЕ) ===
+                # Выключается через KVART_PER_DEV=0. Лимит: KVART_PER_DEV_LIMIT=5.
+                if _per_dev_enabled():
+                    dev_names = _read_monitoring_developers()
+                    limit = _per_dev_limit()
+                    if limit:
+                        dev_names = dev_names[:limit]
+                    if not dev_names:
+                        print("       ⚠️  monitoring_2_0 не найден — per-dev пропускаем")
+                    else:
+                        per_dev: list[dict] = []
+                        print(f"       ── per-dev обход: {len(dev_names)} девелоперов "
+                              f"(KVART_PER_DEV=0 чтобы выключить)")
+                        ok_count = fail_count = 0
+                        for i, dev in enumerate(dev_names, 1):
+                            try:
+                                ok = _switch_developer_filter(
+                                    driver, dev, wait_change=True, timeout=12)
+                            except Exception as e:  # noqa: BLE001
+                                print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
+                                ok = False
+                            if not ok:
+                                fail_count += 1
+                                continue
+                            apt = _parse_apartments_live(driver)
+                            if apt:
+                                # Используем имя из шапки фильтра как точное имя
+                                filter_label = _get_developer_filter_label(driver) or dev
+                                per_dev.append({
+                                    "наименование": filter_label,
+                                    "monitoring_name": dev,
+                                    "apartments": apt,
+                                })
+                                ok_count += 1
+                            if i % 10 == 0:
+                                print(f"          · {i}/{len(dev_names)}: "
+                                      f"ok={ok_count}, miss={fail_count}")
+                                data["apartments_per_dev"] = per_dev
+                                flush()
+                        # финальный сейв
+                        data["apartments_per_dev"] = per_dev
+                        flush()
+                        print(f"       ✅ per-dev: {ok_count} собрано, "
+                              f"{fail_count} пропущено")
+                        # Сбрасываем фильтр на «Все девелоперы» чтобы следующий
+                        # регион стартовал с агрегата
+                        try:
+                            _switch_developer_filter(
+                                driver, "Все девелоперы", wait_change=False)
+                        except Exception:  # noqa: BLE001
+                            pass
 
             except Exception as exc:  # noqa: BLE001
                 # Любая ошибка внутри региона — сохраняем что есть и идём дальше
@@ -721,6 +811,233 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  «Все квартиры» не сменилось (всё ещё «{actual}»)")
         _save_debug_snapshot(driver, "region_switch_no_data_change")
         return False
+
+
+# ─────────────────────────────────────────────
+# Per-developer обход (НОВОЕ)
+# ─────────────────────────────────────────────
+
+def _get_developer_filter_label(driver) -> str:
+    """Возвращает текущее значение фильтра «Девелопер»."""
+    return driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null &&
+            /^девелопер$/i.test((e.innerText || '').trim()));
+        if (!p || !p.nextElementSibling) return '';
+        const span = p.nextElementSibling.querySelector('span.css-wjcl1w');
+        return span ? span.innerText.trim() : '';
+        """
+    ) or ""
+
+
+def _switch_developer_filter(driver, target_label: str, *,
+                             wait_change: bool = True,
+                             timeout: int = 15) -> bool:
+    """Переключает фильтр «Девелопер» на target_label.
+
+    Структура попапа идентична фильтру региона — те же классы
+    (css-wsxkpq input, css-1ogbkfc span, css-1ynvnsn row).
+
+    target_label ищется как:
+      1) точное совпадение текста span
+      2) если не нашли — первое совпадение по подстроке
+    """
+    baseline = _get_all_apartments_count(driver) if wait_change else ""
+
+    # 1) Клик на триггер
+    trigger = driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null &&
+            /^девелопер$/i.test((e.innerText || '').trim()));
+        if (!p || !p.nextElementSibling) return null;
+        return p.nextElementSibling.querySelector('[tabindex="0"]');
+        """
+    )
+    if not trigger:
+        return False
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
+        time.sleep(0.2)
+        driver.execute_script("arguments[0].click();", trigger)
+    except WebDriverException:
+        return False
+
+    # 2) Ждём search-input
+    try:
+        WebDriverWait(driver, 6).until(
+            lambda d: d.execute_script(
+                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+            )
+        )
+    except TimeoutException:
+        return False
+    time.sleep(0.3)
+
+    # 3) Вводим запрос (для уже длинного списка — без запроса попап тормозит)
+    driver.execute_script(
+        """
+        const q = arguments[0];
+        const inp = document.querySelector('input[placeholder="Поиск по названию"]');
+        if (!inp) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, q);
+        inp.dispatchEvent(new Event('input', {bubbles: true}));
+        inp.dispatchEvent(new Event('change', {bubbles: true}));
+        return true;
+        """,
+        target_label,
+    )
+    time.sleep(0.8)
+
+    # 4) Кликаем по совпадению (сначала точное, потом подстрока — case-insensitive)
+    clicked = driver.execute_script(
+        """
+        const target = (arguments[0] || '').trim().toLowerCase();
+        if (!target) return false;
+        const spans = [...document.querySelectorAll(
+            'span.css-1ogbkfc, span.css-pqw2m5')];
+        let match = spans.find(s =>
+            (s.innerText || '').trim().toLowerCase() === target);
+        if (!match) {
+            match = spans.find(s => {
+                const t = (s.innerText || '').trim().toLowerCase();
+                return t && t.includes(target);
+            });
+        }
+        if (!match) return false;
+        const row = match.parentElement || match;
+        row.scrollIntoView({block: 'center'});
+        row.click();
+        return true;
+        """,
+        target_label,
+    )
+    if not clicked:
+        try:
+            driver.execute_script("document.body.click();")
+        except WebDriverException:
+            pass
+        return False
+
+    # 5) Закрыть попап
+    time.sleep(0.4)
+    try:
+        driver.execute_script("document.body.click();")
+    except WebDriverException:
+        pass
+
+    if not wait_change:
+        return True
+
+    # 6) Ждём смены данных
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: (
+                _get_all_apartments_count(d) != baseline
+                and _get_all_apartments_count(d) != ""
+            )
+        )
+        return True
+    except TimeoutException:
+        return False
+
+
+def _parse_apartments_live(driver) -> dict:
+    """Парсит шапку «Все квартиры / 1 / 2 / 3 / 4+» прямо из DOM.
+
+    Возвращает: {all: (count,area), ONE/TWO/THREE/FOUR: (count,area)}
+    """
+    raw = driver.execute_script(
+        """
+        const result = {};
+        // 1) Все квартиры
+        const allBtn = [...document.querySelectorAll('button')].find(b =>
+            b.offsetParent !== null && /Все квартиры/.test(b.innerText || ''));
+        if (allBtn) {
+            const divs = allBtn.querySelectorAll(':scope > div');
+            if (divs.length >= 3) {
+                result.all = {
+                    count: (divs[1].innerText || '').trim(),
+                    area: (divs[2].innerText || '').trim()
+                };
+            }
+        }
+        // 2) По типам комнат
+        for (const b of document.querySelectorAll('button[data-rooms]')) {
+            const room = b.getAttribute('data-rooms');
+            const divs = b.querySelectorAll(':scope > div');
+            if (divs.length < 3) continue;
+            result[room] = {
+                count: (divs[1].innerText || '').trim(),
+                area: (divs[2].innerText || '').trim()
+            };
+        }
+        return result;
+        """
+    ) or {}
+    return raw
+
+
+def _read_monitoring_developers() -> list[str]:
+    """Свежий список ГК из monitoring_2_0_*.xlsx (объединение Реестр РВ + ОКС).
+
+    Возвращает пустой список если xlsx не найден. Используется
+    для per-dev обхода kvartirografia.
+    """
+    files = sorted(DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"))
+    if not files:
+        return []
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    devs: set[str] = set()
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(latest, read_only=True, data_only=True)
+        for sheet_name in ["Реестр РВ", "Реестр ОКС"]:
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+            if not header_row:
+                continue
+            try:
+                col_idx = list(header_row).index("Группа компаний")
+            except ValueError:
+                continue
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                v = row[col_idx] if col_idx < len(row) else None
+                if not isinstance(v, str):
+                    continue
+                s = v.strip().strip('"').strip("'")
+                # Фильтруем формулы Excel и заведомо невалидные имена
+                if not s or s.startswith("#") or s.startswith("="):
+                    continue
+                if s.isdigit() or len(s) < 2:
+                    continue
+                devs.add(s)
+        wb.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"     ⚠️  не удалось прочитать monitoring devs: {exc}")
+        return []
+    return sorted(devs)
+
+
+# Конфиг per-dev обхода: KVART_PER_DEV=1 включает, KVART_PER_DEV_LIMIT
+# ограничивает количество для отладки (KVART_PER_DEV_LIMIT=5 → первые 5).
+def _per_dev_enabled() -> bool:
+    return os.environ.get("KVART_PER_DEV", "1").strip() not in ("0", "", "false", "no")
+
+
+def _per_dev_limit() -> int | None:
+    raw = os.environ.get("KVART_PER_DEV_LIMIT", "").strip()
+    if not raw:
+        return None
+    try:
+        n = int(raw)
+        return n if n > 0 else None
+    except ValueError:
+        return None
 
 
 def _parse_kvartirografia(html: str, url: str) -> dict:

@@ -363,65 +363,113 @@ with right:
 
 # === Квартирография: таблица типов ===
 st.markdown(f"### Структура портфеля по типам квартир")
-kvart_devs = kvart.get("developers")
-if kvart_devs is not None and not kvart_devs.empty:
-    rows = find_dev_rows(kvart_devs, "наименование", sel_key)
-    if not rows.empty:
-        # Может быть до 2 строк (РФ + Москва) — берём данные по Москве если есть
-        if "region_key" in rows.columns:
-            msk_rows = rows[rows["region_key"] == "msk"]
-            r = msk_rows.iloc[0] if not msk_rows.empty else rows.iloc[0]
-        else:
-            r = rows.iloc[0]
 
-        total = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
-        rooms = {}
-        for k in ["1комн", "2комн", "3комн", "4+комн"]:
-            pct = r.get(f"доля_{k}_%_num")
-            if pct is not None and not pd.isna(pct):
-                rooms[k] = (float(pct), total * float(pct) / 100.0)
-            else:
-                rooms[k] = (None, None)
+# Сначала пробуем точные данные из apartments_per_dev (новый парсер
+# проходится по каждому девелоперу и берёт exact count). Если их нет —
+# fallback на расчёт через % и общий total.
+per_dev = kvart.get("apartments_per_dev", pd.DataFrame())
+exact_rows = pd.DataFrame()
+if isinstance(per_dev, pd.DataFrame) and not per_dev.empty:
+    exact_rows = find_dev_rows(per_dev, "наименование", sel_key)
+    if exact_rows.empty:
+        exact_rows = find_dev_rows(per_dev, "monitoring_name", sel_key)
 
-        kvart_table = pd.DataFrame([
-            {"Тип квартир": "Все",
-             "Количество, тыс. шт": total if total else None,
-             "Доля, %": 100.0 if total else None,
-             "Площадь, тыс. м²": r.get("площадь_тыс_м²_num")},
-            {"Тип квартир": "1 комн",
-             "Количество, тыс. шт": rooms["1комн"][1],
-             "Доля, %": rooms["1комн"][0],
-             "Площадь, тыс. м²": None},
-            {"Тип квартир": "2 комн",
-             "Количество, тыс. шт": rooms["2комн"][1],
-             "Доля, %": rooms["2комн"][0],
-             "Площадь, тыс. м²": None},
-            {"Тип квартир": "3 комн",
-             "Количество, тыс. шт": rooms["3комн"][1],
-             "Доля, %": rooms["3комн"][0],
-             "Площадь, тыс. м²": None},
-            {"Тип квартир": "4+ комн",
-             "Количество, тыс. шт": rooms["4+комн"][1],
-             "Доля, %": rooms["4+комн"][0],
-             "Площадь, тыс. м²": None},
-        ])
-        st.dataframe(
-            kvart_table, hide_index=True, use_container_width=True,
-            column_config={
-                "Доля, %": st.column_config.ProgressColumn(
-                    format="%.0f%%", min_value=0, max_value=100),
-                "Количество, тыс. шт": st.column_config.NumberColumn(format="%.1f"),
-                "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.0f"),
-            },
-        )
-        st.caption(
-            "Количество = всего × долю %. Точное число можно получить "
-            "перейдя на сайт наш.дом.рф/аналитика/квартирография и выбрав застройщика."
-        )
+if not exact_rows.empty:
+    # Точные числа из шапки квартирографии
+    if "region_key" in exact_rows.columns:
+        msk = exact_rows[exact_rows["region_key"] == "msk"]
+        r = msk.iloc[0] if not msk.empty else exact_rows.iloc[0]
     else:
-        st.info(f"«{sel_canon}» не найден в данных квартирографии")
+        r = exact_rows.iloc[0]
+    total = float(r.get("Все_количество_шт_num") or 0)
+    total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
+    type_data = {}
+    for room in ["1комн", "2комн", "3комн", "4+комн"]:
+        cnt = r.get(f"{room}_количество_шт_num")
+        ar = r.get(f"{room}_площадь_тыс_м²_num")
+        cnt_f = float(cnt) if cnt is not None and not pd.isna(cnt) else 0
+        ar_f = float(ar) if ar is not None and not pd.isna(ar) else 0
+        pct = (cnt_f / total * 100) if total > 0 else 0
+        type_data[room] = (cnt_f, pct, ar_f)
+
+    kvart_table = pd.DataFrame([
+        {"Тип квартир": "Все",
+         "Количество, шт": total if total else None,
+         "Доля, %": 100.0 if total else None,
+         "Площадь, тыс. м²": total_area if total_area else None},
+        *[
+            {"Тип квартир": label,
+             "Количество, шт": type_data[room][0] or None,
+             "Доля, %": type_data[room][1] or None,
+             "Площадь, тыс. м²": type_data[room][2] or None}
+            for room, label in [
+                ("1комн", "1 комн"), ("2комн", "2 комн"),
+                ("3комн", "3 комн"), ("4+комн", "4+ комн"),
+            ]
+        ],
+    ])
+    st.dataframe(
+        kvart_table, hide_index=True, use_container_width=True,
+        column_config={
+            "Доля, %": st.column_config.ProgressColumn(
+                format="%.1f%%", min_value=0, max_value=100),
+            "Количество, шт": st.column_config.NumberColumn(format="%d"),
+            "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.1f"),
+        },
+    )
+    st.caption("Источник: наш.дом.рф/квартирография — точные числа по выбранному застройщику")
 else:
-    st.info("Квартирография не загружена")
+    # Fallback: aggregate per-region (есть только % разбивка, считаем количество)
+    kvart_devs = kvart.get("developers")
+    if kvart_devs is not None and not kvart_devs.empty:
+        rows = find_dev_rows(kvart_devs, "наименование", sel_key)
+        if not rows.empty:
+            if "region_key" in rows.columns:
+                msk_rows = rows[rows["region_key"] == "msk"]
+                r = msk_rows.iloc[0] if not msk_rows.empty else rows.iloc[0]
+            else:
+                r = rows.iloc[0]
+            total = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
+            rooms = {}
+            for k in ["1комн", "2комн", "3комн", "4+комн"]:
+                pct = r.get(f"доля_{k}_%_num")
+                if pct is not None and not pd.isna(pct):
+                    rooms[k] = (float(pct), total * float(pct) / 100.0)
+                else:
+                    rooms[k] = (None, None)
+            kvart_table = pd.DataFrame([
+                {"Тип квартир": "Все",
+                 "Количество, тыс. шт": total if total else None,
+                 "Доля, %": 100.0 if total else None,
+                 "Площадь, тыс. м²": r.get("площадь_тыс_м²_num")},
+                *[
+                    {"Тип квартир": label,
+                     "Количество, тыс. шт": rooms[k][1],
+                     "Доля, %": rooms[k][0],
+                     "Площадь, тыс. м²": None}
+                    for k, label in [
+                        ("1комн", "1 комн"), ("2комн", "2 комн"),
+                        ("3комн", "3 комн"), ("4+комн", "4+ комн"),
+                    ]
+                ],
+            ])
+            st.dataframe(
+                kvart_table, hide_index=True, use_container_width=True,
+                column_config={
+                    "Доля, %": st.column_config.ProgressColumn(
+                        format="%.0f%%", min_value=0, max_value=100),
+                    "Количество, тыс. шт": st.column_config.NumberColumn(format="%.1f"),
+                    "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.0f"),
+                },
+            )
+            st.caption(
+                "Количество = всего × долю % (точных per-dev данных нет — "
+                "запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia` "
+                "чтобы спарсить точные числа).")
+        else:
+            st.info(f"«{sel_canon}» не найден в данных квартирографии")
+    else:
+        st.info("Квартирография не загружена")
 
 
 # === Переносы сроков ввода (2 KPI карточки) ===

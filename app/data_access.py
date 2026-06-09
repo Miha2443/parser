@@ -199,6 +199,7 @@ def load_kvartirografia() -> dict:
 
     apartments_rows, distribution_rows = [], []
     developers_rows, regions_rows = [], []
+    per_dev_rows = []  # apartments_per_dev — точные числа на каждого
     report_date = ""
     region_keys: list[str] = []
     for d in data:
@@ -215,6 +216,24 @@ def load_kvartirografia() -> dict:
             developers_rows.append({"region_key": rk, **x})
         for x in d.get("regions", []):
             regions_rows.append({"region_key": rk, **x})
+        # Per-dev (НОВОЕ): расплющиваем структуру apartments_per_dev
+        for pd_item in d.get("apartments_per_dev", []):
+            apt = pd_item.get("apartments", {}) or {}
+            per_dev_rows.append({
+                "region_key": rk,
+                "наименование": pd_item.get("наименование", ""),
+                "monitoring_name": pd_item.get("monitoring_name", ""),
+                "Все_количество_шт": (apt.get("all") or {}).get("count", ""),
+                "Все_площадь_тыс_м²": (apt.get("all") or {}).get("area", ""),
+                "1комн_количество_шт": (apt.get("ONE") or {}).get("count", ""),
+                "1комн_площадь_тыс_м²": (apt.get("ONE") or {}).get("area", ""),
+                "2комн_количество_шт": (apt.get("TWO") or {}).get("count", ""),
+                "2комн_площадь_тыс_м²": (apt.get("TWO") or {}).get("area", ""),
+                "3комн_количество_шт": (apt.get("THREE") or {}).get("count", ""),
+                "3комн_площадь_тыс_м²": (apt.get("THREE") or {}).get("area", ""),
+                "4+комн_количество_шт": (apt.get("FOUR") or {}).get("count", ""),
+                "4+комн_площадь_тыс_м²": (apt.get("FOUR") or {}).get("area", ""),
+            })
 
     def _df(rows, num_cols):
         df = pd.DataFrame(rows)
@@ -231,12 +250,22 @@ def load_kvartirografia() -> dict:
     ]
     developers = _df(developers_rows, devs_regs_cols)
     regions = _df(regions_rows, devs_regs_cols)
+    # apartments_per_dev — числовые версии всех 5 пар (Все + 1/2/3/4+ × count/area)
+    per_dev_num_cols = [
+        "Все_количество_шт", "Все_площадь_тыс_м²",
+        "1комн_количество_шт", "1комн_площадь_тыс_м²",
+        "2комн_количество_шт", "2комн_площадь_тыс_м²",
+        "3комн_количество_шт", "3комн_площадь_тыс_м²",
+        "4+комн_количество_шт", "4+комн_площадь_тыс_м²",
+    ]
+    apartments_per_dev = _df(per_dev_rows, per_dev_num_cols)
 
     return {
         "apartments": apartments,
         "distribution": distribution,
         "developers": developers,
         "regions": regions,
+        "apartments_per_dev": apartments_per_dev,
         "report_date": report_date,
         "regions_available": region_keys,
     }

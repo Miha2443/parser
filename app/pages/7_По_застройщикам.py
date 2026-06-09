@@ -223,7 +223,7 @@ def other_regions_for_year(year: int) -> str:
         return "—"
     # Москва — берём площадь жилого из monitoring (категория «жилое»)
     msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
-    msk_val = float(msk_rv["category_жилое"].sum()) if not msk_rv.empty else 0.0
+    msk_val = float(msk_rv["Общая площадь"].sum()) if not msk_rv.empty else 0.0
     other = max(rf_val - msk_val, 0)
     pct = other / rf_val * 100
     return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
@@ -236,7 +236,9 @@ def other_regions_total() -> str:
       1) cards.Сдано_YYYY_м² (sum 2016..max_year) — точно по жилью топ-100
       2) fallback на ERZRF top obyem_vvoda.Введено, м²
     Источник Москвы:
-      monitoring 2.0 РВ category_жилое (сумма по всем годам)
+      monitoring 2.0 РВ → Общая площадь всех введённых объектов
+      (как у ERZRF: учитывается полная площадь жилых проектов —
+      жильё + МОП + 1-е этажи + соцобъекты ЖК + отдельные нежилые).
     """
     rf_val: float | None = None
     if cards_row is not None:
@@ -249,7 +251,7 @@ def other_regions_total() -> str:
         rf_val = erzrf_value("obyem_vvoda", "rf")
     if rf_val is None or rf_val <= 0:
         return "—"
-    msk_val = float(rv_dev["category_жилое"].sum()) if not rv_dev.empty else 0.0
+    msk_val = float(rv_dev["Общая площадь"].sum()) if not rv_dev.empty else 0.0
     other = max(rf_val - msk_val, 0)
     pct = other / rf_val * 100
     return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
@@ -483,10 +485,11 @@ def fmt_thousand_m2(v: float | None) -> str:
 
 
 def render_delay_card(title: str, value: float | None, pct_total: float | None,
-                      other_value: float | None, other_pct: float | None):
-    """Карточка из фото: большое число + 2 подписи (% от общего, в других регионах)."""
+                      other_value: float | None, other_pct: float | None,
+                      base_label: str = "от общего объёма"):
+    """Карточка: большое число (перенос) + подпись «X% от общего объёма» + в др.регионах."""
     val_str = fmt_thousand_m2(value)
-    pct_str = f"{pct_total:.0f}%" if pct_total is not None else "—"
+    pct_str = f"{pct_total:.1f}%" if pct_total is not None else "—"
     other_val_str = fmt_thousand_m2(other_value) if other_value else "—"
     other_pct_str = f"{other_pct:.0f}%" if other_pct is not None else "—"
     st.markdown(
@@ -498,7 +501,7 @@ def render_delay_card(title: str, value: float | None, pct_total: float | None,
           <div style='display:flex;align-items:baseline;gap:14px;margin-bottom:14px;'>
             <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};line-height:1;'>{val_str}</div>
             <div style='color:#555;font-size:13px;'>
-              <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> от общего объёма
+              <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> {base_label}
             </div>
           </div>
           <div style='border-top:1px dashed #ccc;padding-top:10px;color:#555;font-size:13px;'>
@@ -554,13 +557,20 @@ with dc1:
     render_delay_card(
         "Переносы сроков ввода (текущее строительство)",
         perenos_stroitelstvo_rf, pct1, other_val1, other_pct1,
+        base_label=f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
     )
 with dc2:
     render_delay_card(
         "Переносы сроков в объектах ввода за 2022–2025 гг.",
         perenos_2225_rf if perenos_2225_rf > 0 else None, pct2, other_val2, other_pct2,
+        base_label=f"от {ru_num(sdano_2225_rf/1000)} тыс. м² введённых за период",
     )
-st.caption("Источник: ERZRF (Единый ресурс застройщиков) — только жилые объекты")
+st.caption(
+    "Источник: ERZRF. **Текущее строительство** — площадь объектов с задержкой ввода "
+    "относительно того, что застройщик строит сейчас по всей РФ. "
+    "**Объекты ввода 2022-2025** — сумма «Перенос» по годам из карточки ERZRF, "
+    "доля от введённого жилья за тот же период."
+)
 
 
 # === Кредитные лимиты и наполнение Эскроу ===

@@ -204,6 +204,14 @@ with cols_top[1]:
 # === Данные ===
 rv_dev = find_dev_rows(mon.get("rv", pd.DataFrame()), "Группа компаний", sel_key)
 oks_dev = find_dev_rows(mon.get("oks", pd.DataFrame()), "Группа компаний", sel_key)
+# ВАЖНО: Реестр ОКС содержит ВСЕ объекты с разрешением на строительство,
+# включая уже ВВЕДЁННЫЕ (status=«Введенный») и планируемые. Для blocка
+# «В строительстве» оставляем только реально строящиеся — это совпадает
+# с тем что показывает наш.дом.рф/квартирография (например ПИК Москва:
+# 1 910 тыс. м² жилой площади vs сайт 1 914 тыс. м²).
+oks_dev_all = oks_dev  # сохраняем для expander/списка
+if not oks_dev.empty and "Статус объекта" in oks_dev.columns:
+    oks_dev = oks_dev[oks_dev["Статус объекта"] == "Строящийся"]
 cat_cols = [f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]
 
 last_year_int = mon.get("max_year")  # 2026
@@ -348,9 +356,23 @@ st.markdown("### В строительстве и распроданность")
 left, right = st.columns([2, 1])
 
 with left:
+    # Подпись: количество строящихся квартир + объектов
+    n_objects = len(oks_dev)
+    n_apartments = int(pd.to_numeric(
+        oks_dev.get("Количество квартир", pd.Series(dtype=float)),
+        errors="coerce").fillna(0).sum())
+    subtitle = ""
+    if n_objects:
+        subtitle = (f"{ru_num(n_apartments)} квартир в {n_objects} строящихся объектах"
+                    if n_apartments else f"{n_objects} строящихся объектов")
     render_donut(
         categorize_sum(oks_dev),
         "В строительстве (Москва)",
+        subtitle,
+    )
+    st.caption(
+        "Только объекты в статусе «Строящийся» (без введённых и планируемых). "
+        "Источник: Мониторинг 2.0 / Реестр ОКС."
     )
 
 with right:
@@ -679,8 +701,9 @@ with st.expander("📋 Список введённых объектов (Рее�
             hide_index=True, use_container_width=True, height=300,
         )
 
-with st.expander("📋 Список объектов в строительстве (Реестр ОКС)"):
-    if oks_dev.empty:
+with st.expander(f"📋 Все объекты с разрешением на строительство — Реестр ОКС "
+                 f"({len(oks_dev_all)} всего, {len(oks_dev)} строящихся)"):
+    if oks_dev_all.empty:
         st.info("Нет данных")
     else:
         cols_show = [c for c in [
@@ -688,8 +711,12 @@ with st.expander("📋 Список объектов в строительств
             "Назначение", "Подтип объекта",
             "Общая площадь", "Жилая площадь", "Количество квартир",
             "Процент готовности", "Год ввода по графику", "Статус объекта",
-        ] if c in oks_dev.columns]
+        ] if c in oks_dev_all.columns]
+        if "Статус объекта" in oks_dev_all.columns:
+            st.caption("В блоке donut «В строительстве» показаны только Строящиеся. "
+                       "Здесь — все, включая Введённые и Планируемые.")
         st.dataframe(
-            oks_dev[cols_show].sort_values("Общая площадь", ascending=False),
+            oks_dev_all[cols_show].sort_values(
+                ["Статус объекта", "Общая площадь"], ascending=[True, False]),
             hide_index=True, use_container_width=True, height=300,
         )

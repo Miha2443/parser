@@ -385,22 +385,40 @@ ERZRF_PATHS = [
 def _normalize_developer_name(name: str) -> str:
     """Приводит имя застройщика к каноническому ключу для матчинга между источниками.
 
-    «ГК Самолет» / «Самолет» / «САМОЛЕТ» / «Группа компаний Самолет» → «самолет».
+    Примеры:
+      «ГК Самолет, г.Москва»     → «самолет»
+      «ПИК, г.Москва»            → «пик»
+      «ГК А101, г.Москва»        → «а101»
+      «А101»                     → «а101»
+      «ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО "ПИК-СЗ"» → «пик-сз»
     """
     if name is None or (isinstance(name, float) and pd.isna(name)):
         return ""
-    s = str(name).strip().lower()
-    # Удаляем юридические/группировочные префиксы
-    for prefix in [
-        "группа компаний ", "гк ", "ао ", "пао ", "ооо ", "зао ",
-        "холдинг ", "ук ", "пик-", "тк ", "пкф ",
-    ]:
-        if s.startswith(prefix):
-            s = s[len(prefix):]
-            break
-    # Убираем кавычки и лишние пробелы
+    s = str(name).strip()
+    # 1) Убираем регион после первой запятой:  "ПИК, г.Москва" → "ПИК"
+    if "," in s:
+        s = s.split(",", 1)[0].strip()
+    # 2) Приводим к lower-case и убираем спец.символы
+    s = s.lower()
     s = s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
+    s = s.replace("\xa0", " ")
     s = " ".join(s.split())
+    # 3) Снимаем юр.префиксы (повторяем — у некоторых их 2-3 слоя)
+    prefixes = [
+        "публичное акционерное общество ", "акционерное общество ",
+        "закрытое акционерное общество ", "общество с ограниченной ответственностью ",
+        "специализированный застройщик ", "спецзастройщик ", "спз ", "сз ",
+        "группа компаний ", "группа ", "холдинг ", "концерн ", "корпорация ",
+        "гк ", "ао ", "пао ", "ооо ", "зао ", "ик ", "иск ", "ук ", "пкф ", "тк ",
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for p in prefixes:
+            if s.startswith(p):
+                s = s[len(p):].strip()
+                changed = True
+                break
     return s
 
 
@@ -541,16 +559,25 @@ def load_rasprodannost() -> dict:
         out["kpi"] = pd.DataFrame()
 
     # 6 таблиц
-    metric_cols = ["Объем жил. строительства", "Распроданность", "Стройготовность",
-                   "Отношение распроданности  к\xa0стройготовности",
-                   "Отношение распроданности к стройготовности"]
+    # Имена колонок в xlsx могут содержать NBSP (\xa0), один или два пробела
+    # подряд — поэтому матчим по prefix-логике (Распроданность/Стройготовность/
+    # Объем/Отношение распроданности), а не по точному имени.
+    def is_metric_col(col: str) -> bool:
+        s = str(col)
+        return (
+            "Распроданность" in s
+            or "Стройготовность" in s
+            or "Объем жил" in s
+            or s.startswith("Отношение распроданности")
+        )
+
     for sheet in RASPROD_TABLE_SHEETS:
         if sheet not in xl.sheet_names:
             out[sheet] = pd.DataFrame()
             continue
         df = pd.read_excel(latest, sheet_name=sheet)
         for col in df.columns:
-            if any(m in col for m in metric_cols):
+            if is_metric_col(col):
                 df[f"{col}_num"] = df[col].apply(_parse_rasprod_number)
         out[sheet] = df
 

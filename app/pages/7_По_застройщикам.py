@@ -97,18 +97,15 @@ rasprod = load_rasprodannost()
 kvart = load_kvartirografia()
 
 # === Собираем все имена застройщиков ===
-all_devs: dict[str, str] = {}  # norm_key → canonical name (предпочитаем monitoring)
-for name in mon.get("developers", []):
-    all_devs[norm(name)] = name
-for name in erzrf_top.get("all_developers", []):
-    k = norm(name)
-    if k and k not in all_devs:
-        all_devs[k] = name
+# Селектор показывает ТОЛЬКО имена из monitoring (главный источник).
+# Остальные источники (ERZRF top/cards, rasprodannost, kvartirografia)
+# матчатся по нормализованному ключу: "ПИК, г.Москва" → "пик" → данные ПИК.
+mon_devs = list(mon.get("developers", []))
 
-if not all_devs:
+if not mon_devs:
     st.warning(
-        "Нет данных ни в одном источнике (monitoring 2.0 / erzrf). "
-        "Положи xlsx-файлы в data/raw/realty/nashdom/ и data/raw/realty/erzrf/."
+        "Нет данных в monitoring 2.0. "
+        "Положи monitoring_2_0_*.xlsx в data/raw/realty/nashdom/."
     )
     st.stop()
 
@@ -118,9 +115,10 @@ cols_top = st.columns([3, 2])
 with cols_top[0]:
     sel_canon = st.selectbox(
         "Группа компаний",
-        sorted(all_devs.values()),
+        sorted(mon_devs),
         key="dev_select_full",
-        help=f"Всего {len(all_devs)} уникальных застройщиков (объединение источников)",
+        help=f"{len(mon_devs)} групп компаний (источник: Мониторинг 2.0). "
+             f"Данные из ERZRF / rasprod / квартирографии подтягиваются по похожему имени.",
     )
 sel_key = norm(sel_canon)
 
@@ -283,17 +281,22 @@ with right:
             rows = rows[(rows["year"] == ly) & (rows["month"] == lm)]
         if not rows.empty:
             r = rows.iloc[0]
-            # Берём только _num колонки чтобы не дублировать
+            # Берём только _num колонки чтобы не дублировать.
+            # ВНИМАНИЕ: в rasprodannost у колонки «Отношение» ДВА пробела
+            # подряд: «Отношение распроданности  к стройготовности».
+            # Поэтому матчим по началу «Отношение распроданности».
             metric_map = [
-                ("Распроданность", "Распроданность"),
-                ("Стройготовность", "Стройготовность"),
-                ("Отношение распроданности к стройготовности",
+                (lambda c: "Распроданность" in c and "Отношение" not in c,
+                 "Распроданность"),
+                (lambda c: "Стройготовность" in c and "Отношение" not in c,
+                 "Стройготовность"),
+                (lambda c: c.startswith("Отношение распроданности"),
                  "Отношение распроданности к стройготовности"),
             ]
             shown = 0
-            for substr, label in metric_map:
+            for match_fn, label in metric_map:
                 num_col = next((c for c in r.index
-                                if c.endswith("_num") and substr in c), None)
+                                if c.endswith("_num") and match_fn(c)), None)
                 if not num_col:
                     continue
                 val = r.get(num_col)
@@ -315,88 +318,126 @@ kvart_devs = kvart.get("developers")
 if kvart_devs is not None and not kvart_devs.empty:
     rows = find_dev_rows(kvart_devs, "наименование", sel_key)
     if not rows.empty:
-        r = rows.iloc[0]
-        # Берём шапку из apartments — те же 5 строк
+        # Может быть до 2 строк (РФ + Москва) — берём данные по Москве если есть
+        if "region_key" in rows.columns:
+            msk_rows = rows[rows["region_key"] == "msk"]
+            r = msk_rows.iloc[0] if not msk_rows.empty else rows.iloc[0]
+        else:
+            r = rows.iloc[0]
+
+        total = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
+        rooms = {}
+        for k in ["1комн", "2комн", "3комн", "4+комн"]:
+            pct = r.get(f"доля_{k}_%_num")
+            if pct is not None and not pd.isna(pct):
+                rooms[k] = (float(pct), total * float(pct) / 100.0)
+            else:
+                rooms[k] = (None, None)
+
         kvart_table = pd.DataFrame([
             {"Тип квартир": "Все",
-             "Квартиры, тыс. шт": r.get("квартиры_тыс_шт_num"),
+             "Количество, тыс. шт": total if total else None,
+             "Доля, %": 100.0 if total else None,
              "Площадь, тыс. м²": r.get("площадь_тыс_м²_num")},
-            {"Тип квартир": "1 комн", "Квартиры, тыс. шт": None, "Площадь, тыс. м²": None,
-             "Доля, %": r.get("доля_1комн_%_num")},
-            {"Тип квартир": "2 комн", "Квартиры, тыс. шт": None, "Площадь, тыс. м²": None,
-             "Доля, %": r.get("доля_2комн_%_num")},
-            {"Тип квартир": "3 комн", "Квартиры, тыс. шт": None, "Площадь, тыс. м²": None,
-             "Доля, %": r.get("доля_3комн_%_num")},
-            {"Тип квартир": "4+ комн", "Квартиры, тыс. шт": None, "Площадь, тыс. м²": None,
-             "Доля, %": r.get("доля_4+комн_%_num")},
+            {"Тип квартир": "1 комн",
+             "Количество, тыс. шт": rooms["1комн"][1],
+             "Доля, %": rooms["1комн"][0],
+             "Площадь, тыс. м²": None},
+            {"Тип квартир": "2 комн",
+             "Количество, тыс. шт": rooms["2комн"][1],
+             "Доля, %": rooms["2комн"][0],
+             "Площадь, тыс. м²": None},
+            {"Тип квартир": "3 комн",
+             "Количество, тыс. шт": rooms["3комн"][1],
+             "Доля, %": rooms["3комн"][0],
+             "Площадь, тыс. м²": None},
+            {"Тип квартир": "4+ комн",
+             "Количество, тыс. шт": rooms["4+комн"][1],
+             "Доля, %": rooms["4+комн"][0],
+             "Площадь, тыс. м²": None},
         ])
         st.dataframe(
             kvart_table, hide_index=True, use_container_width=True,
             column_config={
                 "Доля, %": st.column_config.ProgressColumn(
-                    format="%d%%", min_value=0, max_value=100),
-                "Квартиры, тыс. шт": st.column_config.NumberColumn(format="%.1f"),
-                "Площадь, тыс. м²": st.column_config.NumberColumn(format="%d"),
+                    format="%.0f%%", min_value=0, max_value=100),
+                "Количество, тыс. шт": st.column_config.NumberColumn(format="%.1f"),
+                "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.0f"),
             },
         )
+        st.caption(
+            "Количество = всего × долю %. Точное число можно получить "
+            "перейдя на сайт наш.дом.рф/аналитика/квартирография и выбрав застройщика."
+        )
     else:
-        st.info("Застройщик не найден в данных квартирографии")
+        st.info(f"«{sel_canon}» не найден в данных квартирографии")
 else:
     st.info("Квартирография не загружена")
 
 
 # === Сроки сдачи из ERZRF cards ===
 st.markdown("### Сроки сдачи (ERZRF карточка)")
+
+# Достаём строку (если есть) — иначе пустую
+sroki_row = None
 if not erzrf_cards.empty:
     rows = find_dev_rows(erzrf_cards, "name_card", sel_key)
     if rows.empty:
-        # Попробовать name_table
         rows = find_dev_rows(erzrf_cards, "name_table", sel_key)
     if not rows.empty:
-        r = rows.iloc[0]
-        # Колонки Сдано_YYYY_м², Перенос_YYYY_м², Перенос_YYYY_%, Уточн_YYYY_мес
-        years = sorted({c.split("_")[1] for c in r.index
-                        if c.startswith("Сдано_") and c.endswith("_м²")
-                        and c.split("_")[1].isdigit()})
-        if years:
-            df_sdano = pd.DataFrame({
-                "Год": years,
-                "Сдано, м²": [pd.to_numeric(r.get(f"Сдано_{y}_м²"), errors="coerce") for y in years],
-                "Перенос, м²": [pd.to_numeric(r.get(f"Перенос_{y}_м²"), errors="coerce") for y in years],
-                "Перенос, %": [pd.to_numeric(r.get(f"Перенос_{y}_%"), errors="coerce") for y in years],
-                "Уточн, мес": [pd.to_numeric(r.get(f"Уточн_{y}_мес"), errors="coerce") for y in years],
-            })
+        sroki_row = rows.iloc[0]
 
-            fig = go.Figure()
-            sdano = df_sdano["Сдано, м²"].fillna(0)
-            perenos = df_sdano["Перенос, м²"].fillna(0)
-            sdano_clean = (sdano - perenos).clip(lower=0)
-            fig.add_trace(go.Bar(
-                x=df_sdano["Год"], y=sdano_clean,
-                name="Сдано в срок", marker_color="#8BC540",
-                hovertemplate="<b>В срок</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
-            ))
-            fig.add_trace(go.Bar(
-                x=df_sdano["Год"], y=perenos,
-                name="С переносом срока", marker_color=DELAY_COLOR,
-                hovertemplate="<b>С переносом</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
-            ))
-            fig.update_layout(
-                barmode="stack", height=320,
-                margin=dict(l=0, r=0, t=10, b=0),
-                xaxis_title="Год", yaxis_title="м²",
-                legend=dict(orientation="h", y=-0.15),
-            )
-            st.plotly_chart(fig, use_container_width=True, key="srok_bar")
-
-            with st.expander("Детали: перенос (%), уточнение (мес)"):
-                st.dataframe(df_sdano, hide_index=True, use_container_width=True)
-        else:
-            st.info("Нет годовых данных в карточке")
-    else:
-        st.info("Застройщик не найден в карточках ERZRF")
+# Определяем диапазон годов
+if sroki_row is not None:
+    years = sorted({c.split("_")[1] for c in sroki_row.index
+                    if c.startswith("Сдано_") and c.endswith("_м²")
+                    and c.split("_")[1].isdigit()})
 else:
-    st.info("ERZRF карточки не загружены")
+    years = [str(y) for y in range(2016, (last_year_int or 2026) + 1)]
+
+df_sdano = pd.DataFrame({
+    "Год": years,
+    "Сдано, м²": [pd.to_numeric(sroki_row.get(f"Сдано_{y}_м²") if sroki_row is not None else None,
+                                errors="coerce") for y in years],
+    "Перенос, м²": [pd.to_numeric(sroki_row.get(f"Перенос_{y}_м²") if sroki_row is not None else None,
+                                  errors="coerce") for y in years],
+    "Перенос, %": [pd.to_numeric(sroki_row.get(f"Перенос_{y}_%") if sroki_row is not None else None,
+                                 errors="coerce") for y in years],
+    "Уточн, мес": [pd.to_numeric(sroki_row.get(f"Уточн_{y}_мес") if sroki_row is not None else None,
+                                 errors="coerce") for y in years],
+})
+
+fig = go.Figure()
+sdano = df_sdano["Сдано, м²"].fillna(0)
+perenos = df_sdano["Перенос, м²"].fillna(0)
+sdano_clean = (sdano - perenos).clip(lower=0)
+fig.add_trace(go.Bar(
+    x=df_sdano["Год"], y=sdano_clean,
+    name="Сдано в срок", marker_color="#8BC540",
+    hovertemplate="<b>В срок</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
+))
+fig.add_trace(go.Bar(
+    x=df_sdano["Год"], y=perenos,
+    name="С переносом срока", marker_color=DELAY_COLOR,
+    hovertemplate="<b>С переносом</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
+))
+empty = sdano.sum() == 0 and perenos.sum() == 0
+fig.update_layout(
+    barmode="stack", height=320,
+    margin=dict(l=0, r=0, t=10, b=0),
+    xaxis_title="Год", yaxis_title="м²",
+    legend=dict(orientation="h", y=-0.15),
+    annotations=[dict(
+        text=f"Нет данных по «{sel_canon}» в карточках ERZRF",
+        x=0.5, y=0.5, xref="paper", yref="paper",
+        showarrow=False, font=dict(size=14, color="#999"),
+    )] if empty else [],
+)
+st.plotly_chart(fig, use_container_width=True, key="srok_bar")
+
+if sroki_row is not None and not empty:
+    with st.expander("Детали: перенос (%), уточнение (мес)"):
+        st.dataframe(df_sdano, hide_index=True, use_container_width=True)
 
 
 # === Список объектов ===

@@ -477,6 +477,9 @@ def load_erzrf_cards() -> pd.DataFrame:
 
     Возвращает DataFrame с колонками включая 'name_card', 'slug',
     'regions_count' и Сдано/Перенос/Уточн по годам.
+
+    Все «Сдано_YYYY_м²» и «Перенос_YYYY_м²» в xlsx — строки с пробелами
+    как разделителями тысяч («2 185 178»). Конвертим их в _num колонки.
     """
     files = []
     for base in ERZRF_PATHS:
@@ -486,9 +489,61 @@ def load_erzrf_cards() -> pd.DataFrame:
         return pd.DataFrame()
     latest = max(files, key=lambda p: p.stat().st_mtime)
     try:
-        return pd.read_excel(latest, sheet_name="cards")
+        df = pd.read_excel(latest, sheet_name="cards")
     except Exception:  # noqa: BLE001
         return pd.DataFrame()
+
+    def parse_num(v):
+        if v is None or pd.isna(v) or v == "" or v == "-":
+            return 0.0
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).replace("\xa0", "").replace(" ", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    for col in df.columns:
+        cs = str(col)
+        if (cs.startswith("Сдано_") and cs.endswith("_м²")) \
+                or (cs.startswith("Перенос_") and cs.endswith("_м²")) \
+                or cs.startswith("Строится"):
+            df[f"{col}_num"] = df[col].apply(parse_num)
+    return df
+
+
+# ─────────────────────────────────────────────
+# Эскроу (наполняемость счетов — пообъектный реестр Москвы)
+# ─────────────────────────────────────────────
+
+ESCROW_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "escrow_manual",
+    Path(__file__).resolve().parent.parent / "escrow_manual",
+]
+
+
+@st.cache_data(show_spinner=False)
+def load_escrow_manual() -> pd.DataFrame:
+    """Читает «Наполняемость счетов.xlsx».
+
+    Пообъектный реестр Москвы (ЕИСЖС): 537 объектов, по каждому —
+    ГК застройщика, сумма кредита, задолженность, выручка, покрытие.
+    Первая строка xlsx — длинный заголовок, реальная шапка во второй
+    строке → header=1.
+    """
+    files = []
+    for base in ESCROW_PATHS:
+        if base.exists():
+            files.extend(sorted(base.glob("*.xlsx")))
+    if not files:
+        return pd.DataFrame()
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    try:
+        df = pd.read_excel(latest, sheet_name="Выгрузка", header=1)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+    return df
 
 
 RASPROD_PATHS = [

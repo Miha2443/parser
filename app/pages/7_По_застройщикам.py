@@ -23,6 +23,7 @@ from app.data_access import (
     load_erzrf_cards,
     load_rasprodannost,
     load_kvartirografia,
+    load_escrow_manual,
     _normalize_developer_name as norm,
 )
 
@@ -95,6 +96,7 @@ erzrf_top = load_erzrf_top()
 erzrf_cards = load_erzrf_cards()
 rasprod = load_rasprodannost()
 kvart = load_kvartirografia()
+escrow = load_escrow_manual()
 
 # === Собираем все имена застройщиков ===
 # Селектор показывает ТОЛЬКО имена из monitoring (главный источник).
@@ -195,12 +197,59 @@ def erzrf_value(sorting: str, region: str, value_substr: str = "Введено")
     return float(pd.to_numeric(rows[val_col].iloc[0], errors="coerce") or 0)
 
 
-def other_regions_pct(sorting: str) -> str:
-    """% площади у застройщика в других регионах (РФ − Москва) / РФ."""
-    rf_val = erzrf_value(sorting, "rf")
-    msk_val = erzrf_value(sorting, "msk")
-    if rf_val is None or msk_val is None or rf_val <= 0:
+# Достаём cards-строку для выбранного девелопера (один раз, переиспользуем)
+def get_cards_row() -> pd.Series | None:
+    if erzrf_cards.empty:
+        return None
+    rows = find_dev_rows(erzrf_cards, "name_card", sel_key)
+    if rows.empty:
+        rows = find_dev_rows(erzrf_cards, "name_table", sel_key)
+    return rows.iloc[0] if not rows.empty else None
+
+
+cards_row = get_cards_row()
+
+
+def other_regions_for_year(year: int) -> str:
+    """% «жильё в других регионах за год» = (cards.Сдано_РФ − Monitoring.МСК) / cards.Сдано_РФ.
+
+    cards содержит ввод за каждый год по РФ, monitoring — по Москве.
+    Если cards нет (девелопер не в топ-100) — «—».
+    """
+    if cards_row is None:
         return "—"
+    rf_val = float(cards_row.get(f"Сдано_{year}_м²_num") or 0)
+    if rf_val <= 0:
+        return "—"
+    # Москва — берём площадь жилого из monitoring (категория «жилое»)
+    msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
+    msk_val = float(msk_rv["category_жилое"].sum()) if not msk_rv.empty else 0.0
+    other = max(rf_val - msk_val, 0)
+    pct = other / rf_val * 100
+    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+
+
+def other_regions_total() -> str:
+    """% накопленного ввода в других регионах = (РФ − Москва) / РФ.
+
+    Источник РФ:
+      1) cards.Сдано_YYYY_м² (sum 2016..max_year) — точно по жилью топ-100
+      2) fallback на ERZRF top obyem_vvoda.Введено, м²
+    Источник Москвы:
+      monitoring 2.0 РВ category_жилое (сумма по всем годам)
+    """
+    rf_val: float | None = None
+    if cards_row is not None:
+        s = 0.0
+        for y in range(2016, (last_year_int or 2026) + 1):
+            s += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
+        if s > 0:
+            rf_val = s
+    if rf_val is None:
+        rf_val = erzrf_value("obyem_vvoda", "rf")
+    if rf_val is None or rf_val <= 0:
+        return "—"
+    msk_val = float(rv_dev["category_жилое"].sum()) if not rv_dev.empty else 0.0
     other = max(rf_val - msk_val, 0)
     pct = other / rf_val * 100
     return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
@@ -214,21 +263,21 @@ with pie_cols[0]:
     render_donut(
         categorize_sum(rv_dev),
         "Ввод с 2016 г.",
-        f"В других регионах: {other_regions_pct('nakopl_vvod')}",
+        f"В других регионах: {other_regions_total()}",
     )
 
 with pie_cols[1]:
     render_donut(
         categorize_sum(prev_rv) if not prev_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {prev_year_int} г." if prev_year_int else "Ввод за пред. год",
-        f"В других регионах: {other_regions_pct('obyem_vvoda')}",
+        f"В других регионах: {other_regions_for_year(prev_year_int) if prev_year_int else '—'}",
     )
 
 with pie_cols[2]:
     render_donut(
         categorize_sum(last_rv) if not last_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {last_year_int} г." if last_year_int else "Ввод за последний год",
-        f"В других регионах: {other_regions_pct('obyem_vvoda')}",
+        f"В других регионах: {other_regions_for_year(last_year_int) if last_year_int else '—'}",
     )
 
 
@@ -375,69 +424,151 @@ else:
     st.info("Квартирография не загружена")
 
 
-# === Сроки сдачи из ERZRF cards ===
-st.markdown("### Сроки сдачи (ERZRF карточка)")
+# === Переносы сроков ввода (2 KPI карточки) ===
+st.markdown("### Переносы сроков ввода")
 
-# Достаём строку (если есть) — иначе пустую
-sroki_row = None
-if not erzrf_cards.empty:
-    rows = find_dev_rows(erzrf_cards, "name_card", sel_key)
-    if rows.empty:
-        rows = find_dev_rows(erzrf_cards, "name_table", sel_key)
-    if not rows.empty:
-        sroki_row = rows.iloc[0]
 
-# Определяем диапазон годов
-if sroki_row is not None:
-    years = sorted({c.split("_")[1] for c in sroki_row.index
-                    if c.startswith("Сдано_") and c.endswith("_м²")
-                    and c.split("_")[1].isdigit()})
+def fmt_thousand_m2(v: float | None) -> str:
+    if v is None or v <= 0:
+        return "—"
+    return f"{ru_num(v/1000, 1)} тыс. м²"
+
+
+def render_delay_card(title: str, value: float | None, pct_total: float | None,
+                      other_value: float | None, other_pct: float | None):
+    """Карточка из фото: большое число + 2 подписи (% от общего, в других регионах)."""
+    val_str = fmt_thousand_m2(value)
+    pct_str = f"{pct_total:.0f}%" if pct_total is not None else "—"
+    other_val_str = fmt_thousand_m2(other_value) if other_value else "—"
+    other_pct_str = f"{other_pct:.0f}%" if other_pct is not None else "—"
+    st.markdown(
+        f"""
+        <div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;
+                    background:#fafafa;height:100%;'>
+          <div style='color:#888;font-size:11px;text-transform:uppercase;
+                      letter-spacing:0.5px;margin-bottom:6px;'>{title}</div>
+          <div style='display:flex;align-items:baseline;gap:14px;margin-bottom:14px;'>
+            <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};line-height:1;'>{val_str}</div>
+            <div style='color:#555;font-size:13px;'>
+              <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> от общего объёма
+            </div>
+          </div>
+          <div style='border-top:1px dashed #ccc;padding-top:10px;color:#555;font-size:13px;'>
+            В других регионах:
+            <span style='font-weight:600;color:#333;'>{other_val_str}</span> /
+            <span style='font-weight:600;color:#333;'>{other_pct_str}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# Карточка 1: переносы в текущем строительстве (top_obyem_stroitelstva)
+stroitelstvo_rf = erzrf_value("obyem_stroitelstva", "rf", "Строится")
+stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "Строится")
+perenos_stroitelstvo_rf = erzrf_value("obyem_stroitelstva", "rf", "С переносом срока")
+perenos_stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "С переносом срока")
+
+pct1 = (perenos_stroitelstvo_rf / stroitelstvo_rf * 100) \
+    if perenos_stroitelstvo_rf and stroitelstvo_rf else None
+other_val1 = max((perenos_stroitelstvo_rf or 0) - (perenos_stroitelstvo_msk or 0), 0) \
+    if perenos_stroitelstvo_rf is not None else None
+other_pct1 = (other_val1 / perenos_stroitelstvo_rf * 100) \
+    if other_val1 is not None and perenos_stroitelstvo_rf else None
+
+# Карточка 2: переносы в объектах ввода за 2022-2025 (cards)
+sdano_2225_rf = 0.0
+perenos_2225_rf = 0.0
+if cards_row is not None:
+    for y in range(2022, 2026):
+        sdano_2225_rf += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
+        perenos_2225_rf += float(cards_row.get(f"Перенос_{y}_м²_num") or 0)
+
+pct2 = (perenos_2225_rf / sdano_2225_rf * 100) if sdano_2225_rf > 0 else None
+# Москва: ввод 2022-2025 из monitoring РВ (только жилое — cards про жильё)
+msk_2225_zhilye = 0.0
+if not rv_dev.empty:
+    msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
+    msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
+# Пропорция: доля переносов в др.регионах ≈ доле ввода вне Москвы
+if sdano_2225_rf > 0 and perenos_2225_rf > 0:
+    msk_share = min(msk_2225_zhilye / sdano_2225_rf, 1.0)
+    other_share2 = 1.0 - msk_share
+    other_val2 = perenos_2225_rf * other_share2
+    other_pct2 = other_share2 * 100
 else:
-    years = [str(y) for y in range(2016, (last_year_int or 2026) + 1)]
+    other_val2 = None
+    other_pct2 = None
 
-df_sdano = pd.DataFrame({
-    "Год": years,
-    "Сдано, м²": [pd.to_numeric(sroki_row.get(f"Сдано_{y}_м²") if sroki_row is not None else None,
-                                errors="coerce") for y in years],
-    "Перенос, м²": [pd.to_numeric(sroki_row.get(f"Перенос_{y}_м²") if sroki_row is not None else None,
-                                  errors="coerce") for y in years],
-    "Перенос, %": [pd.to_numeric(sroki_row.get(f"Перенос_{y}_%") if sroki_row is not None else None,
-                                 errors="coerce") for y in years],
-    "Уточн, мес": [pd.to_numeric(sroki_row.get(f"Уточн_{y}_мес") if sroki_row is not None else None,
-                                 errors="coerce") for y in years],
-})
+dc1, dc2 = st.columns(2)
+with dc1:
+    render_delay_card(
+        "Переносы сроков ввода (текущее строительство)",
+        perenos_stroitelstvo_rf, pct1, other_val1, other_pct1,
+    )
+with dc2:
+    render_delay_card(
+        "Переносы сроков в объектах ввода за 2022–2025 гг.",
+        perenos_2225_rf if perenos_2225_rf > 0 else None, pct2, other_val2, other_pct2,
+    )
+st.caption("Источник: ERZRF (Единый ресурс застройщиков) — только жилые объекты")
 
-fig = go.Figure()
-sdano = df_sdano["Сдано, м²"].fillna(0)
-perenos = df_sdano["Перенос, м²"].fillna(0)
-sdano_clean = (sdano - perenos).clip(lower=0)
-fig.add_trace(go.Bar(
-    x=df_sdano["Год"], y=sdano_clean,
-    name="Сдано в срок", marker_color="#8BC540",
-    hovertemplate="<b>В срок</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
-))
-fig.add_trace(go.Bar(
-    x=df_sdano["Год"], y=perenos,
-    name="С переносом срока", marker_color=DELAY_COLOR,
-    hovertemplate="<b>С переносом</b><br>%{x}: %{y:,.0f} м²<extra></extra>",
-))
-empty = sdano.sum() == 0 and perenos.sum() == 0
-fig.update_layout(
-    barmode="stack", height=320,
-    margin=dict(l=0, r=0, t=10, b=0),
-    xaxis_title="Год", yaxis_title="м²",
-    legend=dict(orientation="h", y=-0.15),
-    annotations=[dict(
-        text=f"Нет данных по «{sel_canon}» в карточках ERZRF",
-        x=0.5, y=0.5, xref="paper", yref="paper",
-        showarrow=False, font=dict(size=14, color="#999"),
-    )] if empty else [],
-)
-st.plotly_chart(fig, use_container_width=True, key="srok_bar")
 
-if sroki_row is not None and not empty:
-    with st.expander("Детали: перенос (%), уточнение (мес)"):
-        st.dataframe(df_sdano, hide_index=True, use_container_width=True)
+# === Кредитные лимиты и наполнение Эскроу ===
+st.markdown("### Кредитные лимиты и наполнение Эскроу")
+if escrow.empty:
+    st.info("Положи «Наполняемость счетов.xlsx» в data/raw/realty/escrow_manual/")
+else:
+    # Сопоставляем по «ГК застройщика»
+    gk_col = next((c for c in escrow.columns if "ГК застройщика" in str(c)), None)
+    if not gk_col:
+        st.info("В файле эскроу нет колонки «ГК застройщика»")
+    else:
+        rows = escrow[escrow[gk_col].apply(lambda x: norm(str(x)) == sel_key)]
+        if rows.empty:
+            st.info(f"«{sel_canon}» не найден в эскроу-реестре (он содержит только Москву)")
+        else:
+            def find_col(*subs: str) -> str | None:
+                for c in escrow.columns:
+                    cs = str(c)
+                    if all(s in cs for s in subs):
+                        return c
+                return None
+
+            credit_col = find_col("Сумма кредита")
+            debt_col = find_col("Сумма задолженности")
+            revenue_col = find_col("Выручка от реализации всех площадей") \
+                or find_col("Выручка от реализации")
+            # уточнение — может быть несколько «Выручка от реализации …»
+            # нужно «всех площадей» (не «жилой», не «по эскроу»)
+            for c in escrow.columns:
+                cs = str(c)
+                if "Выручка от реализации всех площадей" in cs and "эскроу" not in cs:
+                    revenue_col = c
+                    break
+
+            objem = pd.to_numeric(rows[credit_col], errors="coerce").sum() if credit_col else 0
+            ostatok = pd.to_numeric(rows[debt_col], errors="coerce").sum() if debt_col else 0
+            vyruchka = pd.to_numeric(rows[revenue_col], errors="coerce").sum() if revenue_col else 0
+            dolya_ostatka = (ostatok / objem * 100) if objem > 0 else None
+            # Покрытие = выручка / остаток задолженности (а не /объём займов).
+            # На образце ДОМ.РФ: 388.2/270.4 = 144% — именно это и показывают.
+            pokrytie = (vyruchka / ostatok * 100) if ostatok > 0 else None
+
+            def fmt_mlrd(v):
+                if v is None or v == 0:
+                    return "—"
+                return f"{v/1e9:.1f}".replace(".", ",") + " млрд ₽"
+
+            ec = st.columns(5)
+            ec[0].metric("Объём займов", fmt_mlrd(objem))
+            ec[1].metric("Остаток выплат", fmt_mlrd(ostatok))
+            ec[2].metric("% Доля остатка", f"{dolya_ostatka:.0f}%" if dolya_ostatka else "—")
+            ec[3].metric("Выручка от продаж", fmt_mlrd(vyruchka))
+            ec[4].metric("Покрытие займов выручкой",
+                         f"{pokrytie:.0f}%" if pokrytie else "—")
+            st.caption(f"Источник: ДОМ.РФ ЕИСЖС, {len(rows)} объектов в Москве")
 
 
 # === Список объектов ===

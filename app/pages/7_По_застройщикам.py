@@ -356,23 +356,31 @@ st.markdown("### В строительстве и распроданность")
 left, right = st.columns([2, 1])
 
 with left:
-    # Подпись: количество строящихся квартир + объектов
+    # Подпись: количество квартир + жилая площадь (=что показывает наш.дом.рф)
     n_objects = len(oks_dev)
     n_apartments = int(pd.to_numeric(
         oks_dev.get("Количество квартир", pd.Series(dtype=float)),
         errors="coerce").fillna(0).sum())
+    zhilaya = float(oks_dev["category_жилое"].sum()) if not oks_dev.empty else 0
     subtitle = ""
     if n_objects:
-        subtitle = (f"{ru_num(n_apartments)} квартир в {n_objects} строящихся объектах"
-                    if n_apartments else f"{n_objects} строящихся объектов")
+        parts = []
+        if n_apartments:
+            parts.append(f"{ru_num(n_apartments)} квартир")
+        if zhilaya > 0:
+            parts.append(f"жилая {ru_num(zhilaya/1000)} тыс. м²")
+        parts.append(f"{n_objects} объектов")
+        subtitle = " · ".join(parts)
     render_donut(
         categorize_sum(oks_dev),
         "В строительстве (Москва)",
         subtitle,
     )
     st.caption(
-        "Только объекты в статусе «Строящийся» (без введённых и планируемых). "
-        "Источник: Мониторинг 2.0 / Реестр ОКС."
+        "Только объекты в статусе «Строящийся». Число в центре — "
+        "**общая площадь** (жильё + МОП + паркинги + соцобъекты). "
+        "На наш.дом.рф/квартирография показывают только зелёный сегмент "
+        "«Жилое». Источник: Мониторинг 2.0 / Реестр ОКС."
     )
 
 with right:

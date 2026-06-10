@@ -574,8 +574,28 @@ if all_regions:
         region_choice = all_regions[0]
     region_label = "г.Москва" if region_choice == "msk" else "Российская Федерация"
 
-    # 1) Точные данные из per-dev (если есть для этого региона)
+    # 1) Точные данные из per-dev — НО с проверкой что они не «подделка»
+    #    (баг парсера: на сайте при per-dev обходе фильтр региона мог
+    #    сбрасываться, и в строке для region=msk оказывались РФ-числа).
+    #    Если TOTAL из per-dev отличается от TOTAL из developers больше
+    #    чем на 15% — игнорируем per-dev и фолбэк на developers.
+    fallback_total_th: float | None = None
+    if region_choice in regions_in_fallback:
+        fr = fallback_rows[fallback_rows["region_key"] == region_choice].iloc[0]
+        fallback_total_th = float(fr.get("квартиры_тыс_шт_num") or 0)
+
+    per_dev_trustworthy = False
     if region_choice in regions_in_exact:
+        r_check = exact_rows[exact_rows["region_key"] == region_choice].iloc[0]
+        per_total_th = float(r_check.get("Все_количество_шт_num") or 0) / 1000.0
+        if fallback_total_th and fallback_total_th > 0:
+            ratio = per_total_th / fallback_total_th
+            # Доверяем per-dev если он в пределах 0.85–1.15 от fallback
+            per_dev_trustworthy = 0.85 <= ratio <= 1.15
+        else:
+            per_dev_trustworthy = per_total_th > 0
+
+    if per_dev_trustworthy:
         r = exact_rows[exact_rows["region_key"] == region_choice].iloc[0]
         total = float(r.get("Все_количество_шт_num") or 0)
         total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
@@ -612,8 +632,14 @@ if all_regions:
             reg_df = kvart_devs_full[kvart_devs_full["region_key"] == region_choice]
             if "площадь_тыс_м²_num" in reg_df.columns:
                 market_total = float(reg_df["площадь_тыс_м²_num"].fillna(0).sum())
-        source_note = ("Количество = всего × долю %. Для точных чисел запусти "
-                       "`KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`")
+        # Если per-dev был, но мы его отвергли — сообщаем
+        if region_choice in regions_in_exact and not per_dev_trustworthy:
+            source_note = ("Количество = всего × долю %. "
+                           "Per-dev данные для этого региона выглядят как РФ-числа "
+                           "(баг парсера на переключении региона) — проигнорированы.")
+        else:
+            source_note = ("Количество = всего × долю %. Для точных чисел запусти "
+                           "`KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`")
     else:
         total, total_area, rooms_data, market_total = 0, 0, {}, 0
         source_note = "Нет данных"

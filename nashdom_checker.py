@@ -1023,10 +1023,14 @@ def _read_monitoring_developers() -> list[str]:
     return sorted(devs)
 
 
-# Конфиг per-dev обхода: KVART_PER_DEV=1 включает, KVART_PER_DEV_LIMIT
-# ограничивает количество для отладки (KVART_PER_DEV_LIMIT=5 → первые 5).
+# Per-dev обход ВЫКЛЮЧЕН по умолчанию. Текущая реализация даёт
+# неправильные числа (в 4 раза больше правды): парсер не успевает
+# дождаться смены DOM после переключения фильтра «Девелопер» — и
+# снимает «промежуточные» данные. Включается явно: KVART_PER_DEV=1.
+# До починки логики ожидания на странице 7 используется только лист
+# `developers` (точные числа с сайта наш.дом.рф через total × долю %).
 def _per_dev_enabled() -> bool:
-    return os.environ.get("KVART_PER_DEV", "1").strip() not in ("0", "", "false", "no")
+    return os.environ.get("KVART_PER_DEV", "0").strip() in ("1", "true", "yes")
 
 
 def _per_dev_limit() -> int | None:

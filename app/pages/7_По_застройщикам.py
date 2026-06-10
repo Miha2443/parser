@@ -65,13 +65,16 @@ def render_donut(values: dict, title: str = "", subtitle: str = ""):
     if total <= 0:
         st.info(f"Нет данных: {title}")
         return
+    # На сегментах — ЗНАЧЕНИЕ (тыс. м²), в hover — процент.
+    seg_texts = [ru_num(v / 1000, 0) for v in values.values()]
     fig = go.Figure(go.Pie(
         labels=list(values.keys()),
         values=list(values.values()),
         marker=dict(colors=CAT_COLORS),
-        textinfo="percent",
-        textfont=dict(size=10),
-        hovertemplate="<b>%{label}</b><br>%{value:,.0f} м² (%{percent})<extra></extra>",
+        text=seg_texts,
+        textinfo="text",
+        textfont=dict(size=11),
+        hovertemplate="<b>%{label}</b><br>%{percent}<br>%{value:,.0f} м²<extra></extra>",
         sort=False,
         hole=0.55,
     ))
@@ -97,6 +100,28 @@ erzrf_cards = load_erzrf_cards()
 rasprod = load_rasprodannost()
 kvart = load_kvartirografia()
 escrow = load_escrow_manual()
+
+
+# Даты файлов источников (mtime) для подписей
+def _mtime_for(*patterns: str) -> str:
+    """Возвращает дату последней модификации первого найденного файла."""
+    from datetime import datetime as _dt
+    from pathlib import Path as _P
+    base = _P("/home/user/parser/data/raw/realty")
+    for pat in patterns:
+        files = list(base.rglob(pat))
+        if files:
+            latest = max(files, key=lambda p: p.stat().st_mtime)
+            return _dt.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
+    return ""
+
+
+date_monitoring = _mtime_for("monitoring_2_0_*.xlsx")
+date_kvart = _mtime_for("kvartirografia_*.xlsx", "kvartirografia_*.json")
+date_erzrf_top = _mtime_for("top_obyem_stroitelstva_rf_*.xlsx")
+date_erzrf_cards = _mtime_for("cards_*.xlsx")
+date_rasprod = _mtime_for("rasprodannost_*.xlsx")
+date_escrow = _mtime_for("Наполняемость*.xlsx", "наполняемость*.xlsx", "*эскроу*.xlsx")
 
 # === Собираем все имена застройщиков ===
 # Селектор показывает ТОЛЬКО имена из monitoring (главный источник).
@@ -143,6 +168,16 @@ def _build_ordered_devs(mon_names: list[str]) -> list[str]:
 ordered_devs = _build_ordered_devs(mon_devs)
 
 st.title("Профиль застройщика")
+# Подпись с датами всех источников
+src_dates = []
+if date_monitoring: src_dates.append(f"Мониторинг 2.0 — **{date_monitoring}**")
+if date_erzrf_top: src_dates.append(f"ERZRF топ — **{date_erzrf_top}**")
+if date_erzrf_cards: src_dates.append(f"ERZRF карточки — **{date_erzrf_cards}**")
+if date_kvart: src_dates.append(f"Квартирография — **{date_kvart}**")
+if date_rasprod: src_dates.append(f"Распроданность — **{date_rasprod}**")
+if date_escrow: src_dates.append(f"Эскроу — **{date_escrow}**")
+if src_dates:
+    st.caption("Даты выгрузки источников: " + " · ".join(src_dates))
 
 cols_top = st.columns([3, 2])
 with cols_top[0]:
@@ -251,22 +286,40 @@ cards_row = get_cards_row()
 
 
 def other_regions_for_year(year: int) -> str:
-    """% «жильё в других регионах за год» = (cards.Сдано_РФ − Monitoring.МСК) / cards.Сдано_РФ.
+    """% «в других регионах за год» — та же формула что для «с 2016»:
+    (cards.Сдано_РФ − Monitoring.МСК) / cards.Сдано_РФ.
 
-    cards содержит ввод за каждый год по РФ, monitoring — по Москве.
-    Если cards нет (девелопер не в топ-100) — «—».
+    Для ТЕКУЩЕГО года cards.Сдано показывает только то что УЖЕ сдано
+    (за прошедшие месяцы), а monitoring РВ — полный годовой план МСК.
+    Если cards < monitoring → берём пропорцию строящегося из
+    top_obyem_stroitelstva (РФ-МСК)/РФ — это лучшая аппроксимация
+    структуры предстоящего ввода.
     """
     if cards_row is None:
         return "—"
     rf_val = float(cards_row.get(f"Сдано_{year}_м²_num") or 0)
-    if rf_val <= 0:
-        return "—"
-    # Москва — берём площадь жилого из monitoring (категория «жилое»)
     msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
     msk_val = float(msk_rv["Общая площадь"].sum()) if not msk_rv.empty else 0.0
-    other = max(rf_val - msk_val, 0)
-    pct = other / rf_val * 100
-    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+
+    if rf_val > 0 and rf_val >= msk_val:
+        other = rf_val - msk_val
+        pct = other / rf_val * 100
+        return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+
+    # Fallback для текущего/будущего года: пропорция строящегося из ERZRF.
+    stroy_rf = erzrf_value("obyem_stroitelstva", "rf", "Строится")
+    stroy_msk = erzrf_value("obyem_stroitelstva", "msk", "Строится")
+    if stroy_rf and stroy_rf > 0:
+        share = max(stroy_rf - (stroy_msk or 0), 0) / stroy_rf
+        # Применяем эту долю к monitoring МСК (как точке отсчёта)
+        if msk_val > 0:
+            # МСК = (1−share) × total → total = МСК / (1−share)
+            if share < 0.99:
+                total_est = msk_val / (1 - share)
+                other = total_est - msk_val
+                return f"≈ {share*100:.0f}% (≈ {ru_num(other/1000)} тыс. м²)"
+        return f"≈ {share*100:.0f}% (по доле строящегося)"
+    return "—"
 
 
 def other_regions_total() -> str:
@@ -342,10 +395,20 @@ else:
             textposition="inside",
             hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
         ))
+    # Сумма над каждым столбом
+    totals = by_year[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
+    fig.add_trace(go.Scatter(
+        x=by_year["Год ввода по Мосстату"], y=totals,
+        mode="text", text=[ru_num(v) for v in totals],
+        textposition="top center",
+        textfont=dict(size=12, color="#333"),
+        showlegend=False, hoverinfo="skip",
+    ))
     fig.update_layout(
-        barmode="stack", height=380,
-        margin=dict(l=0, r=0, t=10, b=0),
+        barmode="stack", height=400,
+        margin=dict(l=0, r=0, t=20, b=0),
         xaxis_title="Год ввода", yaxis_title="тыс. м²",
+        yaxis=dict(range=[0, totals.max() * 1.15]),  # запас сверху для надписи
         legend=dict(orientation="h", y=-0.15),
     )
     st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
@@ -438,42 +501,42 @@ if isinstance(per_dev, pd.DataFrame) and not per_dev.empty:
     if exact_rows.empty:
         exact_rows = find_dev_rows(per_dev, "monitoring_name", sel_key)
 
-if not exact_rows.empty:
-    # Точные числа из шапки квартирографии
-    if "region_key" in exact_rows.columns:
-        msk = exact_rows[exact_rows["region_key"] == "msk"]
-        r = msk.iloc[0] if not msk.empty else exact_rows.iloc[0]
-    else:
-        r = exact_rows.iloc[0]
-    total = float(r.get("Все_количество_шт_num") or 0)
-    total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
-    type_data = {}
-    for room in ["1комн", "2комн", "3комн", "4+комн"]:
-        cnt = r.get(f"{room}_количество_шт_num")
-        ar = r.get(f"{room}_площадь_тыс_м²_num")
-        cnt_f = float(cnt) if cnt is not None and not pd.isna(cnt) else 0
-        ar_f = float(ar) if ar is not None and not pd.isna(ar) else 0
-        pct = (cnt_f / total * 100) if total > 0 else 0
-        type_data[room] = (cnt_f, pct, ar_f)
+def _render_kvart_section(total_shtuk: float, area_th: float,
+                          rooms_data: dict[str, tuple[float, float, float | None]],
+                          region_label: str, market_total_area: float,
+                          source_note: str):
+    """Унифицированный рендер: KPI-строка + таблица комнат (без 'Все').
 
-    kvart_table = pd.DataFrame([
-        {"Тип квартир": "Все",
-         "Количество, шт": total if total else None,
-         "Доля, %": 100.0 if total else None,
-         "Площадь, тыс. м²": total_area if total_area else None},
-        *[
-            {"Тип квартир": label,
-             "Количество, шт": type_data[room][0] or None,
-             "Доля, %": type_data[room][1] or None,
-             "Площадь, тыс. м²": type_data[room][2] or None}
-            for room, label in [
-                ("1комн", "1 комн"), ("2комн", "2 комн"),
-                ("3комн", "3 комн"), ("4+комн", "4+ комн"),
-            ]
-        ],
-    ])
+    rooms_data: {label: (count_shtuk, pct, area_th_optional)}
+    market_total_area: суммарная площадь всех девелоперов в регионе (для доли рынка)
+    """
+    # KPI верхняя строка
+    kpi = st.columns(4)
+    kpi[0].metric("Квартиры", f"{ru_num(total_shtuk)} шт")
+    kpi[1].metric("Площадь", f"{ru_num(area_th)} тыс. м²")
+    if total_shtuk > 0 and area_th > 0:
+        avg = area_th * 1000 / total_shtuk
+        kpi[2].metric("Ср. площадь квартиры", f"{ru_num(avg, 1)} м²")
+    else:
+        kpi[2].metric("Ср. площадь квартиры", "—")
+    if market_total_area > 0:
+        share = area_th / market_total_area * 100
+        kpi[3].metric("Доля рынка региона", f"{share:.2f}%")
+    else:
+        kpi[3].metric("Доля рынка региона", "—")
+
+    # Таблица комнат
+    rows = []
+    for label, (cnt, pct, ar) in rooms_data.items():
+        rows.append({
+            "Тип": label,
+            "Количество, шт": cnt if cnt else None,
+            "Доля, %": pct if pct else None,
+            "Площадь, тыс. м²": ar if ar else None,
+        })
+    df_table = pd.DataFrame(rows)
     st.dataframe(
-        kvart_table, hide_index=True, use_container_width=True,
+        df_table, hide_index=True, use_container_width=True,
         column_config={
             "Доля, %": st.column_config.ProgressColumn(
                 format="%.1f%%", min_value=0, max_value=100),
@@ -481,65 +544,93 @@ if not exact_rows.empty:
             "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.1f"),
         },
     )
-    st.caption("Источник: наш.дом.рф/квартирография — точные числа по выбранному застройщику")
+    date_suffix = f" · дата: **{date_kvart}**" if date_kvart else ""
+    st.caption(f"Регион: **{region_label}**. {source_note}{date_suffix}")
+
+
+if not exact_rows.empty:
+    # === Точные числа из apartments_per_dev ===
+    # Если есть оба региона — переключатель
+    available_regions = list(exact_rows["region_key"].unique()) if "region_key" in exact_rows.columns else []
+    region_choice = "msk"
+    if len(available_regions) > 1:
+        region_choice = st.radio(
+            "Регион", ["msk", "rf"], horizontal=True,
+            format_func=lambda x: "г.Москва" if x == "msk" else "Российская Федерация",
+            key="kvart_region",
+        )
+    elif available_regions:
+        region_choice = available_regions[0]
+    region_label = "г.Москва" if region_choice == "msk" else "Российская Федерация"
+
+    if region_choice in available_regions:
+        r = exact_rows[exact_rows["region_key"] == region_choice].iloc[0]
+    else:
+        r = exact_rows.iloc[0]
+    total = float(r.get("Все_количество_шт_num") or 0)
+    total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
+    rooms_data = {}
+    for room, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                        ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
+        cnt = float(r.get(f"{room}_количество_шт_num") or 0)
+        ar = float(r.get(f"{room}_площадь_тыс_м²_num") or 0)
+        pct = (cnt / total * 100) if total > 0 else 0
+        rooms_data[label] = (cnt, pct, ar if ar else None)
+
+    # Доля рынка региона
+    market_total = 0.0
+    per_dev_reg = per_dev[per_dev["region_key"] == region_choice] if "region_key" in per_dev.columns else per_dev
+    if "Все_площадь_тыс_м²_num" in per_dev_reg.columns:
+        market_total = float(per_dev_reg["Все_площадь_тыс_м²_num"].fillna(0).sum())
+
+    _render_kvart_section(
+        total, total_area, rooms_data, region_label, market_total,
+        "Точные числа из шапки наш.дом.рф/квартирография"
+    )
 else:
-    # Fallback: aggregate per-region (есть только % разбивка, считаем количество)
+    # === Fallback: считаем количество через total × % ===
     kvart_devs = kvart.get("developers")
     if kvart_devs is not None and not kvart_devs.empty:
         rows = find_dev_rows(kvart_devs, "наименование", sel_key)
         if not rows.empty:
-            if "region_key" in rows.columns:
-                msk_rows = rows[rows["region_key"] == "msk"]
-                r = msk_rows.iloc[0] if not msk_rows.empty else rows.iloc[0]
+            available_regions = list(rows["region_key"].unique()) if "region_key" in rows.columns else []
+            region_choice = "msk"
+            if len(available_regions) > 1:
+                region_choice = st.radio(
+                    "Регион", ["msk", "rf"], horizontal=True,
+                    format_func=lambda x: "г.Москва" if x == "msk" else "Российская Федерация",
+                    key="kvart_region_fb",
+                )
+            elif available_regions:
+                region_choice = available_regions[0]
+            region_label = "г.Москва" if region_choice == "msk" else "Российская Федерация"
+
+            if region_choice in available_regions:
+                r = rows[rows["region_key"] == region_choice].iloc[0]
             else:
                 r = rows.iloc[0]
-            # На сайте наш.дом.рф числа в ШТУКАХ (с разделителями тысяч —
-            # «42 100 квартир»). В нашем kvart-файле колонка хранится как
-            # «тыс. шт» — поэтому домножаем на 1000 чтобы единицы совпали
-            # со страницей 5 (Квартирография по девелоперу) и сайтом.
-            total_th = float(r.get("квартиры_тыс_шт_num") or 0)  # тыс. шт
-            total = total_th * 1000.0  # шт
+            total_th = float(r.get("квартиры_тыс_шт_num") or 0)
+            total = total_th * 1000.0
             area_th = float(r.get("площадь_тыс_м²_num") or 0)
-            rooms = {}
-            for k in ["1комн", "2комн", "3комн", "4+комн"]:
+            rooms_data = {}
+            for k, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                             ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
                 pct = r.get(f"доля_{k}_%_num")
                 if pct is not None and not pd.isna(pct):
-                    rooms[k] = (float(pct), total * float(pct) / 100.0)
+                    rooms_data[label] = (total * float(pct) / 100.0, float(pct), None)
                 else:
-                    rooms[k] = (None, None)
-            kvart_table = pd.DataFrame([
-                {"Тип квартир": "Все",
-                 "Количество, шт": total if total else None,
-                 "Доля, %": 100.0 if total else None,
-                 "Площадь, тыс. м²": area_th if area_th else None},
-                *[
-                    {"Тип квартир": label,
-                     "Количество, шт": rooms[k][1],
-                     "Доля, %": rooms[k][0],
-                     "Площадь, тыс. м²": None}
-                    for k, label in [
-                        ("1комн", "1 комн"), ("2комн", "2 комн"),
-                        ("3комн", "3 комн"), ("4+комн", "4+ комн"),
-                    ]
-                ],
-            ])
-            st.dataframe(
-                kvart_table, hide_index=True, use_container_width=True,
-                column_config={
-                    "Доля, %": st.column_config.ProgressColumn(
-                        format="%.0f%%", min_value=0, max_value=100),
-                    "Количество, шт": st.column_config.NumberColumn(format="%d"),
-                    "Площадь, тыс. м²": st.column_config.NumberColumn(format="%.0f"),
-                },
-            )
-            region_label = "г.Москва" if (
-                "region_key" in rows.columns
-                and not rows[rows["region_key"] == "msk"].empty
-            ) else "Российская Федерация"
-            st.caption(
-                f"Источник: наш.дом.рф/квартирография ({region_label}). "
-                f"Количество = всего × долю %. Для точных чисел по комнатности "
-                f"запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`."
+                    rooms_data[label] = (0, 0, None)
+            market_total = 0.0
+            if "region_key" in kvart_devs.columns:
+                reg_df = kvart_devs[kvart_devs["region_key"] == region_choice]
+            else:
+                reg_df = kvart_devs
+            if "площадь_тыс_м²_num" in reg_df.columns:
+                market_total = float(reg_df["площадь_тыс_м²_num"].fillna(0).sum())
+            _render_kvart_section(
+                total, area_th, rooms_data, region_label, market_total,
+                "Количество в комнатах = всего × долю % (точные числа: "
+                "запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`)"
             )
         else:
             st.info(f"«{sel_canon}» не найден в данных квартирографии")
@@ -559,10 +650,13 @@ def fmt_thousand_m2(v: float | None) -> str:
 
 def render_delay_card(title: str, value: float | None, pct_total: float | None,
                       other_value: float | None, other_pct: float | None,
-                      base_label: str = "от общего объёма"):
-    """Карточка: большое число (перенос) + подпись «X% от общего объёма» + в др.регионах."""
+                      pct_msk: float | None = None,
+                      base_label: str = "от общего объёма",
+                      msk_label: str = "от стройки в Москве"):
+    """Карточка: большое число (перенос) + 3 подписи (% от РФ, % от МСК, в др.рег)."""
     val_str = fmt_thousand_m2(value)
     pct_str = f"{pct_total:.1f}%" if pct_total is not None else "—"
+    pct_msk_str = f"{pct_msk:.1f}%" if pct_msk is not None else "—"
     other_val_str = fmt_thousand_m2(other_value) if other_value else "—"
     other_pct_str = f"{other_pct:.0f}%" if other_pct is not None else "—"
     st.markdown(
@@ -571,11 +665,14 @@ def render_delay_card(title: str, value: float | None, pct_total: float | None,
                     background:#fafafa;height:100%;'>
           <div style='color:#888;font-size:11px;text-transform:uppercase;
                       letter-spacing:0.5px;margin-bottom:6px;'>{title}</div>
-          <div style='display:flex;align-items:baseline;gap:14px;margin-bottom:14px;'>
+          <div style='display:flex;align-items:baseline;gap:14px;margin-bottom:8px;'>
             <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};line-height:1;'>{val_str}</div>
-            <div style='color:#555;font-size:13px;'>
-              <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> {base_label}
-            </div>
+          </div>
+          <div style='color:#555;font-size:13px;margin-bottom:6px;'>
+            <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> {base_label}
+          </div>
+          <div style='color:#555;font-size:13px;margin-bottom:10px;'>
+            <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_msk_str}</span> {msk_label}
           </div>
           <div style='border-top:1px dashed #ccc;padding-top:10px;color:#555;font-size:13px;'>
             В других регионах:
@@ -596,6 +693,9 @@ perenos_stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "С пере
 
 pct1 = (perenos_stroitelstvo_rf / stroitelstvo_rf * 100) \
     if perenos_stroitelstvo_rf and stroitelstvo_rf else None
+# % от стройки в МОСКВЕ (новая подпись по просьбе пользователя)
+pct1_msk = (perenos_stroitelstvo_msk / stroitelstvo_msk * 100) \
+    if perenos_stroitelstvo_msk and stroitelstvo_msk else None
 other_val1 = max((perenos_stroitelstvo_rf or 0) - (perenos_stroitelstvo_msk or 0), 0) \
     if perenos_stroitelstvo_rf is not None else None
 other_pct1 = (other_val1 / perenos_stroitelstvo_rf * 100) \
@@ -610,14 +710,23 @@ if cards_row is not None:
         perenos_2225_rf += float(cards_row.get(f"Перенос_{y}_м²_num") or 0)
 
 pct2 = (perenos_2225_rf / sdano_2225_rf * 100) if sdano_2225_rf > 0 else None
-# Москва: ввод 2022-2025 из monitoring РВ (только жилое — cards про жильё)
-msk_2225_zhilye = 0.0
+
+# Москва: введённое 2022-2025 (Общая площадь, как у ERZRF)
+msk_2225_total = 0.0
 if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
-    msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
-# Пропорция: доля переносов в др.регионах ≈ доле ввода вне Москвы
+    msk_2225_total = float(msk_2225["Общая площадь"].sum())
+
+# % от стройки в Москве за период 2022-2025: пропорциональная оценка
+# (cards не делит на регионы; берём долю Москвы во вводе и применяем к переносу)
+pct2_msk = None
+if msk_2225_total > 0 and sdano_2225_rf > 0:
+    msk_share = min(msk_2225_total / sdano_2225_rf, 1.0)
+    perenos_msk_est = perenos_2225_rf * msk_share
+    pct2_msk = (perenos_msk_est / msk_2225_total * 100) if msk_2225_total > 0 else None
+
 if sdano_2225_rf > 0 and perenos_2225_rf > 0:
-    msk_share = min(msk_2225_zhilye / sdano_2225_rf, 1.0)
+    msk_share = min(msk_2225_total / sdano_2225_rf, 1.0)
     other_share2 = 1.0 - msk_share
     other_val2 = perenos_2225_rf * other_share2
     other_pct2 = other_share2 * 100
@@ -630,13 +739,17 @@ with dc1:
     render_delay_card(
         "Переносы сроков ввода (текущее строительство)",
         perenos_stroitelstvo_rf, pct1, other_val1, other_pct1,
+        pct_msk=pct1_msk,
         base_label=f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
+        msk_label=f"от {ru_num((stroitelstvo_msk or 0)/1000)} тыс. м² в стройке в Москве",
     )
 with dc2:
     render_delay_card(
         "Переносы сроков в объектах ввода за 2022–2025 гг.",
         perenos_2225_rf if perenos_2225_rf > 0 else None, pct2, other_val2, other_pct2,
-        base_label=f"от {ru_num(sdano_2225_rf/1000)} тыс. м² введённых за период",
+        pct_msk=pct2_msk,
+        base_label=f"от {ru_num(sdano_2225_rf/1000)} тыс. м² введённых в РФ за период",
+        msk_label=f"от {ru_num(msk_2225_total/1000)} тыс. м² введённых в Москве",
     )
 st.caption(
     "Источник: ERZRF. **Текущее строительство** — площадь объектов с задержкой ввода "
@@ -699,7 +812,9 @@ else:
             ec[3].metric("Выручка от продаж", fmt_mlrd(vyruchka))
             ec[4].metric("Покрытие займов выручкой",
                          f"{pokrytie:.0f}%" if pokrytie else "—")
-            st.caption(f"Источник: ДОМ.РФ ЕИСЖС, {len(rows)} объектов в Москве")
+            date_suffix = f" · дата выгрузки: **{date_escrow}**" if date_escrow else ""
+            st.caption(
+                f"Источник: ДОМ.РФ ЕИСЖС, {len(rows)} объектов в Москве{date_suffix}")
 
 
 # === Список объектов ===

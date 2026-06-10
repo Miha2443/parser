@@ -881,18 +881,131 @@ def _get_developer_filter_label(driver) -> str:
     ) or ""
 
 
+def _clear_developer_filter(driver) -> bool:
+    """Очищает фильтр «Девелопер» (multi-select), чтобы быть готовым к
+    выбору ОДНОГО девелопера.
+
+    Фильтр «Девелопер» — это multi-select: каждый клик ДОБАВЛЯЕТ
+    девелопера в выборку, не заменяет. Поэтому перед выбором нового
+    нужно сбросить — иначе накапливается «19 девелоперов» / «20» / …
+    и шапка показывает сумму, а не данные одного.
+
+    Способы очистки на наш.дом.рф:
+      1) Кнопка ✕ внутри pill-фильтра «N девелоперов» (рядом со стрелкой)
+      2) Открыть попап → клик по «Все девелоперы» (сбрасывает выборку)
+
+    Возвращает True если фильтр в состоянии «Все девелоперы» / пуст.
+    """
+    # Если в фильтре уже «Все девелоперы» / пусто — ничего не делаем
+    current = _get_developer_filter_label(driver)
+    if not current or "все" in current.lower():
+        return True
+
+    # Способ 1: жмём «×» внутри pill-фильтра «Девелопер».
+    # На странице это svg/button c классом close внутри триггера.
+    cleared = driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null &&
+            /^девелопер$/i.test((e.innerText || '').trim()));
+        if (!p || !p.nextElementSibling) return false;
+        const pill = p.nextElementSibling;
+        // Ищем X-кнопку: обычно svg/button рядом со стрелкой dropdown
+        const closeBtn = pill.querySelector(
+            '[aria-label*="ист"],[aria-label*="clear"],' +
+            '[title*="ист"],[title*="clear"],' +
+            'button[type="button"]:not([tabindex="0"])'
+        );
+        if (closeBtn) {
+            closeBtn.click();
+            return true;
+        }
+        return false;
+        """
+    )
+    if cleared:
+        time.sleep(0.6)
+        new_label = _get_developer_filter_label(driver)
+        if not new_label or "все" in new_label.lower():
+            return True
+
+    # Способ 2: открыть попап и кликнуть «Все девелоперы»
+    trigger = driver.execute_script(
+        """
+        const p = [...document.querySelectorAll('p')].find(e =>
+            e.offsetParent !== null &&
+            /^девелопер$/i.test((e.innerText || '').trim()));
+        if (!p || !p.nextElementSibling) return null;
+        return p.nextElementSibling.querySelector('[tabindex="0"]');
+        """
+    )
+    if not trigger:
+        return False
+    try:
+        driver.execute_script("arguments[0].click();", trigger)
+    except WebDriverException:
+        return False
+    try:
+        WebDriverWait(driver, 5).until(
+            lambda d: d.execute_script(
+                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+            )
+        )
+    except TimeoutException:
+        return False
+    time.sleep(0.3)
+    # Очищаем поле поиска чтобы видеть «Все девелоперы»
+    driver.execute_script(
+        """
+        const inp = document.querySelector('input[placeholder="Поиск по названию"]');
+        if (!inp) return;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, '');
+        inp.dispatchEvent(new Event('input', {bubbles: true}));
+        inp.dispatchEvent(new Event('change', {bubbles: true}));
+        """
+    )
+    time.sleep(0.6)
+    # Кликаем «Все девелоперы» (это сбрасывает все галочки)
+    driver.execute_script(
+        """
+        const spans = [...document.querySelectorAll('span.css-1ogbkfc, span.css-pqw2m5')];
+        const target = spans.find(s =>
+            /^все\\s+девелоперы/i.test((s.innerText || '').trim()));
+        if (target) {
+            (target.parentElement || target).click();
+        }
+        """
+    )
+    time.sleep(0.4)
+    # Закрываем попап
+    try:
+        driver.execute_script("document.body.click();")
+    except WebDriverException:
+        pass
+    time.sleep(0.6)
+    new_label = _get_developer_filter_label(driver) or ""
+    return "все" in new_label.lower() or not new_label
+
+
 def _switch_developer_filter(driver, target_label: str, *,
                              wait_change: bool = True,
                              timeout: int = 15) -> bool:
     """Переключает фильтр «Девелопер» на target_label.
 
-    Структура попапа идентична фильтру региона — те же классы
-    (css-wsxkpq input, css-1ogbkfc span, css-1ynvnsn row).
+    Фильтр multi-select → перед выбором нового сбрасываем предыдущий
+    через _clear_developer_filter. Иначе шапка считает СУММУ всех
+    выбранных девелоперов («19 девелоперов» → 96 378 квартир вместо
+    значения одного).
 
     target_label ищется как:
       1) точное совпадение текста span
       2) если не нашли — первое совпадение по подстроке
     """
+    # КРИТИЧНО: всегда сбрасываем фильтр перед выбором нового.
+    # Если этого не сделать — multi-select накапливает выбор.
+    if target_label and "все" not in target_label.lower():
+        _clear_developer_filter(driver)
     baseline = _get_all_apartments_count(driver) if wait_change else ""
 
     # 1) Клик на триггер

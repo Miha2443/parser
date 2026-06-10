@@ -553,8 +553,10 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 # КРИТИЧНО: сохраняем xlsx ПОСЛЕ каждого региона
                 flush()
 
-                # === Per-developer обход (НОВОЕ) ===
-                # Выключается через KVART_PER_DEV=0. Лимит: KVART_PER_DEV_LIMIT=5.
+                # === Per-developer обход ===
+                # Управляется KVART_PER_DEV (default=0).
+                # Каждый результат верифицируется против developers-агрегата —
+                # если расхождение >10% → повтор (до 2 раз), иначе пропуск.
                 if _per_dev_enabled():
                     dev_names = _read_monitoring_developers()
                     limit = _per_dev_limit()
@@ -563,42 +565,90 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                     if not dev_names:
                         print("       ⚠️  monitoring_2_0 не найден — per-dev пропускаем")
                     else:
+                        # Сборка lookup: «нормализованное имя» → ожидаемые числа
+                        # из developers (агрегат уже собран и точно правильный)
+                        expected: dict[str, dict] = {}
+                        for d_row in data.get("developers", []):
+                            nm = _normalize_dev_name_for_lookup(d_row.get("наименование", ""))
+                            if not nm:
+                                continue
+                            expected[nm] = {
+                                "all_count": _parse_num_apartments(d_row.get("квартиры_тыс_шт", "")),
+                                "all_area": _parse_num_apartments(d_row.get("площадь_тыс_м²", "")),
+                            }
+
+                        debug_first = os.environ.get(
+                            "KVART_PER_DEV_DEBUG", "0").strip() == "1"
                         per_dev: list[dict] = []
                         print(f"       ── per-dev обход: {len(dev_names)} девелоперов "
                               f"(KVART_PER_DEV=0 чтобы выключить)")
-                        ok_count = fail_count = 0
+                        ok_count = fail_count = rejected = 0
                         for i, dev in enumerate(dev_names, 1):
                             try:
                                 ok = _switch_developer_filter(
-                                    driver, dev, wait_change=True, timeout=12)
+                                    driver, dev, wait_change=True, timeout=15)
                             except Exception as e:  # noqa: BLE001
                                 print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
                                 ok = False
                             if not ok:
                                 fail_count += 1
                                 continue
-                            apt = _parse_apartments_live(driver)
-                            if apt:
-                                # Используем имя из шапки фильтра как точное имя
-                                filter_label = _get_developer_filter_label(driver) or dev
+
+                            # Парсим (с debug для первого девелопера в каждом регионе
+                            # чтобы видеть какой селектор был выбран)
+                            apt = _parse_apartments_live(
+                                driver, debug=(debug_first and i == 1))
+
+                            # ВЕРИФИКАЦИЯ: сравним с агрегатом из developers.
+                            # Если расхождение >10% — это баг (взяли не тот блок),
+                            # повторяем парсинг после паузы.
+                            filter_label = _get_developer_filter_label(driver) or dev
+                            verify_key = _normalize_dev_name_for_lookup(filter_label)
+                            exp = expected.get(verify_key) or expected.get(
+                                _normalize_dev_name_for_lookup(dev))
+                            if exp and apt and apt.get("all"):
+                                got = _parse_num_apartments(apt["all"].get("count", ""))
+                                want = exp["all_count"] * 1000  # developers даёт тыс. шт
+                                if want > 0:
+                                    ratio = got / want
+                                    if ratio < 0.9 or ratio > 1.1:
+                                        # Повтор: ещё подождать и перечитать
+                                        time.sleep(2.0)
+                                        apt = _parse_apartments_live(driver)
+                                        got2 = _parse_num_apartments(
+                                            (apt.get("all") or {}).get("count", "")) if apt else 0
+                                        if got2 > 0:
+                                            ratio = got2 / want
+                                        if ratio < 0.9 or ratio > 1.1:
+                                            rejected += 1
+                                            if rejected <= 3:
+                                                print(f"          🚫 {i}/{len(dev_names)} «{dev[:30]}»: "
+                                                      f"парсер дал {got2 or got:.0f} шт, "
+                                                      f"ожидалось ~{want:.0f} (ratio={ratio:.2f}) — пропускаю")
+                                            continue
+
+                            if apt and apt.get("all"):
                                 per_dev.append({
                                     "наименование": filter_label,
                                     "monitoring_name": dev,
                                     "apartments": apt,
                                 })
                                 ok_count += 1
+                            else:
+                                fail_count += 1
+
                             if i % 10 == 0:
                                 print(f"          · {i}/{len(dev_names)}: "
-                                      f"ok={ok_count}, miss={fail_count}")
+                                      f"ok={ok_count}, miss={fail_count}, rejected={rejected}")
                                 data["apartments_per_dev"] = per_dev
                                 flush()
                         # финальный сейв
                         data["apartments_per_dev"] = per_dev
                         flush()
                         print(f"       ✅ per-dev: {ok_count} собрано, "
-                              f"{fail_count} пропущено")
-                        # Сбрасываем фильтр на «Все девелоперы» чтобы следующий
-                        # регион стартовал с агрегата
+                              f"{fail_count} ошибок селектора, "
+                              f"{rejected} отвергнуто (не совпадает с агрегатом)")
+                        # Сброс фильтра на «Все девелоперы»
                         try:
                             _switch_developer_filter(
                                 driver, "Все девелоперы", wait_change=False)
@@ -931,7 +981,18 @@ def _switch_developer_filter(driver, target_label: str, *,
     if not wait_change:
         return True
 
-    # 6) Ждём смены данных
+    # 6) Ждём 2 вещи параллельно:
+    #    (а) фильтр «Девелопер» показал нужное имя
+    #    (б) число «Все квартиры» сменилось с baseline
+    target_lower = (target_label or "").lower()[:25]
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: target_lower in (_get_developer_filter_label(d) or "").lower()
+        )
+    except TimeoutException:
+        actual_lbl = _get_developer_filter_label(driver)
+        print(f"       ⚠️  фильтр девелопера не сменился (видим «{actual_lbl}»)")
+        return False
     try:
         WebDriverWait(driver, timeout).until(
             lambda d: (
@@ -939,22 +1000,100 @@ def _switch_developer_filter(driver, target_label: str, *,
                 and _get_all_apartments_count(d) != ""
             )
         )
-        return True
     except TimeoutException:
-        return False
+        # Может быть редкий случай когда у двух девелоперов одинаковое
+        # число «всех квартир» — не повод для ошибки. Просто ждём
+        # дополнительную секунду для React-ререндера.
+        pass
+    # ВАЖНО: даже после смены DOM React может ещё мигнуть/перерисовать.
+    # Дополнительная пауза позволяет данным «успокоиться».
+    time.sleep(1.2)
+    return True
 
 
-def _parse_apartments_live(driver) -> dict:
-    """Парсит шапку «Все квартиры / 1 / 2 / 3 / 4+» прямо из DOM.
+def _parse_apartments_live(driver, *, debug: bool = False) -> dict:
+    """Парсит шапку «Все квартиры / 1 / 2 / 3 / 4+» в основном блоке.
 
-    Возвращает: {all: (count,area), ONE/TWO/THREE/FOUR: (count,area)}
+    КРИТИЧНО: на странице наш.дом.рф/квартирография может быть
+    несколько групп кнопок `[data-rooms]` (в фильтре сверху и в
+    основной шапке). Раньше код искал ПО ВСЕМУ document и брал не
+    тот блок — отсюда числа в 4 раза больше реальных.
+
+    Теперь:
+    1) Находим контейнер: поднимаемся от первой `[data-rooms]` пока
+       внутри не окажется 4+ таких кнопок И кнопка «Все квартиры».
+    2) Парсим ТОЛЬКО кнопки внутри этого контейнера.
+
+    debug=True печатает детали для отладки селекторов.
     """
     raw = driver.execute_script(
         """
+        const dbg = arguments[0];
+        const debugInfo = {};
+
+        // Все кандидаты в основной блок — это группы где рядом
+        // есть и кнопка «Все квартиры», и кнопки [data-rooms].
+        const allRoomBtns = [...document.querySelectorAll('button[data-rooms]')];
+        debugInfo.totalRoomButtons = allRoomBtns.length;
+        if (allRoomBtns.length === 0) return {error: 'no data-rooms buttons', debug: debugInfo};
+
+        // Группируем по общему предку: для каждой кнопки идём вверх
+        // пока не найдём контейнер с 4+ кнопками И «Все квартиры».
+        function findContainer(btn) {
+            let el = btn.parentElement;
+            for (let i = 0; i < 8 && el; i++) {
+                const roomBtns = el.querySelectorAll('button[data-rooms]');
+                const allBtn = [...el.querySelectorAll('button')]
+                    .find(b => /Все квартиры/.test(b.innerText || ''));
+                if (roomBtns.length >= 4 && allBtn) return el;
+                el = el.parentElement;
+            }
+            return null;
+        }
+
+        // Берём контейнер для ПЕРВОЙ data-rooms кнопки (обычно это
+        // основной блок — фильтры идут после в DOM, но мы ищем по
+        // структуре, не по позиции).
+        const containers = new Set();
+        for (const b of allRoomBtns) {
+            const c = findContainer(b);
+            if (c) containers.add(c);
+        }
+        debugInfo.containersFound = containers.size;
+        if (containers.size === 0) {
+            return {error: 'no valid container', debug: debugInfo};
+        }
+
+        // Выбираем контейнер: тот в котором кнопки имеют наибольшие
+        // КОНКРЕТНЫЕ числа в divs[1] (фильтр-блок обычно показывает
+        // лейблы типа «1 комн» без чисел; основной блок — числа).
+        let bestContainer = null;
+        let bestScore = -1;
+        for (const c of containers) {
+            const roomBtns = c.querySelectorAll('button[data-rooms]');
+            let score = 0;
+            for (const b of roomBtns) {
+                const divs = b.querySelectorAll(':scope > div');
+                if (divs.length >= 2) {
+                    const txt = (divs[1].innerText || '').trim();
+                    // Считаем «цифровым» если есть цифра
+                    if (/\\d/.test(txt)) score += 1;
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestContainer = c;
+            }
+        }
+        debugInfo.bestScore = bestScore;
+        if (!bestContainer) {
+            return {error: 'no container with numbers', debug: debugInfo};
+        }
+
         const result = {};
-        // 1) Все квартиры
-        const allBtn = [...document.querySelectorAll('button')].find(b =>
-            b.offsetParent !== null && /Все квартиры/.test(b.innerText || ''));
+        // Все квартиры
+        const allBtn = [...bestContainer.querySelectorAll('button')]
+            .find(b => /Все квартиры/.test(b.innerText || ''));
         if (allBtn) {
             const divs = allBtn.querySelectorAll(':scope > div');
             if (divs.length >= 3) {
@@ -964,8 +1103,8 @@ def _parse_apartments_live(driver) -> dict:
                 };
             }
         }
-        // 2) По типам комнат
-        for (const b of document.querySelectorAll('button[data-rooms]')) {
+        // По типам комнат — ТОЛЬКО внутри найденного контейнера
+        for (const b of bestContainer.querySelectorAll('button[data-rooms]')) {
             const room = b.getAttribute('data-rooms');
             const divs = b.querySelectorAll(':scope > div');
             if (divs.length < 3) continue;
@@ -974,10 +1113,54 @@ def _parse_apartments_live(driver) -> dict:
                 area: (divs[2].innerText || '').trim()
             };
         }
+        if (dbg) result._debug = debugInfo;
         return result;
-        """
+        """,
+        debug,
     ) or {}
+    if debug and raw:
+        print(f"          🔍 _parse_apartments_live debug: {raw.get('_debug')}")
     return raw
+
+
+def _parse_num_apartments(text: str) -> float:
+    """«42 100» → 42100; «42,1 тыс. шт» → 42100; «< 1» → 1."""
+    if not text:
+        return 0.0
+    s = str(text).replace("\xa0", " ").strip()
+    is_th = "тыс" in s.lower()
+    # Берём первую числовую группу: «42,1», «1 914», «42 100», «<1»
+    m = re.search(r"([<>]?\s*\d[\d\s]*(?:[.,]\d+)?)", s)
+    if not m:
+        return 0.0
+    num_str = m.group(1).replace(" ", "").replace(",", ".").lstrip("<>").strip()
+    if not num_str:
+        return 0.0
+    try:
+        v = float(num_str)
+        return v * 1000 if is_th else v
+    except ValueError:
+        return 0.0
+
+
+def _normalize_dev_name_for_lookup(name: str) -> str:
+    """Простая нормализация для сопоставления имён девелоперов между
+    monitoring и developers-листом квартирографии (lowercase + убрать
+    спец.символы и юр.префиксы). Сравнение нужно для верификации
+    результата per-dev парсинга против ожидаемого агрегата."""
+    if not name:
+        return ""
+    s = str(name).strip().lower()
+    # Убираем регион после запятой («ПИК, г.Москва» → «пик»)
+    if "," in s:
+        s = s.split(",", 1)[0].strip()
+    s = s.replace("«", "").replace("»", "").replace('"', "")
+    for p in ["группа компаний ", "гк ", "ао ", "пао ", "ооо ",
+              "холдинг ", "спецзастройщик ", "сз "]:
+        if s.startswith(p):
+            s = s[len(p):]
+            break
+    return " ".join(s.split())
 
 
 def _read_monitoring_developers() -> list[str]:

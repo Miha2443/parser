@@ -492,14 +492,23 @@ with right:
 # === Квартирография: таблица типов ===
 st.markdown(f"### Структура портфеля по типам квартир")
 
-# === Квартирография: только лист `developers` (проверенный источник) ===
-# Лист `apartments_per_dev` отключён — данные оттуда в 4 раза больше
-# правды (баг парсера: не успевает дождаться смены DOM после выбора
-# девелопера). Пока не починим — используем только `developers`,
-# где числа гарантированно совпадают с сайтом наш.дом.рф.
+# === Квартирография ===
+# Используем `developers` лист (агрегаты — стабильные, точные).
+# Если есть `apartments_per_dev` (новый парсер с верификацией) —
+# используем его только если данные проходят sanity-check:
+# total в per-dev должен быть в диапазоне 0.95–1.05 от total в
+# developers. Это спасает от ситуации когда per-dev собрал не тот
+# блок (раньше брал данные в 4 раза больше правды).
 kvart_devs_full = kvart.get("developers", pd.DataFrame())
 kvart_rows = (find_dev_rows(kvart_devs_full, "наименование", sel_key)
               if not kvart_devs_full.empty else pd.DataFrame())
+
+per_dev = kvart.get("apartments_per_dev", pd.DataFrame())
+per_dev_rows = pd.DataFrame()
+if isinstance(per_dev, pd.DataFrame) and not per_dev.empty:
+    per_dev_rows = find_dev_rows(per_dev, "наименование", sel_key)
+    if per_dev_rows.empty:
+        per_dev_rows = find_dev_rows(per_dev, "monitoring_name", sel_key)
 
 
 def _render_kvart_section(total_shtuk: float, area_th: float,
@@ -567,14 +576,37 @@ else:
     total_th = float(r.get("квартиры_тыс_шт_num") or 0)
     total = total_th * 1000.0
     total_area = float(r.get("площадь_тыс_м²_num") or 0)
-    rooms_data = {}
-    for k, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
-                     ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
-        pct_v = r.get(f"доля_{k}_%_num")
-        if pct_v is not None and not pd.isna(pct_v):
-            rooms_data[label] = (total * float(pct_v) / 100.0, float(pct_v), None)
-        else:
-            rooms_data[label] = (0, 0, None)
+
+    # Пытаемся использовать per-dev для точных комнат если данные
+    # выглядят правильно (sanity check: total в пределах 5% от агрегата).
+    use_per_dev = False
+    if not per_dev_rows.empty and "region_key" in per_dev_rows.columns:
+        pd_region = per_dev_rows[per_dev_rows["region_key"] == region_choice]
+        if not pd_region.empty:
+            pd_row = pd_region.iloc[0]
+            pd_total = float(pd_row.get("Все_количество_шт_num") or 0)
+            if total > 0 and abs(pd_total / total - 1) < 0.05:
+                # Per-dev данные согласованы с агрегатом — берём точные числа
+                use_per_dev = True
+                rooms_data = {}
+                for room, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                                    ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
+                    cnt = float(pd_row.get(f"{room}_количество_шт_num") or 0)
+                    ar = float(pd_row.get(f"{room}_площадь_тыс_м²_num") or 0)
+                    pct = (cnt / pd_total * 100) if pd_total > 0 else 0
+                    rooms_data[label] = (cnt, pct, ar if ar else None)
+                total = pd_total
+                total_area = float(pd_row.get("Все_площадь_тыс_м²_num") or total_area)
+
+    if not use_per_dev:
+        rooms_data = {}
+        for k, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                         ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
+            pct_v = r.get(f"доля_{k}_%_num")
+            if pct_v is not None and not pd.isna(pct_v):
+                rooms_data[label] = (total * float(pct_v) / 100.0, float(pct_v), None)
+            else:
+                rooms_data[label] = (0, 0, None)
 
     market_total = 0.0
     if "region_key" in kvart_devs_full.columns:
@@ -582,9 +614,11 @@ else:
         if "площадь_тыс_м²_num" in reg_df.columns:
             market_total = float(reg_df["площадь_тыс_м²_num"].fillna(0).sum())
 
+    src_note = ("Точные числа из per-dev обхода (верифицировано "
+                "против агрегата)" if use_per_dev else
+                "Источник: наш.дом.рф/квартирография (агрегат `developers`)")
     _render_kvart_section(
-        total, total_area, rooms_data, region_label, market_total,
-        "Источник: наш.дом.рф/квартирография (лист `developers`)."
+        total, total_area, rooms_data, region_label, market_total, src_note
     )
 
 

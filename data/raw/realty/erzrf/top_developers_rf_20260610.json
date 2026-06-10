@@ -1,0 +1,806 @@
+{
+  "region": "rf",
+  "scraped_at": "2026-06-10T12:04:44",
+  "developers": [
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-samolet-2366201001?region=vse-regiony&regionKey=0&organizationId=2366201001",
+      "cells": [
+        "1\n0\nГК Самолет, г.Москва\n4 688 963\n1 486 718\n31.71\n4.15\n15\n61\n62\n0\n238\n0\n4\n3.5"
+      ],
+      "name": "ГК Самолет",
+      "place": "1\n0\nГК Самолет, г.Москва\n4 688 963\n1 486 718\n31.71\n4.15\n15\n61\n62\n0\n238\n0\n4\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/pik-429726001?region=vse-regiony&regionKey=0&organizationId=429726001",
+      "cells": [
+        "2\n0\nПИК, г.Москва\n3 947 676\n63 680\n1.61\n0.1\n14\n65\n71\n0\n171\n0\n1\n5"
+      ],
+      "name": "ПИК",
+      "place": "2\n0\nПИК, г.Москва\n3 947 676\n63 680\n1.61\n0.1\n14\n65\n71\n0\n171\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/dogma-5699998001?region=vse-regiony&regionKey=0&organizationId=5699998001",
+      "cells": [
+        "3\n0\nDOGMA, Краснодарский край\n2 761 001\n172 331\n6.24\n0.5\n5\n13\n12\n0\n164\n0\n0\n5"
+      ],
+      "name": "DOGMA",
+      "place": "3\n0\nDOGMA, Краснодарский край\n2 761 001\n172 331\n6.24\n0.5\n5\n13\n12\n0\n164\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-tochno-2894925001?region=vse-regiony&regionKey=0&organizationId=2894925001",
+      "cells": [
+        "4\n0\nГК ТОЧНО, Краснодарский край\n2 218 408\n252 020\n11.36\n2.84\n7\n13\n13\n0\n135\n0\n0\n3.5"
+      ],
+      "name": "ГК ТОЧНО",
+      "place": "4\n0\nГК ТОЧНО, Краснодарский край\n2 218 408\n252 020\n11.36\n2.84\n7\n13\n13\n0\n135\n0\n0\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-fsk-755344001?region=vse-regiony&regionKey=0&organizationId=755344001",
+      "cells": [
+        "5\n0\nГК ФСК, г.Москва\n1 912 370\n84 445\n4.42\n0.48\n9\n26\n26\n0\n91\n117\n1\n4"
+      ],
+      "name": "ГК ФСК",
+      "place": "5\n0\nГК ФСК, г.Москва\n1 912 370\n84 445\n4.42\n0.48\n9\n26\n26\n0\n91\n117\n1\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-ssk-5360409001?region=vse-regiony&regionKey=0&organizationId=5360409001",
+      "cells": [
+        "6\n+1\nГК ССК, Краснодарский край\n1 820 636\n0\n0\n0\n6\n16\n20\n0\n149\n4\n21\n5"
+      ],
+      "name": "ГК ССК",
+      "place": "6\n+1\nГК ССК, Краснодарский край\n1 820 636\n0\n0\n0\n6\n16\n20\n0\n149\n4\n21\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/brusnika-733498001?region=vse-regiony&regionKey=0&organizationId=733498001",
+      "cells": [
+        "7\n-1\nБрусника, Свердловская область\n1 739 601\n50 243\n2.89\n0.28\n13\n14\n37\n0\n80\n0\n0\n5"
+      ],
+      "name": "Брусника",
+      "place": "7\n-1\nБрусника, Свердловская область\n1 739 601\n50 243\n2.89\n0.28\n13\n14\n37\n0\n80\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-jugstrojinvest-1705946001?region=vse-regiony&regionKey=0&organizationId=1705946001",
+      "cells": [
+        "8\n0\nГК ЮгСтройИнвест, Ставропольский край\n1 651 971\n0\n0\n0\n4\n5\n18\n0\n136\n0\n0\n5"
+      ],
+      "name": "ГК ЮгСтройИнвест",
+      "place": "8\n0\nГК ЮгСтройИнвест, Ставропольский край\n1 651 971\n0\n0\n0\n4\n5\n18\n0\n136\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/kholding-setl-group-363697001?region=vse-regiony&regionKey=0&organizationId=363697001",
+      "cells": [
+        "9\n0\nХолдинг Setl Group, г.Санкт-Петербург\n1 637 179\n0\n0\n0\n3\n15\n17\n0\n99\n0\n0\n5"
+      ],
+      "name": "Холдинг Setl Group",
+      "place": "9\n0\nХолдинг Setl Group, г.Санкт-Петербург\n1 637 179\n0\n0\n0\n3\n15\n17\n0\n99\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-strana-development-5339663001?region=vse-regiony&regionKey=0&organizationId=5339663001",
+      "cells": [
+        "10\n0\nГК Страна Девелопмент, Тюменская область\n1 356 115\n150 351\n11.09\n0.82\n5\n17\n15\n0\n43\n0\n0\n4"
+      ],
+      "name": "ГК Страна Девелопмент",
+      "place": "10\n0\nГК Страна Девелопмент, Тюменская область\n1 356 115\n150 351\n11.09\n0.82\n5\n17\n15\n0\n43\n0\n0\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-etalon-1331499001?region=vse-regiony&regionKey=0&organizationId=1331499001",
+      "cells": [
+        "11\n+1\nГруппа Эталон, г.Москва\n1 245 418\n155 864\n12.51\n1.88\n7\n17\n17\n0\n57\n0\n1\n4"
+      ],
+      "name": "Группа Эталон",
+      "place": "11\n+1\nГруппа Эталон, г.Москва\n1 245 418\n155 864\n12.51\n1.88\n7\n17\n17\n0\n57\n0\n1\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-lsr-429468001?region=vse-regiony&regionKey=0&organizationId=429468001",
+      "cells": [
+        "12\n-1\nГруппа ЛСР, г.Санкт-Петербург\n1 177 063\n23 514\n2\n0.48\n4\n13\n26\n0\n62\n0\n0\n5"
+      ],
+      "name": "Группа ЛСР",
+      "place": "12\n-1\nГруппа ЛСР, г.Санкт-Петербург\n1 177 063\n23 514\n2\n0.48\n4\n13\n26\n0\n62\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/mr-group-430836001?region=vse-regiony&regionKey=0&organizationId=430836001",
+      "cells": [
+        "13\n0\nMR Group, г.Москва\n993 876\n50 587\n5.09\n0.43\n1\n13\n14\n0\n22\n0\n0\n5"
+      ],
+      "name": "MR Group",
+      "place": "13\n0\nMR Group, г.Москва\n993 876\n50 587\n5.09\n0.43\n1\n13\n14\n0\n22\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-razvitie-461175001?region=vse-regiony&regionKey=0&organizationId=461175001",
+      "cells": [
+        "14\n0\nГК Развитие, Воронежская область\n939 969\n0\n0\n0\n7\n27\n32\n0\n61\n0\n6\n5"
+      ],
+      "name": "ГК Развитие",
+      "place": "14\n0\nГК Развитие, Воронежская область\n939 969\n0\n0\n0\n7\n27\n32\n0\n61\n0\n6\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/talan-2493968001?region=vse-regiony&regionKey=0&organizationId=2493968001",
+      "cells": [
+        "15\n0\nТалан, Удмуртская Республика\n854 560\n53 289\n6.24\n0.5\n12\n20\n20\n0\n50\n0\n0\n5"
+      ],
+      "name": "Талан",
+      "place": "15\n0\nТалан, Удмуртская Республика\n854 560\n53 289\n6.24\n0.5\n12\n20\n20\n0\n50\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-granel-955386001?region=vse-regiony&regionKey=0&organizationId=955386001",
+      "cells": [
+        "16\n+1\nГК Гранель, г.Москва\n818 434\n0\n0\n0\n3\n16\n16\n0\n28\n0\n0\n5"
+      ],
+      "name": "ГК Гранель",
+      "place": "16\n+1\nГК Гранель, г.Москва\n818 434\n0\n0\n0\n3\n16\n16\n0\n28\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-rascvetaj-5799295001?region=vse-regiony&regionKey=0&organizationId=5799295001",
+      "cells": [
+        "17\n+1\nГК Расцветай, Новосибирская область\n811 407\n0\n0\n0\n3\n21\n21\n0\n83\n0\n1\n5"
+      ],
+      "name": "ГК Расцветай",
+      "place": "17\n+1\nГК Расцветай, Новосибирская область\n811 407\n0\n0\n0\n3\n21\n21\n0\n83\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/donstroj-430278001?region=vse-regiony&regionKey=0&organizationId=430278001",
+      "cells": [
+        "18\n+1\nДОНСТРОЙ, г.Москва\n797 384\n0\n0\n0\n1\n10\n8\n0\n21\n0\n0\n4.5"
+      ],
+      "name": "ДОНСТРОЙ",
+      "place": "18\n+1\nДОНСТРОЙ, г.Москва\n797 384\n0\n0\n0\n1\n10\n8\n0\n21\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-akvilon-391375001?region=vse-regiony&regionKey=0&organizationId=391375001",
+      "cells": [
+        "19\n-3\nГруппа Аквилон, г.Санкт-Петербург\n795 155\n0\n0\n0\n5\n29\n30\n0\n39\n0\n1\n5"
+      ],
+      "name": "Группа Аквилон",
+      "place": "19\n-3\nГруппа Аквилон, г.Санкт-Петербург\n795 155\n0\n0\n0\n5\n29\n30\n0\n39\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-glorax-1931581001?region=vse-regiony&regionKey=0&organizationId=1931581001",
+      "cells": [
+        "20\n0\nГК GloraX, г.Санкт-Петербург\n790 435\n0\n0\n0\n9\n17\n16\n0\n42\n0\n0\n5"
+      ],
+      "name": "ГК GloraX",
+      "place": "20\n0\nГК GloraX, г.Санкт-Петербург\n790 435\n0\n0\n0\n9\n17\n16\n0\n42\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/level-group-6150430001?region=vse-regiony&regionKey=0&organizationId=6150430001",
+      "cells": [
+        "21\n0\nLevel Group, г.Москва\n709 239\n43 098\n6.08\n0.18\n3\n9\n9\n0\n15\n0\n2\n4"
+      ],
+      "name": "Level Group",
+      "place": "21\n0\nLevel Group, г.Москва\n709 239\n43 098\n6.08\n0.18\n3\n9\n9\n0\n15\n0\n2\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-enko-402466001?region=vse-regiony&regionKey=0&organizationId=402466001",
+      "cells": [
+        "22\n0\nГК ЭНКО, Тюменская область\n677 459\n0\n0\n0\n6\n13\n11\n0\n30\n0\n0\n5"
+      ],
+      "name": "ГК ЭНКО",
+      "place": "22\n0\nГК ЭНКО, Тюменская область\n677 459\n0\n0\n0\n6\n13\n11\n0\n30\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/unistroj-1130405001?region=vse-regiony&regionKey=0&organizationId=1130405001",
+      "cells": [
+        "23\n0\nУнистрой, Республика Татарстан (Татарстан)\n638 359\n0\n0\n0\n7\n22\n23\n0\n36\n0\n1\n5"
+      ],
+      "name": "Унистрой",
+      "place": "23\n0\nУнистрой, Республика Татарстан (Татарстан)\n638 359\n0\n0\n0\n7\n22\n23\n0\n36\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-a101-1075233001?region=vse-regiony&regionKey=0&organizationId=1075233001",
+      "cells": [
+        "24\n0\nГК А101, г.Москва\n618 408\n217 632\n35.19\n2.49\n2\n6\n11\n0\n21\n0\n0\n4.5"
+      ],
+      "name": "ГК А101",
+      "place": "24\n0\nГК А101, г.Москва\n618 408\n217 632\n35.19\n2.49\n2\n6\n11\n0\n21\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/razum-4296089001?region=vse-regiony&regionKey=0&organizationId=4296089001",
+      "cells": [
+        "25\n0\nРАЗУМ, Астраханская область\n597 593\n51 223\n8.57\n1.11\n2\n13\n12\n0\n43\n0\n0\n3.5"
+      ],
+      "name": "РАЗУМ",
+      "place": "25\n0\nРАЗУМ, Астраханская область\n597 593\n51 223\n8.57\n1.11\n2\n13\n12\n0\n43\n0\n0\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-absoljut-934095001?region=vse-regiony&regionKey=0&organizationId=934095001",
+      "cells": [
+        "26\n0\nГК АБСОЛЮТ, г.Москва\n513 776\n80 978\n15.76\n2.85\n2\n4\n4\n0\n16\n0\n0\n4.5"
+      ],
+      "name": "ГК АБСОЛЮТ",
+      "place": "26\n0\nГК АБСОЛЮТ, г.Москва\n513 776\n80 978\n15.76\n2.85\n2\n4\n4\n0\n16\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshchik-gradstrojproekt-21975457001?region=vse-regiony&regionKey=0&organizationId=21975457001",
+      "cells": [
+        "27\n0\nСЗ Градстройпроект, Краснодарский край\n511 023\n0\n0\n0\n1\n1\n1\n0\n42\n0\n0\nн/р"
+      ],
+      "name": "СЗ Градстройпроект",
+      "place": "27\n0\nСЗ Градстройпроект, Краснодарский край\n511 023\n0\n0\n0\n1\n1\n1\n0\n42\n0\n0\nн/р"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-edinstvo-156056001?region=vse-regiony&regionKey=0&organizationId=156056001",
+      "cells": [
+        "28\n+2\nГК Единство, Рязанская область\n484 139\n83 668\n17.28\n2.86\n2\n20\n20\n0\n40\n0\n0\n4"
+      ],
+      "name": "ГК Единство",
+      "place": "28\n+2\nГК Единство, Рязанская область\n484 139\n83 668\n17.28\n2.86\n2\n20\n20\n0\n40\n0\n0\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-kortros-429541001?region=vse-regiony&regionKey=0&organizationId=429541001",
+      "cells": [
+        "29\n0\nГК КОРТРОС, г.Москва\n483 972\n37 376\n7.72\n0.7\n4\n5\n7\n0\n19\n0\n0\n4.5"
+      ],
+      "name": "ГК КОРТРОС",
+      "place": "29\n0\nГК КОРТРОС, г.Москва\n483 972\n37 376\n7.72\n0.7\n4\n5\n7\n0\n19\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/legenda-intelligent-development-1824654001?region=vse-regiony&regionKey=0&organizationId=1824654001",
+      "cells": [
+        "30\n+1\nLEGENDA Intelligent Development, г.Санкт-Петербург\n439 474\n0\n0\n0\n2\n6\n6\n0\n14\n0\n0\n5"
+      ],
+      "name": "LEGENDA Intelligent Development",
+      "place": "30\n+1\nLEGENDA Intelligent Development, г.Санкт-Петербург\n439 474\n0\n0\n0\n2\n6\n6\n0\n14\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/zhelezno-5896105001?region=vse-regiony&regionKey=0&organizationId=5896105001",
+      "cells": [
+        "31\n+2\nЖелезно, Кировская область\n412 581\n0\n0\n0\n6\n9\n15\n0\n36\n0\n0\n5"
+      ],
+      "name": "Железно",
+      "place": "31\n+2\nЖелезно, Кировская область\n412 581\n0\n0\n0\n6\n9\n15\n0\n36\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-alfastrojinvest-5380617001?region=vse-regiony&regionKey=0&organizationId=5380617001",
+      "cells": [
+        "32\n0\nГК АльфаСтройИнвест, Краснодарский край\n406 795\n27 949\n6.87\n0.53\n3\n5\n5\n0\n21\n0\n0\n5"
+      ],
+      "name": "ГК АльфаСтройИнвест",
+      "place": "32\n0\nГК АльфаСтройИнвест, Краснодарский край\n406 795\n27 949\n6.87\n0.53\n3\n5\n5\n0\n21\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/komosstroj-851697001?region=vse-regiony&regionKey=0&organizationId=851697001",
+      "cells": [
+        "33\n+5\nКОМОССТРОЙ®, Удмуртская Республика\n404 937\n32 545\n8.04\n0.7\n2\n17\n15\n0\n36\n0\n0\n5"
+      ],
+      "name": "КОМОССТРОЙ®",
+      "place": "33\n+5\nКОМОССТРОЙ®, Удмуртская Республика\n404 937\n32 545\n8.04\n0.7\n2\n17\n15\n0\n36\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-novyj-don-1164353001?region=vse-regiony&regionKey=0&organizationId=1164353001",
+      "cells": [
+        "34\n+1\nГК Новый ДОН, Самарская область\n397 507\n0\n0\n0\n2\n9\n9\n0\n13\n0\n1\n4.5"
+      ],
+      "name": "ГК Новый ДОН",
+      "place": "34\n+1\nГК Новый ДОН, Самарская область\n397 507\n0\n0\n0\n2\n9\n9\n0\n13\n0\n1\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-osnova-6201034001?region=vse-regiony&regionKey=0&organizationId=6201034001",
+      "cells": [
+        "35\n+1\nГК ОСНОВА, г.Москва\n394 825\n125 882\n31.88\n3.73\n2\n8\n9\n0\n5\n0\n6\n5"
+      ],
+      "name": "ГК ОСНОВА",
+      "place": "35\n+1\nГК ОСНОВА, г.Москва\n394 825\n125 882\n31.88\n3.73\n2\n8\n9\n0\n5\n0\n6\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-ost-10977487001?region=vse-regiony&regionKey=0&organizationId=10977487001",
+      "cells": [
+        "36\n+1\nГК ОСТ, Тульская область\n393 766\n20 844\n5.29\n1.12\n1\n18\n13\n0\n44\n0\n0\n4.5"
+      ],
+      "name": "ГК ОСТ",
+      "place": "36\n+1\nГК ОСТ, Тульская область\n393 766\n20 844\n5.29\n1.12\n1\n18\n13\n0\n44\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-pervyj-trest-4053794001?region=vse-regiony&regionKey=0&organizationId=4053794001",
+      "cells": [
+        "37\n+5\nГК Первый Трест, Республика Башкортостан\n391 822\n53 325\n13.61\n4.95\n1\n7\n8\n0\n19\n0\n0\n3.5"
+      ],
+      "name": "ГК Первый Трест",
+      "place": "37\n+5\nГК Первый Трест, Республика Башкортостан\n391 822\n53 325\n13.61\n4.95\n1\n7\n8\n0\n19\n0\n0\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelnaja-kompanija-semja-5696040001?region=vse-regiony&regionKey=0&organizationId=5696040001",
+      "cells": [
+        "38\n+1\nСК Семья, Краснодарский край\n389 636\n144 422\n37.07\n2.54\n2\n3\n3\n0\n47\n0\n1\n4.5"
+      ],
+      "name": "СК Семья",
+      "place": "38\n+1\nСК Семья, Краснодарский край\n389 636\n144 422\n37.07\n2.54\n2\n3\n3\n0\n47\n0\n1\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/interstroj-2987923001?region=vse-regiony&regionKey=0&organizationId=2987923001",
+      "cells": [
+        "39\n-5\nИнтерСтрой, Республика Крым\n387 153\n0\n0\n0\n3\n21\n22\n0\n51\n0\n8\n5"
+      ],
+      "name": "ИнтерСтрой",
+      "place": "39\n-5\nИнтерСтрой, Республика Крым\n387 153\n0\n0\n0\n3\n21\n22\n0\n51\n0\n8\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/seven-suns-development-2488380001?region=vse-regiony&regionKey=0&organizationId=2488380001",
+      "cells": [
+        "40\n-12\nSeven Suns Development, г.Санкт-Петербург\n385 105\n385 105\n100\n48.13\n3\n4\n4\n0\n13\n0\n11\n0.5"
+      ],
+      "name": "Seven Suns Development",
+      "place": "40\n-12\nSeven Suns Development, г.Санкт-Петербург\n385 105\n385 105\n100\n48.13\n3\n4\n4\n0\n13\n0\n11\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-kubanaljansproekt-28190308001?region=vse-regiony&regionKey=0&organizationId=28190308001",
+      "cells": [
+        "41\n-1\nСЗ КАП, Краснодарский край\n366 177\n0\n0\n0\n1\n1\n1\n0\n17\n0\n0\nн/р"
+      ],
+      "name": "СЗ КАП",
+      "place": "41\n-1\nСЗ КАП, Краснодарский край\n366 177\n0\n0\n0\n1\n1\n1\n0\n17\n0\n0\nн/р"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelnaja-kompanija-sk-10-5827081001?region=vse-regiony&regionKey=0&organizationId=5827081001",
+      "cells": [
+        "42\n-1\nСК 10, Ростовская область\n365 980\n0\n0\n0\n1\n5\n5\n0\n12\n0\n1\n5"
+      ],
+      "name": "СК 10",
+      "place": "42\n-1\nСК 10, Ростовская область\n365 980\n0\n0\n0\n1\n5\n5\n0\n12\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/lider-grupp-430857001?region=vse-regiony&regionKey=0&organizationId=430857001",
+      "cells": [
+        "43\n0\nЛидер Групп, г.Санкт-Петербург\n335 462\n33 829\n10.08\n0.61\n2\n10\n11\n0\n12\n0\n0\n5"
+      ],
+      "name": "Лидер Групп",
+      "place": "43\n0\nЛидер Групп, г.Санкт-Петербург\n335 462\n33 829\n10.08\n0.61\n2\n10\n11\n0\n12\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-kapital-261190001?region=vse-regiony&regionKey=0&organizationId=261190001",
+      "cells": [
+        "44\n+1\nГК Капитал, Рязанская область\n322 563\n0\n0\n0\n2\n12\n12\n0\n26\n0\n0\n5"
+      ],
+      "name": "ГК Капитал",
+      "place": "44\n+1\nГК Капитал, Рязанская область\n322 563\n0\n0\n0\n2\n12\n12\n0\n26\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-strojdomkrasnodar-27753932001?region=vse-regiony&regionKey=0&organizationId=27753932001",
+      "cells": [
+        "45\n+1\nСЗ СтройдомКраснодар, Краснодарский край\n319 523\n0\n0\n0\n1\n1\n1\n0\n22\n0\n0\nн/р"
+      ],
+      "name": "СЗ СтройдомКраснодар",
+      "place": "45\n+1\nСЗ СтройдомКраснодар, Краснодарский край\n319 523\n0\n0\n0\n1\n1\n1\n0\n22\n0\n0\nн/р"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/domostroitelnyj-kombinat-561250001?region=vse-regiony&regionKey=0&organizationId=561250001",
+      "cells": [
+        "46\n+1\nДСК, Воронежская область\n315 525\n38 979\n12.35\n1.12\n1\n8\n9\n0\n19\n0\n0\n4.5"
+      ],
+      "name": "ДСК",
+      "place": "46\n+1\nДСК, Воронежская область\n315 525\n38 979\n12.35\n1.12\n1\n8\n9\n0\n19\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/pzsp-2991496001?region=vse-regiony&regionKey=0&organizationId=2991496001",
+      "cells": [
+        "47\n-3\nПЗСП, Пермский край\n313 428\n0\n0\n0\n2\n8\n8\n0\n23\n0\n0\n5"
+      ],
+      "name": "ПЗСП",
+      "place": "47\n-3\nПЗСП, Пермский край\n313 428\n0\n0\n0\n2\n8\n8\n0\n23\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-paritet-development-16664888001?region=vse-regiony&regionKey=0&organizationId=16664888001",
+      "cells": [
+        "48\n+1\nГК Паритет Девелопмент, Тюменская область\n311 562\n0\n0\n0\n2\n7\n7\n0\n17\n0\n0\n5"
+      ],
+      "name": "ГК Паритет Девелопмент",
+      "place": "48\n+1\nГК Паритет Девелопмент, Тюменская область\n311 562\n0\n0\n0\n2\n7\n7\n0\n17\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-kvs-1288457001?region=vse-regiony&regionKey=0&organizationId=1288457001",
+      "cells": [
+        "49\n+1\nГК КВС, г.Санкт-Петербург\n302 180\n0\n0\n0\n2\n7\n7\n0\n23\n0\n0\n5"
+      ],
+      "name": "ГК КВС",
+      "place": "49\n+1\nГК КВС, г.Санкт-Петербург\n302 180\n0\n0\n0\n2\n7\n7\n0\n23\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-territorija-zhizni-7333890001?region=vse-regiony&regionKey=0&organizationId=7333890001",
+      "cells": [
+        "50\n+8\nГК Территория жизни, Пензенская область\n298 960\n0\n0\n0\n1\n7\n2\n0\n14\n0\n0\n5"
+      ],
+      "name": "ГК Территория жизни",
+      "place": "50\n+8\nГК Территория жизни, Пензенская область\n298 960\n0\n0\n0\n1\n7\n2\n0\n14\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/ten-development-931046001?region=vse-regiony&regionKey=0&organizationId=931046001",
+      "cells": [
+        "51\n+13\nTEN Девелопмент, Свердловская область\n296 486\n27 148\n9.16\n0.63\n3\n7\n7\n0\n33\n0\n0\n4.5"
+      ],
+      "name": "TEN Девелопмент",
+      "place": "51\n+13\nTEN Девелопмент, Свердловская область\n296 486\n27 148\n9.16\n0.63\n3\n7\n7\n0\n33\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/sminex-4354668001?region=vse-regiony&regionKey=0&organizationId=4354668001",
+      "cells": [
+        "52\n+4\nSminex, г.Москва\n293 377\n5 493\n1.87\n0.11\n2\n8\n8\n0\n15\n0\n0\n4"
+      ],
+      "name": "Sminex",
+      "place": "52\n+4\nSminex, г.Москва\n293 377\n5 493\n1.87\n0.11\n2\n8\n8\n0\n15\n0\n0\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/moskovskij-fond-renovacii-zhiloj-zastrojki-14543898001?region=vse-regiony&regionKey=0&organizationId=14543898001",
+      "cells": [
+        "53\n0\nФонд реновации, г.Москва\n280 348\n0\n0\n0\n1\n1\n10\n0\n15\n0\n0\n5"
+      ],
+      "name": "Фонд реновации",
+      "place": "53\n0\nФонд реновации, г.Москва\n280 348\n0\n0\n0\n1\n1\n10\n0\n15\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-strojpark-28787766001?region=vse-regiony&regionKey=0&organizationId=28787766001",
+      "cells": [
+        "54\n0\nСЗ Стройпарк, Краснодарский край\n280 081\n0\n0\n0\n1\n1\n1\n0\n30\n0\n0\nн/р"
+      ],
+      "name": "СЗ Стройпарк",
+      "place": "54\n0\nСЗ Стройпарк, Краснодарский край\n280 081\n0\n0\n0\n1\n1\n1\n0\n30\n0\n0\nн/р"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/profi-invest-3732427001?region=vse-regiony&regionKey=0&organizationId=3732427001",
+      "cells": [
+        "55\n0\nПРОФИ-ИНВЕСТ, г.Москва\n279 735\n0\n0\n0\n1\n8\n6\n0\n15\n0\n0\n5"
+      ],
+      "name": "ПРОФИ-ИНВЕСТ",
+      "place": "55\n0\nПРОФИ-ИНВЕСТ, г.Москва\n279 735\n0\n0\n0\n1\n8\n6\n0\n15\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-insiti-5696575001?region=vse-regiony&regionKey=0&organizationId=5696575001",
+      "cells": [
+        "56\n-8\nГК ИНСИТИ девелопмент, Краснодарский край\n277 608\n0\n0\n0\n1\n3\n1\n0\n8\n0\n0\n5"
+      ],
+      "name": "ГК ИНСИТИ девелопмент",
+      "place": "56\n-8\nГК ИНСИТИ девелопмент, Краснодарский край\n277 608\n0\n0\n0\n1\n3\n1\n0\n8\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/suvarstroit-5372083001?region=vse-regiony&regionKey=0&organizationId=5372083001",
+      "cells": [
+        "57\n+2\nСуварстроит, Республика Татарстан (Татарстан)\n275 921\n35 277\n12.79\n1.15\n1\n5\n3\n0\n8\n0\n0\n2"
+      ],
+      "name": "Суварстроит",
+      "place": "57\n+2\nСуварстроит, Республика Татарстан (Татарстан)\n275 921\n35 277\n12.79\n1.15\n1\n5\n3\n0\n8\n0\n0\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/atomstrojkompleks-691686001?region=vse-regiony&regionKey=0&organizationId=691686001",
+      "cells": [
+        "58\n+19\nГК Атомстройкомплекс, Свердловская область\n271 791\n0\n0\n0\n1\n8\n8\n0\n20\n0\n0\n5"
+      ],
+      "name": "ГК Атомстройкомплекс",
+      "place": "58\n+19\nГК Атомстройкомплекс, Свердловская область\n271 791\n0\n0\n0\n1\n8\n8\n0\n20\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/unikey-22031811001?region=vse-regiony&regionKey=0&organizationId=22031811001",
+      "cells": [
+        "59\n+1\nЮникей, г.Москва\n269 562\n0\n0\n0\n2\n5\n5\n0\n18\n0\n0\n5"
+      ],
+      "name": "Юникей",
+      "place": "59\n+1\nЮникей, г.Москва\n269 562\n0\n0\n0\n2\n5\n5\n0\n18\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/atlas-development-7814301001?region=vse-regiony&regionKey=0&organizationId=7814301001",
+      "cells": [
+        "60\n+1\nАтлас Девелопмент, Свердловская область\n267 407\n39 709\n14.85\n1.34\n1\n7\n7\n0\n9\n0\n0\n4.5"
+      ],
+      "name": "Атлас Девелопмент",
+      "place": "60\n+1\nАтлас Девелопмент, Свердловская область\n267 407\n39 709\n14.85\n1.34\n1\n7\n7\n0\n9\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-smk-1567563001?region=vse-regiony&regionKey=0&organizationId=1567563001",
+      "cells": [
+        "61\n+1\nГК СМК, Архангельская область\n267 097\n8 447\n3.16\n0.2\n2\n5\n14\n0\n28\n0\n0\n4.5"
+      ],
+      "name": "ГК СМК",
+      "place": "61\n+1\nГК СМК, Архангельская область\n267 097\n8 447\n3.16\n0.2\n2\n5\n14\n0\n28\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-glavstroj-1961151001?region=vse-regiony&regionKey=0&organizationId=1961151001",
+      "cells": [
+        "62\n+1\nГК Главстрой, г.Москва\n266 873\n0\n0\n0\n1\n3\n3\n0\n3\n0\n0\n5"
+      ],
+      "name": "ГК Главстрой",
+      "place": "62\n+1\nГК Главстрой, г.Москва\n266 873\n0\n0\n0\n1\n3\n3\n0\n3\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/trest-magnitostroj-922602001?region=vse-regiony&regionKey=0&organizationId=922602001",
+      "cells": [
+        "63\n+15\nТрест Магнитострой, Челябинская область\n265 438\n76 994\n29.01\n6.37\n2\n12\n7\n0\n17\n0\n0\n2"
+      ],
+      "name": "Трест Магнитострой",
+      "place": "63\n+15\nТрест Магнитострой, Челябинская область\n265 438\n76 994\n29.01\n6.37\n2\n12\n7\n0\n17\n0\n0\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-psk-2153371001?region=vse-regiony&regionKey=0&organizationId=2153371001",
+      "cells": [
+        "64\n+1\nГК ПСК, г.Санкт-Петербург\n263 624\n0\n0\n0\n1\n6\n6\n0\n18\n0\n0\n5"
+      ],
+      "name": "ГК ПСК",
+      "place": "64\n+1\nГК ПСК, г.Санкт-Петербург\n263 624\n0\n0\n0\n1\n6\n6\n0\n18\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/ak-bars-dom-2923318001?region=vse-regiony&regionKey=0&organizationId=2923318001",
+      "cells": [
+        "65\n-14\nАк Барс Дом, Республика Татарстан (Татарстан)\n263 296\n22 112\n8.4\n0.76\n1\n6\n4\n0\n13\n0\n0\n5"
+      ],
+      "name": "Ак Барс Дом",
+      "place": "65\n-14\nАк Барс Дом, Республика Татарстан (Татарстан)\n263 296\n22 112\n8.4\n0.76\n1\n6\n4\n0\n13\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelno-investicionnaja-korporacija-development-jug-1459022001?region=vse-regiony&regionKey=0&organizationId=1459022001",
+      "cells": [
+        "66\n-14\nСИК Девелопмент-Юг, Краснодарский край\n262 106\n16 582\n6.33\n0.19\n4\n11\n7\n0\n17\n0\n0\n5"
+      ],
+      "name": "СИК Девелопмент-Юг",
+      "place": "66\n-14\nСИК Девелопмент-Юг, Краснодарский край\n262 106\n16 582\n6.33\n0.19\n4\n11\n7\n0\n17\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-pao-apri-5392618001?region=vse-regiony&regionKey=0&organizationId=5392618001",
+      "cells": [
+        "67\n-1\nГК ПАО АПРИ, Челябинская область\n261 455\n17 745\n6.79\n0.69\n3\n10\n9\n0\n28\n12\n18\n4"
+      ],
+      "name": "ГК ПАО АПРИ",
+      "place": "67\n-1\nГК ПАО АПРИ, Челябинская область\n261 455\n17 745\n6.79\n0.69\n3\n10\n9\n0\n28\n12\n18\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/severnaja-kompanija-4856325001?region=vse-regiony&regionKey=0&organizationId=4856325001",
+      "cells": [
+        "68\n-11\nСЕВЕРНАЯ КОМПАНИЯ, Рязанская область\n259 217\n0\n0\n0\n1\n9\n9\n0\n16\n0\n0\n4"
+      ],
+      "name": "СЕВЕРНАЯ КОМПАНИЯ",
+      "place": "68\n-11\nСЕВЕРНАЯ КОМПАНИЯ, Рязанская область\n259 217\n0\n0\n0\n1\n9\n9\n0\n16\n0\n0\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-nosta-22810761001?region=vse-regiony&regionKey=0&organizationId=22810761001",
+      "cells": [
+        "69\n-2\nГК НОСТА, Краснодарский край\n256 325\n50 044\n19.52\n1.28\n2\n6\n5\n1\n59\n19\n1\n4"
+      ],
+      "name": "ГК НОСТА",
+      "place": "69\n-2\nГК НОСТА, Краснодарский край\n256 325\n50 044\n19.52\n1.28\n2\n6\n5\n1\n59\n19\n1\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-ikar-7080922001?region=vse-regiony&regionKey=0&organizationId=7080922001",
+      "cells": [
+        "70\n-2\nГК ИКАР, Челябинская область\n251 480\n35 185\n13.99\n1.68\n2\n6\n6\n0\n19\n0\n0\n5"
+      ],
+      "name": "ГК ИКАР",
+      "place": "70\n-2\nГК ИКАР, Челябинская область\n251 480\n35 185\n13.99\n1.68\n2\n6\n6\n0\n19\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/developerskaja-kompanija-progress-5599108001?region=vse-regiony&regionKey=0&organizationId=5599108001",
+      "cells": [
+        "71\n0\nДК Прогресс, Астраханская область\n247 292\n10 193\n4.12\n0.25\n2\n12\n11\n0\n21\n0\n0\n5"
+      ],
+      "name": "ДК Прогресс",
+      "place": "71\n0\nДК Прогресс, Астраханская область\n247 292\n10 193\n4.12\n0.25\n2\n12\n11\n0\n21\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-geografiya-22466965001?region=vse-regiony&regionKey=0&organizationId=22466965001",
+      "cells": [
+        "72\n0\nГК География, Тюменская область\n244 281\n8 442\n3.46\n0.1\n2\n3\n5\n0\n15\n0\n0\n5"
+      ],
+      "name": "ГК География",
+      "place": "72\n0\nГК География, Тюменская область\n244 281\n8 442\n3.46\n0.1\n2\n3\n5\n0\n15\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelno-promyshlennaja-kompanija-zelenyj-sad-559542001?region=vse-regiony&regionKey=0&organizationId=559542001",
+      "cells": [
+        "73\n0\nСПК Зелёный сад, Рязанская область\n242 222\n16 928\n6.99\n0.84\n2\n4\n4\n0\n24\n0\n0\n5"
+      ],
+      "name": "СПК Зелёный сад",
+      "place": "73\n0\nСПК Зелёный сад, Рязанская область\n242 222\n16 928\n6.99\n0.84\n2\n4\n4\n0\n24\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-eskadra-451521001?region=vse-regiony&regionKey=0&organizationId=451521001",
+      "cells": [
+        "74\n0\nГК Эскадра, Приморский край\n239 214\n117 416\n49.08\n16.6\n1\n7\n7\n0\n48\n0\n0\n1.5"
+      ],
+      "name": "ГК Эскадра",
+      "place": "74\n0\nГК Эскадра, Приморский край\n239 214\n117 416\n49.08\n16.6\n1\n7\n7\n0\n48\n0\n0\n1.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/investicionno-stroitelnyj-komitet-gorodskogo-okruga-gorod-ufa-respubliki-bashkortostan-3499945001?region=vse-regiony&regionKey=0&organizationId=3499945001",
+      "cells": [
+        "75\n0\nИСК г. Уфы, Республика Башкортостан\n238 431\n0\n0\n0\n1\n11\n5\n0\n23\n0\n0\n4.5"
+      ],
+      "name": "ИСК г. Уфы",
+      "place": "75\n0\nИСК г. Уфы, Республика Башкортостан\n238 431\n0\n0\n0\n1\n11\n5\n0\n23\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-ekaterinodarinvest-stroj-10146399001?region=vse-regiony&regionKey=0&organizationId=10146399001",
+      "cells": [
+        "76\n+17\nГК ЕкатеринодарИнвест-Строй, Краснодарский край\n237 093\n0\n0\n0\n1\n4\n4\n0\n10\n0\n0\n4.5"
+      ],
+      "name": "ГК ЕкатеринодарИнвест-Строй",
+      "place": "76\n+17\nГК ЕкатеринодарИнвест-Строй, Краснодарский край\n237 093\n0\n0\n0\n1\n4\n4\n0\n10\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-trest-1738274001?region=vse-regiony&regionKey=0&organizationId=1738274001",
+      "cells": [
+        "77\n-1\nГК ТРЕСТ, г.Санкт-Петербург\n235 150\n0\n0\n0\n3\n6\n6\n0\n9\n0\n0\n5"
+      ],
+      "name": "ГК ТРЕСТ",
+      "place": "77\n-1\nГК ТРЕСТ, г.Санкт-Петербург\n235 150\n0\n0\n0\n3\n6\n6\n0\n9\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-strojgrad-4752097001?region=vse-regiony&regionKey=0&organizationId=4752097001",
+      "cells": [
+        "78\n+7\nГК СТРОЙГРАД, Ставропольский край\n234 744\n107 124\n45.63\n4.68\n2\n5\n7\n0\n23\n0\n0\n3.5"
+      ],
+      "name": "ГК СТРОЙГРАД",
+      "place": "78\n+7\nГК СТРОЙГРАД, Ставропольский край\n234 744\n107 124\n45.63\n4.68\n2\n5\n7\n0\n23\n0\n0\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/dars-development-7537722001?region=vse-regiony&regionKey=0&organizationId=7537722001",
+      "cells": [
+        "79\n-10\nDARS Development, Ульяновская область\n232 178\n37 191\n16.02\n1.86\n4\n10\n10\n0\n28\n0\n0\n4.5"
+      ],
+      "name": "DARS Development",
+      "place": "79\n-10\nDARS Development, Ульяновская область\n232 178\n37 191\n16.02\n1.86\n4\n10\n10\n0\n28\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-rbi-1813315001?region=vse-regiony&regionKey=0&organizationId=1813315001",
+      "cells": [
+        "80\n0\nГруппа RBI, г.Санкт-Петербург\n232 109\n0\n0\n0\n1\n10\n11\n0\n11\n0\n10\n4.5"
+      ],
+      "name": "Группа RBI",
+      "place": "80\n0\nГруппа RBI, г.Санкт-Петербург\n232 109\n0\n0\n0\n1\n10\n11\n0\n11\n0\n10\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-dom-22417441001?region=vse-regiony&regionKey=0&organizationId=22417441001",
+      "cells": [
+        "81\n0\nГК ДОМ, Республика Крым\n231 342\n0\n0\n0\n1\n4\n5\n0\n13\n0\n2\n5"
+      ],
+      "name": "ГК ДОМ",
+      "place": "81\n0\nГК ДОМ, Республика Крым\n231 342\n0\n0\n0\n1\n4\n5\n0\n13\n0\n2\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelnyj-kholding-termodom-4784610001?region=vse-regiony&regionKey=0&organizationId=4784610001",
+      "cells": [
+        "82\n-3\nСХ ТЕРМОДОМ, Пензенская область\n226 650\n111 149\n49.04\n4.11\n1\n12\n6\n0\n19\n0\n0\n4.5"
+      ],
+      "name": "СХ ТЕРМОДОМ",
+      "place": "82\n-3\nСХ ТЕРМОДОМ, Пензенская область\n226 650\n111 149\n49.04\n4.11\n1\n12\n6\n0\n19\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-metriks-develorment-9337739001?region=vse-regiony&regionKey=0&organizationId=9337739001",
+      "cells": [
+        "83\n0\nГК Метрикс Develoрment, Краснодарский край\n225 653\n142 641\n63.21\n22.69\n2\n6\n6\n0\n16\n0\n12\n3.5"
+      ],
+      "name": "ГК Метрикс Develoрment",
+      "place": "83\n0\nГК Метрикс Develoрment, Краснодарский край\n225 653\n142 641\n63.21\n22.69\n2\n6\n6\n0\n16\n0\n12\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/investicionno-stroitelnaja-gruppa-mavis-2110139001?region=vse-regiony&regionKey=0&organizationId=2110139001",
+      "cells": [
+        "84\n-14\nИСГ МАВИС, г.Санкт-Петербург\n223 944\n23 770\n10.61\n0.96\n1\n3\n3\n0\n6\n0\n0\n4"
+      ],
+      "name": "ИСГ МАВИС",
+      "place": "84\n-14\nИСГ МАВИС, г.Санкт-Петербург\n223 944\n23 770\n10.61\n0.96\n1\n3\n3\n0\n6\n0\n0\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-SKAJGRUPP-DEVELOPMENT-21696327001?region=vse-regiony&regionKey=0&organizationId=21696327001",
+      "cells": [
+        "85\n+195\nГК СКАЙГРУПП ДЕВЕЛОПМЕНТ, Республика Крым\n223 140\n0\n0\n0\n1\n3\n4\n0\n0\n0\n15\n5"
+      ],
+      "name": "ГК СКАЙГРУПП ДЕВЕЛОПМЕНТ",
+      "place": "85\n+195\nГК СКАЙГРУПП ДЕВЕЛОПМЕНТ, Республика Крым\n223 140\n0\n0\n0\n1\n3\n4\n0\n0\n0\n15\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-kamastrojinvest-2436482001?region=vse-regiony&regionKey=0&organizationId=2436482001",
+      "cells": [
+        "86\n-2\nГК КамаСтройИнвест, Республика Татарстан (Татарстан)\n222 304\n4 910\n2.21\n0.07\n1\n5\n6\n0\n11\n0\n0\n4.5"
+      ],
+      "name": "ГК КамаСтройИнвест",
+      "place": "86\n-2\nГК КамаСтройИнвест, Республика Татарстан (Татарстан)\n222 304\n4 910\n2.21\n0.07\n1\n5\n6\n0\n11\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-prime-development-24447747001?region=vse-regiony&regionKey=0&organizationId=24447747001",
+      "cells": [
+        "87\n-5\nГК Prime Development, Республика Башкортостан\n218 301\n0\n0\n0\n1\n9\n7\n1\n9\n4\n3\n5"
+      ],
+      "name": "ГК Prime Development",
+      "place": "87\n-5\nГК Prime Development, Республика Башкортостан\n218 301\n0\n0\n0\n1\n9\n7\n1\n9\n4\n3\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-stroitelnykh-kompanij-arban-2224464001?region=vse-regiony&regionKey=0&organizationId=2224464001",
+      "cells": [
+        "88\n-2\nГСК Арбан, Красноярский край\n217 213\n0\n0\n0\n1\n4\n4\n0\n12\n0\n0\n5"
+      ],
+      "name": "ГСК Арбан",
+      "place": "88\n-2\nГСК Арбан, Красноярский край\n217 213\n0\n0\n0\n1\n4\n4\n0\n12\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stroitelnaja-gruppa-risan-451437001?region=vse-regiony&regionKey=0&organizationId=451437001",
+      "cells": [
+        "89\n+3\nСГ Рисан, Пензенская область\n213 418\n0\n0\n0\n1\n2\n6\n0\n13\n0\n0\n5"
+      ],
+      "name": "СГ Рисан",
+      "place": "89\n+3\nСГ Рисан, Пензенская область\n213 418\n0\n0\n0\n1\n2\n6\n0\n13\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/neometrija-1734816001?region=vse-regiony&regionKey=0&organizationId=1734816001",
+      "cells": [
+        "90\n-1\nНеометрия, Краснодарский край\n204 897\n18 459\n9.01\n0.54\n2\n5\n5\n0\n9\n0\n1\n5"
+      ],
+      "name": "Неометрия",
+      "place": "90\n-1\nНеометрия, Краснодарский край\n204 897\n18 459\n9.01\n0.54\n2\n5\n5\n0\n9\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-simferopolskaya-developerskaya-kompaniya-22827617001?region=vse-regiony&regionKey=0&organizationId=22827617001",
+      "cells": [
+        "91\n-1\nГК СДК, Республика Крым\n203 305\n0\n0\n0\n1\n4\n6\n0\n11\n0\n1\n5"
+      ],
+      "name": "ГК СДК",
+      "place": "91\n-1\nГК СДК, Республика Крым\n203 305\n0\n0\n0\n1\n4\n6\n0\n11\n0\n1\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/investicionno-stroitelnaja-gruppa-marmaks-559678001?region=vse-regiony&regionKey=0&organizationId=559678001",
+      "cells": [
+        "92\n+21\nИСГ Мармакс, Рязанская область\n202 003\n14 951\n7.4\n1.33\n3\n9\n9\n0\n19\n1\n0\n5"
+      ],
+      "name": "ИСГ Мармакс",
+      "place": "92\n+21\nИСГ Мармакс, Рязанская область\n202 003\n14 951\n7.4\n1.33\n3\n9\n9\n0\n19\n1\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/mangazeja-3126628001?region=vse-regiony&regionKey=0&organizationId=3126628001",
+      "cells": [
+        "93\n-2\nМангазея, г.Москва\n199 002\n0\n0\n0\n1\n4\n4\n0\n4\n0\n0\nн/р"
+      ],
+      "name": "Мангазея",
+      "place": "93\n-2\nМангазея, г.Москва\n199 002\n0\n0\n0\n1\n4\n4\n0\n4\n0\n0\nн/р"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/moskovskaja-stroitelnaja-kompanija-3772776001?region=vse-regiony&regionKey=0&organizationId=3772776001",
+      "cells": [
+        "94\n0\nМСК, Ростовская область\n195 829\n86 697\n44.27\n5.31\n1\n4\n4\n0\n9\n0\n0\n2.5"
+      ],
+      "name": "МСК",
+      "place": "94\n0\nМСК, Ростовская область\n195 829\n86 697\n44.27\n5.31\n1\n4\n4\n0\n9\n0\n0\n2.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-rodina-21959217001?region=vse-regiony&regionKey=0&organizationId=21959217001",
+      "cells": [
+        "95\n0\nГруппа Родина, г.Москва\n195 099\n0\n0\n0\n1\n3\n3\n0\n8\n0\n0\n5"
+      ],
+      "name": "Группа Родина",
+      "place": "95\n0\nГруппа Родина, г.Москва\n195 099\n0\n0\n0\n1\n3\n3\n0\n8\n0\n0\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-monolit-3086478001?region=vse-regiony&regionKey=0&organizationId=3086478001",
+      "cells": [
+        "96\n0\nГК Монолит, Республика Крым\n193 013\n0\n0\n0\n2\n11\n9\n0\n33\n0\n0\n3.5"
+      ],
+      "name": "ГК Монолит",
+      "place": "96\n0\nГК Монолит, Республика Крым\n193 013\n0\n0\n0\n2\n11\n9\n0\n33\n0\n0\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/sbercity-21161735001?region=vse-regiony&regionKey=0&organizationId=21161735001",
+      "cells": [
+        "97\n0\nСЗ СБЕРСИТИ, г.Москва\n191 995\n75 398\n39.27\n3.8\n1\n1\n1\n0\n21\n0\n0\n3"
+      ],
+      "name": "СЗ СБЕРСИТИ",
+      "place": "97\n0\nСЗ СБЕРСИТИ, г.Москва\n191 995\n75 398\n39.27\n3.8\n1\n1\n1\n0\n21\n0\n0\n3"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/evroinvest-development-7897128001?region=vse-regiony&regionKey=0&organizationId=7897128001",
+      "cells": [
+        "98\n0\nЕвроИнвест Девелопмент, г.Санкт-Петербург\n189 180\n91 328\n48.28\n11.32\n2\n3\n3\n0\n8\n0\n0\n4.5"
+      ],
+      "name": "ЕвроИнвест Девелопмент",
+      "place": "98\n0\nЕвроИнвест Девелопмент, г.Санкт-Петербург\n189 180\n91 328\n48.28\n11.32\n2\n3\n3\n0\n8\n0\n0\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/ufimskoe-gorodskoe-agentstvo-ipotechnogo-kreditovanija-10898601001?region=vse-regiony&regionKey=0&organizationId=10898601001",
+      "cells": [
+        "99\n+1\nУГАИК, Республика Башкортостан\n188 681\n105 578\n55.96\n18.22\n1\n1\n1\n0\n13\n0\n0\n2"
+      ],
+      "name": "УГАИК",
+      "place": "99\n+1\nУГАИК, Республика Башкортостан\n188 681\n105 578\n55.96\n18.22\n1\n1\n1\n0\n13\n0\n0\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-meta-5203863001?region=vse-regiony&regionKey=0&organizationId=5203863001",
+      "cells": [
+        "100\n+1\nГруппа Мета, Новосибирская область\n188 126\n0\n0\n0\n2\n7\n5\n0\n12\n0\n0\n4"
+      ],
+      "name": "Группа Мета",
+      "place": "100\n+1\nГруппа Мета, Новосибирская область\n188 126\n0\n0\n0\n2\n7\n5\n0\n12\n0\n0\n4"
+    }
+  ]
+}

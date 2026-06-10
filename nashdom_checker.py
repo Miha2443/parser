@@ -584,9 +584,13 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                               f"(KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
                         for i, dev in enumerate(dev_names, 1):
+                            # debug-вывод для первых 3 девелоперов чтобы было
+                            # видно как работает сброс фильтра (или KVART_PER_DEV_DEBUG=1)
+                            dbg = debug_first and i <= 3
                             try:
                                 ok = _switch_developer_filter(
-                                    driver, dev, wait_change=True, timeout=15)
+                                    driver, dev, wait_change=True,
+                                    timeout=15, debug=dbg)
                             except Exception as e:  # noqa: BLE001
                                 print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
                                 ok = False
@@ -881,87 +885,25 @@ def _get_developer_filter_label(driver) -> str:
     ) or ""
 
 
-def _clear_developer_filter(driver) -> bool:
-    """Очищает фильтр «Девелопер» (multi-select) — крестик ✕ внутри pill.
+def _clear_developer_filter(driver, debug: bool = False) -> bool:
+    """Очищает фильтр «Девелопер» (multi-select).
 
-    Фильтр multi-select: каждый клик ДОБАВЛЯЕТ девелопера. Перед
-    выбором нового нужно сбросить — иначе шапка показывает сумму
-    («19 девелоперов» → 96 378 квартир вместо данных одного).
-
-    SVG крестика на наш.дом.рф (предоставлен пользователем):
-        <svg class="css-1k2i6yk" viewBox="0 0 12 12" fill="none">...</svg>
-
-    Алгоритм:
-      1) Если фильтр уже пустой/«Все девелоперы» — выходим
-      2) Ищем svg.css-1k2i6yk внутри pill «Девелопер»
-      3) Кликаем по нему (или ближайшему button-родителю)
-      4) Fallback: открыть попап → клик «Все девелоперы»
-      5) Верификация: фильтр стал пустой/«Все»
+    Алгоритм (с debug-выводом если debug=True):
+      1) Logging: сколько крестиков на странице
+      2) Способ A: открыть попап → клик «Все девелоперы» (надёжнее)
+      3) Способ B (fallback): клик на крестик ✕ через mousedown+click
+      4) Verifies: после очистки в фильтре «Все девелоперы» или пусто
     """
-    current = _get_developer_filter_label(driver)
+    current = _get_developer_filter_label(driver) or ""
+    if debug:
+        print(f"          🔍 clear: текущий фильтр = «{current}»")
     if not current or "все" in current.lower():
+        if debug:
+            print("          🔍 clear: уже пусто — пропускаем")
         return True
 
-    # === Способ 1: клик по svg.css-1k2i6yk внутри pill фильтра ===
-    cleared = driver.execute_script(
-        """
-        // Находим <p>Девелопер</p> и pill (его sibling)
-        const p = [...document.querySelectorAll('p')].find(e =>
-            e.offsetParent !== null &&
-            /^девелопер$/i.test((e.innerText || '').trim()));
-        if (!p || !p.nextElementSibling) return 'no-pill';
-        const pill = p.nextElementSibling;
-
-        // Ищем SVG-крестик по классу (предоставленному пользователем)
-        let xSvg = pill.querySelector('svg.css-1k2i6yk');
-
-        // Запасной поиск: маленький SVG с viewBox 0 0 12 12 (типичный
-        // размер crossмарки, отличается от стрелки dropdown 8x8 или 16x16)
-        if (!xSvg) {
-            xSvg = [...pill.querySelectorAll('svg')]
-                .find(s => (s.getAttribute('viewBox') || '') === '0 0 12 12');
-        }
-        if (!xSvg) return 'no-x-svg';
-
-        // Кликаем по ближайшему button или по родителю svg
-        const btn = xSvg.closest('button');
-        const target = btn || xSvg.parentElement || xSvg;
-        target.click();
-        return 'clicked';
-        """
-    )
-    if cleared == "clicked":
-        time.sleep(0.8)
-        new_label = _get_developer_filter_label(driver) or ""
-        if not new_label or "все" in new_label.lower():
-            return True
-        # Если pill всё ещё показывает девелоперов — попробуем ещё раз
-        # (иногда нужно несколько кликов если ✕ снимает по одному)
-        for _ in range(3):
-            cleared2 = driver.execute_script(
-                """
-                const p = [...document.querySelectorAll('p')].find(e =>
-                    e.offsetParent !== null &&
-                    /^девелопер$/i.test((e.innerText || '').trim()));
-                if (!p || !p.nextElementSibling) return false;
-                const pill = p.nextElementSibling;
-                const xSvg = pill.querySelector('svg.css-1k2i6yk') ||
-                    [...pill.querySelectorAll('svg')]
-                        .find(s => (s.getAttribute('viewBox') || '') === '0 0 12 12');
-                if (!xSvg) return false;
-                const btn = xSvg.closest('button');
-                (btn || xSvg.parentElement || xSvg).click();
-                return true;
-                """
-            )
-            if not cleared2:
-                break
-            time.sleep(0.5)
-            lbl = _get_developer_filter_label(driver) or ""
-            if not lbl or "все" in lbl.lower():
-                return True
-
-    # === Способ 2: открыть попап и кликнуть «Все девелоперы» ===
+    # === СПОСОБ A: открыть попап + клик «Все девелоперы» ===
+    # Это наиболее надёжный сброс multi-select.
     trigger = driver.execute_script(
         """
         const p = [...document.querySelectorAll('p')].find(e =>
@@ -971,72 +913,158 @@ def _clear_developer_filter(driver) -> bool:
         return p.nextElementSibling.querySelector('[tabindex="0"]');
         """
     )
-    if not trigger:
-        return False
-    try:
-        driver.execute_script("arguments[0].click();", trigger)
-    except WebDriverException:
-        return False
-    try:
-        WebDriverWait(driver, 5).until(
-            lambda d: d.execute_script(
-                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+    if trigger:
+        try:
+            driver.execute_script("arguments[0].click();", trigger)
+            if debug:
+                print("          🔍 clear: открыли попап")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+                )
             )
+            time.sleep(0.3)
+            # Очищаем поле поиска чтобы «Все девелоперы» был виден
+            driver.execute_script(
+                """
+                const inp = document.querySelector('input[placeholder="Поиск по названию"]');
+                if (!inp) return;
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value').set;
+                setter.call(inp, '');
+                inp.dispatchEvent(new Event('input', {bubbles: true}));
+                inp.dispatchEvent(new Event('change', {bubbles: true}));
+                """
+            )
+            time.sleep(0.5)
+            # Скроллим список наверх (там «Все девелоперы» обычно первым)
+            driver.execute_script(
+                """
+                const lists = document.querySelectorAll('div.list');
+                for (const l of lists) {
+                    if (l.offsetParent !== null) l.scrollTop = 0;
+                }
+                """
+            )
+            time.sleep(0.3)
+            # Клик «Все девелоперы»
+            result_a = driver.execute_script(
+                """
+                const spans = [...document.querySelectorAll(
+                    'span.css-1ogbkfc, span.css-pqw2m5')];
+                const target = spans.find(s =>
+                    /^все\\s+девелоперы/i.test((s.innerText || '').trim()));
+                if (!target) return 'not-found';
+                const row = target.parentElement || target;
+                row.scrollIntoView({block: 'center'});
+                row.click();
+                return 'clicked';
+                """
+            )
+            if debug:
+                print(f"          🔍 clear: клик «Все девелоперы» → {result_a}")
+            time.sleep(0.4)
+            # Закрываем попап
+            try:
+                driver.execute_script("document.body.click();")
+            except WebDriverException:
+                pass
+            time.sleep(0.8)
+            new_label = _get_developer_filter_label(driver) or ""
+            if debug:
+                print(f"          🔍 clear: после A фильтр = «{new_label}»")
+            if not new_label or "все" in new_label.lower():
+                return True
+        except (TimeoutException, WebDriverException) as exc:
+            if debug:
+                print(f"          🔍 clear: способ A error: {exc}")
+
+    # === СПОСОБ B: крестик ✕ через mouseEvents ===
+    # На наш.дом.рф крестик это svg.css-1k2i6yk внутри pill.
+    # Иногда .click() не срабатывает на SVG в React-компонентах,
+    # нужны mousedown+mouseup+click через dispatchEvent.
+    for attempt in range(5):
+        clicked_info = driver.execute_script(
+            """
+            const p = [...document.querySelectorAll('p')].find(e =>
+                e.offsetParent !== null &&
+                /^девелопер$/i.test((e.innerText || '').trim()));
+            if (!p || !p.nextElementSibling) return {ok:false, reason:'no-pill'};
+            const pill = p.nextElementSibling;
+            let xSvg = pill.querySelector('svg.css-1k2i6yk');
+            if (!xSvg) {
+                xSvg = [...pill.querySelectorAll('svg')]
+                    .find(s => (s.getAttribute('viewBox') || '') === '0 0 12 12');
+            }
+            if (!xSvg) return {ok:false, reason:'no-svg'};
+
+            // Поднимаемся в иерархии и для каждого кликабельного предка
+            // отправляем полный набор mouse-событий.
+            const candidates = [];
+            let cur = xSvg;
+            for (let i = 0; i < 4 && cur; i++) {
+                candidates.push(cur);
+                cur = cur.parentElement;
+            }
+            // Также добавляем ближайший button если есть
+            const closestBtn = xSvg.closest('button');
+            if (closestBtn && !candidates.includes(closestBtn)) {
+                candidates.push(closestBtn);
+            }
+
+            for (const el of candidates) {
+                try {
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width/2;
+                    const y = rect.top + rect.height/2;
+                    const init = {bubbles:true, cancelable:true, view:window,
+                                  clientX:x, clientY:y, button:0};
+                    el.dispatchEvent(new MouseEvent('mousedown', init));
+                    el.dispatchEvent(new MouseEvent('mouseup', init));
+                    el.dispatchEvent(new MouseEvent('click', init));
+                } catch(e) {}
+            }
+            return {ok:true, candidatesCount: candidates.length,
+                    tag: xSvg.tagName, parentTag: (xSvg.parentElement || {}).tagName};
+            """
         )
-    except TimeoutException:
-        return False
-    time.sleep(0.3)
-    # Очищаем поле поиска
-    driver.execute_script(
-        """
-        const inp = document.querySelector('input[placeholder="Поиск по названию"]');
-        if (!inp) return;
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(inp, '');
-        inp.dispatchEvent(new Event('input', {bubbles: true}));
-        inp.dispatchEvent(new Event('change', {bubbles: true}));
-        """
-    )
-    time.sleep(0.6)
-    # Клик «Все девелоперы»
-    driver.execute_script(
-        """
-        const spans = [...document.querySelectorAll('span.css-1ogbkfc, span.css-pqw2m5')];
-        const target = spans.find(s =>
-            /^все\\s+девелоперы/i.test((s.innerText || '').trim()));
-        if (target) {
-            (target.parentElement || target).click();
-        }
-        """
-    )
-    time.sleep(0.4)
-    try:
-        driver.execute_script("document.body.click();")
-    except WebDriverException:
-        pass
-    time.sleep(0.6)
-    new_label = _get_developer_filter_label(driver) or ""
-    return "все" in new_label.lower() or not new_label
+        if debug:
+            print(f"          🔍 clear B попытка {attempt+1}: {clicked_info}")
+        if not clicked_info or not clicked_info.get("ok"):
+            break
+        time.sleep(0.6)
+        new_label = _get_developer_filter_label(driver) or ""
+        if debug:
+            print(f"          🔍 clear: после B[{attempt+1}] фильтр = «{new_label}»")
+        if not new_label or "все" in new_label.lower():
+            return True
+
+    # Если ни A ни B не помогли — последняя попытка через keyboard Esc + повторное A
+    return False
 
 
 def _switch_developer_filter(driver, target_label: str, *,
                              wait_change: bool = True,
-                             timeout: int = 15) -> bool:
+                             timeout: int = 15,
+                             debug: bool = False) -> bool:
     """Переключает фильтр «Девелопер» на target_label.
 
-    Фильтр multi-select → перед выбором нового сбрасываем предыдущий
-    через _clear_developer_filter. Иначе шапка считает СУММУ всех
-    выбранных девелоперов («19 девелоперов» → 96 378 квартир вместо
-    значения одного).
+    КРИТИЧНО (multi-select): перед выбором нового сбрасываем
+    предыдущий через _clear_developer_filter — иначе шапка
+    показывает сумму всех выбранных девелоперов.
 
     target_label ищется как:
       1) точное совпадение текста span
       2) если не нашли — первое совпадение по подстроке
     """
-    # КРИТИЧНО: всегда сбрасываем фильтр перед выбором нового.
-    # Если этого не сделать — multi-select накапливает выбор.
+    # === КРИТИЧНО: сначала сброс фильтра, ВСЕГДА ===
     if target_label and "все" not in target_label.lower():
-        _clear_developer_filter(driver)
+        cleared = _clear_developer_filter(driver, debug=debug)
+        if not cleared:
+            if debug:
+                print(f"          ⚠️  не смог сбросить фильтр перед выбором «{target_label}»")
+            # Не выбираем — иначе будет суммирование
+            return False
     baseline = _get_all_apartments_count(driver) if wait_change else ""
 
     # 1) Клик на триггер

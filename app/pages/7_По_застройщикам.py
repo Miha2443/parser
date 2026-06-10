@@ -286,40 +286,41 @@ cards_row = get_cards_row()
 
 
 def other_regions_for_year(year: int) -> str:
-    """% «в других регионах за год» — та же формула что для «с 2016»:
-    (cards.Сдано_РФ − Monitoring.МСК) / cards.Сдано_РФ.
+    """% «в других регионах за год».
 
-    Для ТЕКУЩЕГО года cards.Сдано показывает только то что УЖЕ сдано
-    (за прошедшие месяцы), а monitoring РВ — полный годовой план МСК.
-    Если cards < monitoring → берём пропорцию строящегося из
-    top_obyem_stroitelstva (РФ-МСК)/РФ — это лучшая аппроксимация
-    структуры предстоящего ввода.
+    Логика разная для прошлого vs текущего года:
+
+    Текущий год (year == last_year_int): используем top_obyem_vvoda
+      (это «введено за послед.12 мес» в ERZRF — самое свежее число
+      для текущего года). РФ−МСК даёт точное «в других регионах».
+      Пример ПИК 2026: 492 − 421 = 71 тыс. (14%) — совпадает с ERZRF.
+
+    Прошлый год: cards.Сдано_YYYY (РФ-уровень) минус
+      monitoring.category_жилое (только Жилая площадь, без МОП —
+      методика ERZRF для конкретного года).
+      Пример ПИК 2025: 1 678 − 773 = 905 тыс. (54%).
     """
+    # === Текущий год — top_obyem_vvoda ===
+    if year == last_year_int:
+        rf_val = erzrf_value("obyem_vvoda", "rf", "Введено")
+        msk_val = erzrf_value("obyem_vvoda", "msk", "Введено")
+        if rf_val and rf_val > 0:
+            other = max(rf_val - (msk_val or 0), 0)
+            pct = other / rf_val * 100
+            return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+        return "—"
+
+    # === Прошлый год — cards.Сдано (РФ) − monitoring category_жилое (МСК) ===
     if cards_row is None:
         return "—"
     rf_val = float(cards_row.get(f"Сдано_{year}_м²_num") or 0)
+    if rf_val <= 0:
+        return "—"
     msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
-    msk_val = float(msk_rv["Общая площадь"].sum()) if not msk_rv.empty else 0.0
-
-    if rf_val > 0 and rf_val >= msk_val:
-        other = rf_val - msk_val
-        pct = other / rf_val * 100
-        return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
-
-    # Fallback для текущего/будущего года: пропорция строящегося из ERZRF.
-    stroy_rf = erzrf_value("obyem_stroitelstva", "rf", "Строится")
-    stroy_msk = erzrf_value("obyem_stroitelstva", "msk", "Строится")
-    if stroy_rf and stroy_rf > 0:
-        share = max(stroy_rf - (stroy_msk or 0), 0) / stroy_rf
-        # Применяем эту долю к monitoring МСК (как точке отсчёта)
-        if msk_val > 0:
-            # МСК = (1−share) × total → total = МСК / (1−share)
-            if share < 0.99:
-                total_est = msk_val / (1 - share)
-                other = total_est - msk_val
-                return f"≈ {share*100:.0f}% (≈ {ru_num(other/1000)} тыс. м²)"
-        return f"≈ {share*100:.0f}% (по доле строящегося)"
-    return "—"
+    msk_val = float(msk_rv["category_жилое"].sum()) if not msk_rv.empty else 0.0
+    other = max(rf_val - msk_val, 0)
+    pct = other / rf_val * 100
+    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
 
 
 def other_regions_total() -> str:
@@ -548,94 +549,82 @@ def _render_kvart_section(total_shtuk: float, area_th: float,
     st.caption(f"Регион: **{region_label}**. {source_note}{date_suffix}")
 
 
-if not exact_rows.empty:
-    # === Точные числа из apartments_per_dev ===
-    # Если есть оба региона — переключатель
-    available_regions = list(exact_rows["region_key"].unique()) if "region_key" in exact_rows.columns else []
-    region_choice = "msk"
-    if len(available_regions) > 1:
+# Объединяем доступные регионы: per-dev (точные) + developers (через %).
+# Если для региона есть точные данные — используем их, иначе считаем
+# fallback через total × долю %. Это решает проблему когда парсер
+# успел пройти только РФ и в per-dev нет Москвы.
+kvart_devs_full = kvart.get("developers", pd.DataFrame())
+fallback_rows = (find_dev_rows(kvart_devs_full, "наименование", sel_key)
+                 if not kvart_devs_full.empty else pd.DataFrame())
+
+regions_in_exact = set(exact_rows["region_key"].unique()) if not exact_rows.empty and "region_key" in exact_rows.columns else set()
+regions_in_fallback = set(fallback_rows["region_key"].unique()) if not fallback_rows.empty and "region_key" in fallback_rows.columns else set()
+all_regions = sorted(regions_in_exact | regions_in_fallback,
+                     key=lambda x: 0 if x == "msk" else 1)
+
+if all_regions:
+    # Переключатель региона (даже если 1 регион — покажем какой)
+    if len(all_regions) > 1:
         region_choice = st.radio(
-            "Регион", ["msk", "rf"], horizontal=True,
+            "Регион", all_regions, horizontal=True,
             format_func=lambda x: "г.Москва" if x == "msk" else "Российская Федерация",
             key="kvart_region",
         )
-    elif available_regions:
-        region_choice = available_regions[0]
+    else:
+        region_choice = all_regions[0]
     region_label = "г.Москва" if region_choice == "msk" else "Российская Федерация"
 
-    if region_choice in available_regions:
+    # 1) Точные данные из per-dev (если есть для этого региона)
+    if region_choice in regions_in_exact:
         r = exact_rows[exact_rows["region_key"] == region_choice].iloc[0]
-    else:
-        r = exact_rows.iloc[0]
-    total = float(r.get("Все_количество_шт_num") or 0)
-    total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
-    rooms_data = {}
-    for room, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
-                        ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
-        cnt = float(r.get(f"{room}_количество_шт_num") or 0)
-        ar = float(r.get(f"{room}_площадь_тыс_м²_num") or 0)
-        pct = (cnt / total * 100) if total > 0 else 0
-        rooms_data[label] = (cnt, pct, ar if ar else None)
+        total = float(r.get("Все_количество_шт_num") or 0)
+        total_area = float(r.get("Все_площадь_тыс_м²_num") or 0)
+        rooms_data = {}
+        for room, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                            ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
+            cnt = float(r.get(f"{room}_количество_шт_num") or 0)
+            ar = float(r.get(f"{room}_площадь_тыс_м²_num") or 0)
+            pct = (cnt / total * 100) if total > 0 else 0
+            rooms_data[label] = (cnt, pct, ar if ar else None)
+        market_total = 0.0
+        if "region_key" in per_dev.columns:
+            per_dev_reg = per_dev[per_dev["region_key"] == region_choice]
+            if "Все_площадь_тыс_м²_num" in per_dev_reg.columns:
+                market_total = float(per_dev_reg["Все_площадь_тыс_м²_num"].fillna(0).sum())
+        source_note = "Точные числа из шапки наш.дом.рф/квартирография"
 
-    # Доля рынка региона
-    market_total = 0.0
-    per_dev_reg = per_dev[per_dev["region_key"] == region_choice] if "region_key" in per_dev.columns else per_dev
-    if "Все_площадь_тыс_м²_num" in per_dev_reg.columns:
-        market_total = float(per_dev_reg["Все_площадь_тыс_м²_num"].fillna(0).sum())
-
-    _render_kvart_section(
-        total, total_area, rooms_data, region_label, market_total,
-        "Точные числа из шапки наш.дом.рф/квартирография"
-    )
-else:
-    # === Fallback: считаем количество через total × % ===
-    kvart_devs = kvart.get("developers")
-    if kvart_devs is not None and not kvart_devs.empty:
-        rows = find_dev_rows(kvart_devs, "наименование", sel_key)
-        if not rows.empty:
-            available_regions = list(rows["region_key"].unique()) if "region_key" in rows.columns else []
-            region_choice = "msk"
-            if len(available_regions) > 1:
-                region_choice = st.radio(
-                    "Регион", ["msk", "rf"], horizontal=True,
-                    format_func=lambda x: "г.Москва" if x == "msk" else "Российская Федерация",
-                    key="kvart_region_fb",
-                )
-            elif available_regions:
-                region_choice = available_regions[0]
-            region_label = "г.Москва" if region_choice == "msk" else "Российская Федерация"
-
-            if region_choice in available_regions:
-                r = rows[rows["region_key"] == region_choice].iloc[0]
+    # 2) Fallback на developers (всегда есть оба региона)
+    elif region_choice in regions_in_fallback:
+        r = fallback_rows[fallback_rows["region_key"] == region_choice].iloc[0]
+        total_th = float(r.get("квартиры_тыс_шт_num") or 0)
+        total = total_th * 1000.0
+        total_area = float(r.get("площадь_тыс_м²_num") or 0)
+        rooms_data = {}
+        for k, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
+                         ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
+            pct_v = r.get(f"доля_{k}_%_num")
+            if pct_v is not None and not pd.isna(pct_v):
+                rooms_data[label] = (total * float(pct_v) / 100.0, float(pct_v), None)
             else:
-                r = rows.iloc[0]
-            total_th = float(r.get("квартиры_тыс_шт_num") or 0)
-            total = total_th * 1000.0
-            area_th = float(r.get("площадь_тыс_м²_num") or 0)
-            rooms_data = {}
-            for k, label in [("1комн", "1 комн"), ("2комн", "2 комн"),
-                             ("3комн", "3 комн"), ("4+комн", "4+ комн")]:
-                pct = r.get(f"доля_{k}_%_num")
-                if pct is not None and not pd.isna(pct):
-                    rooms_data[label] = (total * float(pct) / 100.0, float(pct), None)
-                else:
-                    rooms_data[label] = (0, 0, None)
-            market_total = 0.0
-            if "region_key" in kvart_devs.columns:
-                reg_df = kvart_devs[kvart_devs["region_key"] == region_choice]
-            else:
-                reg_df = kvart_devs
+                rooms_data[label] = (0, 0, None)
+        market_total = 0.0
+        if "region_key" in kvart_devs_full.columns:
+            reg_df = kvart_devs_full[kvart_devs_full["region_key"] == region_choice]
             if "площадь_тыс_м²_num" in reg_df.columns:
                 market_total = float(reg_df["площадь_тыс_м²_num"].fillna(0).sum())
-            _render_kvart_section(
-                total, area_th, rooms_data, region_label, market_total,
-                "Количество в комнатах = всего × долю % (точные числа: "
-                "запусти `KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`)"
-            )
-        else:
-            st.info(f"«{sel_canon}» не найден в данных квартирографии")
+        source_note = ("Количество = всего × долю %. Для точных чисел запусти "
+                       "`KVART_PER_DEV=1 py nashdom_checker.py kvartirografia`")
     else:
+        total, total_area, rooms_data, market_total = 0, 0, {}, 0
+        source_note = "Нет данных"
+
+    _render_kvart_section(total, total_area, rooms_data, region_label,
+                          market_total, source_note)
+else:
+    if kvart_devs_full.empty:
         st.info("Квартирография не загружена")
+    else:
+        st.info(f"«{sel_canon}» не найден в данных квартирографии")
 
 
 # === Переносы сроков ввода (2 KPI карточки) ===

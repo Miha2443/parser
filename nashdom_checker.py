@@ -872,15 +872,44 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
 # ─────────────────────────────────────────────
 
 def _get_developer_filter_label(driver) -> str:
-    """Возвращает текущее значение фильтра «Девелопер»."""
+    """Возвращает текст лейбла pill фильтра «Девелопер».
+
+    Структура pill (по HTML предоставленному пользователем):
+      <div tabindex="0" class="css-5nk8c4">           ← pill
+        <div class="css-11s03ds">
+          <span class="css-203ko5">4 девелопера</span> ← лейбл (!)
+          <div class="css-1thn7xl">
+            <svg class="css-1k2i6yk" .../>             ← крестик
+            <svg class="css-1fv53l9" .../>             ← стрелка
+          </div>
+        </div>
+      </div>
+
+    Раньше я искал span.css-wjcl1w (так у фильтра «Регион»), но
+    у фильтра «Девелопер» класс другой — css-203ko5. Из-за этого
+    функция возвращала "" и проверка «уже пусто» срабатывала
+    ошибочно, сброс не выполнялся.
+    """
     return driver.execute_script(
         """
         const p = [...document.querySelectorAll('p')].find(e =>
             e.offsetParent !== null &&
             /^девелопер$/i.test((e.innerText || '').trim()));
         if (!p || !p.nextElementSibling) return '';
-        const span = p.nextElementSibling.querySelector('span.css-wjcl1w');
-        return span ? span.innerText.trim() : '';
+        const pill = p.nextElementSibling;
+        // Пробуем разные классы (могут отличаться у разных фильтров)
+        let span = pill.querySelector('span.css-203ko5') ||
+                   pill.querySelector('span.css-wjcl1w') ||
+                   pill.querySelector('span.css-pqw2m5');
+        if (span) return (span.innerText || '').trim();
+        // Запасной поиск: ЛЮБОЙ span внутри pill (берём первый
+        // непустой — обычно это и есть лейбл)
+        const allSpans = [...pill.querySelectorAll('span')];
+        for (const s of allSpans) {
+            const t = (s.innerText || '').trim();
+            if (t) return t;
+        }
+        return '';
         """
     ) or ""
 
@@ -979,10 +1008,13 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             if debug:
                 print(f"          🔍 clear: способ A error: {exc}")
 
-    # === СПОСОБ B: крестик ✕ через mouseEvents ===
-    # На наш.дом.рф крестик это svg.css-1k2i6yk внутри pill.
-    # Иногда .click() не срабатывает на SVG в React-компонентах,
-    # нужны mousedown+mouseup+click через dispatchEvent.
+    # === СПОСОБ B: клик по svg.css-1k2i6yk ===
+    # ВНИМАНИЕ из HTML пользователя:
+    #   pill > div.css-11s03ds > div.css-1thn7xl > svg.css-1k2i6yk (крестик)
+    #                                            > svg.css-1fv53l9 (стрелка)
+    # Крестик и стрелка в ОДНОМ родителе → клик по родителю откроет
+    # dropdown (как стрелка). Поэтому событие отправляем ТОЛЬКО на
+    # сам SVG крестика (или его иммедиатного span-обёртки если есть).
     for attempt in range(5):
         clicked_info = driver.execute_script(
             """
@@ -998,48 +1030,78 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             }
             if (!xSvg) return {ok:false, reason:'no-svg'};
 
-            // Поднимаемся в иерархии и для каждого кликабельного предка
-            // отправляем полный набор mouse-событий.
-            const candidates = [];
-            let cur = xSvg;
-            for (let i = 0; i < 4 && cur; i++) {
-                candidates.push(cur);
-                cur = cur.parentElement;
-            }
-            // Также добавляем ближайший button если есть
-            const closestBtn = xSvg.closest('button');
-            if (closestBtn && !candidates.includes(closestBtn)) {
-                candidates.push(closestBtn);
-            }
+            const rect = xSvg.getBoundingClientRect();
+            const x = rect.left + rect.width/2;
+            const y = rect.top + rect.height/2;
+            const init = {bubbles:true, cancelable:true, view:window,
+                          clientX:x, clientY:y, button:0,
+                          composed: true, pointerType:'mouse'};
 
-            for (const el of candidates) {
+            // Полный цикл: pointer + mouse events. React ловит pointerdown
+            // и onClick. Отправляем на svg И на родителя (но НЕ на
+            // div.css-1thn7xl — это контейнер обоих SVG, клик откроет dropdown).
+            const targets = [xSvg];
+            // path внутри svg — реальный pixel-hit таргет
+            const path = xSvg.querySelector('path');
+            if (path) targets.unshift(path);
+
+            for (const el of targets) {
                 try {
-                    const rect = el.getBoundingClientRect();
-                    const x = rect.left + rect.width/2;
-                    const y = rect.top + rect.height/2;
-                    const init = {bubbles:true, cancelable:true, view:window,
-                                  clientX:x, clientY:y, button:0};
+                    el.dispatchEvent(new PointerEvent('pointerdown', init));
                     el.dispatchEvent(new MouseEvent('mousedown', init));
+                    el.dispatchEvent(new PointerEvent('pointerup', init));
                     el.dispatchEvent(new MouseEvent('mouseup', init));
                     el.dispatchEvent(new MouseEvent('click', init));
                 } catch(e) {}
             }
-            return {ok:true, candidatesCount: candidates.length,
-                    tag: xSvg.tagName, parentTag: (xSvg.parentElement || {}).tagName};
+            return {ok:true, targets: targets.length,
+                    rect: {x:rect.left, y:rect.top, w:rect.width, h:rect.height}};
             """
         )
         if debug:
             print(f"          🔍 clear B попытка {attempt+1}: {clicked_info}")
         if not clicked_info or not clicked_info.get("ok"):
             break
-        time.sleep(0.6)
+        time.sleep(0.7)
         new_label = _get_developer_filter_label(driver) or ""
         if debug:
             print(f"          🔍 clear: после B[{attempt+1}] фильтр = «{new_label}»")
         if not new_label or "все" in new_label.lower():
             return True
 
-    # Если ни A ни B не помогли — последняя попытка через keyboard Esc + повторное A
+    # === СПОСОБ C: настоящий клик через ActionChains (физический) ===
+    # Если события не сработали — кликаем мышью по координатам крестика.
+    try:
+        from selenium.webdriver.common.action_chains import ActionChains
+        crosshair = driver.execute_script(
+            """
+            const p = [...document.querySelectorAll('p')].find(e =>
+                e.offsetParent !== null &&
+                /^девелопер$/i.test((e.innerText || '').trim()));
+            if (!p || !p.nextElementSibling) return null;
+            const pill = p.nextElementSibling;
+            return pill.querySelector('svg.css-1k2i6yk') ||
+                   [...pill.querySelectorAll('svg')]
+                       .find(s => (s.getAttribute('viewBox') || '') === '0 0 12 12');
+            """
+        )
+        if crosshair:
+            if debug:
+                print("          🔍 clear C: ActionChains физический клик")
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block:'center'});", crosshair)
+            time.sleep(0.3)
+            ActionChains(driver).move_to_element(crosshair).pause(0.2).click().perform()
+            time.sleep(0.8)
+            new_label = _get_developer_filter_label(driver) or ""
+            if debug:
+                print(f"          🔍 clear: после C фильтр = «{new_label}»")
+            if not new_label or "все" in new_label.lower():
+                return True
+    except Exception as exc:  # noqa: BLE001
+        if debug:
+            print(f"          🔍 clear C error: {exc}")
+
     return False
 
 

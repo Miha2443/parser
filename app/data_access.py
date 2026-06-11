@@ -38,7 +38,7 @@ def format_thousands(value: float, digits: int = 0) -> str:
     return f"{value:,.{digits}f}".replace(",", " ")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_indicator(indicator_id: str) -> pd.DataFrame:
     """Универсальный загрузчик витрины по id из реестра."""
     path = DATA_PROCESSED / f"{indicator_id}.pkl"
@@ -47,7 +47,7 @@ def load_indicator(indicator_id: str) -> pd.DataFrame:
     return pd.read_pickle(path)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def _load_derived() -> pd.DataFrame:
     """Производные committed-витрины (CSV в data/derived/), не обновляемые ETL.
 
@@ -108,7 +108,7 @@ def load_ipc() -> pd.DataFrame:
 NA_INDICATORS = ["gdp_rf", "gdp_per_capita_rf", "vrp_msk", "vds_msk", "vds_rf", "vds_msk_legacy"]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_national_accounts() -> pd.DataFrame:
     """Объединённая витрина национальных счётов (ВВП/ВРП/ВДС, Москва + РФ)."""
     frames = [load_indicator(i) for i in NA_INDICATORS]
@@ -166,7 +166,7 @@ def _parse_kvart_number(value) -> float | None:
         return None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_kvartirografia() -> dict:
     """Загружает свежий kvartirografia_<date>.json.
 
@@ -285,7 +285,7 @@ MONITORING_PATHS = [
 ]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_monitoring_2_0() -> dict:
     """Загружает свежий monitoring_2_0_<date>.xlsx (Google Sheets export).
 
@@ -505,7 +505,7 @@ def _normalize_developer_name(name: str) -> str:
     return s
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_erzrf_top() -> dict:
     """Читает ERZRF TOP-файлы (5 сортировок × 2 региона).
 
@@ -554,7 +554,7 @@ def load_erzrf_top() -> dict:
     return result
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_erzrf_cards() -> pd.DataFrame:
     """Читает свежий cards_*.xlsx (sheet 'cards').
 
@@ -606,7 +606,7 @@ ESCROW_PATHS = [
 ]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_escrow_manual() -> pd.DataFrame:
     """Читает «Наполняемость счетов.xlsx».
 
@@ -653,7 +653,7 @@ def _parse_rasprod_number(value) -> float | None:
         return None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_rasprodannost() -> dict:
     """Загружает свежий rasprodannost_<date>.xlsx.
 

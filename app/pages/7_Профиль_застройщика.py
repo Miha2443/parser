@@ -390,10 +390,14 @@ else:
     legend_col, chart_col = st.columns([1, 3])
 
     with legend_col:
-        y_min = by_year["Год ввода по Мосстату"].iloc[0]
-        y_max = by_year["Год ввода по Мосстату"].iloc[-1]
+        # Легенда — только за 2022-2026 (как и график справа).
+        rv_dev_22 = rv_dev[rv_dev["Год ввода по Мосстату"] >= 2022]
+        years_in_legend = sorted(
+            rv_dev_22["Год ввода по Мосстату"].dropna().astype(int).unique())
+        y_min = str(years_in_legend[0]) if years_in_legend else "—"
+        y_max = str(years_in_legend[-1]) if years_in_legend else "—"
         cat_sums = {
-            lbl: float(rv_dev[f"{CAT_COL_PREFIX}{key}"].sum()) / 1e6  # млн м²
+            lbl: float(rv_dev_22[f"{CAT_COL_PREFIX}{key}"].sum()) / 1e6  # млн м²
             for lbl, key in zip(CAT_LABELS, CAT_KEYS)
         }
         itogo = sum(cat_sums.values())

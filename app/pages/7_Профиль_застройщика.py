@@ -27,7 +27,7 @@ from app.data_access import (
     _normalize_developer_name as norm,
 )
 
-st.set_page_config(page_title="По застройщикам — Аналитика Москвы", layout="wide")
+st.set_page_config(page_title="Профиль застройщика — Аналитика Москвы", layout="wide")
 
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
@@ -386,33 +386,72 @@ else:
     by_year = by_year.sort_values("Год ввода по Мосстату")
     by_year["Год ввода по Мосстату"] = by_year["Год ввода по Мосстату"].astype(int).astype(str)
 
-    fig = go.Figure()
-    for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
-        vals = by_year[f"{CAT_COL_PREFIX}{key}"] / 1000.0
-        fig.add_trace(go.Bar(
-            x=by_year["Год ввода по Мосстату"], y=vals,
-            name=lbl, marker_color=color,
-            text=[ru_num(v) if v > 0 else "" for v in vals],
-            textposition="inside",
-            hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
+    # Слева — текстовая сводка (как на эскизе), справа — диаграмма
+    legend_col, chart_col = st.columns([1, 3])
+
+    with legend_col:
+        y_min = by_year["Год ввода по Мосстату"].iloc[0]
+        y_max = by_year["Год ввода по Мосстату"].iloc[-1]
+        cat_sums = {
+            lbl: float(rv_dev[f"{CAT_COL_PREFIX}{key}"].sum()) / 1e6  # млн м²
+            for lbl, key in zip(CAT_LABELS, CAT_KEYS)
+        }
+        itogo = sum(cat_sums.values())
+
+        def mln(v: float) -> str:
+            return f"{v:.1f}".replace(".", ",")
+
+        lines = "".join(
+            f"<div style='margin-bottom:10px;font-size:15px;'>"
+            f"<span style='display:inline-block;width:13px;height:13px;"
+            f"background:{color};margin-right:8px;border-radius:2px;'></span>"
+            f"<b>{lbl}</b> = <span style='color:{color};font-weight:700;'>"
+            f"{mln(val)}</span> млн м²</div>"
+            for (lbl, val), color in zip(cat_sums.items(), CAT_COLORS)
+        )
+        st.markdown(
+            f"""
+            <div style='padding-top:20px;'>
+              <div style='font-size:22px;font-weight:700;line-height:1.2;'>
+                Ввод недвижимости</div>
+              <div style='color:#666;font-size:14px;margin:6px 0 16px 0;'>
+                за {y_min}–{y_max} гг.:</div>
+              {lines}
+              <div style='font-size:18px;font-weight:800;margin-top:14px;'>
+                ИТОГО = {mln(itogo)} млн м²</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with chart_col:
+        fig = go.Figure()
+        for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
+            vals = by_year[f"{CAT_COL_PREFIX}{key}"] / 1000.0
+            fig.add_trace(go.Bar(
+                x=by_year["Год ввода по Мосстату"], y=vals,
+                name=lbl, marker_color=color,
+                text=[ru_num(v) if v > 0 else "" for v in vals],
+                textposition="inside",
+                hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
+            ))
+        # Сумма над каждым столбом
+        totals = by_year[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
+        fig.add_trace(go.Scatter(
+            x=by_year["Год ввода по Мосстату"], y=totals,
+            mode="text", text=[ru_num(v) for v in totals],
+            textposition="top center",
+            textfont=dict(size=12, color="#333"),
+            showlegend=False, hoverinfo="skip",
         ))
-    # Сумма над каждым столбом
-    totals = by_year[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
-    fig.add_trace(go.Scatter(
-        x=by_year["Год ввода по Мосстату"], y=totals,
-        mode="text", text=[ru_num(v) for v in totals],
-        textposition="top center",
-        textfont=dict(size=12, color="#333"),
-        showlegend=False, hoverinfo="skip",
-    ))
-    fig.update_layout(
-        barmode="stack", height=400,
-        margin=dict(l=0, r=0, t=20, b=0),
-        xaxis_title="Год ввода", yaxis_title="тыс. м²",
-        yaxis=dict(range=[0, totals.max() * 1.15]),  # запас сверху для надписи
-        legend=dict(orientation="h", y=-0.15),
-    )
-    st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
+        fig.update_layout(
+            barmode="stack", height=400,
+            margin=dict(l=0, r=0, t=20, b=0),
+            xaxis_title="Год ввода", yaxis_title="тыс. м²",
+            yaxis=dict(range=[0, totals.max() * 1.15]),  # запас сверху для надписи
+            legend=dict(orientation="h", y=-0.15),
+        )
+        st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
 
 
 # === В строительстве (donut слева) + Распроданность/готовность (справа) ===

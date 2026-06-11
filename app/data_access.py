@@ -289,10 +289,18 @@ MONITORING_PATHS = [
 def load_monitoring_2_0() -> dict:
     """Загружает свежий monitoring_2_0_<date>.xlsx (Google Sheets export).
 
+    Листы:
+      «Реестр ОКС»  — объекты в строительстве
+      «Реестр РВ»   — введённые объекты (2022-2026)
+      «Лист4»       — введённые объекты за старые годы (2017-2021),
+                      та же логика что РВ, но меньше колонок.
+                      Объединяется с РВ в один DataFrame 'rv' —
+                      так «Ввод с 2016» и динамика включают все годы.
+
     Возвращает:
-      'rv': DataFrame реестра РВ (введённые объекты, Год ввода по Мосстату)
+      'rv': DataFrame реестра РВ + Лист4 (введённые объекты, все годы)
       'oks': DataFrame реестра ОКС (объекты в строительстве)
-      'developers': sorted list[str] — уникальные «Группа компаний» из обоих листов
+      'developers': sorted list[str] — уникальные «Группа компаний» из всех листов
       'min_year' / 'max_year': диапазон годов ввода
     """
     files = []
@@ -309,8 +317,54 @@ def load_monitoring_2_0() -> dict:
         }
     latest = max(files, key=lambda p: p.stat().st_mtime)
 
+    xl = pd.ExcelFile(latest)
     rv = pd.read_excel(latest, sheet_name="Реестр РВ")
     oks = pd.read_excel(latest, sheet_name="Реестр ОКС")
+    rv["source_sheet"] = "Реестр РВ"
+
+    # Третий лист со старыми годами (2017-2021). Имя может быть «Лист4»
+    # или другое — берём первый лист, не являющийся ОКС/РВ, в котором
+    # есть ключевые колонки реестра ввода.
+    extra_sheets = [s for s in xl.sheet_names if s not in ("Реестр ОКС", "Реестр РВ")]
+    for sheet in extra_sheets:
+        try:
+            old = pd.read_excel(latest, sheet_name=sheet)
+        except Exception:  # noqa: BLE001
+            continue
+        required = {"Год ввода по Мосстату", "Общая площадь", "Группа компаний"}
+        if not required.issubset(set(old.columns)):
+            continue
+
+        # ФИКС сдвига колонок (часть строк 2018-2019): «Год» содержит
+        # название месяца («сентябрь»), а сам год уехал в «Дата ввода
+        # по Мосстату». Там он в двух видах:
+        #   а) число года как Excel-дата: 2019 → 1905-07-11
+        #      (serial number) → год = (дата − 1899-12-30).days
+        #   б) настоящая дата ввода: 2018-01-11 → год = .dt.year
+        year_num = pd.to_numeric(old["Год ввода по Мосстату"], errors="coerce")
+        shifted = year_num.isna() & old["Год ввода по Мосстату"].notna()
+        if shifted.any() and "Дата ввода по Мосстату" in old.columns:
+            excel_epoch = pd.Timestamp("1899-12-30")
+            dates = pd.to_datetime(
+                old.loc[shifted, "Дата ввода по Мосстату"], errors="coerce")
+            serial = (dates - excel_epoch).dt.days
+            # а) serial — это сам год (число 2000-2030 как Excel-дата)
+            recovered = serial.where((serial >= 2000) & (serial <= 2030))
+            # б) иначе — настоящая дата, берём её год
+            real_year = dates.dt.year.where(
+                (dates.dt.year >= 2000) & (dates.dt.year <= 2030))
+            recovered = recovered.fillna(real_year)
+            year_num.loc[shifted] = recovered
+            # Месяц у сдвинутых строк лежит в колонке «Год»
+            if "Месяц ввода по Мосстату" in old.columns:
+                old.loc[shifted, "Месяц ввода по Мосстату"] = \
+                    old.loc[shifted, "Год ввода по Мосстату"]
+        old["Год ввода по Мосстату"] = year_num
+        old["source_sheet"] = sheet
+        rv = pd.concat([rv, old], ignore_index=True)
+
+    rv["Год ввода по Мосстату"] = pd.to_numeric(
+        rv["Год ввода по Мосстату"], errors="coerce")
 
     # Категории площадей — 4 группы:
     # РВ (Отрасли + Группировка):

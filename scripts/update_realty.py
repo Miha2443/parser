@@ -177,6 +177,26 @@ def main():
     if failures:
         print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
     print(f"{'='*60}\n")
+
+    # === Уведомление в TDM ===
+    # Шлём ВСЕГДА — успех и неудача. Если TDM_BOT_TOKEN/TDM_CHAT_ID
+    # не заданы — функция notify() молча вернёт False.
+    try:
+        sys.path.insert(0, str(ROOT))
+        from pipeline.tdm_notify import notify
+        icon = "✅" if not failures else "⚠️"
+        lines = [
+            f"{icon} Прогон realty завершён за {total_min:.1f} мин",
+            f"Успешно: {len(successes)}/{len(successes) + len(failures)}",
+        ]
+        if successes:
+            lines.append(f"OK: {', '.join(successes)}")
+        if failures:
+            lines.append(f"FAIL: {', '.join(failures)}")
+        notify("\n".join(lines), silent=True)
+    except Exception:  # noqa: BLE001
+        pass  # уведомления не должны валить прогон
+
     return 0 if not failures else 2
 
 

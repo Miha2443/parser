@@ -425,30 +425,34 @@ else:
         )
 
     with chart_col:
+        # Сам график — только с 2022 года (более ранние годы видны
+        # в легенде слева и в общем итоге за 2017-2026 гг.).
+        by_year_chart = by_year[by_year["Год ввода по Мосстату"].astype(int) >= 2022]
         fig = go.Figure()
         for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
-            vals = by_year[f"{CAT_COL_PREFIX}{key}"] / 1000.0
+            vals = by_year_chart[f"{CAT_COL_PREFIX}{key}"] / 1000.0
             fig.add_trace(go.Bar(
-                x=by_year["Год ввода по Мосстату"], y=vals,
+                x=by_year_chart["Год ввода по Мосстату"], y=vals,
                 name=lbl, marker_color=color,
                 text=[ru_num(v) if v > 0 else "" for v in vals],
                 textposition="inside",
                 hovertemplate="<b>" + lbl + "</b><br>%{x}: %{y:,.0f} тыс. м²<extra></extra>",
             ))
         # Сумма над каждым столбом
-        totals = by_year[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
+        totals = by_year_chart[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
         fig.add_trace(go.Scatter(
-            x=by_year["Год ввода по Мосстату"], y=totals,
+            x=by_year_chart["Год ввода по Мосстату"], y=totals,
             mode="text", text=[ru_num(v) for v in totals],
             textposition="top center",
             textfont=dict(size=12, color="#333"),
             showlegend=False, hoverinfo="skip",
         ))
+        y_top = totals.max() * 1.15 if not totals.empty else 1
         fig.update_layout(
             barmode="stack", height=400,
             margin=dict(l=0, r=0, t=20, b=0),
             xaxis_title="Год ввода", yaxis_title="тыс. м²",
-            yaxis=dict(range=[0, totals.max() * 1.15]),  # запас сверху для надписи
+            yaxis=dict(range=[0, y_top]),
             legend=dict(orientation="h", y=-0.15),
         )
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")

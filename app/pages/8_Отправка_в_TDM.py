@@ -64,11 +64,17 @@ with st.expander("🔌 Статус подключения", expanded=not all_ok
                     st.success(f"Найдено {len(groups)} групп(ы):")
                     for g in groups:
                         gid = g.get("groupId")
-                        ws = g.get("workspaceId")
-                        title = (g.get("lastMessage", {}).get("group", {}).get("title")
-                                 or g.get("title") or g.get("groupName") or "—")
+                        group_obj = g.get("group") or {}
+                        opp = g.get("opponent") or {}
+                        ws = group_obj.get("workspaceId")
+                        grp_type = group_obj.get("type", "—")
+                        title = (group_obj.get("title")
+                                 or (f"{opp.get('firstName', '')} "
+                                     f"{opp.get('lastName', '')}").strip()
+                                 or g.get("groupName") or "—")
                         st.code(
-                            f"groupId={gid}\nworkspaceId={ws}\nназв.: «{title}»",
+                            f"groupId={gid}\nworkspaceId={ws}\n"
+                            f"тип: {grp_type}\nназв.: «{title}»",
                             language="text",
                         )
                     st.caption(

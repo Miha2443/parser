@@ -322,18 +322,25 @@ def main():
         print(f"Найдено {len(groups)} групп(ы) бота:\n")
         for g in groups:
             gid = g.get("groupId")
-            ws = g.get("workspaceId")
-            title = (g.get("lastMessage", {}).get("group", {}).get("title")
-                     or g.get("title") or g.get("groupName") or "—")
+            group_obj = g.get("group") or {}
+            opp = g.get("opponent") or {}
+            ws = group_obj.get("workspaceId")
+            grp_type = group_obj.get("type", "—")
+            # title: для P2P — имя пользователя из opponent
+            title = (group_obj.get("title")
+                     or (f"{opp.get('firstName', '')} "
+                         f"{opp.get('lastName', '')}").strip()
+                     or g.get("groupName") or "—")
             counter = g.get("counter", 0)
-            print(f"  groupId={gid}  workspaceId={ws}")
+            print(f"  groupId={gid}  workspaceId={ws}  type={grp_type}")
             print(f"    title: «{title}»  непрочитано: {counter}")
             print()
         print("Для уведомлений впиши в .env:")
         if groups:
             g0 = groups[0]
+            ws0 = (g0.get("group") or {}).get("workspaceId", "")
             print(f"  TDM_GROUP_ID={g0.get('groupId', '')}")
-            print(f"  TDM_WORKSPACE_ID={g0.get('workspaceId', '')}")
+            print(f"  TDM_WORKSPACE_ID={ws0}")
         return 0
 
     if args.test:

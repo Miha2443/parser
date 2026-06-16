@@ -199,9 +199,10 @@ def find_dev_rows(df: pd.DataFrame, name_col: str, key: str) -> pd.DataFrame:
     return df[df[name_col].notna() & mask]
 
 
-# === Рейтинг (из ERZRF top по объёму строительства) ===
-def get_rating(region: str) -> dict:
-    df = erzrf_top.get("obyem_stroitelstva", {}).get(region)
+# === Рейтинги ERZRF по 2 сортировкам × 2 регионам ===
+def get_rating(sorting: str, region: str) -> dict:
+    """Возвращает {Место, Рейтинг ЕРЗ, Строится, Введено, ...} из ERZRF top."""
+    df = erzrf_top.get(sorting, {}).get(region)
     if df is None or df.empty:
         return {}
     name_col = next((c for c in df.columns if "Наименование" in str(c)), None)
@@ -220,20 +221,48 @@ def get_rating(region: str) -> dict:
 
 
 with cols_top[1]:
-    rating_msk = get_rating("msk")
-    rating_rf = get_rating("rf")
-    if rating_rf or rating_msk:
-        info = []
-        if rating_rf.get("Место"):
-            info.append(f"место по РФ: <b>{ru_num(rating_rf['Место'])}</b>")
-        if rating_msk.get("Место"):
-            info.append(f"по Москве: <b>{ru_num(rating_msk['Место'])}</b>")
-        if rating_rf.get("Рейтинг ЕРЗ"):
-            info.append(f"Рейтинг ЕРЗ: <b>{rating_rf['Рейтинг ЕРЗ']}</b>")
-        st.markdown(
-            "<div style='padding-top:30px;color:#444;'>" + " · ".join(info) + "</div>",
-            unsafe_allow_html=True,
-        )
+    # 4 рейтинга: по строительству и по вводу × по РФ и по Москве
+    str_rf = get_rating("obyem_stroitelstva", "rf")
+    str_msk = get_rating("obyem_stroitelstva", "msk")
+    vv_rf = get_rating("obyem_vvoda", "rf")
+    vv_msk = get_rating("obyem_vvoda", "msk")
+    erz_rating = (str_rf.get("Рейтинг ЕРЗ") or vv_rf.get("Рейтинг ЕРЗ")
+                  or str_msk.get("Рейтинг ЕРЗ") or vv_msk.get("Рейтинг ЕРЗ"))
+
+    def fmt_place(d: dict) -> str:
+        p = d.get("Место")
+        if p is None or pd.isna(p):
+            return "—"
+        try:
+            return str(int(p))
+        except (ValueError, TypeError):
+            return str(p)
+
+    rating_html = f"""
+    <div style='padding-top:18px;font-size:13px;color:#444;line-height:1.5;'>
+      <div style='font-size:11px;text-transform:uppercase;letter-spacing:0.5px;
+                  color:#888;margin-bottom:4px;'>Рейтинги ЕРЗ</div>
+      <table style='border-collapse:collapse;font-size:13px;'>
+        <tr>
+          <th style='text-align:left;padding:2px 12px 2px 0;color:#666;font-weight:500;'></th>
+          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>РФ</th>
+          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>Москва</th>
+        </tr>
+        <tr>
+          <td style='padding:2px 12px 2px 0;'>По вводу</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_msk)}</td>
+        </tr>
+        <tr>
+          <td style='padding:2px 12px 2px 0;'>По строительству</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_msk)}</td>
+        </tr>
+      </table>
+      {f"<div style='margin-top:6px;color:#666;'>Оценка ЕРЗ: <b style='color:#1f4e79;'>{erz_rating}</b></div>" if erz_rating else ""}
+    </div>
+    """
+    st.markdown(rating_html, unsafe_allow_html=True)
 
 
 # === Данные ===
@@ -324,15 +353,11 @@ def other_regions_for_year(year: int) -> str:
 
 
 def other_regions_total() -> str:
-    """% накопленного ввода в других регионах = (РФ − Москва) / РФ.
+    """% в других регионах = (cards.Сдано_РФ за все годы − category_жилое МСК) / РФ.
 
-    Источник РФ:
-      1) cards.Сдано_YYYY_м² (sum 2016..max_year) — точно по жилью топ-100
-      2) fallback на ERZRF top obyem_vvoda.Введено, м²
-    Источник Москвы:
-      monitoring 2.0 РВ → Общая площадь всех введённых объектов
-      (как у ERZRF: учитывается полная площадь жилых проектов —
-      жильё + МОП + 1-е этажи + соцобъекты ЖК + отдельные нежилые).
+    По требованию пользователя — Москва считается ТОЛЬКО как Жилая
+    площадь (без МОП и нежилого), РФ — общий ввод из ERZ карточки.
+    Единая методика «только жильё» — сопоставимо с ERZ для каждого года.
     """
     rf_val: float | None = None
     if cards_row is not None:
@@ -345,7 +370,8 @@ def other_regions_total() -> str:
         rf_val = erzrf_value("obyem_vvoda", "rf")
     if rf_val is None or rf_val <= 0:
         return "—"
-    msk_val = float(rv_dev["Общая площадь"].sum()) if not rv_dev.empty else 0.0
+    # Москва: только жилое (методика ERZ)
+    msk_val = float(rv_dev["category_жилое"].sum()) if not rv_dev.empty else 0.0
     other = max(rf_val - msk_val, 0)
     pct = other / rf_val * 100
     return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
@@ -498,38 +524,63 @@ with right:
     st.markdown("#### Распроданность / стройготовность")
     rasprod_dev_df = rasprod.get("developers")
     if rasprod_dev_df is not None and not rasprod_dev_df.empty and "наименование" in rasprod_dev_df.columns:
-        rows = find_dev_rows(rasprod_dev_df, "наименование", sel_key)
+        all_rows = find_dev_rows(rasprod_dev_df, "наименование", sel_key)
         latest_period = rasprod.get("latest_period")
-        if latest_period and not rows.empty:
+        if latest_period and not all_rows.empty:
             ly, lm = latest_period
-            rows = rows[(rows["year"] == ly) & (rows["month"] == lm)]
-        if not rows.empty:
-            r = rows.iloc[0]
-            # Берём только _num колонки чтобы не дублировать.
-            # ВНИМАНИЕ: в rasprodannost у колонки «Отношение» ДВА пробела
-            # подряд: «Отношение распроданности  к стройготовности».
-            # Поэтому матчим по началу «Отношение распроданности».
-            metric_map = [
-                (lambda c: "Распроданность" in c and "Отношение" not in c,
-                 "Распроданность"),
-                (lambda c: "Стройготовность" in c and "Отношение" not in c,
-                 "Стройготовность"),
-                (lambda c: c.startswith("Отношение распроданности"),
-                 "Отношение распроданности к стройготовности"),
-            ]
-            shown = 0
-            for match_fn, label in metric_map:
+            all_rows = all_rows[(all_rows["year"] == ly) & (all_rows["month"] == lm)]
+        if not all_rows.empty:
+            row_rf = all_rows[all_rows["region_key"] == "rf"]
+            row_msk = all_rows[all_rows["region_key"] == "msk"]
+            r_rf = row_rf.iloc[0] if not row_rf.empty else None
+            r_msk = row_msk.iloc[0] if not row_msk.empty else None
+
+            def find_num(r, predicate) -> str:
+                if r is None:
+                    return "—"
                 num_col = next((c for c in r.index
-                                if c.endswith("_num") and match_fn(c)), None)
+                                if c.endswith("_num") and predicate(c)), None)
                 if not num_col:
-                    continue
-                val = r.get(num_col)
-                if val is None or pd.isna(val):
-                    continue
-                st.metric(label, f"{float(val):.0f}%")
-                shown += 1
-            if shown == 0:
-                st.info("Нет метрик за последний период")
+                    return "—"
+                v = r.get(num_col)
+                if v is None or pd.isna(v):
+                    return "—"
+                return f"{float(v):.0f}%"
+
+            preds = [
+                ("Распроданность",
+                 lambda c: "Распроданность" in c and "Отношение" not in c),
+                ("Стройготовность",
+                 lambda c: "Стройготовность" in c and "Отношение" not in c),
+                ("Отношение Р/С",
+                 lambda c: c.startswith("Отношение распроданности")),
+            ]
+
+            html = """
+            <table style='width:100%;border-collapse:collapse;font-size:13px;'>
+              <tr>
+                <th style='text-align:left;padding:6px 0;color:#888;font-weight:500;'></th>
+                <th style='text-align:right;padding:6px 8px;color:#888;font-weight:500;'>Москва</th>
+                <th style='text-align:right;padding:6px 0;color:#888;font-weight:500;'>РФ</th>
+              </tr>
+            """
+            for label, pred in preds:
+                v_msk = find_num(r_msk, pred)
+                v_rf = find_num(r_rf, pred)
+                html += f"""
+                <tr style='border-top:1px solid #eee;'>
+                  <td style='padding:8px 0;color:#444;'>{label}</td>
+                  <td style='text-align:right;padding:8px 8px;font-weight:700;
+                             font-size:18px;color:#222;'>{v_msk}</td>
+                  <td style='text-align:right;padding:8px 0;font-weight:700;
+                             font-size:18px;color:#666;'>{v_rf}</td>
+                </tr>
+                """
+            html += "</table>"
+            st.markdown(html, unsafe_allow_html=True)
+            period_str = f"{lm:02d}.{ly}" if latest_period else ""
+            if period_str:
+                st.caption(f"На {period_str} · Источник: наш.дом.рф")
         else:
             st.info("Застройщик не найден в распроданности")
     else:
@@ -669,7 +720,7 @@ else:
     )
 
 
-# === Переносы сроков ввода (2 KPI карточки) ===
+# === Переносы сроков ввода (3 KPI карточки) ===
 st.markdown("### Переносы сроков ввода")
 
 
@@ -679,60 +730,41 @@ def fmt_thousand_m2(v: float | None) -> str:
     return f"{ru_num(v/1000, 1)} тыс. м²"
 
 
-def render_delay_card(title: str, value: float | None, pct_total: float | None,
-                      other_value: float | None, other_pct: float | None,
-                      pct_msk: float | None = None,
-                      base_label: str = "от общего объёма",
-                      msk_label: str = "от стройки в Москве"):
-    """Карточка: большое число (перенос) + 3 подписи (% от РФ, % от МСК, в др.рег)."""
+def render_delay_card(title: str, value: float | None,
+                      sub_lines: list[tuple[str, str]]):
+    """Карточка: заголовок + большое число (перенос) + список подписей."""
     val_str = fmt_thousand_m2(value)
-    pct_str = f"{pct_total:.1f}%" if pct_total is not None else "—"
-    pct_msk_str = f"{pct_msk:.1f}%" if pct_msk is not None else "—"
-    other_val_str = fmt_thousand_m2(other_value) if other_value else "—"
-    other_pct_str = f"{other_pct:.0f}%" if other_pct is not None else "—"
+    subs_html = "".join(
+        f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+        f"<span style='font-weight:600;color:{DELAY_COLOR};'>{v}</span> {label}</div>"
+        for label, v in sub_lines
+    )
     st.markdown(
         f"""
         <div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;
                     background:#fafafa;height:100%;'>
           <div style='color:#888;font-size:11px;text-transform:uppercase;
-                      letter-spacing:0.5px;margin-bottom:6px;'>{title}</div>
-          <div style='display:flex;align-items:baseline;gap:14px;margin-bottom:8px;'>
-            <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};line-height:1;'>{val_str}</div>
-          </div>
-          <div style='color:#555;font-size:13px;margin-bottom:6px;'>
-            <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_str}</span> {base_label}
-          </div>
-          <div style='color:#555;font-size:13px;margin-bottom:10px;'>
-            <span style='font-weight:600;color:{DELAY_COLOR};'>{pct_msk_str}</span> {msk_label}
-          </div>
-          <div style='border-top:1px dashed #ccc;padding-top:10px;color:#555;font-size:13px;'>
-            В других регионах:
-            <span style='font-weight:600;color:#333;'>{other_val_str}</span> /
-            <span style='font-weight:600;color:#333;'>{other_pct_str}</span>
-          </div>
+                      letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>
+          <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};
+                      line-height:1;margin-bottom:14px;'>{val_str}</div>
+          {subs_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-# Карточка 1: переносы в текущем строительстве (top_obyem_stroitelstva)
+# === Источники для переносов ===
+# Текущий год (2026) — точные числа из ERZ top obyem_vvoda
+perenos_vvoda_rf_2026 = erzrf_value("obyem_vvoda", "rf", "С переносом срока")
+perenos_vvoda_msk_2026 = erzrf_value("obyem_vvoda", "msk", "С переносом срока")
+vvod_rf_2026 = erzrf_value("obyem_vvoda", "rf", "Введено")
+
+# В строительстве (для расчёта % от текущей стройки)
 stroitelstvo_rf = erzrf_value("obyem_stroitelstva", "rf", "Строится")
 stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "Строится")
-perenos_stroitelstvo_rf = erzrf_value("obyem_stroitelstva", "rf", "С переносом срока")
-perenos_stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "С переносом срока")
 
-pct1 = (perenos_stroitelstvo_rf / stroitelstvo_rf * 100) \
-    if perenos_stroitelstvo_rf and stroitelstvo_rf else None
-# % от стройки в МОСКВЕ (новая подпись по просьбе пользователя)
-pct1_msk = (perenos_stroitelstvo_msk / stroitelstvo_msk * 100) \
-    if perenos_stroitelstvo_msk and stroitelstvo_msk else None
-other_val1 = max((perenos_stroitelstvo_rf or 0) - (perenos_stroitelstvo_msk or 0), 0) \
-    if perenos_stroitelstvo_rf is not None else None
-other_pct1 = (other_val1 / perenos_stroitelstvo_rf * 100) \
-    if other_val1 is not None and perenos_stroitelstvo_rf else None
-
-# Карточка 2: переносы в объектах ввода за 2022-2025 (cards)
+# Перенос за 2022-2025 — из ERZ карточки (РФ-уровень)
 sdano_2225_rf = 0.0
 perenos_2225_rf = 0.0
 if cards_row is not None:
@@ -740,53 +772,75 @@ if cards_row is not None:
         sdano_2225_rf += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
         perenos_2225_rf += float(cards_row.get(f"Перенос_{y}_м²_num") or 0)
 
-pct2 = (perenos_2225_rf / sdano_2225_rf * 100) if sdano_2225_rf > 0 else None
-
-# Москва: введённое 2022-2025 (Общая площадь, как у ERZRF)
-msk_2225_total = 0.0
+# Москва: введённое 2022-2025 (только жилое — для пропорциональной оценки)
+msk_2225_zhilye = 0.0
 if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
-    msk_2225_total = float(msk_2225["Общая площадь"].sum())
+    msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
 
-# % от стройки в Москве за период 2022-2025: пропорциональная оценка
-# (cards не делит на регионы; берём долю Москвы во вводе и применяем к переносу)
-pct2_msk = None
-if msk_2225_total > 0 and sdano_2225_rf > 0:
-    msk_share = min(msk_2225_total / sdano_2225_rf, 1.0)
-    perenos_msk_est = perenos_2225_rf * msk_share
-    pct2_msk = (perenos_msk_est / msk_2225_total * 100) if msk_2225_total > 0 else None
-
+# Оценка переноса в Москве 22-25:
+# доля МСК в общем РФ-вводе × общий перенос РФ
+perenos_msk_2225 = None
 if sdano_2225_rf > 0 and perenos_2225_rf > 0:
-    msk_share = min(msk_2225_total / sdano_2225_rf, 1.0)
-    other_share2 = 1.0 - msk_share
-    other_val2 = perenos_2225_rf * other_share2
-    other_pct2 = other_share2 * 100
-else:
-    other_val2 = None
-    other_pct2 = None
+    msk_share = min(msk_2225_zhilye / sdano_2225_rf, 1.0)
+    perenos_msk_2225 = perenos_2225_rf * msk_share
 
-dc1, dc2 = st.columns(2)
+# В других регионах за 2026
+other_perenos_2026 = None
+if perenos_vvoda_rf_2026 and perenos_vvoda_rf_2026 > 0:
+    other_perenos_2026 = max(perenos_vvoda_rf_2026 - (perenos_vvoda_msk_2026 or 0), 0)
+
+# === 3 карточки ===
+dc1, dc2, dc3 = st.columns(3)
+
+# 1) Перенос Москвы 22-25
 with dc1:
+    subs = []
+    if msk_2225_zhilye > 0 and perenos_msk_2225 is not None:
+        pct_msk = perenos_msk_2225 / msk_2225_zhilye * 100
+        subs.append((f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² введённых жилых в Москве",
+                     f"{pct_msk:.1f}%"))
+    subs.append(("оценка по доле Москвы в общем вводе РФ", "≈"))
     render_delay_card(
-        "Переносы сроков ввода (текущее строительство)",
-        perenos_stroitelstvo_rf, pct1, other_val1, other_pct1,
-        pct_msk=pct1_msk,
-        base_label=f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
-        msk_label=f"от {ru_num((stroitelstvo_msk or 0)/1000)} тыс. м² в стройке в Москве",
+        "Перенос в Москве за 2022-2025 гг.",
+        perenos_msk_2225, subs,
     )
+
+# 2) Перенос за 2026 + % от в строительстве (РФ)
 with dc2:
+    subs = []
+    if perenos_vvoda_rf_2026 is not None and stroitelstvo_rf:
+        pct_str = perenos_vvoda_rf_2026 / stroitelstvo_rf * 100
+        subs.append((f"от {ru_num(stroitelstvo_rf/1000)} тыс. м² в стройке по РФ",
+                     f"{pct_str:.1f}%"))
+    if perenos_vvoda_msk_2026 is not None and stroitelstvo_msk:
+        pct_str_msk = perenos_vvoda_msk_2026 / stroitelstvo_msk * 100
+        subs.append((f"в Москве: {fmt_thousand_m2(perenos_vvoda_msk_2026)} "
+                     f"({pct_str_msk:.1f}% от стройки в МСК)", ""))
     render_delay_card(
-        "Переносы сроков в объектах ввода за 2022–2025 гг.",
-        perenos_2225_rf if perenos_2225_rf > 0 else None, pct2, other_val2, other_pct2,
-        pct_msk=pct2_msk,
-        base_label=f"от {ru_num(sdano_2225_rf/1000)} тыс. м² введённых в РФ за период",
-        msk_label=f"от {ru_num(msk_2225_total/1000)} тыс. м² введённых в Москве",
+        "Перенос ввода за 2026 г.",
+        perenos_vvoda_rf_2026, subs,
     )
+
+# 3) В других регионах (за 2026)
+with dc3:
+    subs = []
+    if other_perenos_2026 is not None and vvod_rf_2026:
+        pct_other = other_perenos_2026 / vvod_rf_2026 * 100
+        subs.append((f"от {ru_num(vvod_rf_2026/1000)} тыс. м² ввода в РФ за 2026",
+                     f"{pct_other:.1f}%"))
+    if other_perenos_2026 is not None and perenos_vvoda_rf_2026:
+        share_others = other_perenos_2026 / perenos_vvoda_rf_2026 * 100
+        subs.append((f"от всех переносов РФ", f"{share_others:.0f}%"))
+    render_delay_card(
+        "В других регионах за 2026 г.",
+        other_perenos_2026, subs,
+    )
+
 st.caption(
-    "Источник: ERZRF. **Текущее строительство** — площадь объектов с задержкой ввода "
-    "относительно того, что застройщик строит сейчас по всей РФ. "
-    "**Объекты ввода 2022-2025** — сумма «Перенос» по годам из карточки ERZRF, "
-    "доля от введённого жилья за тот же период."
+    "Источники: ERZRF (top obyem_vvoda, top obyem_stroitelstva, карточка). "
+    "Перенос Москвы 22-25 — оценка по доле введённого жилья в Москве "
+    "от общего ввода в РФ. Точных МСК-данных по годам в карточке ERZ нет."
 )
 
 

@@ -49,6 +49,42 @@ from typing import Optional
 
 import requests
 
+
+def _load_dotenv() -> None:
+    """Загружает переменные из .env (рядом с корнем проекта).
+
+    Простая реализация без зависимости от python-dotenv:
+      - читает строки KEY=VALUE
+      - пропускает комментарии (#) и пустые строки
+      - НЕ перезаписывает уже заданные в os.environ
+    """
+    # Корень проекта: tdm_notify.py → pipeline/ → ROOT
+    root = Path(__file__).resolve().parent.parent
+    env_file = root / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        for raw in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            # Снимаем обрамляющие кавычки если есть
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+# Загружаем .env при импорте модуля — все функции _get_* будут видеть
+# переменные из файла без явных set-команд.
+_load_dotenv()
+
+
 DEFAULT_BASE = "https://api.tdm.mos.ru"
 DEFAULT_FILE_BASE = "https://fileupload.tdm.mos.ru"
 TIMEOUT = 30

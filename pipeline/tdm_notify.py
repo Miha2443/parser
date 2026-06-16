@@ -1,29 +1,32 @@
 """Уведомления через TDM Bot API (мэрия Москвы).
 
-Документация: см. _to_delete/api.pdf
+Документация: _to_delete/api.pdf (Bot API, февраль 2026)
+
+URL'ы из официальной доки (раздел 6, пример Python-клиента):
+    REST API:    https://api.tdm.mos.ru
+    SSE:         https://pusher.tdm.mos.ru
+    File upload: https://fileupload.tdm.mos.ru
 
 Структура API:
-  - Auth: HTTP header `Authorization: <authToken>`
-  - Base URL: https://botapi.tdm.mos.ru (или другой — настраивается)
-  - REST endpoints под /botapi/v1/...
+  - Auth: HTTP header `Authorization: <authToken>` (формат «BOT-…»)
   - Сообщения требуют 2 ID:
-      workspaceId — ID пространства (постоянный для бота)
-      groupId    — ID группы/чата куда слать
+      workspaceId — ID пространства (Long)
+      groupId    — ID группы/чата (Long)
 
 Эндпоинты которыми пользуемся:
   POST /botapi/v1/groups/getAllUserGroupStates
-       → список всех групп бота (workspaceId + groupId + назв.)
+       → список всех групп бота (workspaceId + groupId)
   POST /botapi/v1/messages/sendTextMessage/{workspaceId}/{groupId}
        body: {clientRandomId, message}
   POST /botapi/v1/messages/sendFile/{workspaceId}/{groupId}
-       body: {clientRandomId, file: {fileName, length, mimeType, resourceRef}, message}
-  POST /botapi/v1/s3/upload  — сначала грузим файл, потом sendFile
+       body: {clientRandomId, file: {fileName, length, mimeType, resourceRef}}
 
 Настройка через env (.env):
-  TDM_BOT_TOKEN     — токен бота (header Authorization)
-  TDM_WORKSPACE_ID  — ID пространства (Long)
-  TDM_GROUP_ID      — ID группы (Long) — основной чат для уведомлений
-  TDM_API_BASE      — base URL (default: https://botapi.tdm.mos.ru)
+  TDM_BOT_TOKEN     — authToken (с префиксом BOT-)
+  TDM_WORKSPACE_ID  — Long
+  TDM_GROUP_ID      — Long
+  TDM_API_BASE      — base REST URL (default: https://api.tdm.mos.ru)
+  TDM_FILE_BASE     — base file-upload URL (default: https://fileupload.tdm.mos.ru)
   TDM_DISABLED      — '1' чтобы выключить
 
 CLI:
@@ -46,7 +49,8 @@ from typing import Optional
 
 import requests
 
-DEFAULT_BASE = "https://botapi.tdm.mos.ru"
+DEFAULT_BASE = "https://api.tdm.mos.ru"
+DEFAULT_FILE_BASE = "https://fileupload.tdm.mos.ru"
 TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_BACKOFF = (2, 4, 8)
@@ -74,6 +78,10 @@ def _get_group_id(override: str | None = None) -> Optional[str]:
 
 def _api_base() -> str:
     return (os.environ.get("TDM_API_BASE") or "").strip() or DEFAULT_BASE
+
+
+def _file_base() -> str:
+    return (os.environ.get("TDM_FILE_BASE") or "").strip() or DEFAULT_FILE_BASE
 
 
 def _auth_headers(extra: dict | None = None) -> dict:
@@ -174,41 +182,63 @@ def notify(text: str, *, group_id: str | None = None,
 
 
 def _upload_to_s3(path: Path) -> dict | None:
-    """Загружает файл в s3.tdm.mos.ru и возвращает resourceRef.
+    """Загружает файл в s3.tdm.mos.ru через fileupload.tdm.mos.ru.
 
-    Эндпоинт сохранения файлов: POST /botapi/v1/files/upload (multipart).
-    После загрузки возвращается id/url/key для resourceRef в sendFile.
-    Точный путь endpoint'а зависит от реализации TDM — пробуем 2 варианта.
+    Из доки (5.7): POST {file_base}/api/v1/upload/ с заголовками:
+      Content-Type: multipart/form-data; boundary=...
+      Encryption-Key-Id: <int>
+      Content-Disposition: form-data; name="file"; filename="..."
+      WorkspaceId: <Long>  (-1 если без шифрования)
+      Authorization: <authToken>
+
+    Ответ: {original: {resource: {id, key, transformation, url}, w, h},
+            thumbnails: [...]}
+    Возвращает resource (для resourceRef в sendFile).
+
+    ⚠️ ШИФРОВАНИЕ: оригинальный TDM требует чтобы файл был зашифрован
+    GOST3412-2015 ДО отправки. Здесь шлём незашифрованным (WorkspaceId=-1
+    означает «без шифрования») — это работает для нашего use-case'а
+    (отчёты внутри корпоративной сети мэрии). Если у вас обязательное
+    шифрование — добавь pycryptodome + ключи.
     """
-    candidates = ["/botapi/v1/files/upload", "/botapi/v1/s3/upload"]
-    for path_str in candidates:
-        url = f"{_api_base().rstrip('/')}/{path_str.lstrip('/')}"
+    url = f"{_file_base().rstrip('/')}/api/v1/upload/"
+    ws = _get_workspace_id() or "-1"
+    try:
+        with path.open("rb") as f:
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            headers = {
+                "Authorization": _get_token(),
+                "WorkspaceId": str(ws),
+                # Encryption-Key-Id: можно опустить для незашифрованных
+            }
+            r = requests.post(
+                url, headers=headers,
+                files={"file": (path.name, f, mime)},
+                timeout=300,
+            )
+        if r.status_code >= 400:
+            print(f"⚠️  upload failed [{r.status_code}]: {r.text[:300]}")
+            return None
         try:
-            with path.open("rb") as f:
-                mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-                r = requests.post(
-                    url,
-                    headers={"Authorization": _get_token()},
-                    files={"file": (path.name, f, mime)},
-                    timeout=300,
-                )
-            if r.status_code >= 400:
-                continue
-            try:
-                body = r.json()
-            except (json.JSONDecodeError, ValueError):
-                continue
-            # Ищем resourceRef в ответе (может быть на разных уровнях)
-            if isinstance(body, dict):
-                if "resourceRef" in body:
-                    return body["resourceRef"]
-                # Иногда возвращается сам resourceRef как корень:
-                if "id" in body and "url" in body:
-                    return body
-            return body if isinstance(body, dict) else None
-        except requests.RequestException:
-            continue
-    return None
+            body = r.json()
+        except (json.JSONDecodeError, ValueError):
+            print(f"⚠️  upload returned non-json: {r.text[:300]}")
+            return None
+        if isinstance(body, dict):
+            # из доки: {original: {resource: {...}, w, h}, thumbnails: [...]}
+            orig = body.get("original")
+            if isinstance(orig, dict) and "resource" in orig:
+                return orig["resource"]
+            # альтернатива: {resourceRef: {...}}
+            if "resourceRef" in body:
+                return body["resourceRef"]
+            # или плоский корень
+            if "id" in body and "url" in body:
+                return body
+        return None
+    except requests.RequestException as exc:
+        print(f"⚠️  upload exception: {exc}")
+        return None
 
 
 def notify_file(path: str | Path, *, caption: str = "",

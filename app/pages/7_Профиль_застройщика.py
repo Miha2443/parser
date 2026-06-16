@@ -556,27 +556,32 @@ with right:
                  lambda c: c.startswith("Отношение распроданности")),
             ]
 
-            html = """
-            <table style='width:100%;border-collapse:collapse;font-size:13px;'>
-              <tr>
-                <th style='text-align:left;padding:6px 0;color:#888;font-weight:500;'></th>
-                <th style='text-align:right;padding:6px 8px;color:#888;font-weight:500;'>Москва</th>
-                <th style='text-align:right;padding:6px 0;color:#888;font-weight:500;'>РФ</th>
-              </tr>
-            """
+            # ВАЖНО: HTML без ведущих пробелов в начале строк —
+            # иначе st.markdown трактует строки с 4+ пробелами как
+            # code block и показывает HTML как текст.
+            rows_html = ""
             for label, pred in preds:
                 v_msk = find_num(r_msk, pred)
                 v_rf = find_num(r_rf, pred)
-                html += f"""
-                <tr style='border-top:1px solid #eee;'>
-                  <td style='padding:8px 0;color:#444;'>{label}</td>
-                  <td style='text-align:right;padding:8px 8px;font-weight:700;
-                             font-size:18px;color:#222;'>{v_msk}</td>
-                  <td style='text-align:right;padding:8px 0;font-weight:700;
-                             font-size:18px;color:#666;'>{v_rf}</td>
-                </tr>
-                """
-            html += "</table>"
+                rows_html += (
+                    "<tr style='border-top:1px solid #eee;'>"
+                    f"<td style='padding:8px 0;color:#444;'>{label}</td>"
+                    "<td style='text-align:right;padding:8px 8px;"
+                    f"font-weight:700;font-size:18px;color:#222;'>{v_msk}</td>"
+                    "<td style='text-align:right;padding:8px 0;"
+                    f"font-weight:700;font-size:18px;color:#666;'>{v_rf}</td>"
+                    "</tr>"
+                )
+            html = (
+                "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+                "<tr>"
+                "<th style='text-align:left;padding:6px 0;color:#888;font-weight:500;'></th>"
+                "<th style='text-align:right;padding:6px 8px;color:#888;font-weight:500;'>Москва</th>"
+                "<th style='text-align:right;padding:6px 0;color:#888;font-weight:500;'>РФ</th>"
+                "</tr>"
+                f"{rows_html}"
+                "</table>"
+            )
             st.markdown(html, unsafe_allow_html=True)
             period_str = f"{lm:02d}.{ly}" if latest_period else ""
             if period_str:
@@ -720,7 +725,7 @@ else:
     )
 
 
-# === Переносы сроков ввода (3 KPI карточки) ===
+# === Переносы сроков ввода (4 KPI карточки в 2 ряда) ===
 st.markdown("### Переносы сроков ввода")
 
 
@@ -732,39 +737,53 @@ def fmt_thousand_m2(v: float | None) -> str:
 
 def render_delay_card(title: str, value: float | None,
                       sub_lines: list[tuple[str, str]]):
-    """Карточка: заголовок + большое число (перенос) + список подписей."""
+    """Карточка: заголовок + большое число (перенос) + список подписей.
+
+    sub_lines: список (label, value_html). Если value пустое — рендерится
+    как обычный текст без подсветки.
+    """
     val_str = fmt_thousand_m2(value)
-    subs_html = "".join(
-        f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
-        f"<span style='font-weight:600;color:{DELAY_COLOR};'>{v}</span> {label}</div>"
-        for label, v in sub_lines
-    )
+    parts = []
+    for label, v in sub_lines:
+        if v:
+            parts.append(
+                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"<span style='font-weight:600;color:{DELAY_COLOR};'>{v}</span> "
+                f"{label}</div>"
+            )
+        else:
+            parts.append(
+                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"{label}</div>"
+            )
+    subs_html = "".join(parts)
     st.markdown(
-        f"""
-        <div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;
-                    background:#fafafa;height:100%;'>
-          <div style='color:#888;font-size:11px;text-transform:uppercase;
-                      letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>
-          <div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};
-                      line-height:1;margin-bottom:14px;'>{val_str}</div>
-          {subs_html}
-        </div>
-        """,
+        "<div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;"
+        "background:#fafafa;height:100%;'>"
+        "<div style='color:#888;font-size:11px;text-transform:uppercase;"
+        f"letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>"
+        f"<div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};"
+        f"line-height:1;margin-bottom:14px;'>{val_str}</div>"
+        f"{subs_html}"
+        "</div>",
         unsafe_allow_html=True,
     )
 
 
-# === Источники для переносов ===
-# Текущий год (2026) — точные числа из ERZ top obyem_vvoda
-perenos_vvoda_rf_2026 = erzrf_value("obyem_vvoda", "rf", "С переносом срока")
-perenos_vvoda_msk_2026 = erzrf_value("obyem_vvoda", "msk", "С переносом срока")
-vvod_rf_2026 = erzrf_value("obyem_vvoda", "rf", "Введено")
-
-# В строительстве (для расчёта % от текущей стройки)
+# === Источники ===
+# В строительстве (РФ + МСК) — у нас точные числа из top_obyem_stroitelstva
 stroitelstvo_rf = erzrf_value("obyem_stroitelstva", "rf", "Строится")
 stroitelstvo_msk = erzrf_value("obyem_stroitelstva", "msk", "Строится")
+perenos_stroy_rf = erzrf_value("obyem_stroitelstva", "rf", "С переносом срока")
+perenos_stroy_msk = erzrf_value("obyem_stroitelstva", "msk", "С переносом срока")
 
-# Перенос за 2022-2025 — из ERZ карточки (РФ-уровень)
+# Ввод 2026 (РФ + МСК) — точные числа из top_obyem_vvoda
+vvod_rf_2026 = erzrf_value("obyem_vvoda", "rf", "Введено")
+vvod_msk_2026 = erzrf_value("obyem_vvoda", "msk", "Введено")
+perenos_vvod_rf_2026 = erzrf_value("obyem_vvoda", "rf", "С переносом срока")
+perenos_vvod_msk_2026 = erzrf_value("obyem_vvoda", "msk", "С переносом срока")
+
+# Перенос 2022-2025 (только РФ из cards — МСК по годам в карточке нет)
 sdano_2225_rf = 0.0
 perenos_2225_rf = 0.0
 if cards_row is not None:
@@ -772,75 +791,84 @@ if cards_row is not None:
         sdano_2225_rf += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
         perenos_2225_rf += float(cards_row.get(f"Перенос_{y}_м²_num") or 0)
 
-# Москва: введённое 2022-2025 (только жилое — для пропорциональной оценки)
+# Москва: введённое 2022-2025 (только жилое)
 msk_2225_zhilye = 0.0
 if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
     msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
 
-# Оценка переноса в Москве 22-25:
-# доля МСК в общем РФ-вводе × общий перенос РФ
-perenos_msk_2225 = None
+# Оценка переноса в Москве 22-25 через долю МСК во вводе
+perenos_msk_2225_est = None
 if sdano_2225_rf > 0 and perenos_2225_rf > 0:
     msk_share = min(msk_2225_zhilye / sdano_2225_rf, 1.0)
-    perenos_msk_2225 = perenos_2225_rf * msk_share
+    perenos_msk_2225_est = perenos_2225_rf * msk_share
 
 # В других регионах за 2026
 other_perenos_2026 = None
-if perenos_vvoda_rf_2026 and perenos_vvoda_rf_2026 > 0:
-    other_perenos_2026 = max(perenos_vvoda_rf_2026 - (perenos_vvoda_msk_2026 or 0), 0)
+if perenos_vvod_rf_2026 and perenos_vvod_rf_2026 > 0:
+    other_perenos_2026 = max(perenos_vvod_rf_2026 - (perenos_vvod_msk_2026 or 0), 0)
 
-# === 3 карточки ===
-dc1, dc2, dc3 = st.columns(3)
 
-# 1) Перенос Москвы 22-25
-with dc1:
-    subs = []
-    if msk_2225_zhilye > 0 and perenos_msk_2225 is not None:
-        pct_msk = perenos_msk_2225 / msk_2225_zhilye * 100
-        subs.append((f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² введённых жилых в Москве",
-                     f"{pct_msk:.1f}%"))
-    subs.append(("оценка по доле Москвы в общем вводе РФ", "≈"))
-    render_delay_card(
-        "Перенос в Москве за 2022-2025 гг.",
-        perenos_msk_2225, subs,
-    )
+def pct_str(num: float | None, denom: float | None) -> str:
+    if num is None or denom is None or denom <= 0:
+        return "—"
+    return f"{num / denom * 100:.1f}%"
 
-# 2) Перенос за 2026 + % от в строительстве (РФ)
-with dc2:
-    subs = []
-    if perenos_vvoda_rf_2026 is not None and stroitelstvo_rf:
-        pct_str = perenos_vvoda_rf_2026 / stroitelstvo_rf * 100
-        subs.append((f"от {ru_num(stroitelstvo_rf/1000)} тыс. м² в стройке по РФ",
-                     f"{pct_str:.1f}%"))
-    if perenos_vvoda_msk_2026 is not None and stroitelstvo_msk:
-        pct_str_msk = perenos_vvoda_msk_2026 / stroitelstvo_msk * 100
-        subs.append((f"в Москве: {fmt_thousand_m2(perenos_vvoda_msk_2026)} "
-                     f"({pct_str_msk:.1f}% от стройки в МСК)", ""))
-    render_delay_card(
-        "Перенос ввода за 2026 г.",
-        perenos_vvoda_rf_2026, subs,
-    )
 
-# 3) В других регионах (за 2026)
-with dc3:
-    subs = []
-    if other_perenos_2026 is not None and vvod_rf_2026:
-        pct_other = other_perenos_2026 / vvod_rf_2026 * 100
-        subs.append((f"от {ru_num(vvod_rf_2026/1000)} тыс. м² ввода в РФ за 2026",
-                     f"{pct_other:.1f}%"))
-    if other_perenos_2026 is not None and perenos_vvoda_rf_2026:
-        share_others = other_perenos_2026 / perenos_vvoda_rf_2026 * 100
-        subs.append((f"от всех переносов РФ", f"{share_others:.0f}%"))
-    render_delay_card(
-        "В других регионах за 2026 г.",
-        other_perenos_2026, subs,
-    )
+# === Ряд 1: текущее строительство (РФ + МСК) ===
+r1c1, r1c2 = st.columns(2)
+with r1c1:
+    subs = [
+        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
+         pct_str(perenos_stroy_rf, stroitelstvo_rf)),
+        ("источник: top_obyem_stroitelstva (ERZ)", ""),
+    ]
+    render_delay_card("Перенос в текущем строительстве РФ", perenos_stroy_rf, subs)
+with r1c2:
+    subs = [
+        (f"от {ru_num((stroitelstvo_msk or 0)/1000)} тыс. м² в стройке Москвы",
+         pct_str(perenos_stroy_msk, stroitelstvo_msk)),
+        ("источник: top_obyem_stroitelstva_msk (ERZ)", ""),
+    ]
+    render_delay_card("Перенос в текущем строительстве МСК", perenos_stroy_msk, subs)
+
+# === Ряд 2: переносы ввода ===
+r2c1, r2c2 = st.columns(2)
+with r2c1:
+    subs = [
+        (f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² жилого ввода Москвы 22-25",
+         pct_str(perenos_msk_2225_est, msk_2225_zhilye)),
+        ("⚠️ оценка: РФ_перенос × (МСК_жилое / РФ_сдано) — "
+         "точных МСК-данных по годам в карточке ERZ нет", ""),
+    ]
+    render_delay_card("Перенос в Москве за 2022-2025 (оценка)",
+                      perenos_msk_2225_est, subs)
+with r2c2:
+    subs = [
+        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке РФ",
+         pct_str(perenos_vvod_rf_2026, stroitelstvo_rf)),
+        (f"в Москве: {fmt_thousand_m2(perenos_vvod_msk_2026)} "
+         f"({pct_str(perenos_vvod_msk_2026, stroitelstvo_msk)} от стройки МСК)", ""),
+    ]
+    render_delay_card("Перенос ввода за 2026 (РФ)", perenos_vvod_rf_2026, subs)
+
+# === Ряд 3: в других регионах + место для будущей карточки ===
+r3c1, _ = st.columns(2)
+with r3c1:
+    subs = [
+        (f"от {ru_num((vvod_rf_2026 or 0)/1000)} тыс. м² ввода в РФ за 2026",
+         pct_str(other_perenos_2026, vvod_rf_2026)),
+        (f"от всех переносов РФ ({fmt_thousand_m2(perenos_vvod_rf_2026)})",
+         pct_str(other_perenos_2026, perenos_vvod_rf_2026)),
+    ]
+    render_delay_card("В других регионах за 2026", other_perenos_2026, subs)
 
 st.caption(
-    "Источники: ERZRF (top obyem_vvoda, top obyem_stroitelstva, карточка). "
-    "Перенос Москвы 22-25 — оценка по доле введённого жилья в Москве "
-    "от общего ввода в РФ. Точных МСК-данных по годам в карточке ERZ нет."
+    "Источники: ERZRF top_obyem_stroitelstva (МСК + РФ), "
+    "top_obyem_vvoda (МСК + РФ), карточка cards (РФ по годам). "
+    "Для ТОЧНЫХ переносов в Москве за 2022-2025 нужно научить парсер ERZ "
+    "переключать год на сайте и скачивать данные за каждый год — "
+    "пришли URL/скриншот фильтра «год» на сайте ERZ."
 )
 
 

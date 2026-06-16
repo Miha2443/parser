@@ -218,42 +218,32 @@ def notify(text: str, *, group_id: str | None = None,
 
 
 def _upload_to_s3(path: Path) -> dict | None:
-    """Загружает файл в s3.tdm.mos.ru через fileupload.tdm.mos.ru.
+    """Загружает файл и возвращает resource для resourceRef в sendFile.
 
-    Из доки (5.7): POST {file_base}/api/v1/upload/ с заголовками:
-      Content-Type: multipart/form-data; boundary=...
-      Encryption-Key-Id: <int>
-      Content-Disposition: form-data; name="file"; filename="..."
-      WorkspaceId: <Long>  (-1 если без шифрования)
-      Authorization: <authToken>
+    Из доки (5.7) есть 3 endpoint'а:
+      1. POST /api/v1/upload/                  — для уже зашифрованных
+         (нужен Encryption-Key-Id, WorkspaceId, Content-Disposition)
+      2. POST /api/v1/upload/secret            — для уже зашифрованных
+         (нужны WorkspaceId, Content-Disposition)
+      3. POST /api/v1/upload/secret/encryptable — СЕРВЕР сам шифрует ✓
+         (только Authorization + Content-Type + Content-Length)
 
-    Ответ: {original: {resource: {id, key, transformation, url}, w, h},
-            thumbnails: [...]}
-    Возвращает resource (для resourceRef в sendFile).
-
-    ⚠️ ШИФРОВАНИЕ: оригинальный TDM требует чтобы файл был зашифрован
-    GOST3412-2015 ДО отправки. Здесь шлём незашифрованным (WorkspaceId=-1
-    означает «без шифрования») — это работает для нашего use-case'а
-    (отчёты внутри корпоративной сети мэрии). Если у вас обязательное
-    шифрование — добавь pycryptodome + ключи.
+    Используем (3) — самый простой, не требует клиентского шифрования.
+    Ответ: {resource: {id, url, key, transformation}}
     """
-    url = f"{_file_base().rstrip('/')}/api/v1/upload/"
-    ws = _get_workspace_id() or "-1"
+    url = f"{_file_base().rstrip('/')}/api/v1/upload/secret/encryptable"
     try:
         with path.open("rb") as f:
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            headers = {
-                "Authorization": _get_token(),
-                "WorkspaceId": str(ws),
-                # Encryption-Key-Id: можно опустить для незашифрованных
-            }
             r = requests.post(
-                url, headers=headers,
+                url,
+                headers={"Authorization": _get_token()},
                 files={"file": (path.name, f, mime)},
                 timeout=300,
             )
         if r.status_code >= 400:
-            print(f"⚠️  upload failed [{r.status_code}]: {r.text[:300]}")
+            print(f"⚠️  upload failed [{r.status_code}] на {url}")
+            print(f"    response: {r.text[:300]}")
             return None
         try:
             body = r.json()
@@ -261,14 +251,10 @@ def _upload_to_s3(path: Path) -> dict | None:
             print(f"⚠️  upload returned non-json: {r.text[:300]}")
             return None
         if isinstance(body, dict):
-            # из доки: {original: {resource: {...}, w, h}, thumbnails: [...]}
-            orig = body.get("original")
-            if isinstance(orig, dict) and "resource" in orig:
-                return orig["resource"]
-            # альтернатива: {resourceRef: {...}}
-            if "resourceRef" in body:
-                return body["resourceRef"]
-            # или плоский корень
+            # из доки: {resource: {id, url, key, transformation}}
+            if "resource" in body and isinstance(body["resource"], dict):
+                return body["resource"]
+            # запасные варианты структуры
             if "id" in body and "url" in body:
                 return body
         return None

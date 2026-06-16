@@ -797,11 +797,43 @@ if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
     msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
 
-# Оценка переноса в Москве 22-25 через долю МСК во вводе
-perenos_msk_2225_est = None
-if sdano_2225_rf > 0 and perenos_2225_rf > 0:
+# ТОЧНЫЕ числа из per-year ERZ top_obyem_vvoda_msk_YYYY_*.xlsx
+# (если парсер их собрал — после обновления erzrf_checker)
+perenos_msk_2225_exact = 0.0
+sdano_msk_2225_exact = 0.0
+exact_years_found = []
+by_year_msk = erzrf_top.get("obyem_vvoda_by_year", {}).get("msk", {})
+for y in (2022, 2023, 2024, 2025):
+    df_y = by_year_msk.get(y)
+    if df_y is None or df_y.empty:
+        continue
+    name_col = next((c for c in df_y.columns if "Наименование" in str(c)), None)
+    if not name_col:
+        continue
+    rows_y = df_y[df_y[name_col].apply(lambda x: norm(str(x)) == sel_key)]
+    if rows_y.empty:
+        continue
+    r_y = rows_y.iloc[0]
+    p_col = next((c for c in df_y.columns
+                  if "С переносом срока" in c and "м²" in c), None)
+    v_col = next((c for c in df_y.columns
+                  if "Введено" in c and "м²" in c), None)
+    if p_col:
+        perenos_msk_2225_exact += float(pd.to_numeric(r_y[p_col], errors="coerce") or 0)
+    if v_col:
+        sdano_msk_2225_exact += float(pd.to_numeric(r_y[v_col], errors="coerce") or 0)
+    exact_years_found.append(y)
+
+perenos_msk_2225_est = None  # для оценки если точных нет
+if not exact_years_found and sdano_2225_rf > 0 and perenos_2225_rf > 0:
     msk_share = min(msk_2225_zhilye / sdano_2225_rf, 1.0)
     perenos_msk_2225_est = perenos_2225_rf * msk_share
+
+# Если точные есть — используем их, иначе оценку
+perenos_msk_2225 = (perenos_msk_2225_exact if exact_years_found
+                    else perenos_msk_2225_est)
+base_msk_2225 = (sdano_msk_2225_exact if exact_years_found
+                 else msk_2225_zhilye)
 
 # В других регионах за 2026
 other_perenos_2026 = None
@@ -835,14 +867,23 @@ with r1c2:
 # === Ряд 2: переносы ввода ===
 r2c1, r2c2 = st.columns(2)
 with r2c1:
-    subs = [
-        (f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² жилого ввода Москвы 22-25",
-         pct_str(perenos_msk_2225_est, msk_2225_zhilye)),
-        ("⚠️ оценка: РФ_перенос × (МСК_жилое / РФ_сдано) — "
-         "точных МСК-данных по годам в карточке ERZ нет", ""),
-    ]
-    render_delay_card("Перенос в Москве за 2022-2025 (оценка)",
-                      perenos_msk_2225_est, subs)
+    if exact_years_found:
+        title = f"Перенос в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
+        subs = [
+            (f"от {ru_num(base_msk_2225/1000)} тыс. м² введённых в Москве",
+             pct_str(perenos_msk_2225, base_msk_2225)),
+            (f"источник: top_obyem_vvoda_msk_YYYY (ERZ по годам, "
+             f"собрано лет: {len(exact_years_found)})", ""),
+        ]
+    else:
+        title = "Перенос в Москве за 2022-2025 (оценка)"
+        subs = [
+            (f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² жилого ввода Москвы 22-25",
+             pct_str(perenos_msk_2225_est, msk_2225_zhilye)),
+            ("⚠️ оценка: точных данных нет. Запусти erzrf_checker top — "
+             "соберёт per-year файлы top_obyem_vvoda_msk_YYYY_*.xlsx", ""),
+        ]
+    render_delay_card(title, perenos_msk_2225, subs)
 with r2c2:
     subs = [
         (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке РФ",

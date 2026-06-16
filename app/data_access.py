@@ -528,6 +528,13 @@ def load_erzrf_top() -> dict:
     regions = ["rf", "msk"]
     result: dict = {}
     all_names = set()
+    # Доп. структура: per-year файлы obyem_vvoda
+    # result['obyem_vvoda_by_year'] = {region: {year: DataFrame}}
+    result["obyem_vvoda_by_year"] = {"rf": {}, "msk": {}}
+
+    import re as _re
+    year_pat = _re.compile(r"_(\d{4})_\d{8}\.xlsx$")
+
     for sorting in sortings:
         result[sorting] = {}
         for reg in regions:
@@ -537,18 +544,40 @@ def load_erzrf_top() -> dict:
                     files.extend(sorted(base.glob(f"top_{sorting}_{reg}_*.xlsx")))
             if not files:
                 continue
-            latest = max(files, key=lambda p: p.stat().st_mtime)
-            try:
-                df = pd.read_excel(latest)
-                result[sorting][reg] = df
-                # Имя в колонке «Наименование, регион» (для большинства) или «Наименование»
-                name_col = next((c for c in df.columns
-                                 if "Наименование" in str(c)), None)
-                if name_col:
-                    for v in df[name_col].dropna().unique():
-                        all_names.add(str(v).strip())
-            except Exception:  # noqa: BLE001
-                pass
+            # Разделяем: per-year (с _YYYY_ в имени) vs обычные
+            per_year_files = []
+            current_files = []
+            for f in files:
+                m = year_pat.search(f.name)
+                if m:
+                    per_year_files.append((int(m.group(1)), f))
+                else:
+                    current_files.append(f)
+            # «Текущий» (без года в имени) — самый свежий по mtime
+            if current_files:
+                latest = max(current_files, key=lambda p: p.stat().st_mtime)
+                try:
+                    df = pd.read_excel(latest)
+                    result[sorting][reg] = df
+                    name_col = next((c for c in df.columns
+                                     if "Наименование" in str(c)), None)
+                    if name_col:
+                        for v in df[name_col].dropna().unique():
+                            all_names.add(str(v).strip())
+                except Exception:  # noqa: BLE001
+                    pass
+            # Per-year: для каждого года самый свежий
+            if sorting == "obyem_vvoda" and per_year_files:
+                by_year: dict[int, list] = {}
+                for year, f in per_year_files:
+                    by_year.setdefault(year, []).append(f)
+                for year, year_files in by_year.items():
+                    latest_y = max(year_files, key=lambda p: p.stat().st_mtime)
+                    try:
+                        df = pd.read_excel(latest_y)
+                        result["obyem_vvoda_by_year"][reg][year] = df
+                    except Exception:  # noqa: BLE001
+                        pass
 
     result["all_developers"] = sorted(all_names)
     return result

@@ -545,6 +545,63 @@ def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) ->
     return int(count or 0)
 
 
+# Сортировки и регионы где имеет смысл скачивать данные ПО ГОДАМ
+# (т.е. где на странице есть фильтр «Год ввода»):
+#   obyem_vvoda — там реально разные данные за разные годы
+# Прочие сортировки (obyem_stroitelstva / nakopl_vvod / potreb_kachestva /
+# skorost) показывают НЕ годовой срез — год для них не применим.
+PER_YEAR_SORTINGS = {"obyem_vvoda"}
+PER_YEAR_RANGE = list(range(2022, 2027))  # 2022..2026 включительно
+
+
+def _switch_year_filter(driver, year: int) -> bool:
+    """Переключает фильтр года ввода через скрытый <select> (Select2 wrapper).
+
+    HTML (предоставлен пользователем):
+        <select id="select6" class="styleClass select2-hidden-accessible">
+          <option value="2026">2026</option>
+          <option value="2025">2025</option>
+          ...
+        </select>
+
+    Select2 рендерит видимый span, но слушает события change на скрытом
+    select. Меняем value и шлём 'change' с bubbles — Select2 и Angular
+    оба подхватывают.
+
+    Возвращает True если переключение прошло (текущий year == year).
+    """
+    target = str(year)
+    ok = driver.execute_script(
+        """
+        const target = String(arguments[0]).trim();
+        // Ищем select с опциями годов (id='select6' по примеру или
+        // любой select где есть option с нужным value).
+        let sel = document.getElementById('select6');
+        if (!sel) {
+            sel = [...document.querySelectorAll('select')].find(s =>
+                [...s.options].some(o => (o.value || '').trim() === target));
+        }
+        if (!sel) return false;
+        if (sel.value === target) return true;
+        sel.value = target;
+        sel.dispatchEvent(new Event('input', {bubbles: true}));
+        sel.dispatchEvent(new Event('change', {bubbles: true}));
+        // jQuery trigger если есть (Select2 слушает именно jq-event)
+        if (window.jQuery) {
+            try { window.jQuery(sel).val(target).trigger('change'); }
+            catch(e) {}
+        }
+        return sel.value === target;
+        """,
+        target,
+    )
+    if not ok:
+        return False
+    # Ждём пока контент перерисуется (можно по смене таблицы)
+    time.sleep(4)
+    return True
+
+
 def fetch_top(state: dict) -> list[Path]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     new_files: list[Path] = []
@@ -559,6 +616,32 @@ def fetch_top(state: dict) -> list[Path]:
             return []
 
         date_str = datetime.now().strftime("%Y%m%d")
+
+        def _download_current(filename_base: str) -> Path | None:
+            """Кликает «Весь список», ждёт xlsx, переименовывает в target."""
+            before = set(DOWNLOAD_DIR.glob("*"))
+            click_info = _click_download_excel(driver, target_label="Весь список")
+            if not click_info.get("clicked"):
+                print(f"       ⚠️  кнопка «Весь список» не найдена")
+                _save_debug_snapshot(driver, f"{filename_base}_no_button")
+                return None
+            print(
+                f"       клик: [{click_info.get('matched')}] "
+                f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
+            )
+            new_file = wait_for_download(
+                DOWNLOAD_DIR, before_snapshot=before, timeout=180
+            )
+            if new_file is None:
+                print(f"       ⚠️  xlsx не появился в папке за 180 сек")
+                _save_debug_snapshot(driver, f"{filename_base}_after_click")
+                return None
+            target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
+            if target.exists():
+                target.unlink()
+            new_file.rename(target)
+            print(f"       ✅ {target.name}")
+            return target
 
         for region in REGIONS:
             print(f"  🌐 регион: {region['key']} ({region['label']})")
@@ -576,32 +659,30 @@ def fetch_top(state: dict) -> list[Path]:
                     _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
                     continue
 
-                before = set(DOWNLOAD_DIR.glob("*"))
-                click_info = _click_download_excel(driver, target_label="Весь список")
-                if not click_info.get("clicked"):
-                    print(f"       ⚠️  кнопка «Весь список» не найдена")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_no_button")
-                    continue
-                print(
-                    f"       клик: [{click_info.get('matched')}] "
-                    f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
-                )
-                new_file = wait_for_download(
-                    DOWNLOAD_DIR, before_snapshot=before, timeout=180
-                )
-                if new_file is None:
-                    print(f"       ⚠️  xlsx не появился в папке за 180 сек")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_after_click")
-                    continue
-                target = (
-                    DOWNLOAD_DIR
-                    / f"top_{sorting['key']}_{region['key']}_{date_str}{new_file.suffix}"
-                )
-                if target.exists():
-                    target.unlink()
-                new_file.rename(target)
-                print(f"       ✅ {target.name}")
-                new_files.append(target)
+                # 1) Скачиваем «текущее» состояние (без явного выбора года —
+                # это последний год по умолчанию)
+                base_name = f"top_{sorting['key']}_{region['key']}_{date_str}"
+                target = _download_current(base_name)
+                if target:
+                    new_files.append(target)
+
+                # 2) Для obyem_vvoda — циклим по годам 2022-2026 и для
+                # каждого скачиваем отдельный xlsx с суффиксом года.
+                if sorting["key"] in PER_YEAR_SORTINGS:
+                    print(f"       ── обход по годам: {PER_YEAR_RANGE}")
+                    for year in PER_YEAR_RANGE:
+                        ok = _switch_year_filter(driver, year)
+                        if not ok:
+                            print(f"          ⚠️  год {year} — не удалось переключить")
+                            continue
+                        # Подождём ещё немного для гарантированного ререндера
+                        if not _wait_for_top_content(driver):
+                            print(f"          ⚠️  год {year} — контент не появился")
+                            continue
+                        year_name = f"top_{sorting['key']}_{region['key']}_{year}_{date_str}"
+                        ytarget = _download_current(year_name)
+                        if ytarget:
+                            new_files.append(ytarget)
 
             # Шаг B: собираем ТОП-100 застройщиков пагинацией (5 страниц × 20)
             # — это для fetch_cards (карточки нужны только по ТОП-100).

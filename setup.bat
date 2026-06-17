@@ -157,8 +157,14 @@ if %DO_SCHEDULER%==1 (
     REM Проверка прав
     net session >nul 2>&1
     if errorlevel 1 (
-        echo [WARN] Setup запущен НЕ от админа — пропускаю Task Scheduler.
-        echo        Запусти scripts\register_scheduler.bat от админа отдельно.
+        echo [WARN] Setup запущен НЕ от админа.
+        echo        Регистрирую задачу в режиме «текущий пользователь»
+        echo        (она будет работать только когда ты залогинен).
+        echo.
+        call scripts\register_scheduler_user.bat
+        echo.
+        echo Для надёжной задачи (работает даже без логина) запусти
+        echo от админа: scripts\register_scheduler.bat
     ) else (
         call scripts\register_scheduler.bat
     )

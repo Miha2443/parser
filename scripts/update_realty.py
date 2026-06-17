@@ -49,12 +49,16 @@ SOURCE_MAP = {
     "kvart":      ("nashdom_checker.py", ["kvartirografia"]),
     "erz-top":    ("erzrf_checker.py",   ["top"]),
     "erz-cards":  ("erzrf_checker.py",   ["cards"]),
+    "fedstat":    ("fedstat_checker.py", []),   # зарплата, ИПЦ, ВРП и пр.
+    "rosstat":    ("rosstat_checker.py", []),   # ВРП/ВВП по годам
 }
 
 GROUP_MAP = {
     "nashdom": ["monitoring", "rasprod", "kvart"],
     "erzrf":   ["erz-top", "erz-cards"],
-    "all":     ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards"],
+    "stats":   ["fedstat", "rosstat"],
+    "all":     ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards",
+                "fedstat", "rosstat"],
 }
 
 
@@ -132,13 +136,16 @@ def diff_snapshots(before: dict, after: dict) -> dict:
     return {"added": added, "changed": changed, "removed": removed}
 
 
-def run_source(alias: str, env: dict) -> bool:
+def run_source(alias: str, env: dict, force: bool = False) -> bool:
     """Запускает один источник. Возвращает True при успехе."""
     if alias not in SOURCE_MAP:
         print(f"⚠️  Неизвестный источник: {alias}")
         return False
     script, args = SOURCE_MAP[alias]
-    cmd = [sys.executable, str(ROOT / script), *args]
+    extra = []
+    if force and alias in ("fedstat", "rosstat"):
+        extra.append("--force")
+    cmd = [sys.executable, str(ROOT / script), *args, *extra]
     print(f"\n{'─'*60}")
     print(f"▶ {alias}: {' '.join(cmd[1:])}")
     print(f"{'─'*60}")
@@ -328,6 +335,9 @@ def main():
                         help="Сколько свежих файлов оставить в активной папке (default: 1)")
     parser.add_argument("--no-notify", action="store_true",
                         help="Не отправлять уведомление в TDM")
+    parser.add_argument("--force", action="store_true",
+                        help="Передать --force в чекеры (игнорировать state, "
+                             "пере-скачать всё)")
     args = parser.parse_args()
 
     # Разворачиваем группы в отдельные источники
@@ -370,7 +380,7 @@ def main():
     successes, failures = [], []
     try:
         for alias in sources:
-            ok = run_source(alias, env)
+            ok = run_source(alias, env, force=args.force)
             (successes if ok else failures).append(alias)
     except KeyboardInterrupt:
         print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")

@@ -325,9 +325,10 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
         return False
 
 
-def run() -> list[Path]:
+def run(force: bool = False) -> list[Path]:
+    """force=True — игнорируем state, перекачиваем все источники."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    state = load_state()
+    state = load_state() if not force else {}
     session = _new_session()
     downloaded: list[Path] = []
 
@@ -398,4 +399,6 @@ def run() -> list[Path]:
 
 
 if __name__ == "__main__":
-    run()
+    import sys
+    force = "--force" in sys.argv
+    run(force=force)

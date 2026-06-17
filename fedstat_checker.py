@@ -1063,9 +1063,10 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
         return None
 
 
-def run():
+def run(force: bool = False):
+    """force=True — игнорируем state, перекачиваем все индикаторы."""
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    state = load_state()
+    state = load_state() if not force else {}
     downloaded_files = []
 
     print(f"\n{'='*60}")
@@ -1117,4 +1118,6 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    import sys
+    force = "--force" in sys.argv
+    run(force=force)

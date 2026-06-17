@@ -62,29 +62,95 @@ GROUP_MAP = {
 }
 
 
-def snapshot_files() -> dict[str, tuple[int, str]]:
-    """Snapshot всех файлов в data/raw/realty: {rel_path: (size, sha256_head)}.
+SNAPSHOT_DIRS = [
+    (REALTY_ROOT, "realty"),
+    (ROOT / "downloads", "downloads"),
+]
 
-    Хеш только первых 256 КБ — достаточно для определения «файл изменился»,
-    а считается мгновенно даже для крупных xlsx.
+
+def snapshot_files() -> dict[str, tuple[int, str]]:
+    """Snapshot файлов realty/ + downloads/: {prefix:rel_path → (size, sha256_head)}.
+
+    Хеш по первым 256 КБ — быстро и достаточно для детекта изменений.
     """
     out: dict[str, tuple[int, str]] = {}
-    if not REALTY_ROOT.exists():
-        return out
-    for f in REALTY_ROOT.rglob("*"):
-        if not f.is_file():
+    for base, prefix in SNAPSHOT_DIRS:
+        if not base.exists():
             continue
-        if "_archive" in f.parts:
-            continue
-        try:
-            size = f.stat().st_size
-            h = hashlib.sha256()
-            with f.open("rb") as fh:
-                h.update(fh.read(256 * 1024))
-            rel = str(f.relative_to(REALTY_ROOT)).replace("\\", "/")
-            out[rel] = (size, h.hexdigest()[:16])
-        except OSError:
-            pass
+        for f in base.rglob("*"):
+            if not f.is_file() or "_archive" in f.parts:
+                continue
+            try:
+                size = f.stat().st_size
+                h = hashlib.sha256()
+                with f.open("rb") as fh:
+                    h.update(fh.read(256 * 1024))
+                rel = str(f.relative_to(base)).replace("\\", "/")
+                out[f"{prefix}:{rel}"] = (size, h.hexdigest()[:16])
+            except OSError:
+                pass
+    return out
+
+
+# Классификатор: путь файла → бизнес-название источника.
+# Применяется к именам из snapshot: «prefix:rel_path».
+def classify_file(rel_with_prefix: str) -> str | None:
+    """Возвращает бизнес-название («ИПЦ», «Квартирография», …) или None."""
+    p = rel_with_prefix.lower()
+    rules = [
+        ("monitoring_2_0", "Мониторинг 2.0"),
+        ("kvartirografia", "Квартирография"),
+        ("rasprodannost", "Распроданность"),
+        ("top_obyem_vvoda", "ERZ ввод"),
+        ("top_obyem_stroitelstva", "ERZ строительство"),
+        ("top_nakopl_vvod", "ERZ накопл. ввод"),
+        ("top_skorost", "ERZ скорость"),
+        ("top_potreb_kachestva", "ERZ потреб. качества"),
+        ("top_developers", "ERZ список топ-100"),
+        ("cards_", "ERZ карточки"),
+        ("наполняемость", "Наполняемость счетов (эскроу)"),
+        ("эскроу", "Наполняемость счетов (эскроу)"),
+        ("escrow", "Наполняемость счетов (эскроу)"),
+        ("среднемесячная", "Зарплата"),
+        ("заработная плата", "Зарплата"),
+        ("потребительских цен", "ИПЦ"),
+        ("индексы потребительских", "ИПЦ"),
+        ("инвестиции в основной", "Инвестиции"),
+        ("введено в действие", "Ввод жилья (Росстат)"),
+        ("количество построенных квартир", "Количество построенных квартир"),
+        ("численность", "Численность населения"),
+        ("валовой региональный", "ВРП"),
+        ("валовый региональный", "ВРП"),
+        ("врп", "ВРП"),
+        ("ввп", "ВВП"),
+        ("vrp", "ВРП"),
+        ("vvp", "ВВП"),
+        ("vds", "ВДС"),
+        ("индекс предпринимательской", "Индекс предпр. уверенности"),
+        ("трудовых ресурсов", "Трудовые ресурсы"),
+        ("занятых в экономике", "Занятые в экономике"),
+        ("средняя цена 1 кв", "Средняя цена м²"),
+        ("средние потребительские цены", "Средние цены товаров/услуг"),
+    ]
+    for needle, label in rules:
+        if needle in p:
+            return label
+    return None
+
+
+def summarize_by_topic(paths: list[str]) -> list[str]:
+    """Группирует пути по бизнес-темам. Возвращает уникальные темы (сортированные)."""
+    topics: set[str] = set()
+    unknown: list[str] = []
+    for p in paths:
+        label = classify_file(p)
+        if label:
+            topics.add(label)
+        else:
+            unknown.append(p)
+    out = sorted(topics)
+    if unknown:
+        out.append(f"прочее ({len(unknown)})")
     return out
 
 
@@ -283,23 +349,16 @@ def build_tdm_report(successes: list[str], failures: list[str],
 
     added = diff.get("added", [])
     changed = diff.get("changed", [])
-    if added or changed:
+    # Группируем добавленные и изменённые в одну корзину «обновилось»
+    updated_topics = summarize_by_topic(added + changed)
+    if updated_topics:
         lines.append("")
-        lines.append("📥 **Изменения в файлах:**")
-        for p in added[:8]:
-            lines.append(f"  + {p}")
-        if len(added) > 8:
-            lines.append(f"  + (и ещё {len(added) - 8})")
-        for p in changed[:8]:
-            lines.append(f"  ✎ {p}")
-        if len(changed) > 8:
-            lines.append(f"  ✎ (и ещё {len(changed) - 8})")
+        lines.append("📥 **Обновилось:**")
+        for t in updated_topics:
+            lines.append(f"  • {t}")
     else:
         lines.append("")
         lines.append("ℹ️ Новых данных нет — все источники без изменений")
-
-    if deduped > 0:
-        lines.append(f"↩️ {deduped} файлов скачано повторно (контент идентичен — удалены)")
 
     if site_dates:
         date_lines = format_site_dates(site_dates)

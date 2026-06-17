@@ -74,3 +74,38 @@ def wait_for_download(
         if completed and not crdownload:
             return completed[0]
     return None
+
+
+def retry_with_refresh(driver, fn, *, attempts: int = 5, refresh: bool = True,
+                       pause: float = 3.0, label: str = ""):
+    """Запускает fn() до `attempts` раз. Между попытками driver.refresh().
+
+    fn возвращает истинное значение при успехе или False/None/raise при неудаче.
+    Возвращает результат fn или None если все попытки провалились.
+
+    Используется когда страница временно не грузится / селектор не появляется:
+        result = retry_with_refresh(driver, lambda: parse_table(driver),
+                                     attempts=5, label="rasprod-table")
+    """
+    import time as _t
+
+    last_exc = None
+    for i in range(attempts):
+        try:
+            result = fn()
+            if result is not None and result is not False:
+                return result
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            tag = f"[{label}] " if label else ""
+            print(f"  ⚠️  {tag}попытка {i + 1}/{attempts}: {exc}")
+        if i < attempts - 1 and refresh:
+            try:
+                driver.refresh()
+            except Exception:  # noqa: BLE001
+                pass
+            _t.sleep(pause)
+    if last_exc:
+        tag = f"[{label}] " if label else ""
+        print(f"  ❌ {tag}все {attempts} попыток провалились")
+    return None

@@ -397,6 +397,9 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="Передать --force в чекеры (игнорировать state, "
                              "пере-скачать всё)")
+    parser.add_argument("--retries", type=int, default=2,
+                        help="Сколько раз повторять упавшие источники "
+                             "(default: 2; задержка 30/60с между раундами)")
     args = parser.parse_args()
 
     # Разворачиваем группы в отдельные источники
@@ -438,9 +441,31 @@ def main():
     started = time.time()
     successes, failures = [], []
     try:
+        # Первый проход
         for alias in sources:
             ok = run_source(alias, env, force=args.force)
             (successes if ok else failures).append(alias)
+
+        # Повторные попытки для упавших источников
+        # (например страница не загрузилась — пробуем ещё)
+        for retry_round in range(1, args.retries + 1):
+            if not failures:
+                break
+            stuck = list(failures)
+            wait_s = 30 * retry_round
+            print(f"\n{'─'*60}")
+            print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
+                  f"{len(stuck)} источников: {', '.join(stuck)}")
+            print(f"{'─'*60}")
+            time.sleep(wait_s)
+            failures = []
+            for alias in stuck:
+                ok = run_source(alias, env, force=args.force)
+                if ok:
+                    successes.append(alias)
+                    print(f"   ✅ {alias} починилось со {retry_round}-й попытки")
+                else:
+                    failures.append(alias)
     except KeyboardInterrupt:
         print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
         sys.exit(130)

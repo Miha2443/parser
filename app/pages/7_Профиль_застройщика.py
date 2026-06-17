@@ -138,7 +138,7 @@ if not mon_devs:
     )
     st.stop()
 
-# Порядок в селекторе: сначала топ ERZRF по объёму строительства РФ
+# Порядок в селекторе: сначала топ ERZRF по объёму ввода в Москве
 # (так Самолет/ПИК/ДОГМА идут первыми вместо «ФОНД СВЯТОСЛАВА ФЕДОРОВА»
 # который алфавитно был наверху из-за кавычек). Если девелопера нет в топе —
 # идёт ниже алфавитно.
@@ -147,7 +147,7 @@ def _build_ordered_devs(mon_names: list[str]) -> list[str]:
     ordered: list[str] = []
     used_keys: set[str] = set()
     # 1) По топу ERZRF
-    top_df = erzrf_top.get("obyem_stroitelstva", {}).get("rf")
+    top_df = erzrf_top.get("obyem_vvoda", {}).get("msk")
     if top_df is not None and not top_df.empty:
         name_col = next((c for c in top_df.columns if "Наименование" in str(c)), None)
         place_col = next((c for c in top_df.columns
@@ -188,7 +188,7 @@ with cols_top[0]:
         ordered_devs,
         key="dev_select_full",
         help=f"{len(ordered_devs)} групп компаний. Порядок: топ ERZRF по объёму "
-             f"строительства РФ → дальше остальные алфавитно. "
+             f"ввода в Москве → дальше остальные алфавитно. "
              f"Данные подтягиваются из 5 источников по нормализованному имени.",
     )
 sel_key = norm(sel_canon)

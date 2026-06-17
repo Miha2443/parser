@@ -224,7 +224,26 @@ def get_last_update_date(driver, indicator_id):
         return None
 
 
-def download_excel(indicator_id, save_dir):
+def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
+    """«12.05.2026» / «2026-05-12» / «12.05.2026 14:30» → '20260512'.
+
+    Если не парсится — возвращает текущую дату как fallback (чтобы файл
+    точно записался). Используется в имени xls-файла, чтобы оно отражало
+    реальную дату обновления данных с сайта, а не день скачивания.
+    """
+    if s:
+        s = str(s).strip()
+        # Пробуем популярные форматы
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M",
+                    "%d-%m-%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s[:len(fmt) + 6], fmt).strftime("%Y%m%d")
+            except (ValueError, TypeError):
+                continue
+    return datetime.now().strftime("%Y%m%d")
+
+
+def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
     PAYLOADS = {
         "33648": {
             "title": "Индекс предпринимательской уверенности в строительстве (процент)",
@@ -1025,7 +1044,11 @@ def download_excel(indicator_id, save_dir):
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
         safe_title = safe_title[:80]
-        filename = f"{datetime.now().strftime('%Y%m%d')}_{safe_title}.xls"
+        # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
+        # (а не сегодняшняя). Так файл сразу говорит когда контент
+        # реально обновлён.
+        date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
+        filename = f"{date_in_name}_{safe_title}.xls"
         save_path = save_dir / filename
 
         with open(save_path, "wb") as f:
@@ -1072,7 +1095,8 @@ def run():
                 print(f"  ✔️  Без изменений ({remote_date})\n")
                 continue
 
-            saved_path = download_excel(indicator_id, DOWNLOAD_DIR)
+            saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
+                                        remote_date=remote_date)
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date

@@ -184,9 +184,84 @@ def check_escrow():
         print(f"✓ Файл есть: {latest.name} (от {date})")
 
 
+def collect_site_dates() -> dict:
+    """Собирает «дата последнего обновления на сайте» из state-файлов.
+
+    Возвращает {source: {indicator/key: date_str}} для:
+      fedstat — fedstat_state.json: {indicator_id: «12.05.2026»}
+      rosstat — rosstat_state.json: {key: {date, filename, url}}
+      nashdom rasprodannost — nashdom_state.json → state['rasprodannost']
+    """
+    out: dict = {}
+    for state_file, key in [
+        (ROOT / "fedstat_state.json", "fedstat"),
+        (ROOT / "rosstat_state.json", "rosstat"),
+        (ROOT / "state" / "nashdom_state.json", "nashdom"),
+        (ROOT / "state" / "erzrf_state.json", "erzrf"),
+    ]:
+        if not state_file.is_file():
+            continue
+        try:
+            import json as _j
+            data = _j.loads(state_file.read_text(encoding="utf-8"))
+            out[key] = data
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def format_site_dates(site_dates: dict) -> list[str]:
+    """Превращает state-данные в короткие строки для TDM-сводки."""
+    lines: list[str] = []
+
+    # fedstat: {indicator_id: «12.05.2026»}
+    fed = site_dates.get("fedstat") or {}
+    if isinstance(fed, dict) and fed:
+        # Берём «латест» как тот что чаще встречается и пишем 2-3 примера
+        dates = [v for v in fed.values() if isinstance(v, str)]
+        if dates:
+            uniq = sorted(set(dates))
+            sample = ", ".join(uniq[-3:])
+            lines.append(f"  · fedstat обновлён: {sample}")
+
+    # rosstat: {key: {date, filename, url}}
+    ros = site_dates.get("rosstat") or {}
+    if isinstance(ros, dict) and ros:
+        dates = [v.get("date") for v in ros.values()
+                 if isinstance(v, dict) and v.get("date")]
+        if dates:
+            uniq = sorted(set(dates))
+            sample = ", ".join(uniq[-3:])
+            lines.append(f"  · rosstat обновлён: {sample}")
+
+    # nashdom: state['rasprodannost'].get('report_period')
+    nd = site_dates.get("nashdom") or {}
+    if isinstance(nd, dict):
+        for sub_key, label in [("monitoring_2_0", "monitoring"),
+                                ("rasprodannost", "rasprod"),
+                                ("kvartirografia", "kvart")]:
+            sub = nd.get(sub_key)
+            if isinstance(sub, dict):
+                period = (sub.get("report_period")
+                          or sub.get("scraped_at", "")[:10])
+                if period:
+                    lines.append(f"  · nashdom/{label}: {period}")
+
+    # erzrf
+    erz = site_dates.get("erzrf") or {}
+    if isinstance(erz, dict):
+        sub = erz.get("erzrf_top") or {}
+        if isinstance(sub, dict):
+            when = sub.get("last_run", "")[:10]
+            if when:
+                lines.append(f"  · erzrf обновлён: {when}")
+    return lines
+
+
 def build_tdm_report(successes: list[str], failures: list[str],
                      diff: dict, total_min: float,
-                     deduped: int = 0) -> str:
+                     deduped: int = 0,
+                     site_dates: dict | None = None) -> str:
     """Формирует текст сводки для TDM."""
     icon = "✅" if not failures else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -218,6 +293,14 @@ def build_tdm_report(successes: list[str], failures: list[str],
 
     if deduped > 0:
         lines.append(f"↩️ {deduped} файлов скачано повторно (контент идентичен — удалены)")
+
+    if site_dates:
+        date_lines = format_site_dates(site_dates)
+        if date_lines:
+            lines.append("")
+            lines.append("📅 **Дата данных на сайтах:**")
+            lines.extend(date_lines)
+
     return "\n".join(lines)
 
 
@@ -329,7 +412,8 @@ def main():
             sys.path.insert(0, str(ROOT))
             from pipeline.tdm_notify import notify
             text = build_tdm_report(successes, failures, diff, total_min,
-                                    deduped=deduped_count)
+                                    deduped=deduped_count,
+                                    site_dates=collect_site_dates())
             notify(text, silent=True)
         except Exception:  # noqa: BLE001
             pass

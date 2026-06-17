@@ -143,25 +143,35 @@ if not mon_devs:
 # который алфавитно был наверху из-за кавычек). Если девелопера нет в топе —
 # идёт ниже алфавитно.
 def _build_ordered_devs(mon_names: list[str]) -> list[str]:
+    """Сортировка для селектора: сначала топ по накопленному вводу с 2016.
+
+    Накопленный ввод считается из cards (sum Сдано_YYYY за все годы).
+    Кто не в cards (не топ-100) — добавляется ниже алфавитно.
+    """
     mon_by_key = {norm(n): n for n in mon_names}
     ordered: list[str] = []
     used_keys: set[str] = set()
-    # 1) По топу ERZRF
-    top_df = erzrf_top.get("obyem_vvoda", {}).get("msk")
-    if top_df is not None and not top_df.empty:
-        name_col = next((c for c in top_df.columns if "Наименование" in str(c)), None)
-        place_col = next((c for c in top_df.columns
-                          if str(c).strip().lower() in ("место", "место ")), None)
-        if name_col:
-            df = top_df.sort_values(place_col) if place_col else top_df
-            for raw in df[name_col].dropna():
-                k = norm(str(raw))
-                if k in used_keys:
-                    continue
-                if k in mon_by_key:
-                    ordered.append(mon_by_key[k])
-                    used_keys.add(k)
-    # 2) Остальные monitoring (которых нет в топе) — алфавитно
+
+    # 1) По сумме Сдано из cards (накопленный ввод)
+    if not erzrf_cards.empty:
+        sdano_cols = [c for c in erzrf_cards.columns
+                      if str(c).startswith("Сдано_") and str(c).endswith("_м²_num")]
+        if sdano_cols:
+            tmp = erzrf_cards.copy()
+            tmp["_total"] = tmp[sdano_cols].sum(axis=1)
+            tmp = tmp.sort_values("_total", ascending=False)
+            name_col = "name_card" if "name_card" in tmp.columns else (
+                "name_table" if "name_table" in tmp.columns else None)
+            if name_col:
+                for raw in tmp[name_col].dropna():
+                    k = norm(str(raw))
+                    if k in used_keys:
+                        continue
+                    if k in mon_by_key:
+                        ordered.append(mon_by_key[k])
+                        used_keys.add(k)
+
+    # 2) Остальные monitoring — алфавитно
     rest = [n for k, n in mon_by_key.items() if k not in used_keys]
     ordered.extend(sorted(rest))
     return ordered
@@ -381,6 +391,17 @@ def other_regions_total() -> str:
 
 # === 3 donut диаграммы ===
 st.markdown("### Структура ввода по типу площади (Москва)")
+
+# Легенда цветов для 4 категорий (общая для всех 3 донатов)
+legend_html = "<div style='text-align:center;margin-bottom:8px;font-size:13px;'>" + \
+    " &nbsp; ".join(
+        f"<span style='display:inline-block;width:11px;height:11px;"
+        f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
+        f"<span style='vertical-align:middle;'>{lbl}</span>"
+        for lbl, c in zip(CAT_LABELS, CAT_COLORS)
+    ) + "</div>"
+st.markdown(legend_html, unsafe_allow_html=True)
+
 pie_cols = st.columns(3)
 
 with pie_cols[0]:
@@ -512,6 +533,15 @@ with left:
         "",
         colors=colors_3,
     )
+    # Легенда цветов для 3 категорий «В строительстве»
+    legend_3 = "<div style='text-align:center;font-size:13px;'>" + \
+        " &nbsp; ".join(
+            f"<span style='display:inline-block;width:11px;height:11px;"
+            f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
+            f"<span style='vertical-align:middle;'>{lbl}</span>"
+            for lbl, c in zip(cats_3.keys(), colors_3)
+        ) + "</div>"
+    st.markdown(legend_3, unsafe_allow_html=True)
 
 with right:
     st.markdown("#### Распроданность / стройготовность")

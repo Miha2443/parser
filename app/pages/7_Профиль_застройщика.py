@@ -31,7 +31,7 @@ st.set_page_config(page_title="Профиль застройщика — Ана�
 
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
-CAT_LABELS = ["Жилое", "МОП", "Нежилое в жилом", "Нежилое отдельное"]
+CAT_LABELS = ["Жилое", "МОП", "Нежилье в жилье", "Нежилое отдельное"]
 CAT_COLORS = ["#8BC540", "#A8DC74", "#4EC3E0", "#7A8386"]
 CAT_COL_PREFIX = "category_"
 
@@ -59,18 +59,20 @@ def categorize_sum(df: pd.DataFrame) -> dict:
     }
 
 
-def render_donut(values: dict, title: str = "", subtitle: str = ""):
-    """Donut с 4 цветными сегментами + значение в центре."""
+def render_donut(values: dict, title: str = "", subtitle: str = "",
+                 colors: list[str] | None = None):
+    """Donut с цветными сегментами + значение в центре."""
     total = sum(values.values())
     if total <= 0:
         st.info(f"Нет данных: {title}")
         return
     # На сегментах — ЗНАЧЕНИЕ (тыс. м²), в hover — процент.
     seg_texts = [ru_num(v / 1000, 0) for v in values.values()]
+    seg_colors = colors if colors is not None else CAT_COLORS
     fig = go.Figure(go.Pie(
         labels=list(values.keys()),
         values=list(values.values()),
-        marker=dict(colors=CAT_COLORS),
+        marker=dict(colors=seg_colors),
         text=seg_texts,
         textinfo="text",
         textfont=dict(size=11),
@@ -488,36 +490,27 @@ else:
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
 
 
-# === В строительстве (donut слева) + Распроданность/готовность (справа) ===
-st.markdown("### В строительстве и распроданность")
+# === В строительстве (donut слева) + Распроданность/стройготовность (справа) ===
+st.markdown("### В строительстве")
 left, right = st.columns([2, 1])
 
 with left:
-    # Подпись: количество квартир + жилая площадь (=что показывает наш.дом.рф)
-    n_objects = len(oks_dev)
-    n_apartments = int(pd.to_numeric(
-        oks_dev.get("Количество квартир", pd.Series(dtype=float)),
-        errors="coerce").fillna(0).sum())
-    zhilaya = float(oks_dev["category_жилое"].sum()) if not oks_dev.empty else 0
-    subtitle = ""
-    if n_objects:
-        parts = []
-        if n_apartments:
-            parts.append(f"{ru_num(n_apartments)} квартир")
-        if zhilaya > 0:
-            parts.append(f"жилая {ru_num(zhilaya/1000)} тыс. м²")
-        parts.append(f"{n_objects} объектов")
-        subtitle = " · ".join(parts)
+    # Для donut «В строительстве» используем 3 категории (а не 4 как
+    # в других местах): МОП объединяется с «Нежилье в жилье» в одну.
+    raw_cats = categorize_sum(oks_dev)
+    cats_3 = {
+        "Жилое": raw_cats.get("Жилое", 0),
+        "Нежилье в жилье и МОП":
+            raw_cats.get("МОП", 0) + raw_cats.get("Нежилье в жилье", 0),
+        "Нежилое отдельное": raw_cats.get("Нежилое отдельное", 0),
+    }
+    # Цвета: зелёный / тёплый жёлто-оранжевый / серый
+    colors_3 = ["#8BC540", "#F4A261", "#7A8386"]
     render_donut(
-        categorize_sum(oks_dev),
+        cats_3,
         "В строительстве (Москва)",
-        subtitle,
-    )
-    st.caption(
-        "Только объекты в статусе «Строящийся». Число в центре — "
-        "**общая площадь** (жильё + МОП + паркинги + соцобъекты). "
-        "На наш.дом.рф/квартирография показывают только зелёный сегмент "
-        "«Жилое». Источник: Мониторинг 2.0 / Реестр ОКС."
+        "",
+        colors=colors_3,
     )
 
 with right:
@@ -585,7 +578,7 @@ with right:
             st.markdown(html, unsafe_allow_html=True)
             period_str = f"{lm:02d}.{ly}" if latest_period else ""
             if period_str:
-                st.caption(f"На {period_str} · Источник: наш.дом.рф")
+                st.caption(f"На {period_str}")
         else:
             st.info("Застройщик не найден в распроданности")
     else:
@@ -652,7 +645,7 @@ def _render_kvart_section(total_shtuk: float, area_th: float,
         },
     )
     date_suffix = f" · дата: **{date_kvart}**" if date_kvart else ""
-    st.caption(f"Регион: **{region_label}**. {source_note}{date_suffix}")
+    st.caption(f"Регион: **{region_label}**{date_suffix}")
 
 
 if kvart_rows.empty:
@@ -847,53 +840,63 @@ def pct_str(num: float | None, denom: float | None) -> str:
     return f"{num / denom * 100:.1f}%"
 
 
+# Знаменатели для МСК берём из monitoring 2.0:
+# — текущее строительство МСК = Общая площадь объектов ОКС со Статусом «Строящийся»
+# — ввод 2026 МСК = Общая площадь объектов РВ за 2026
+# — ввод 2022-2025 МСК = Общая площадь объектов РВ за 2022..2025
+mon_stroy_msk = float(oks_dev["Общая площадь"].sum()) if not oks_dev.empty else 0.0
+mon_vvod_msk_2026 = 0.0
+mon_vvod_msk_2225 = 0.0
+if not rv_dev.empty:
+    rv_2026 = rv_dev[rv_dev.get("Год ввода по Мосстату") == 2026]
+    mon_vvod_msk_2026 = float(rv_2026["Общая площадь"].sum())
+    rv_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
+    mon_vvod_msk_2225 = float(rv_2225["Общая площадь"].sum())
+
+
 # === Ряд 1: текущее строительство (РФ + МСК) ===
 r1c1, r1c2 = st.columns(2)
 with r1c1:
     subs = [
         (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
          pct_str(perenos_stroy_rf, stroitelstvo_rf)),
-        ("источник: top_obyem_stroitelstva (ERZ)", ""),
     ]
     render_delay_card("Перенос в текущем строительстве РФ", perenos_stroy_rf, subs)
 with r1c2:
+    # Москва: знаменатель из monitoring 2.0 (Реестр ОКС, статус «Строящийся»)
     subs = [
-        (f"от {ru_num((stroitelstvo_msk or 0)/1000)} тыс. м² в стройке Москвы",
-         pct_str(perenos_stroy_msk, stroitelstvo_msk)),
-        ("источник: top_obyem_stroitelstva_msk (ERZ)", ""),
+        (f"от {ru_num(mon_stroy_msk/1000)} тыс. м² в стройке Москвы",
+         pct_str(perenos_stroy_msk, mon_stroy_msk)),
     ]
     render_delay_card("Перенос в текущем строительстве МСК", perenos_stroy_msk, subs)
 
 # === Ряд 2: переносы ввода ===
 r2c1, r2c2 = st.columns(2)
 with r2c1:
+    # Москва: знаменатель из monitoring 2.0 (РВ за 2022..2025)
     if exact_years_found:
         title = f"Перенос в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
-        subs = [
-            (f"от {ru_num(base_msk_2225/1000)} тыс. м² введённых в Москве",
-             pct_str(perenos_msk_2225, base_msk_2225)),
-            (f"источник: top_obyem_vvoda_msk_YYYY (ERZ по годам, "
-             f"собрано лет: {len(exact_years_found)})", ""),
-        ]
+        value = perenos_msk_2225
     else:
         title = "Перенос в Москве за 2022-2025 (оценка)"
-        subs = [
-            (f"от {ru_num(msk_2225_zhilye/1000)} тыс. м² жилого ввода Москвы 22-25",
-             pct_str(perenos_msk_2225_est, msk_2225_zhilye)),
-            ("⚠️ оценка: точных данных нет. Запусти erzrf_checker top — "
-             "соберёт per-year файлы top_obyem_vvoda_msk_YYYY_*.xlsx", ""),
-        ]
-    render_delay_card(title, perenos_msk_2225, subs)
+        value = perenos_msk_2225_est
+    subs = [
+        (f"от {ru_num(mon_vvod_msk_2225/1000)} тыс. м² введённых в Москве 22-25",
+         pct_str(value, mon_vvod_msk_2225)),
+    ]
+    render_delay_card(title, value, subs)
 with r2c2:
+    # РФ-карточка: знаменатель оставляем ERZ (как договорились)
     subs = [
         (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке РФ",
          pct_str(perenos_vvod_rf_2026, stroitelstvo_rf)),
+        # Москва-строка: знаменатель из monitoring 2.0 (РВ за 2026)
         (f"в Москве: {fmt_thousand_m2(perenos_vvod_msk_2026)} "
-         f"({pct_str(perenos_vvod_msk_2026, stroitelstvo_msk)} от стройки МСК)", ""),
+         f"({pct_str(perenos_vvod_msk_2026, mon_vvod_msk_2026)} от ввода МСК)", ""),
     ]
     render_delay_card("Перенос ввода за 2026 (РФ)", perenos_vvod_rf_2026, subs)
 
-# === Ряд 3: в других регионах + место для будущей карточки ===
+# === Ряд 3: в других регионах ===
 r3c1, _ = st.columns(2)
 with r3c1:
     subs = [
@@ -903,15 +906,6 @@ with r3c1:
          pct_str(other_perenos_2026, perenos_vvod_rf_2026)),
     ]
     render_delay_card("В других регионах за 2026", other_perenos_2026, subs)
-
-st.caption(
-    "Источники: ERZRF top_obyem_stroitelstva (МСК + РФ), "
-    "top_obyem_vvoda (МСК + РФ), карточка cards (РФ по годам). "
-    "Для ТОЧНЫХ переносов в Москве за 2022-2025 нужно научить парсер ERZ "
-    "переключать год на сайте и скачивать данные за каждый год — "
-    "пришли URL/скриншот фильтра «год» на сайте ERZ."
-)
-
 
 # === Кредитные лимиты и наполнение Эскроу ===
 st.markdown("### Кредитные лимиты и наполнение Эскроу")
@@ -966,9 +960,8 @@ else:
             ec[3].metric("Выручка от продаж", fmt_mlrd(vyruchka))
             ec[4].metric("Покрытие займов выручкой",
                          f"{pokrytie:.0f}%" if pokrytie else "—")
-            date_suffix = f" · дата выгрузки: **{date_escrow}**" if date_escrow else ""
-            st.caption(
-                f"Источник: ДОМ.РФ ЕИСЖС, {len(rows)} объектов в Москве{date_suffix}")
+            if date_escrow:
+                st.caption(f"Дата документа: **{date_escrow}**")
 
 
 # === Список объектов ===

@@ -38,8 +38,12 @@ if exist .env (
   )
 )
 
+REM Выбираем Python: venv приоритетнее системного py
+set PY_EXE=py
+if exist ".venv\Scripts\python.exe" set PY_EXE=.venv\Scripts\python.exe
+
 REM Запуск с per-dev обходом ТОЛЬКО ПО ПОНЕДЕЛЬНИКАМ
-py scripts\update_realty.py --weekly-kvart-per-dev >> "%LOG_FILE%" 2>&1
+%PY_EXE% scripts\update_realty.py --weekly-kvart-per-dev >> "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%
 
 echo. >> "%LOG_FILE%"

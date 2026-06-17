@@ -1,20 +1,19 @@
 @echo off
-chcp 65001 >nul 2>&1
-REM Проверка TDM-бота: список групп + тестовое сообщение.
+REM TDM bot check: list groups + send test message.
 
 setlocal
 cd /d %~dp0
 
 if not exist .venv\Scripts\python.exe (
-    echo [ERROR] .venv не найден. Запусти сначала setup.bat
+    echo [ERROR] .venv not found. Run setup.bat first.
     pause
     exit /b 1
 )
 
-echo === Список групп бота ===
+echo === Bot groups ===
 .venv\Scripts\python.exe -m pipeline.tdm_notify --groups
 echo.
-echo === Тестовое сообщение ===
+echo === Test message ===
 .venv\Scripts\python.exe -m pipeline.tdm_notify --test
 echo.
 pause

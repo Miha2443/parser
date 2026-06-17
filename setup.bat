@@ -1,16 +1,14 @@
 @echo off
-chcp 65001 >nul 2>&1
-REM ────────────────────────────────────────────────────────────────────
-REM Setup на чистом Windows-компе.
+REM ============================================================
+REM  Setup parser dashboard on a clean Windows machine.
+REM  Run as Administrator for Task Scheduler registration.
 REM
-REM Запускать ОТ ИМЕНИ АДМИНИСТРАТОРА для регистрации Task Scheduler.
-REM
-REM Использование:
-REM   setup.bat                       полный setup
-REM   setup.bat --no-scrape           без первичного сбора (сайт сразу)
-REM   setup.bat --no-scheduler        без регистрации cron
-REM   setup.bat --no-start            без автозапуска сайта в конце
-REM ────────────────────────────────────────────────────────────────────
+REM  Usage:
+REM    setup.bat                  full setup
+REM    setup.bat --no-scrape      skip first data download
+REM    setup.bat --no-scheduler   skip cron registration
+REM    setup.bat --no-start       skip launching site at the end
+REM ============================================================
 
 setlocal enabledelayedexpansion
 cd /d %~dp0
@@ -30,156 +28,152 @@ goto parse_args
 echo.
 echo ============================================================
 echo  Setup parser dashboard
-echo  Папка: %CD%
+echo  Folder: %CD%
 echo ============================================================
 echo.
 
-REM === Шаг 1: проверка Python ===
-echo [1/8] Проверка Python...
+REM --- Step 1: Python ---
+echo [1/8] Python check...
 where py >nul 2>nul
 if errorlevel 1 (
     where python >nul 2>nul
-    if errorlevel 1 goto :no_python
+    if errorlevel 1 goto no_python
     set PY=python
 ) else (
     set PY=py
 )
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
-if errorlevel 1 goto :old_python
+if errorlevel 1 goto old_python
 %PY% --version
 echo.
-goto :step2
+goto step2
 
 :no_python
-echo [ERROR] Python не установлен. Скачай с https://www.python.org/
-echo         Нужен Python 3.10+. Поставь галочку «Add to PATH».
+echo [ERROR] Python not installed. Get it from https://www.python.org/
+echo         Need Python 3.10+. Check "Add to PATH" during install.
 pause
 exit /b 1
 
 :old_python
-echo [ERROR] Нужен Python 3.10 или новее.
+echo [ERROR] Need Python 3.10 or newer.
 %PY% --version
 pause
 exit /b 1
 
 :step2
-REM === Шаг 2: проверка Chrome ===
-echo [2/8] Проверка Chrome...
+REM --- Step 2: Chrome ---
+echo [2/8] Chrome check...
 set CHROME_OK=0
-REM Используем PowerShell — он умеет искать chrome.exe в разных местах
-REM без проблем со скобками в путях.
 for /f "tokens=*" %%i in ('powershell -NoProfile -Command "@('C:\Program Files\Google\Chrome\Application\chrome.exe','C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',$env:LOCALAPPDATA+'\Google\Chrome\Application\chrome.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1"') do (
     if not "%%i"=="" set CHROME_OK=1
 )
 if !CHROME_OK!==1 (
-    echo Chrome обнаружен.
+    echo Chrome found.
 ) else (
-    echo [WARN] Chrome не найден. Selenium-парсеры nashdom, erzrf не заработают.
-    echo        Скачай: https://www.google.com/chrome/
-    set /p _continue=Продолжить без Chrome? [y/N]:
+    echo [WARN] Chrome not found. Selenium parsers will not work.
+    echo        Get it from https://www.google.com/chrome/
+    set /p _continue=Continue without Chrome? [y/N]:
     if /i not "!_continue!"=="y" exit /b 1
 )
 echo.
 
-REM === Шаг 3: venv ===
-echo [3/8] Создание виртуального окружения .venv ...
+REM --- Step 3: venv ---
+echo [3/8] Creating .venv ...
 if exist .venv (
-    echo .venv уже существует, пропускаю.
+    echo .venv already exists, skipping.
 ) else (
     %PY% -m venv .venv
     if errorlevel 1 (
-        echo [ERROR] Не удалось создать venv
+        echo [ERROR] venv creation failed
         pause
         exit /b 1
     )
 )
 set VENV_PY=%CD%\.venv\Scripts\python.exe
-echo Используем: %VENV_PY%
+echo Using: %VENV_PY%
 echo.
 
-REM === Шаг 4: зависимости ===
-echo [4/8] Установка зависимостей (2-5 минут)...
+REM --- Step 4: dependencies ---
+echo [4/8] Installing dependencies [2-5 min]...
 "%VENV_PY%" -m pip install --upgrade pip --quiet
 "%VENV_PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo [ERROR] Не удалось установить зависимости
+    echo [ERROR] Failed to install dependencies
     pause
     exit /b 1
 )
-echo Зависимости установлены.
+echo Dependencies installed.
 echo.
 
-REM === Шаг 5: .env ===
-echo [5/8] Проверка .env...
+REM --- Step 5: .env ---
+echo [5/8] .env check...
 if not exist .env (
     if exist .env.example (
         copy .env.example .env >nul
-        echo .env создан из .env.example.
+        echo .env created from .env.example.
         echo.
-        echo [ВАЖНО] Открой .env и впиши секреты:
-        echo   TDM_BOT_TOKEN     - токен бота TDM
-        echo   TDM_WORKSPACE_ID  - ID пространства
-        echo   TDM_GROUP_ID      - ID чата куда слать уведомления
+        echo [IMPORTANT] Open .env and fill in secrets:
+        echo   TDM_BOT_TOKEN     - bot token
+        echo   TDM_WORKSPACE_ID  - workspace id
+        echo   TDM_GROUP_ID      - chat id for notifications
         echo.
-        echo Узнать ID групп после установки:
-        echo   tdm_test.bat
+        echo To find IDs run after setup:  tdm_test.bat
         echo.
-        set /p _continue=Открыть .env в блокноте? [Y/n]:
+        set /p _continue=Open .env in notepad? [Y/n]:
         if /i not "!_continue!"=="n" notepad .env
     ) else (
-        echo [WARN] .env.example отсутствует, .env не создан
+        echo [WARN] .env.example missing, .env not created
     )
 ) else (
-    echo .env уже есть.
+    echo .env already exists.
 )
 echo.
 
-REM === Шаг 6: первичный сбор данных ===
+REM --- Step 6: first scrape ---
 if !DO_SCRAPE!==1 (
-    echo [6/8] Первичный сбор данных update_realty.py...
-    echo Это займёт ~40-60 минут. Можешь свернуть окно.
+    echo [6/8] First data scrape via update_realty.py ...
+    echo This takes 40-60 min. You can minimize the window.
     echo.
     "%VENV_PY%" scripts\update_realty.py
     echo.
 ) else (
-    echo [6/8] Первичный сбор данных пропущен --no-scrape
+    echo [6/8] First scrape skipped --no-scrape
     echo.
 )
 
-REM === Шаг 7: Task Scheduler ===
+REM --- Step 7: Task Scheduler ---
 if !DO_SCHEDULER!==1 (
-    echo [7/8] Регистрация задачи в Task Scheduler...
+    echo [7/8] Registering Task Scheduler...
     net session >nul 2>&1
     if errorlevel 1 (
-        echo [WARN] Setup запущен НЕ от админа.
-        echo        Регистрирую задачу в режиме «текущий пользователь».
-        echo        Будет работать только когда ты залогинен.
+        echo [WARN] Setup is NOT running as admin.
+        echo        Registering per-user task. It only fires while you are logged in.
         echo.
         call scripts\register_scheduler_user.bat
         echo.
-        echo Для надёжной задачи запусти от админа: scripts\register_scheduler.bat
+        echo For robust task run as admin:  scripts\register_scheduler.bat
     ) else (
         call scripts\register_scheduler.bat
     )
 ) else (
-    echo [7/8] Регистрация Task Scheduler пропущена --no-scheduler
+    echo [7/8] Task Scheduler skipped --no-scheduler
 )
 echo.
 
-REM === Шаг 8: запуск сайта ===
+REM --- Step 8: launch site ---
 echo ============================================================
-echo  УСТАНОВКА ЗАВЕРШЕНА
+echo  SETUP COMPLETE
 echo ============================================================
 echo.
-echo Дальше:
-echo   - Запустить сайт:      start.bat
-echo   - Обновить данные:     update.bat
-echo   - Тест TDM-бота:       tdm_test.bat
+echo Next:
+echo   - Launch site:        start.bat
+echo   - Refresh data:       update.bat
+echo   - Test TDM bot:       tdm_test.bat
 echo.
-echo Сайт будет обновляться каждый день в 06:00.
+echo Site will refresh daily at 06:00.
 echo.
 if !DO_START!==1 (
-    set /p _start=Запустить сайт сейчас? [Y/n]:
+    set /p _start=Launch site now? [Y/n]:
     if /i not "!_start!"=="n" call start.bat
 )
 endlocal

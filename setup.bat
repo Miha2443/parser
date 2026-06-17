@@ -1,18 +1,9 @@
 @echo off
+chcp 65001 >nul 2>&1
 REM ────────────────────────────────────────────────────────────────────
 REM Setup на чистом Windows-компе.
 REM
-REM Что делает (по шагам):
-REM   1. Проверка Python (нужен 3.10+)
-REM   2. Проверка Chrome (для Selenium-парсеров)
-REM   3. Создание venv в .venv\
-REM   4. pip install -r requirements.txt
-REM   5. Создание .env из .env.example если его нет
-REM   6. Первичный сбор данных (update_realty.py — ~40-60 мин)
-REM   7. Регистрация Task Scheduler на ежедневный запуск в 06:00
-REM   8. Запуск Streamlit-сайта
-REM
-REM Запускать ОТ ИМЕНИ АДМИНИСТРАТОРА (нужно для Task Scheduler).
+REM Запускать ОТ ИМЕНИ АДМИНИСТРАТОРА для регистрации Task Scheduler.
 REM
 REM Использование:
 REM   setup.bat                       полный setup
@@ -48,46 +39,50 @@ echo [1/8] Проверка Python...
 where py >nul 2>nul
 if errorlevel 1 (
     where python >nul 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Python не установлен. Скачай с https://www.python.org/
-        echo         Нужен Python 3.10+. Поставь галочку «Add to PATH».
-        pause
-        exit /b 1
-    )
+    if errorlevel 1 goto :no_python
     set PY=python
 ) else (
     set PY=py
 )
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
-if errorlevel 1 (
-    echo [ERROR] Нужен Python 3.10 или новее.
-    %PY% --version
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :old_python
 %PY% --version
 echo.
+goto :step2
 
+:no_python
+echo [ERROR] Python не установлен. Скачай с https://www.python.org/
+echo         Нужен Python 3.10+. Поставь галочку «Add to PATH».
+pause
+exit /b 1
+
+:old_python
+echo [ERROR] Нужен Python 3.10 или новее.
+%PY% --version
+pause
+exit /b 1
+
+:step2
 REM === Шаг 2: проверка Chrome ===
 echo [2/8] Проверка Chrome...
 set CHROME_OK=0
-if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set CHROME_OK=1
-if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set CHROME_OK=1
-if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set CHROME_OK=1
-if %CHROME_OK%==0 (
-    echo [WARN] Chrome не найден в стандартных местах. Selenium-парсеры
-    echo        (nashdom, erzrf) НЕ заработают.
-    echo        Скачай с https://www.google.com/chrome/
-    echo        После установки запусти setup.bat ещё раз.
-    set /p _continue=Продолжить без Chrome? (y/N):
-    if /i not "!_continue!"=="y" exit /b 1
-) else (
+REM Используем PowerShell — он умеет искать chrome.exe в разных местах
+REM без проблем со скобками в путях.
+for /f "tokens=*" %%i in ('powershell -NoProfile -Command "@('C:\Program Files\Google\Chrome\Application\chrome.exe','C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',$env:LOCALAPPDATA+'\Google\Chrome\Application\chrome.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1"') do (
+    if not "%%i"=="" set CHROME_OK=1
+)
+if !CHROME_OK!==1 (
     echo Chrome обнаружен.
+) else (
+    echo [WARN] Chrome не найден. Selenium-парсеры nashdom, erzrf не заработают.
+    echo        Скачай: https://www.google.com/chrome/
+    set /p _continue=Продолжить без Chrome? [y/N]:
+    if /i not "!_continue!"=="y" exit /b 1
 )
 echo.
 
 REM === Шаг 3: venv ===
-echo [3/8] Создание виртуального окружения (.venv\)...
+echo [3/8] Создание виртуального окружения .venv ...
 if exist .venv (
     echo .venv уже существует, пропускаю.
 ) else (
@@ -103,7 +98,7 @@ echo Используем: %VENV_PY%
 echo.
 
 REM === Шаг 4: зависимости ===
-echo [4/8] Установка зависимостей (это займёт 2-5 минут)...
+echo [4/8] Установка зависимостей (2-5 минут)...
 "%VENV_PY%" -m pip install --upgrade pip --quiet
 "%VENV_PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
@@ -126,10 +121,10 @@ if not exist .env (
         echo   TDM_WORKSPACE_ID  - ID пространства
         echo   TDM_GROUP_ID      - ID чата куда слать уведомления
         echo.
-        echo Узнать ID групп: после установки запусти
-        echo   .venv\Scripts\python.exe -m pipeline.tdm_notify --groups
+        echo Узнать ID групп после установки:
+        echo   tdm_test.bat
         echo.
-        set /p _continue=Откроем .env в блокноте сейчас? (Y/n):
+        set /p _continue=Открыть .env в блокноте? [Y/n]:
         if /i not "!_continue!"=="n" notepad .env
     ) else (
         echo [WARN] .env.example отсутствует, .env не создан
@@ -140,36 +135,34 @@ if not exist .env (
 echo.
 
 REM === Шаг 6: первичный сбор данных ===
-if %DO_SCRAPE%==1 (
-    echo [6/8] Первичный сбор данных (update_realty.py)...
+if !DO_SCRAPE!==1 (
+    echo [6/8] Первичный сбор данных update_realty.py...
     echo Это займёт ~40-60 минут. Можешь свернуть окно.
     echo.
     "%VENV_PY%" scripts\update_realty.py
     echo.
 ) else (
-    echo [6/8] Первичный сбор данных пропущен (--no-scrape).
+    echo [6/8] Первичный сбор данных пропущен --no-scrape
     echo.
 )
 
 REM === Шаг 7: Task Scheduler ===
-if %DO_SCHEDULER%==1 (
+if !DO_SCHEDULER!==1 (
     echo [7/8] Регистрация задачи в Task Scheduler...
-    REM Проверка прав
     net session >nul 2>&1
     if errorlevel 1 (
         echo [WARN] Setup запущен НЕ от админа.
-        echo        Регистрирую задачу в режиме «текущий пользователь»
-        echo        (она будет работать только когда ты залогинен).
+        echo        Регистрирую задачу в режиме «текущий пользователь».
+        echo        Будет работать только когда ты залогинен.
         echo.
         call scripts\register_scheduler_user.bat
         echo.
-        echo Для надёжной задачи (работает даже без логина) запусти
-        echo от админа: scripts\register_scheduler.bat
+        echo Для надёжной задачи запусти от админа: scripts\register_scheduler.bat
     ) else (
         call scripts\register_scheduler.bat
     )
 ) else (
-    echo [7/8] Регистрация Task Scheduler пропущена (--no-scheduler).
+    echo [7/8] Регистрация Task Scheduler пропущена --no-scheduler
 )
 echo.
 
@@ -179,15 +172,14 @@ echo  УСТАНОВКА ЗАВЕРШЕНА
 echo ============================================================
 echo.
 echo Дальше:
-echo   - Запустить сайт:        start.bat
-echo   - Обновить данные:       update.bat
-echo   - Тест TDM-бота:         tdm_test.bat
-echo   - Список групп TDM:      .venv\Scripts\python.exe -m pipeline.tdm_notify --groups
+echo   - Запустить сайт:      start.bat
+echo   - Обновить данные:     update.bat
+echo   - Тест TDM-бота:       tdm_test.bat
 echo.
-echo Сайт будет автоматически обновляться каждый день в 06:00.
+echo Сайт будет обновляться каждый день в 06:00.
 echo.
-if %DO_START%==1 (
-    set /p _start=Запустить сайт сейчас? (Y/n):
+if !DO_START!==1 (
+    set /p _start=Запустить сайт сейчас? [Y/n]:
     if /i not "!_start!"=="n" call start.bat
 )
 endlocal

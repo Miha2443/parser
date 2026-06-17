@@ -84,6 +84,45 @@ def snapshot_files() -> dict[str, tuple[int, str]]:
     return out
 
 
+def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
+    """После прогонов парсеров находит появившиеся файлы и проверяет
+    каждый на дубль (по контенту) с тем что уже есть в архиве.
+
+    Дубликаты УДАЛЯЮТСЯ — мы не считаем такой прогон «обновлением»,
+    хотя файл был скачан.
+
+    Возвращает (deduped, real_new):
+      deduped — сколько файлов удалено как дубли
+      real_new — сколько файлов реально новых/изменённых
+    """
+    sys.path.insert(0, str(ROOT))
+    from pipeline.deduplicate import deduplicate as _dedupe
+
+    after = snapshot_files()
+    added_paths = sorted(set(after) - set(before_snapshot))
+    if not added_paths:
+        return 0, 0
+    print(f"\n{'─'*60}")
+    print(f"🔍 Дедупликация новых файлов ({len(added_paths)} шт)")
+    print(f"{'─'*60}")
+    deduped = 0
+    real_new = 0
+    for rel in added_paths:
+        f = REALTY_ROOT / rel
+        if not f.exists():
+            continue
+        kept, is_update = _dedupe(f, log_prefix="  ")
+        if is_update:
+            real_new += 1
+        else:
+            deduped += 1
+    if deduped:
+        print(f"  Итого: {real_new} новых, {deduped} дублей удалено")
+    else:
+        print(f"  Все {real_new} файлов уникальны (дублей нет)")
+    return deduped, real_new
+
+
 def diff_snapshots(before: dict, after: dict) -> dict:
     """Сравнение двух snapshot'ов. Возвращает {added, changed, removed}."""
     added = sorted(set(after) - set(before))
@@ -146,7 +185,8 @@ def check_escrow():
 
 
 def build_tdm_report(successes: list[str], failures: list[str],
-                     diff: dict, total_min: float) -> str:
+                     diff: dict, total_min: float,
+                     deduped: int = 0) -> str:
     """Формирует текст сводки для TDM."""
     icon = "✅" if not failures else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -175,6 +215,9 @@ def build_tdm_report(successes: list[str], failures: list[str],
     else:
         lines.append("")
         lines.append("ℹ️ Новых данных нет — все источники без изменений")
+
+    if deduped > 0:
+        lines.append(f"↩️ {deduped} файлов скачано повторно (контент идентичен — удалены)")
     return "\n".join(lines)
 
 
@@ -250,8 +293,12 @@ def main():
         print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
         sys.exit(130)
 
-    # SNAPSHOT ПОСЛЕ прогона (до архивирования! Архивирование переместит
-    # старые файлы, и diff покажет «removed» — это не интересно).
+    # ДЕДУПЛИКАЦИЯ: убираем файлы которые идентичны последним в архиве.
+    # Это решает проблему «парсер скачал тот же контент с новой датой
+    # в имени» — без дедупа мы бы считали такой файл «обновлением».
+    deduped_count, real_new_count = deduplicate_new_files(before)
+
+    # SNAPSHOT ПОСЛЕ прогона и дедупликации (до архивирования).
     after = snapshot_files()
     diff = diff_snapshots(before, after)
 
@@ -272,6 +319,8 @@ def main():
         print(f"  📥 Новых файлов:    {len(diff['added'])}")
     if diff["changed"]:
         print(f"  ✎  Обновлено:       {len(diff['changed'])}")
+    if deduped_count:
+        print(f"  ↩️  Дублей удалено:  {deduped_count}")
     print(f"{'='*60}\n")
 
     # === Уведомление в TDM ===
@@ -279,7 +328,8 @@ def main():
         try:
             sys.path.insert(0, str(ROOT))
             from pipeline.tdm_notify import notify
-            text = build_tdm_report(successes, failures, diff, total_min)
+            text = build_tdm_report(successes, failures, diff, total_min,
+                                    deduped=deduped_count)
             notify(text, silent=True)
         except Exception:  # noqa: BLE001
             pass

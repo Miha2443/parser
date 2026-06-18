@@ -138,6 +138,8 @@ if !DO_SCRAPE!==1 (
     echo.
 ) else (
     echo [6/8] First scrape skipped --no-scrape
+    echo        Rebuilding processed pickles from existing downloads/...
+    "%VENV_PY%" pipeline\orchestrator.py --skip-download
     echo.
 )
 

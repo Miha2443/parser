@@ -1447,7 +1447,10 @@ def _read_monitoring_developers() -> list[str]:
 # До починки логики ожидания на странице 7 используется только лист
 # `developers` (точные числа с сайта наш.дом.рф через total × долю %).
 def _per_dev_enabled() -> bool:
-    return os.environ.get("KVART_PER_DEV", "0").strip() in ("1", "true", "yes")
+    # default = on (для страницы 5 «Квартирография по девелоперу»).
+    # Выключить: KVART_PER_DEV=0
+    raw = os.environ.get("KVART_PER_DEV", "1").strip().lower()
+    return raw in ("1", "true", "yes")
 
 
 def _per_dev_limit() -> int | None:

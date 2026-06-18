@@ -147,12 +147,20 @@ b2_left, b2_right = st.columns(2)
 
 with b2_left:
     devs = data["developers"]
-    df = devs[devs["region_key"] == sel].copy()
-    st.subheader(f"Объём строительства по девелоперам ({len(df)})")
-    render_top_table(df, "Девелопер")
+    if devs.empty or "region_key" not in devs.columns:
+        st.subheader("Объём строительства по девелоперам")
+        st.info("Нет данных")
+    else:
+        df = devs[devs["region_key"] == sel].copy()
+        st.subheader(f"Объём строительства по девелоперам ({len(df)})")
+        render_top_table(df, "Девелопер")
 
 with b2_right:
     regs = data["regions"]
-    df = regs[regs["region_key"] == sel].copy()
-    st.subheader(f"Объём строительства по регионам ({len(df)})")
-    render_top_table(df, "Регион")
+    if regs.empty or "region_key" not in regs.columns:
+        st.subheader("Объём строительства по регионам")
+        st.info("Нет данных")
+    else:
+        df = regs[regs["region_key"] == sel].copy()
+        st.subheader(f"Объём строительства по регионам ({len(df)})")
+        render_top_table(df, "Регион")

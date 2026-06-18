@@ -46,6 +46,10 @@ def create_chrome(
                 "download.prompt_for_download": False,
                 "download.directory_upgrade": True,
                 "safebrowsing.enabled": True,
+                # Без этого Chrome 148 при множественных скачиваниях
+                # показывает модальное окно «Разрешить скачивание
+                # нескольких файлов» — парсер erzrf зависает.
+                "profile.default_content_setting_values.automatic_downloads": 1,
             },
         )
     opts.page_load_strategy = page_load_strategy

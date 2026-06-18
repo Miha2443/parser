@@ -1,24 +1,24 @@
 @echo off
-REM ────────────────────────────────────────────────────────────────────
-REM Регистрация ежедневного автозапуска парсеров недвижимости
-REM в Windows Task Scheduler. Запускать ОТ ИМЕНИ АДМИНИСТРАТОРА.
+REM --------------------------------------------------------------------
+REM Register daily auto-run of the realty parsers in Windows Task
+REM Scheduler. RUN AS ADMINISTRATOR.
 REM
-REM Что регистрирует:
-REM   - Задача "parser_etl_realty"
-REM   - Расписание: ежедневно в 06:00 (МСК / локальное время)
-REM   - Команда:    scripts\update_realty_scheduled.bat
-REM   - Логи:       data\processed\etl_<YYYY-MM-DD>.log
+REM What is registered:
+REM   - Task "parser_etl_realty"
+REM   - Schedule: daily at 06:00 (local time)
+REM   - Command:  scripts\update_realty_scheduled.bat
+REM   - Logs:     data\processed\etl_<YYYY-MM-DD>.log
 REM
-REM Использование:
-REM   register_scheduler.bat                  ← регистрация
-REM   register_scheduler.bat --unregister     ← удаление задачи
+REM Usage:
+REM   register_scheduler.bat                  - register
+REM   register_scheduler.bat --unregister     - remove task
 REM
-REM После регистрации можно проверить:
+REM After registration check with:
 REM   schtasks /Query /TN "parser_etl_realty"
 REM
-REM Запустить вручную для теста (без ожидания 06:00):
+REM Run manually for testing (without waiting until 06:00):
 REM   schtasks /Run /TN "parser_etl_realty"
-REM ────────────────────────────────────────────────────────────────────
+REM --------------------------------------------------------------------
 
 setlocal
 set TASK_NAME=parser_etl_realty
@@ -28,27 +28,27 @@ set RUNNER=%PROJECT_DIR%\scripts\update_realty_scheduled.bat
 
 if "%~1"=="--unregister" goto :unregister
 
-REM Проверка прав
+REM Permission check
 net session >nul 2>&1
 if errorlevel 1 (
   echo.
-  echo [ERROR] Запусти этот скрипт ОТ ИМЕНИ АДМИНИСТРАТОРА
-  echo         (правый клик -^> Run as administrator)
+  echo [ERROR] Run this script AS ADMINISTRATOR
+  echo         (right click -^> Run as administrator)
   echo.
   pause
   exit /b 1
 )
 
 if not exist "%RUNNER%" (
-  echo [ERROR] Не найден runner: %RUNNER%
+  echo [ERROR] Runner not found: %RUNNER%
   exit /b 1
 )
 
-echo ─────────────────────────────────────────────────────────────
-echo  Регистрация задачи "%TASK_NAME%"
-echo  Расписание: ежедневно в 06:00
-echo  Runner:    %RUNNER%
-echo ─────────────────────────────────────────────────────────────
+echo ------------------------------------------------------------
+echo  Registering task "%TASK_NAME%"
+echo  Schedule: daily at 06:00
+echo  Runner:   %RUNNER%
+echo ------------------------------------------------------------
 echo.
 
 schtasks /Create /SC DAILY /ST 06:00 ^
@@ -58,16 +58,16 @@ schtasks /Create /SC DAILY /ST 06:00 ^
 
 if errorlevel 1 (
   echo.
-  echo [ERROR] Не удалось зарегистрировать задачу
+  echo [ERROR] Failed to register the task
   exit /b 1
 )
 
 echo.
-echo [OK] Задача "%TASK_NAME%" зарегистрирована
+echo [OK] Task "%TASK_NAME%" registered
 echo.
-echo Проверить:    schtasks /Query /TN "%TASK_NAME%"
-echo Запустить:    schtasks /Run /TN "%TASK_NAME%"
-echo Удалить:      %~nx0 --unregister
+echo Check:    schtasks /Query /TN "%TASK_NAME%"
+echo Run:      schtasks /Run /TN "%TASK_NAME%"
+echo Remove:   %~nx0 --unregister
 echo.
 endlocal
 exit /b 0
@@ -75,9 +75,9 @@ exit /b 0
 :unregister
 schtasks /Delete /TN "%TASK_NAME%" /F
 if errorlevel 1 (
-  echo [ERROR] Не удалось удалить задачу (возможно уже удалена)
+  echo [ERROR] Failed to remove task (maybe already removed)
   exit /b 1
 )
-echo [OK] Задача "%TASK_NAME%" удалена
+echo [OK] Task "%TASK_NAME%" removed
 endlocal
 exit /b 0

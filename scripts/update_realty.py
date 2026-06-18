@@ -177,8 +177,16 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
     print(f"{'─'*60}")
     deduped = 0
     real_new = 0
+    prefix_to_base = {p: b for b, p in SNAPSHOT_DIRS}
     for rel in added_paths:
-        f = REALTY_ROOT / rel
+        if ":" in rel:
+            prefix, sub = rel.split(":", 1)
+            base = prefix_to_base.get(prefix)
+            if base is None:
+                continue
+            f = base / sub
+        else:
+            f = REALTY_ROOT / rel  # backward compat для старых snapshot
         if not f.exists():
             continue
         kept, is_update = _dedupe(f, log_prefix="  ")

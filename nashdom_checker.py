@@ -482,27 +482,38 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     new_files: list[Path] = []
 
     def flush():
-        """Сохраняем текущее накопленное состояние в xlsx + json."""
+        """Сохраняем текущее накопленное состояние в xlsx + json.
+
+        JSON сохраняется ВСЕГДА (он не может быть занят пользователем).
+        xlsx — best-effort: если файл открыт в Excel/OneDrive, пишем
+        предупреждение и продолжаем, чтобы не терять прогресс per-dev.
+        """
         if not all_data:
             return
+        # JSON — приоритет, всегда сохраняем
         try:
-            _build_kvart_xlsx(all_data, target_xlsx)
             target_json.write_text(
                 json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            if target_json not in new_files:
+                new_files.append(target_json)
+        except Exception as exc:  # noqa: BLE001
+            print(f"     ⚠️  ошибка при записи json: {exc}")
+        # xlsx — отдельный try; если занят — не блокируем сбор данных
+        try:
+            _build_kvart_xlsx(all_data, target_xlsx)
             sizes = {
                 "apartments": sum(len(d.get("apartments", [])) for d in all_data),
                 "distribution": sum(len(d.get("distribution", [])) for d in all_data),
                 "developers": sum(len(d.get("developers", [])) for d in all_data),
                 "regions": sum(len(d.get("regions", [])) for d in all_data),
+                "per_dev": sum(len(d.get("apartments_per_dev", [])) for d in all_data),
             }
             print(f"     💾 {target_xlsx.name}: {sizes}")
             if target_xlsx not in new_files:
                 new_files.append(target_xlsx)
-            if target_json not in new_files:
-                new_files.append(target_json)
         except Exception as exc:  # noqa: BLE001
-            print(f"     ⚠️  ошибка при записи xlsx: {exc}")
+            print(f"     ⚠️  xlsx занят/недоступен ({exc}) — JSON всё равно сохранён")
 
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
@@ -580,10 +591,16 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
                         per_dev: list[dict] = []
+                        # attempts — диагностический лог КАЖДОЙ попытки
+                        # с указанием статуса (ok/switch_fail/empty/rejected).
+                        # Сохраняется в data["per_dev_attempts"] для разбора
+                        # причин если в итоге ok_count маленький.
+                        attempts: list[dict] = []
                         print(f"       ── per-dev обход: {len(dev_names)} девелоперов "
                               f"(KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
                         for i, dev in enumerate(dev_names, 1):
+                            attempt = {"i": i, "monitoring_name": dev, "status": ""}
                             # debug-вывод для первых 3 девелоперов чтобы было
                             # видно как работает сброс фильтра (или KVART_PER_DEV_DEBUG=1)
                             dbg = debug_first and i <= 3
@@ -593,9 +610,13 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                     timeout=15, debug=dbg)
                             except Exception as e:  # noqa: BLE001
                                 print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
+                                attempt.update(status="switch_exception", error=str(e)[:200])
                                 ok = False
                             if not ok:
                                 fail_count += 1
+                                if not attempt["status"]:
+                                    attempt["status"] = "switch_fail"
+                                attempts.append(attempt)
                                 continue
 
                             # Парсим (с debug для первого девелопера в каждом регионе
@@ -607,6 +628,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             # Если расхождение >10% — это баг (взяли не тот блок),
                             # повторяем парсинг после паузы.
                             filter_label = _get_developer_filter_label(driver) or dev
+                            attempt["filter_label"] = filter_label
                             verify_key = _normalize_dev_name_for_lookup(filter_label)
                             exp = expected.get(verify_key) or expected.get(
                                 _normalize_dev_name_for_lookup(dev))
@@ -625,6 +647,13 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                             ratio = got2 / want
                                         if ratio < 0.9 or ratio > 1.1:
                                             rejected += 1
+                                            attempt.update(
+                                                status="rejected",
+                                                got=int(got2 or got),
+                                                want=int(want),
+                                                ratio=round(ratio, 3),
+                                            )
+                                            attempts.append(attempt)
                                             if rejected <= 3:
                                                 print(f"          🚫 {i}/{len(dev_names)} «{dev[:30]}»: "
                                                       f"парсер дал {got2 or got:.0f} шт, "
@@ -637,21 +666,32 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                     "monitoring_name": dev,
                                     "apartments": apt,
                                 })
+                                attempt["status"] = "ok"
                                 ok_count += 1
                             else:
                                 fail_count += 1
+                                attempt["status"] = "empty_apartments"
+                            attempts.append(attempt)
 
                             if i % 10 == 0:
                                 print(f"          · {i}/{len(dev_names)}: "
                                       f"ok={ok_count}, miss={fail_count}, rejected={rejected}")
                                 data["apartments_per_dev"] = per_dev
+                                data["per_dev_attempts"] = attempts
                                 flush()
                         # финальный сейв
                         data["apartments_per_dev"] = per_dev
+                        data["per_dev_attempts"] = attempts
                         flush()
                         print(f"       ✅ per-dev: {ok_count} собрано, "
                               f"{fail_count} ошибок селектора, "
                               f"{rejected} отвергнуто (не совпадает с агрегатом)")
+                        # Если всё провалилось — выводим первые причины из attempts
+                        if ok_count == 0 and attempts:
+                            from collections import Counter
+                            status_counts = Counter(a["status"] for a in attempts)
+                            print(f"       ℹ️  диагностика: {dict(status_counts)}")
+                            print(f"       ℹ️  per_dev_attempts сохранены в JSON для разбора")
                         # Сброс фильтра на «Все девелоперы»
                         try:
                             _switch_developer_filter(

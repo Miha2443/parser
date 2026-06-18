@@ -61,7 +61,7 @@ setup.bat --no-start        :: не запускать сайт в конце
 
 ### Заполнение `.env` (TDM-бот)
 
-После шага 5 в Блокноте откроется `.env`. Заполни:
+После шага 5 в Блокноте откроется `.env`. Заполни **три переменные**:
 
 ```ini
 TDM_BOT_TOKEN=BOT-<токен_бота>
@@ -69,11 +69,43 @@ TDM_WORKSPACE_ID=<workspaceId>
 TDM_GROUP_ID=<groupId>
 ```
 
-`WORKSPACE_ID` и `GROUP_ID` узнаются после установки:
+- **`TDM_BOT_TOKEN`** — токен бота. Выдаётся при создании бота в TDM.
+  Имеет формат `BOT-<uuid>-<uuid>-<timestamp>-<uuid>`.
+
+- **`TDM_WORKSPACE_ID` и `TDM_GROUP_ID`** — узнаются командой:
+  ```cmd
+  tdm_test.bat
+  ```
+  Перед запуском **добавь бота в нужный чат TDM** и напиши ему что-нибудь.
+  В консоли увидишь:
+  ```
+  Найдено N групп(ы) бота:
+    groupId=3220144879180380  workspaceId=-1  type=GROUP
+      title: «Мой чат»  непрочитано: 1
+  ```
+  Скопируй `groupId` и `workspaceId` в `.env`.
+
+### Заполнение `config\erzrf.json` (логин ERZRF)
+
+Парсер `erzrf.ru` требует авторизации. Скопируй шаблон и впиши **свой логин/пароль**:
+
 ```cmd
-tdm_test.bat
+copy config\erzrf.example.json config\erzrf.json
+notepad config\erzrf.json
 ```
-(сначала добавь бота в нужный чат TDM).
+
+Внутри:
+```json
+{
+  "email": "твой_email@example.com",
+  "password": "твой_пароль_от_erzrf.ru"
+}
+```
+
+Файл `config\erzrf.json` в `.gitignore` — секреты не уйдут в репо.
+
+Если этот файл не заполнить, парсер ERZRF будет пропускаться (но
+данные из других источников всё равно соберутся).
 
 ---
 
@@ -195,6 +227,14 @@ VPN мэрии или запусти с рабочего ПК
 **Парсер падает на одном источнике** — `--retries 3` или запустить только
 его: `update.bat <alias>` (alias: monitoring, rasprod, kvart, erz-top,
 erz-cards, fedstat, rosstat)
+
+**ERZRF не качает** — нет `config\erzrf.json`. Скопируй
+`config\erzrf.example.json` → `config\erzrf.json`, впиши свой логин/пароль
+от erzrf.ru
+
+**Не вижу TDM groupId** — добавь бота в чат TDM и напиши ему сообщение,
+потом `tdm_test.bat`. Если бот ещё ни в одних чатах, команда выведет
+«пусто»
 
 **Логи прогонов** — `data\processed\etl_<YYYY-MM-DD>.log`
 

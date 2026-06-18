@@ -168,44 +168,68 @@ def _ensure_logged_in(driver) -> bool:
 
     print(f"  🔐 Логин как {email[:3]}***")
     try:
-        # Шаг 1: открыть главную (там есть иконка «Войти» в шапке)
-        driver.get(BASE)
-        time.sleep(3)
+        # Шаг 1: открыть главную с retry — erzrf периодически отдаёт
+        # «The page you are looking for is temporarily unavailable»
+        # или просто долго грузится. До 5 попыток с refresh + пауза.
+        MAX_PAGE_ATTEMPTS = 5
+        opened = False
+        for attempt in range(1, MAX_PAGE_ATTEMPTS + 1):
+            try:
+                driver.get(BASE)
+                time.sleep(4)
+                # Проверяем что страница нормальная (не «temporarily unavailable»)
+                page_text = (driver.execute_script(
+                    "return document.body && document.body.innerText || ''"
+                ) or "").lower()
+                if "temporarily unavailable" in page_text or "the page you are looking for" in page_text:
+                    print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: страница "
+                          f"temporarily unavailable, ждём 10 сек...")
+                    time.sleep(10)
+                    continue
+                # Шаг 2: кликнуть кнопку открытия модалки
+                opened = driver.execute_script(
+                    """
+                    const visible = e => e.offsetParent !== null;
+                    const re = /^\\s*(вход|войти)\\s*$/i;
 
-        # Шаг 2: кликнуть кнопку открытия модалки
-        opened = driver.execute_script(
-            """
-            const visible = e => e.offsetParent !== null;
-            const re = /^\\s*(вход|войти)\\s*$/i;
+                    // 1) точный title (как на скрине пользователя — tooltip «Вход»)
+                    let btn = [...document.querySelectorAll('[title]')]
+                        .find(e => visible(e) && re.test(e.getAttribute('title') || ''));
 
-            // 1) точный title (как на скрине пользователя — tooltip «Вход»)
-            let btn = [...document.querySelectorAll('[title]')]
-                .find(e => visible(e) && re.test(e.getAttribute('title') || ''));
+                    // 2) точный aria-label
+                    if (!btn) {
+                        btn = [...document.querySelectorAll('[aria-label]')]
+                            .find(e => visible(e) && re.test(e.getAttribute('aria-label') || ''));
+                    }
 
-            // 2) точный aria-label
-            if (!btn) {
-                btn = [...document.querySelectorAll('[aria-label]')]
-                    .find(e => visible(e) && re.test(e.getAttribute('aria-label') || ''));
-            }
+                    // 3) элемент в шапке с текстом «Войти»/«Вход» — НЕ ищем по всему
+                    //    документу, иначе словим случайные кнопки в контенте.
+                    if (!btn) {
+                        const header = document.querySelector(
+                            'header, [class*="header" i], [class*="Header"], [id*="header" i]'
+                        );
+                        if (header) {
+                            btn = [...header.querySelectorAll('button, a, div, span')]
+                                .find(e => visible(e) && e.innerText && re.test(e.innerText));
+                        }
+                    }
 
-            // 3) элемент в шапке с текстом «Войти»/«Вход» — НЕ ищем по всему
-            //    документу, иначе словим случайные кнопки в контенте.
-            if (!btn) {
-                const header = document.querySelector(
-                    'header, [class*="header" i], [class*="Header"], [id*="header" i]'
-                );
-                if (header) {
-                    btn = [...header.querySelectorAll('button, a, div, span')]
-                        .find(e => visible(e) && e.innerText && re.test(e.innerText));
-                }
-            }
-
-            if (btn) { btn.click(); return true; }
-            return false;
-            """
-        )
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                    """
+                )
+                if opened:
+                    break
+                # Не нашёл кнопку — пробуем refresh ещё раз
+                print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: кнопка логина "
+                      f"не появилась, обновляю страницу...")
+                time.sleep(5)
+            except Exception as e:  # noqa: BLE001
+                print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: {e}, повторяю...")
+                time.sleep(5)
         if not opened:
-            print("  ⚠️  Не нашёл кнопку открытия модалки логина")
+            print(f"  ⚠️  Не нашёл кнопку открытия модалки логина "
+                  f"за {MAX_PAGE_ATTEMPTS} попыток")
             _save_debug_snapshot(driver, "login_open_button")
             return False
 
@@ -977,7 +1001,13 @@ def fetch_cards(state: dict) -> list[Path]:
 # ─────────────────────────────────────────────
 
 
-def run(only: Iterable[str] | None = None) -> list[Path]:
+def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
+    """Возвращает (скачанные_файлы, успех).
+
+    успех=False если хотя бы один из запрошенных источников упал
+    с ошибкой (incl. провал авторизации). Используется в __main__
+    для exit-кода — чтобы update_realty.py видел провал и сделал retry.
+    """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     keys = set(only) if only else {"top", "cards"}
@@ -988,25 +1018,39 @@ def run(only: Iterable[str] | None = None) -> list[Path]:
     print(f"{'='*60}\n")
 
     all_new: list[Path] = []
+    failed = False
     if "top" in keys:
         try:
-            all_new.extend(fetch_top(state))
+            files = fetch_top(state)
+            all_new.extend(files)
             save_state(state)
+            # Если top запускался и ничего не вернул — это неуспех
+            # (без авторизации или сайт лежит).
+            if not files:
+                failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ top: {exc}")
+            failed = True
     if "cards" in keys:
         try:
-            all_new.extend(fetch_cards(state))
+            files = fetch_cards(state)
+            all_new.extend(files)
             save_state(state)
+            if not files:
+                failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ cards: {exc}")
+            failed = True
 
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Итог: новых/обновлённых файлов — {len(all_new)}")
+    if failed:
+        print(f"erzrf.ru | ⚠️  Один или несколько источников ничего не скачали")
     print(f"{'='*60}\n")
-    return all_new
+    return all_new, not failed
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    run(only=args if args else None)
+    _files, ok = run(only=args if args else None)
+    sys.exit(0 if ok else 2)

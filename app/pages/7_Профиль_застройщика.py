@@ -138,43 +138,23 @@ if not mon_devs:
     )
     st.stop()
 
-# Порядок в селекторе: сначала топ ERZRF по объёму ввода в Москве
-# (так Самолет/ПИК/ДОГМА идут первыми вместо «ФОНД СВЯТОСЛАВА ФЕДОРОВА»
-# который алфавитно был наверху из-за кавычек). Если девелопера нет в топе —
-# идёт ниже алфавитно.
+# Порядок в селекторе: убывание по «Общая площадь» в листе «Реестр РВ»
+# из monitoring_2_0 (сумма по группе компаний = «всего м² введено с 2017»,
+# поскольку Лист4 = 2017-2021 уже объединён с основным РВ-листом).
+# Кто только в ОКС (не в РВ) — в конец алфавитно.
 def _build_ordered_devs(mon_names: list[str]) -> list[str]:
-    """Сортировка для селектора: сначала топ по накопленному вводу с 2016.
-
-    Накопленный ввод считается из cards (sum Сдано_YYYY за все годы).
-    Кто не в cards (не топ-100) — добавляется ниже алфавитно.
-    """
-    mon_by_key = {norm(n): n for n in mon_names}
-    ordered: list[str] = []
-    used_keys: set[str] = set()
-
-    # 1) По сумме Сдано из cards (накопленный ввод)
-    if not erzrf_cards.empty:
-        sdano_cols = [c for c in erzrf_cards.columns
-                      if str(c).startswith("Сдано_") and str(c).endswith("_м²_num")]
-        if sdano_cols:
-            tmp = erzrf_cards.copy()
-            tmp["_total"] = tmp[sdano_cols].sum(axis=1)
-            tmp = tmp.sort_values("_total", ascending=False)
-            name_col = "name_card" if "name_card" in tmp.columns else (
-                "name_table" if "name_table" in tmp.columns else None)
-            if name_col:
-                for raw in tmp[name_col].dropna():
-                    k = norm(str(raw))
-                    if k in used_keys:
-                        continue
-                    if k in mon_by_key:
-                        ordered.append(mon_by_key[k])
-                        used_keys.add(k)
-
-    # 2) Остальные monitoring — алфавитно
-    rest = [n for k, n in mon_by_key.items() if k not in used_keys]
-    ordered.extend(sorted(rest))
-    return ordered
+    """Сортировка для селектора: убывание по «Общая площадь» в Реестр РВ."""
+    rv = mon.get("rv", pd.DataFrame())
+    in_top: list[str] = []
+    if (not rv.empty and "Группа компаний" in rv.columns
+            and "Общая площадь" in rv.columns):
+        agg = (rv.groupby("Группа компаний")["Общая площадь"]
+                 .sum().sort_values(ascending=False))
+        names = set(mon_names)
+        in_top = [n for n in agg.index if n in names]
+    used = set(in_top)
+    rest = sorted(n for n in mon_names if n not in used)
+    return in_top + rest
 
 
 ordered_devs = _build_ordered_devs(mon_devs)

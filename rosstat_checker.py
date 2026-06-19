@@ -272,19 +272,32 @@ def _debug_print_items(items: list[dict], limit: int = 8) -> None:
         print(f"         date={it.get('date')!r}  href={it.get('href')}")
 
 
-def _filename_for(href: str) -> str:
-    """Имя сохраняемого файла: {YYYYMMDD}_{имя_из_url}.xlsx (как в fedstat_checker).
+def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
+    """Конвертирует дату с сайта в YYYYMMDD. Fallback на сегодня."""
+    if s:
+        s = str(s).strip()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M",
+                    "%d-%m-%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s[:len(fmt) + 6], fmt).strftime("%Y%m%d")
+            except (ValueError, TypeError):
+                continue
+    return datetime.now().strftime("%Y%m%d")
 
-    Берём имя из basename URL — оно всегда осмысленное и уникальное
-    (ВРП с 1998 года(142).xlsx / VVP_god_s1995-2025.xlsx). Текст ссылки <a>
-    использовать нельзя: там иконочный маркер «XLSX», из-за которого все
-    файлы получали одно имя и перезаписывали друг друга.
+
+def _filename_for(href: str, *, remote_date: str | None = None) -> str:
+    """Имя сохраняемого файла: {YYYYMMDD}_{имя_из_url}.xlsx.
+
+    YYYYMMDD = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта Росстата (если есть),
+    иначе — сегодняшняя дата.
+    Имя берём из basename URL (а не текста <a>, который иконочный «XLSX»).
     """
     name = unquote(href.rsplit("/", 1)[-1])
     p = Path(name)
     stem = re.sub(r'[\\/*?:"<>|]', "", p.stem).strip()[:120]
     ext = p.suffix.lower() or ".xlsx"
-    return f"{datetime.now().strftime('%Y%m%d')}_{stem}{ext}"
+    date_prefix = _parse_remote_date_to_yyyymmdd(remote_date)
+    return f"{date_prefix}_{stem}{ext}"
 
 
 def download_file(session: requests.Session, href: str, referer: str, save_path: Path) -> bool:
@@ -312,9 +325,10 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
         return False
 
 
-def run() -> list[Path]:
+def run(force: bool = False) -> list[Path]:
+    """force=True — игнорируем state, перекачиваем все источники."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    state = load_state()
+    state = load_state() if not force else {}
     session = _new_session()
     downloaded: list[Path] = []
 
@@ -358,7 +372,7 @@ def run() -> list[Path]:
             else:
                 print(f"     🔄 обновился: {saved_date} → {remote_date}")
 
-            filename = _filename_for(match["href"])
+            filename = _filename_for(match["href"], remote_date=remote_date)
             save_path = DOWNLOAD_DIR / filename
             ok = download_file(session, match["href"], referer=url, save_path=save_path)
             if ok:
@@ -385,4 +399,6 @@ def run() -> list[Path]:
 
 
 if __name__ == "__main__":
-    run()
+    import sys
+    force = "--force" in sys.argv
+    run(force=force)

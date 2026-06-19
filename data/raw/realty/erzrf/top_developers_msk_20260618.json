@@ -1,0 +1,806 @@
+{
+  "region": "msk",
+  "scraped_at": "2026-06-18T13:05:04",
+  "developers": [
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/pik-429726001?region=moskva&regionKey=143443001&organizationId=429726001",
+      "cells": [
+        "1\n0\nПИК, г.Москва\n2 239 987\n0\n0\n0\n2\n34\n39\n0\n64\n0\n0\n13.43%\n5"
+      ],
+      "name": "ПИК",
+      "place": "1\n0\nПИК, г.Москва\n2 239 987\n0\n0\n0\n2\n34\n39\n0\n64\n0\n0\n13.43%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-samolet-2366201001?region=moskva&regionKey=143443001&organizationId=2366201001",
+      "cells": [
+        "2\n0\nГК Самолет, г.Москва\n1 085 564\n707 898\n65.21\n8.58\n1\n15\n15\n0\n52\n0\n2\n6.51%\n3.5"
+      ],
+      "name": "ГК Самолет",
+      "place": "2\n0\nГК Самолет, г.Москва\n1 085 564\n707 898\n65.21\n8.58\n1\n15\n15\n0\n52\n0\n2\n6.51%\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/mr-group-430836001?region=moskva&regionKey=143443001&organizationId=430836001",
+      "cells": [
+        "3\n0\nMR Group, г.Москва\n993 876\n50 587\n5.09\n0.43\n13\n13\n14\n0\n22\n0\n0\n5.96%\n5"
+      ],
+      "name": "MR Group",
+      "place": "3\n0\nMR Group, г.Москва\n993 876\n50 587\n5.09\n0.43\n13\n13\n14\n0\n22\n0\n0\n5.96%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/donstroj-430278001?region=moskva&regionKey=143443001&organizationId=430278001",
+      "cells": [
+        "4\n0\nДОНСТРОЙ, г.Москва\n797 384\n0\n0\n0\n18\n10\n8\n0\n21\n0\n0\n4.78%\n4.5"
+      ],
+      "name": "ДОНСТРОЙ",
+      "place": "4\n0\nДОНСТРОЙ, г.Москва\n797 384\n0\n0\n0\n18\n10\n8\n0\n21\n0\n0\n4.78%\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-fsk-755344001?region=moskva&regionKey=143443001&organizationId=755344001",
+      "cells": [
+        "5\n0\nГК ФСК, г.Москва\n741 324\n84 445\n11.39\n1.23\n5\n7\n7\n0\n20\n0\n0\n4.45%\n4"
+      ],
+      "name": "ГК ФСК",
+      "place": "5\n0\nГК ФСК, г.Москва\n741 324\n84 445\n11.39\n1.23\n5\n7\n7\n0\n20\n0\n0\n4.45%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/level-group-6150430001?region=moskva&regionKey=143443001&organizationId=6150430001",
+      "cells": [
+        "6\n0\nLevel Group, г.Москва\n619 570\n43 098\n6.96\n0.21\n21\n7\n7\n0\n12\n0\n1\n3.72%\n4"
+      ],
+      "name": "Level Group",
+      "place": "6\n0\nLevel Group, г.Москва\n619 570\n43 098\n6.96\n0.21\n21\n7\n7\n0\n12\n0\n1\n3.72%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-a101-1075233001?region=moskva&regionKey=143443001&organizationId=1075233001",
+      "cells": [
+        "7\n0\nГК А101, г.Москва\n582 666\n217 632\n37.35\n2.64\n24\n4\n9\n0\n16\n0\n0\n3.49%\n4.5"
+      ],
+      "name": "ГК А101",
+      "place": "7\n0\nГК А101, г.Москва\n582 666\n217 632\n37.35\n2.64\n24\n4\n9\n0\n16\n0\n0\n3.49%\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-absoljut-934095001?region=moskva&regionKey=143443001&organizationId=934095001",
+      "cells": [
+        "8\n+1\nГК АБСОЛЮТ, г.Москва\n451 633\n80 978\n17.93\n3.24\n26\n3\n3\n0\n14\n0\n0\n2.71%\n4.5"
+      ],
+      "name": "ГК АБСОЛЮТ",
+      "place": "8\n+1\nГК АБСОЛЮТ, г.Москва\n451 633\n80 978\n17.93\n3.24\n26\n3\n3\n0\n14\n0\n0\n2.71%\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-strana-development-5339663001?region=moskva&regionKey=143443001&organizationId=5339663001",
+      "cells": [
+        "9\n+1\nГК Страна Девелопмент, Тюменская область\n408 286\n118 678\n29.07\n2.49\n10\n4\n4\n0\n5\n0\n0\n2.45%\n4"
+      ],
+      "name": "ГК Страна Девелопмент",
+      "place": "9\n+1\nГК Страна Девелопмент, Тюменская область\n408 286\n118 678\n29.07\n2.49\n10\n4\n4\n0\n5\n0\n0\n2.45%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-osnova-6201034001?region=moskva&regionKey=143443001&organizationId=6201034001",
+      "cells": [
+        "10\n+1\nГК ОСНОВА, г.Москва\n369 553\n125 882\n34.06\n3.98\n35\n7\n8\n0\n3\n0\n6\n2.22%\n5"
+      ],
+      "name": "ГК ОСНОВА",
+      "place": "10\n+1\nГК ОСНОВА, г.Москва\n369 553\n125 882\n34.06\n3.98\n35\n7\n8\n0\n3\n0\n6\n2.22%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-lsr-429468001?region=moskva&regionKey=143443001&organizationId=429468001",
+      "cells": [
+        "11\n-3\nГруппа ЛСР, г.Санкт-Петербург\n342 826\n0\n0\n0\n12\n6\n7\n0\n7\n0\n0\n2.06%\n5"
+      ],
+      "name": "Группа ЛСР",
+      "place": "11\n-3\nГруппа ЛСР, г.Санкт-Петербург\n342 826\n0\n0\n0\n12\n6\n7\n0\n7\n0\n0\n2.06%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/brusnika-733498001?region=moskva&regionKey=143443001&organizationId=733498001",
+      "cells": [
+        "12\n0\nБрусника, Свердловская область\n323 492\n0\n0\n0\n7\n5\n5\n0\n7\n0\n0\n1.94%\n5"
+      ],
+      "name": "Брусника",
+      "place": "12\n0\nБрусника, Свердловская область\n323 492\n0\n0\n0\n7\n5\n5\n0\n7\n0\n0\n1.94%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-granel-955386001?region=moskva&regionKey=143443001&organizationId=955386001",
+      "cells": [
+        "13\n0\nГК Гранель, г.Москва\n310 101\n0\n0\n0\n16\n6\n6\n0\n8\n0\n0\n1.86%\n5"
+      ],
+      "name": "ГК Гранель",
+      "place": "13\n0\nГК Гранель, г.Москва\n310 101\n0\n0\n0\n16\n6\n6\n0\n8\n0\n0\n1.86%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/moskovskij-fond-renovacii-zhiloj-zastrojki-14543898001?region=moskva&regionKey=143443001&organizationId=14543898001",
+      "cells": [
+        "14\n+1\nФонд реновации, г.Москва\n280 348\n0\n0\n0\n53\n1\n10\n0\n15\n0\n0\n1.68%\n5"
+      ],
+      "name": "Фонд реновации",
+      "place": "14\n+1\nФонд реновации, г.Москва\n280 348\n0\n0\n0\n53\n1\n10\n0\n15\n0\n0\n1.68%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-etalon-1331499001?region=moskva&regionKey=143443001&organizationId=1331499001",
+      "cells": [
+        "15\n+1\nГруппа Эталон, г.Москва\n276 728\n88 111\n31.84\n5.4\n11\n6\n6\n0\n15\n0\n0\n1.66%\n4"
+      ],
+      "name": "Группа Эталон",
+      "place": "15\n+1\nГруппа Эталон, г.Москва\n276 728\n88 111\n31.84\n5.4\n11\n6\n6\n0\n15\n0\n0\n1.66%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-glavstroj-1961151001?region=moskva&regionKey=143443001&organizationId=1961151001",
+      "cells": [
+        "16\n+1\nГК Главстрой, г.Москва\n266 873\n0\n0\n0\n62\n3\n3\n0\n3\n0\n0\n1.6%\n5"
+      ],
+      "name": "ГК Главстрой",
+      "place": "16\n+1\nГК Главстрой, г.Москва\n266 873\n0\n0\n0\n62\n3\n3\n0\n3\n0\n0\n1.6%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-akvilon-391375001?region=moskva&regionKey=143443001&organizationId=391375001",
+      "cells": [
+        "17\n+1\nГруппа Аквилон, г.Санкт-Петербург\n253 658\n0\n0\n0\n19\n5\n5\n0\n5\n0\n1\n1.52%\n5"
+      ],
+      "name": "Группа Аквилон",
+      "place": "17\n+1\nГруппа Аквилон, г.Санкт-Петербург\n253 658\n0\n0\n0\n19\n5\n5\n0\n5\n0\n1\n1.52%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/mangazeja-3126628001?region=moskva&regionKey=143443001&organizationId=3126628001",
+      "cells": [
+        "18\n+1\nМангазея, г.Москва\n199 002\n0\n0\n0\n93\n4\n4\n0\n4\n0\n0\n1.19%\nNaN"
+      ],
+      "name": "Мангазея",
+      "place": "18\n+1\nМангазея, г.Москва\n199 002\n0\n0\n0\n93\n4\n4\n0\n4\n0\n0\n1.19%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-rodina-21959217001?region=moskva&regionKey=143443001&organizationId=21959217001",
+      "cells": [
+        "19\n+1\nГруппа Родина, г.Москва\n195 099\n0\n0\n0\n95\n3\n3\n0\n8\n0\n0\n1.17%\n5"
+      ],
+      "name": "Группа Родина",
+      "place": "19\n+1\nГруппа Родина, г.Москва\n195 099\n0\n0\n0\n95\n3\n3\n0\n8\n0\n0\n1.17%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/sbercity-21161735001?region=moskva&regionKey=143443001&organizationId=21161735001",
+      "cells": [
+        "20\n+1\nСЗ СБЕРСИТИ, г.Москва\n191 995\n75 398\n39.27\n3.8\n97\n1\n1\n0\n21\n0\n0\n1.15%\n3"
+      ],
+      "name": "СЗ СБЕРСИТИ",
+      "place": "20\n+1\nСЗ СБЕРСИТИ, г.Москва\n191 995\n75 398\n39.27\n3.8\n97\n1\n1\n0\n21\n0\n0\n1.15%\n3"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/seven-suns-development-2488380001?region=moskva&regionKey=143443001&organizationId=2488380001",
+      "cells": [
+        "21\n-7\nSeven Suns Development, г.Санкт-Петербург\n190 523\n190 523\n100\n41.31\n40\n1\n1\n0\n5\n0\n0\n1.14%\n0.5"
+      ],
+      "name": "Seven Suns Development",
+      "place": "21\n-7\nSeven Suns Development, г.Санкт-Петербург\n190 523\n190 523\n100\n41.31\n40\n1\n1\n0\n5\n0\n0\n1.14%\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-pioner-430031001?region=moskva&regionKey=143443001&organizationId=430031001",
+      "cells": [
+        "22\n0\nГК Пионер, г.Москва\n184 448\n0\n0\n0\n104\n4\n4\n0\n4\n0\n0\n1.11%\n5"
+      ],
+      "name": "ГК Пионер",
+      "place": "22\n0\nГК Пионер, г.Москва\n184 448\n0\n0\n0\n104\n4\n4\n0\n4\n0\n0\n1.11%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/Gruppa-kompanij-PLYUS-Development-24345040001?region=moskva&regionKey=143443001&organizationId=24345040001",
+      "cells": [
+        "23\n0\nГК ПЛЮС Девелопмент, г.Москва\n181 316\n0\n0\n0\n108\n2\n2\n0\n3\n0\n0\n1.09%\nNaN"
+      ],
+      "name": "ГК ПЛЮС Девелопмент",
+      "place": "23\n0\nГК ПЛЮС Девелопмент, г.Москва\n181 316\n0\n0\n0\n108\n2\n2\n0\n3\n0\n0\n1.09%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/sminex-4354668001?region=moskva&regionKey=143443001&organizationId=4354668001",
+      "cells": [
+        "24\n0\nSminex, г.Москва\n175 326\n5 493\n3.13\n0.19\n52\n7\n7\n0\n9\n0\n0\n1.05%\n4"
+      ],
+      "name": "Sminex",
+      "place": "24\n0\nSminex, г.Москва\n175 326\n5 493\n3.13\n0.19\n52\n7\n7\n0\n9\n0\n0\n1.05%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/upside-development-2893990001?region=moskva&regionKey=143443001&organizationId=2893990001",
+      "cells": [
+        "25\n+1\nUPSIDE DEVELOPMENT, г.Москва\n147 455\n0\n0\n0\n137\n1\n1\n0\n3\n0\n0\n0.88%\nNaN"
+      ],
+      "name": "UPSIDE DEVELOPMENT",
+      "place": "25\n+1\nUPSIDE DEVELOPMENT, г.Москва\n147 455\n0\n0\n0\n137\n1\n1\n0\n3\n0\n0\n0.88%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-tashir-430966001?region=moskva&regionKey=143443001&organizationId=430966001",
+      "cells": [
+        "26\n+1\nГК Ташир, г.Москва\n142 961\n142 961\n100\n65.22\n142\n2\n2\n0\n4\n0\n1\n0.86%\n0.5"
+      ],
+      "name": "ГК Ташир",
+      "place": "26\n+1\nГК Ташир, г.Москва\n142 961\n142 961\n100\n65.22\n142\n2\n2\n0\n4\n0\n1\n0.86%\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/aeon-development-21738517001?region=moskva&regionKey=143443001&organizationId=21738517001",
+      "cells": [
+        "27\n+1\nАеон Девелопмент, г.Москва\n141 551\n0\n0\n0\n145\n1\n1\n0\n2\n0\n0\n0.85%\nNaN"
+      ],
+      "name": "Аеон Девелопмент",
+      "place": "27\n+1\nАеон Девелопмент, г.Москва\n141 551\n0\n0\n0\n145\n1\n1\n0\n2\n0\n0\n0.85%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/tekta-group-1390311001?region=moskva&regionKey=143443001&organizationId=1390311001",
+      "cells": [
+        "28\n+1\nTEKTA GROUP, г.Москва\n138 871\n54 798\n39.46\n1.18\n151\n3\n3\n0\n3\n0\n0\n0.83%\n3.5"
+      ],
+      "name": "TEKTA GROUP",
+      "place": "28\n+1\nTEKTA GROUP, г.Москва\n138 871\n54 798\n39.46\n1.18\n151\n3\n3\n0\n3\n0\n0\n0.83%\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/unikey-22031811001?region=moskva&regionKey=143443001&organizationId=22031811001",
+      "cells": [
+        "29\n+1\nЮникей, г.Москва\n137 500\n0\n0\n0\n59\n1\n1\n0\n3\n0\n0\n0.82%\n5"
+      ],
+      "name": "Юникей",
+      "place": "29\n+1\nЮникей, г.Москва\n137 500\n0\n0\n0\n59\n1\n1\n0\n3\n0\n0\n0.82%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gals-development-429942001?region=moskva&regionKey=143443001&organizationId=429942001",
+      "cells": [
+        "30\n-5\nГалс-Девелопмент, г.Москва\n133 640\n0\n0\n0\n161\n3\n3\n0\n3\n0\n0\n0.8%\nNaN"
+      ],
+      "name": "Галс-Девелопмент",
+      "place": "30\n-5\nГалс-Девелопмент, г.Москва\n133 640\n0\n0\n0\n161\n3\n3\n0\n3\n0\n0\n0.8%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/kholding-sezar-group-1214960001?region=moskva&regionKey=143443001&organizationId=1214960001",
+      "cells": [
+        "31\n0\nХолдинг Sezar Group, г.Москва\n130 317\n0\n0\n0\n170\n2\n2\n0\n2\n0\n1\n0.78%\n5"
+      ],
+      "name": "Холдинг Sezar Group",
+      "place": "31\n0\nХолдинг Sezar Group, г.Москва\n130 317\n0\n0\n0\n170\n2\n2\n0\n2\n0\n1\n0.78%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/legenda-intelligent-development-1824654001?region=moskva&regionKey=143443001&organizationId=1824654001",
+      "cells": [
+        "32\n0\nLEGENDA Intelligent Development, г.Санкт-Петербург\n128 188\n0\n0\n0\n30\n2\n1\n0\n2\n0\n0\n0.77%\n5"
+      ],
+      "name": "LEGENDA Intelligent Development",
+      "place": "32\n0\nLEGENDA Intelligent Development, г.Санкт-Петербург\n128 188\n0\n0\n0\n30\n2\n1\n0\n2\n0\n0\n0.77%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/koncern-krost-430109001?region=moskva&regionKey=143443001&organizationId=430109001",
+      "cells": [
+        "33\n0\nКонцерн КРОСТ, г.Москва\n123 664\n123 664\n100\n28.12\n179\n3\n3\n0\n4\n0\n0\n0.74%\n1"
+      ],
+      "name": "Концерн КРОСТ",
+      "place": "33\n0\nКонцерн КРОСТ, г.Москва\n123 664\n123 664\n100\n28.12\n179\n3\n3\n0\n4\n0\n0\n0.74%\n1"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stone-7765277001?region=moskva&regionKey=143443001&organizationId=7765277001",
+      "cells": [
+        "34\n0\nSTONE, г.Москва\n119 518\n0\n0\n0\n184\n3\n3\n0\n3\n0\n0\n0.72%\nNaN"
+      ],
+      "name": "STONE",
+      "place": "34\n0\nSTONE, г.Москва\n119 518\n0\n0\n0\n184\n3\n3\n0\n3\n0\n0\n0.72%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/3s-group-9725613001?region=moskva&regionKey=143443001&organizationId=9725613001",
+      "cells": [
+        "35\n0\n3S Group, г.Москва\n118 955\n0\n0\n0\n109\n2\n2\n0\n3\n0\n0\n0.71%\n1.5"
+      ],
+      "name": "3S Group",
+      "place": "35\n0\n3S Group, г.Москва\n118 955\n0\n0\n0\n109\n2\n2\n0\n3\n0\n0\n0.71%\n1.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-samolet-marino-1-29548572001?region=moskva&regionKey=143443001&organizationId=29548572001",
+      "cells": [
+        "36\nnew\nСЗ Самолет-Марьино 1, г.Москва\n118 746\n79 565\n67\n8.58\n187\n1\n1\n0\n4\n0\n0\n0.71%\n1.5"
+      ],
+      "name": "СЗ Самолет-Марьино 1",
+      "place": "36\nnew\nСЗ Самолет-Марьино 1, г.Москва\n118 746\n79 565\n67\n8.58\n187\n1\n1\n0\n4\n0\n0\n0.71%\n1.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-kortros-429541001?region=moskva&regionKey=143443001&organizationId=429541001",
+      "cells": [
+        "37\n-1\nГК КОРТРОС, г.Москва\n115 436\n0\n0\n0\n29\n2\n2\n0\n2\n0\n0\n0.69%\n4.5"
+      ],
+      "name": "ГК КОРТРОС",
+      "place": "37\n-1\nГК КОРТРОС, г.Москва\n115 436\n0\n0\n0\n29\n2\n2\n0\n2\n0\n0\n0.69%\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/upravlenie-eksperimentalnoj-zastrojki-mikrorajonov-7924542001?region=moskva&regionKey=143443001&organizationId=7924542001",
+      "cells": [
+        "38\n0\nУЭЗ, г.Москва\n111 707\n111 707\n100\n25.38\n196\n3\n3\n0\n3\n0\n0\n0.67%\n0.5"
+      ],
+      "name": "УЭЗ",
+      "place": "38\n0\nУЭЗ, г.Москва\n111 707\n111 707\n100\n25.38\n196\n3\n3\n0\n3\n0\n0\n0.67%\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/vesper-3717405001?region=moskva&regionKey=143443001&organizationId=3717405001",
+      "cells": [
+        "39\n0\nVesper, г.Москва\n106 458\n0\n0\n0\n208\n3\n3\n0\n6\n0\n0\n0.64%\nNaN"
+      ],
+      "name": "Vesper",
+      "place": "39\n0\nVesper, г.Москва\n106 458\n0\n0\n0\n208\n3\n3\n0\n6\n0\n0\n0.64%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-grad-3498218001?region=moskva&regionKey=143443001&organizationId=3498218001",
+      "cells": [
+        "40\n0\nГК Град, г.Москва\n104 646\n0\n0\n0\n111\n1\n1\n0\n1\n0\n0\n0.63%\n5"
+      ],
+      "name": "ГК Град",
+      "place": "40\n0\nГК Град, г.Москва\n104 646\n0\n0\n0\n111\n1\n1\n0\n1\n0\n0\n0.63%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-t2-development-28455700001?region=moskva&regionKey=143443001&organizationId=28455700001",
+      "cells": [
+        "41\n0\nСЗ Т2-Девелопмент, г.Москва\n100 219\n0\n0\n0\n227\n1\n1\n0\n1\n0\n0\n0.6%\nNaN"
+      ],
+      "name": "СЗ Т2-Девелопмент",
+      "place": "41\n0\nСЗ Т2-Девелопмент, г.Москва\n100 219\n0\n0\n0\n227\n1\n1\n0\n1\n0\n0\n0.6%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/capital-group-430410001?region=moskva&regionKey=143443001&organizationId=430410001",
+      "cells": [
+        "42\n0\nCapital Group, г.Москва\n97 586\n40 803\n41.81\n10.03\n233\n1\n1\n0\n3\n0\n0\n0.59%\n2"
+      ],
+      "name": "Capital Group",
+      "place": "42\n0\nCapital Group, г.Москва\n97 586\n40 803\n41.81\n10.03\n233\n1\n1\n0\n3\n0\n0\n0.59%\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-rusich-kantemirovskij-22683133001?region=moskva&regionKey=143443001&organizationId=22683133001",
+      "cells": [
+        "43\n0\nСЗ Русич-Кантемировский, г.Москва\n96 604\n67 117\n69.48\n11.46\n237\n1\n1\n0\n3\n0\n0\n0.58%\n2"
+      ],
+      "name": "СЗ Русич-Кантемировский",
+      "place": "43\n0\nСЗ Русич-Кантемировский, г.Москва\n96 604\n67 117\n69.48\n11.46\n237\n1\n1\n0\n3\n0\n0\n0.58%\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/optima-development-10265347001?region=moskva&regionKey=143443001&organizationId=10265347001",
+      "cells": [
+        "44\n0\nOptima Development, г.Москва\n94 146\n0\n0\n0\n245\n1\n1\n0\n3\n0\n0\n0.56%\n5"
+      ],
+      "name": "Optima Development",
+      "place": "44\n0\nOptima Development, г.Москва\n94 146\n0\n0\n0\n245\n1\n1\n0\n3\n0\n0\n0.56%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-sokolnicheskij-val-2a-27732610001?region=moskva&regionKey=143443001&organizationId=27732610001",
+      "cells": [
+        "45\n0\nСЗ Сокольнический Вал 2А, г.Москва\n92 200\n0\n0\n0\n249\n1\n1\n0\n2\n0\n0\n0.55%\nNaN"
+      ],
+      "name": "СЗ Сокольнический Вал 2А",
+      "place": "45\n0\nСЗ Сокольнический Вал 2А, г.Москва\n92 200\n0\n0\n0\n249\n1\n1\n0\n2\n0\n0\n0.55%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/rg-development-3136702001?region=moskva&regionKey=143443001&organizationId=3136702001",
+      "cells": [
+        "46\n0\nРГ-Девелопмент, г.Москва\n87 282\n33 619\n38.52\n3.47\n262\n2\n2\n0\n3\n0\n0\n0.52%\n3"
+      ],
+      "name": "РГ-Девелопмент",
+      "place": "46\n0\nРГ-Девелопмент, г.Москва\n87 282\n33 619\n38.52\n3.47\n262\n2\n2\n0\n3\n0\n0\n0.52%\n3"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/talan-2493968001?region=moskva&regionKey=143443001&organizationId=2493968001",
+      "cells": [
+        "47\n0\nТалан, Удмуртская Республика\n86 718\n0\n0\n0\n15\n1\n1\n0\n1\n0\n0\n0.52%\n5"
+      ],
+      "name": "Талан",
+      "place": "47\n0\nТалан, Удмуртская Республика\n86 718\n0\n0\n0\n15\n1\n1\n0\n1\n0\n0\n0.52%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/regions-development-21281696001?region=moskva&regionKey=143443001&organizationId=21281696001",
+      "cells": [
+        "48\n0\nНИИДАР-Недвижимость (СЗ), г.Москва\n86 566\n0\n0\n0\n265\n1\n1\n0\n1\n0\n0\n0.52%\nNaN"
+      ],
+      "name": "НИИДАР-Недвижимость (СЗ)",
+      "place": "48\n0\nНИИДАР-Недвижимость (СЗ), г.Москва\n86 566\n0\n0\n0\n265\n1\n1\n0\n1\n0\n0\n0.52%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-dominanta-25295570001?region=moskva&regionKey=143443001&organizationId=25295570001",
+      "cells": [
+        "49\n0\nГК Dominanta, г.Москва\n84 323\n0\n0\n0\n272\n2\n2\n0\n2\n0\n0\n0.51%\nNaN"
+      ],
+      "name": "ГК Dominanta",
+      "place": "49\n0\nГК Dominanta, г.Москва\n84 323\n0\n0\n0\n272\n2\n2\n0\n2\n0\n0\n0.51%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-1-j-krasnogvardejskij-23321843001?region=moskva&regionKey=143443001&organizationId=23321843001",
+      "cells": [
+        "50\n0\nСЗ 1-й Красногвардейский, г.Москва\n83 814\n0\n0\n0\n274\n1\n1\n0\n1\n0\n0\n0.5%\nNaN"
+      ],
+      "name": "СЗ 1-й Красногвардейский",
+      "place": "50\n0\nСЗ 1-й Красногвардейский, г.Москва\n83 814\n0\n0\n0\n274\n1\n1\n0\n1\n0\n0\n0.5%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-alfa-21811464001?region=moskva&regionKey=143443001&organizationId=21811464001",
+      "cells": [
+        "51\n0\nСЗ Альфа, г.Москва\n83 572\n47 863\n57.27\n6.87\n275\n1\n1\n0\n2\n0\n0\n0.5%\nNaN"
+      ],
+      "name": "СЗ Альфа",
+      "place": "51\n0\nСЗ Альфа, г.Москва\n83 572\n47 863\n57.27\n6.87\n275\n1\n1\n0\n2\n0\n0\n0.5%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-strojkom-1-14592164001?region=moskva&regionKey=143443001&organizationId=14592164001",
+      "cells": [
+        "52\n-15\nГК Стройком, г.Москва\n76 614\n0\n0\n0\n297\n1\n1\n0\n1\n0\n0\n0.46%\n3.5"
+      ],
+      "name": "ГК Стройком",
+      "place": "52\n-15\nГК Стройком, г.Москва\n76 614\n0\n0\n0\n297\n1\n1\n0\n1\n0\n0\n0.46%\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-atlant-6157606001?region=moskva&regionKey=143443001&organizationId=6157606001",
+      "cells": [
+        "53\n-1\nГК Атлант, г.Москва\n72 218\n9 312\n12.89\n5.18\n244\n4\n2\n0\n6\n0\n0\n0.43%\n1"
+      ],
+      "name": "ГК Атлант",
+      "place": "53\n-1\nГК Атлант, г.Москва\n72 218\n9 312\n12.89\n5.18\n244\n4\n2\n0\n6\n0\n0\n0.43%\n1"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-rezidens-25306723001?region=moskva&regionKey=143443001&organizationId=25306723001",
+      "cells": [
+        "54\n-1\nСЗ Резиденс, г.Москва\n69 310\n0\n0\n0\n323\n1\n1\n0\n1\n0\n0\n0.42%\n1"
+      ],
+      "name": "СЗ Резиденс",
+      "place": "54\n-1\nСЗ Резиденс, г.Москва\n69 310\n0\n0\n0\n323\n1\n1\n0\n1\n0\n0\n0.42%\n1"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/stadion-spartak-10336172001?region=moskva&regionKey=143443001&organizationId=10336172001",
+      "cells": [
+        "55\n-1\nСтадион Спартак, г.Москва\n59 830\n0\n0\n0\n376\n1\n1\n0\n1\n0\n0\n0.36%\n5"
+      ],
+      "name": "Стадион Спартак",
+      "place": "55\n-1\nСтадион Спартак, г.Москва\n59 830\n0\n0\n0\n376\n1\n1\n0\n1\n0\n0\n0.36%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-goraks-25269621001?region=moskva&regionKey=143443001&organizationId=25269621001",
+      "cells": [
+        "56\n-1\nСЗ Горакс, г.Москва\n58 098\n0\n0\n0\n389\n1\n1\n0\n2\n0\n0\n0.35%\nNaN"
+      ],
+      "name": "СЗ Горакс",
+      "place": "56\n-1\nСЗ Горакс, г.Москва\n58 098\n0\n0\n0\n389\n1\n1\n0\n2\n0\n0\n0.35%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/afi-development-1189186001?region=moskva&regionKey=143443001&organizationId=1189186001",
+      "cells": [
+        "57\n-1\nAFI Development, г.Москва\n55 699\n0\n0\n0\n405\n1\n1\n0\n1\n0\n0\n0.33%\n4.5"
+      ],
+      "name": "AFI Development",
+      "place": "57\n-1\nAFI Development, г.Москва\n55 699\n0\n0\n0\n405\n1\n1\n0\n1\n0\n0\n0.33%\n4.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-masters-29144094001?region=moskva&regionKey=143443001&organizationId=29144094001",
+      "cells": [
+        "58\n-1\nСЗ Мастерс, г.Москва\n53 666\n0\n0\n0\n423\n1\n1\n0\n1\n0\n0\n0.32%\nNaN"
+      ],
+      "name": "СЗ Мастерс",
+      "place": "58\n-1\nСЗ Мастерс, г.Москва\n53 666\n0\n0\n0\n423\n1\n1\n0\n1\n0\n0\n0.32%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-sokolniki-28740695001?region=moskva&regionKey=143443001&organizationId=28740695001",
+      "cells": [
+        "59\n-1\nСЗ Сокольники, г.Москва\n53 396\n0\n0\n0\n425\n1\n1\n0\n1\n0\n0\n0.32%\nNaN"
+      ],
+      "name": "СЗ Сокольники",
+      "place": "59\n-1\nСЗ Сокольники, г.Москва\n53 396\n0\n0\n0\n425\n1\n1\n0\n1\n0\n0\n0.32%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-lbm-inzhiniring-26806891001?region=moskva&regionKey=143443001&organizationId=26806891001",
+      "cells": [
+        "60\n-1\nСЗ ЛБМ Инжиниринг, г.Москва\n52 461\n0\n0\n0\n435\n1\n1\n0\n2\n0\n0\n0.31%\nNaN"
+      ],
+      "name": "СЗ ЛБМ Инжиниринг",
+      "place": "60\n-1\nСЗ ЛБМ Инжиниринг, г.Москва\n52 461\n0\n0\n0\n435\n1\n1\n0\n2\n0\n0\n0.31%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-moskovskij-gorodskoj-centr-prodazhi-nedvizhimosti-8961336001?region=moskva&regionKey=143443001&organizationId=8961336001",
+      "cells": [
+        "61\n-1\nСЗ Центр-Инвест, г.Москва\n51 929\n40 766\n78.5\n4.05\n441\n1\n3\n0\n3\n0\n1\n0.31%\n5"
+      ],
+      "name": "СЗ Центр-Инвест",
+      "place": "61\n-1\nСЗ Центр-Инвест, г.Москва\n51 929\n40 766\n78.5\n4.05\n441\n1\n3\n0\n3\n0\n1\n0.31%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/alvek-3192985001?region=moskva&regionKey=143443001&organizationId=3192985001",
+      "cells": [
+        "62\n-1\nALVEK, г.Москва\n51 836\n51 836\n100\n103.21\n443\n3\n3\n0\n0\n0\n3\n0.31%\n0"
+      ],
+      "name": "ALVEK",
+      "place": "62\n-1\nALVEK, г.Москва\n51 836\n51 836\n100\n103.21\n443\n3\n3\n0\n0\n0\n3\n0.31%\n0"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-sijanie-26786327001?region=moskva&regionKey=143443001&organizationId=26786327001",
+      "cells": [
+        "63\n-1\nСЗ Сияние, г.Москва\n51 721\n0\n0\n0\n444\n1\n1\n0\n1\n0\n0\n0.31%\nNaN"
+      ],
+      "name": "СЗ Сияние",
+      "place": "63\n-1\nСЗ Сияние, г.Москва\n51 721\n0\n0\n0\n444\n1\n1\n0\n1\n0\n0\n0.31%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-vektor-6873320001?region=moskva&regionKey=143443001&organizationId=6873320001",
+      "cells": [
+        "64\n-1\nГК Вектор, Московская область\n50 890\n0\n0\n0\n136\n1\n1\n0\n2\n0\n0\n0.31%\n5"
+      ],
+      "name": "ГК Вектор",
+      "place": "64\n-1\nГК Вектор, Московская область\n50 890\n0\n0\n0\n136\n1\n1\n0\n2\n0\n0\n0.31%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-troickaja-zhilishhno-stroitelnaja-kompanija-27770481001?region=moskva&regionKey=143443001&organizationId=27770481001",
+      "cells": [
+        "65\n-1\nСЗ Троицкжилстрой, г.Москва\n49 559\n0\n0\n0\n469\n1\n1\n0\n6\n0\n0\n0.3%\nNaN"
+      ],
+      "name": "СЗ Троицкжилстрой",
+      "place": "65\n-1\nСЗ Троицкжилстрой, г.Москва\n49 559\n0\n0\n0\n469\n1\n1\n0\n6\n0\n0\n0.3%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/transportno-peresadochnyj-uzel-rasskazovka-9899175001?region=moskva&regionKey=143443001&organizationId=9899175001",
+      "cells": [
+        "66\n-1\nТПУ Рассказовка, г.Москва\n48 813\n39 699\n81.33\n63.44\n478\n1\n1\n0\n2\n0\n0\n0.29%\n0.5"
+      ],
+      "name": "ТПУ Рассказовка",
+      "place": "66\n-1\nТПУ Рассказовка, г.Москва\n48 813\n39 699\n81.33\n63.44\n478\n1\n1\n0\n2\n0\n0\n0.29%\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/wainbridge-9856778001?region=moskva&regionKey=143443001&organizationId=9856778001",
+      "cells": [
+        "67\n-1\nWainbridge, г.Москва\n46 770\n46 770\n100\n9\n494\n1\n1\n0\n0\n0\n1\n0.28%\n2"
+      ],
+      "name": "Wainbridge",
+      "place": "67\n-1\nWainbridge, г.Москва\n46 770\n46 770\n100\n9\n494\n1\n1\n0\n0\n0\n1\n0.28%\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-park-razvlechenij-27269550001?region=moskva&regionKey=143443001&organizationId=27269550001",
+      "cells": [
+        "68\n-1\nСЗ Парк Развлечений, г.Москва\n45 901\n0\n0\n0\n500\n1\n1\n0\n1\n0\n0\n0.28%\nNaN"
+      ],
+      "name": "СЗ Парк Развлечений",
+      "place": "68\n-1\nСЗ Парк Развлечений, г.Москва\n45 901\n0\n0\n0\n500\n1\n1\n0\n1\n0\n0\n0.28%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-rks-development-401870001?region=moskva&regionKey=143443001&organizationId=401870001",
+      "cells": [
+        "69\n-1\nГК РКС Девелопмент, г.Москва\n45 482\n0\n0\n0\n124\n1\n1\n0\n0\n0\n1\n0.27%\n5"
+      ],
+      "name": "ГК РКС Девелопмент",
+      "place": "69\n-1\nГК РКС Девелопмент, г.Москва\n45 482\n0\n0\n0\n124\n1\n1\n0\n0\n0\n1\n0.27%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/konsol-4852898001?region=moskva&regionKey=143443001&organizationId=4852898001",
+      "cells": [
+        "70\n-1\nКонсоль, Смоленская область\n45 238\n0\n0\n0\n132\n1\n1\n0\n1\n0\n0\n0.27%\n4"
+      ],
+      "name": "Консоль",
+      "place": "70\n-1\nКонсоль, Смоленская область\n45 238\n0\n0\n0\n132\n1\n1\n0\n1\n0\n0\n0.27%\n4"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-biznes-kontakt-29284202001?region=moskva&regionKey=143443001&organizationId=29284202001",
+      "cells": [
+        "71\n-1\nСЗ Бизнес Контакт, г.Москва\n42 753\n0\n0\n0\n543\n1\n1\n0\n1\n0\n0\n0.26%\nNaN"
+      ],
+      "name": "СЗ Бизнес Контакт",
+      "place": "71\n-1\nСЗ Бизнес Контакт, г.Москва\n42 753\n0\n0\n0\n543\n1\n1\n0\n1\n0\n0\n0.26%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshchik-5-donskoj-5662647001?region=moskva&regionKey=143443001&organizationId=5662647001",
+      "cells": [
+        "72\n-1\nСЗ 5 Донской, г.Москва\n39 993\n39 993\n100\n75\n575\n1\n1\n0\n1\n0\n0\n0.24%\nNaN"
+      ],
+      "name": "СЗ 5 Донской",
+      "place": "72\n-1\nСЗ 5 Донской, г.Москва\n39 993\n39 993\n100\n75\n575\n1\n1\n0\n1\n0\n0\n0.24%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/najome-invest-23576581001?region=moskva&regionKey=143443001&organizationId=23576581001",
+      "cells": [
+        "73\n-1\nНайоме-Инвест, г.Москва\n36 100\n36 100\n100\n30\n628\n1\n1\n0\n1\n0\n0\n0.22%\nNaN"
+      ],
+      "name": "Найоме-Инвест",
+      "place": "73\n-1\nНайоме-Инвест, г.Москва\n36 100\n36 100\n100\n30\n628\n1\n1\n0\n1\n0\n0\n0.22%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-es-aj-es-development-23939225001?region=moskva&regionKey=143443001&organizationId=23939225001",
+      "cells": [
+        "74\n-1\nСЗ Эс Ай Эс Девелопмент, г.Москва\n34 737\n0\n0\n0\n657\n1\n1\n0\n2\n0\n0\n0.21%\nNaN"
+      ],
+      "name": "СЗ Эс Ай Эс Девелопмент",
+      "place": "74\n-1\nСЗ Эс Ай Эс Девелопмент, г.Москва\n34 737\n0\n0\n0\n657\n1\n1\n0\n2\n0\n0\n0.21%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/sz-kantri-klab-22153252001?region=moskva&regionKey=143443001&organizationId=22153252001",
+      "cells": [
+        "75\n-1\nСЗ КАНТРИ КЛАБ, г.Москва\n33 997\n33 997\n100\n24\n666\n1\n1\n0\n5\n0\n0\n0.2%\n0.5"
+      ],
+      "name": "СЗ КАНТРИ КЛАБ",
+      "place": "75\n-1\nСЗ КАНТРИ КЛАБ, г.Москва\n33 997\n33 997\n100\n24\n666\n1\n1\n0\n5\n0\n0\n0.2%\n0.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/itelma-development-20381628001?region=moskva&regionKey=143443001&organizationId=20381628001",
+      "cells": [
+        "76\n-1\nНЬЮТОН ДЕВЕЛОПМЕНТ, г.Москва\n31 849\n31 849\n100\n39\n706\n1\n1\n0\n0\n0\n1\n0.19%\nNaN"
+      ],
+      "name": "НЬЮТОН ДЕВЕЛОПМЕНТ",
+      "place": "76\n-1\nНЬЮТОН ДЕВЕЛОПМЕНТ, г.Москва\n31 849\n31 849\n100\n39\n706\n1\n1\n0\n0\n0\n1\n0.19%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-psn-2303755001?region=moskva&regionKey=143443001&organizationId=2303755001",
+      "cells": [
+        "77\n-1\nГруппа ПСН, г.Москва\n30 366\n30 366\n100\n90\n732\n1\n1\n0\n0\n0\n1\n0.18%\nNaN"
+      ],
+      "name": "Группа ПСН",
+      "place": "77\n-1\nГруппа ПСН, г.Москва\n30 366\n30 366\n100\n90\n732\n1\n1\n0\n0\n0\n1\n0.18%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-tochno-2894925001?region=moskva&regionKey=143443001&organizationId=2894925001",
+      "cells": [
+        "78\n-1\nГК ТОЧНО, Краснодарский край\n30 135\n0\n0\n0\n4\n1\n1\n0\n1\n0\n0\n0.18%\n3.5"
+      ],
+      "name": "ГК ТОЧНО",
+      "place": "78\n-1\nГК ТОЧНО, Краснодарский край\n30 135\n0\n0\n0\n4\n1\n1\n0\n1\n0\n0\n0.18%\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-upravlenie-renovacionnoj-zastrojki-4-28175316001?region=moskva&regionKey=143443001&organizationId=28175316001",
+      "cells": [
+        "79\n-1\nСЗ УРЗ-4, г.Москва\n28 654\n0\n0\n0\n775\n1\n1\n0\n1\n0\n0\n0.17%\nNaN"
+      ],
+      "name": "СЗ УРЗ-4",
+      "place": "79\n-1\nСЗ УРЗ-4, г.Москва\n28 654\n0\n0\n0\n775\n1\n1\n0\n1\n0\n0\n0.17%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specstroj-1-17548243001?region=moskva&regionKey=143443001&organizationId=17548243001",
+      "cells": [
+        "80\n-1\nСпецстрой-1, г.Москва\n27 479\n27 479\n100\n36\n800\n1\n1\n0\n0\n0\n1\n0.16%\nNaN"
+      ],
+      "name": "Спецстрой-1",
+      "place": "80\n-1\nСпецстрой-1, г.Москва\n27 479\n27 479\n100\n36\n800\n1\n1\n0\n0\n0\n1\n0.16%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-dekom-29350780001?region=moskva&regionKey=143443001&organizationId=29350780001",
+      "cells": [
+        "81\n-1\nСЗ Деком, г.Москва\n26 419\n0\n0\n0\n829\n1\n1\n0\n1\n0\n0\n0.16%\nNaN"
+      ],
+      "name": "СЗ Деком",
+      "place": "81\n-1\nСЗ Деком, г.Москва\n26 419\n0\n0\n0\n829\n1\n1\n0\n1\n0\n0\n0.16%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-kurkinskij-proekt-24460254001?region=moskva&regionKey=143443001&organizationId=24460254001",
+      "cells": [
+        "82\n-1\nСЗ Куркинский проект, г.Москва\n25 504\n25 504\n100\n5.1\n858\n1\n1\n0\n1\n0\n0\n0.15%\nNaN"
+      ],
+      "name": "СЗ Куркинский проект",
+      "place": "82\n-1\nСЗ Куркинский проект, г.Москва\n25 504\n25 504\n100\n5.1\n858\n1\n1\n0\n1\n0\n0\n0.15%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-berzarina-37-24806681001?region=moskva&regionKey=143443001&organizationId=24806681001",
+      "cells": [
+        "83\n-1\nСЗ Берзарина 37, г.Москва\n24 151\n0\n0\n0\n892\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+      ],
+      "name": "СЗ Берзарина 37",
+      "place": "83\n-1\nСЗ Берзарина 37, г.Москва\n24 151\n0\n0\n0\n892\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshchik-etaloni-evropa-22889333001?region=moskva&regionKey=143443001&organizationId=22889333001",
+      "cells": [
+        "84\n-1\nСЗ Эталони Европа, г.Москва\n23 323\n23 323\n100\n2.1\n921\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+      ],
+      "name": "СЗ Эталони Европа",
+      "place": "84\n-1\nСЗ Эталони Европа, г.Москва\n23 323\n23 323\n100\n2.1\n921\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-balchug-estejt-26768586001?region=moskva&regionKey=143443001&organizationId=26768586001",
+      "cells": [
+        "85\n-1\nСЗ Балчуг Эстейт, г.Москва\n22 665\n0\n0\n0\n943\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+      ],
+      "name": "СЗ Балчуг Эстейт",
+      "place": "85\n-1\nСЗ Балчуг Эстейт, г.Москва\n22 665\n0\n0\n0\n943\n1\n1\n0\n1\n0\n0\n0.14%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-oniks-development-29292676001?region=moskva&regionKey=143443001&organizationId=29292676001",
+      "cells": [
+        "86\n-1\nСЗ Оникс-Девелопмент, г.Москва\n21 775\n0\n0\n0\n974\n1\n1\n0\n1\n0\n0\n0.13%\nNaN"
+      ],
+      "name": "СЗ Оникс-Девелопмент",
+      "place": "86\n-1\nСЗ Оникс-Девелопмент, г.Москва\n21 775\n0\n0\n0\n974\n1\n1\n0\n1\n0\n0\n0.13%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-uniq-development-26675337001?region=moskva&regionKey=143443001&organizationId=26675337001",
+      "cells": [
+        "87\n-1\nГК UNIQ Development, г.Москва\n20 776\n0\n0\n0\n1009\n1\n1\n0\n1\n0\n0\n0.12%\nNaN"
+      ],
+      "name": "ГК UNIQ Development",
+      "place": "87\n-1\nГК UNIQ Development, г.Москва\n20 776\n0\n0\n0\n1009\n1\n1\n0\n1\n0\n0\n0.12%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-baza-development-24001163001?region=moskva&regionKey=143443001&organizationId=24001163001",
+      "cells": [
+        "88\n-1\nГК BAZA Development, Свердловская область\n19 845\n0\n0\n0\n287\n1\n1\n0\n1\n0\n0\n0.12%\n3.5"
+      ],
+      "name": "ГК BAZA Development",
+      "place": "88\n-1\nГК BAZA Development, Свердловская область\n19 845\n0\n0\n0\n287\n1\n1\n0\n1\n0\n0\n0.12%\n3.5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/gruppa-kompanij-sever-768970001?region=moskva&regionKey=143443001&organizationId=768970001",
+      "cells": [
+        "89\n-1\nДК Север, Тюменская область\n19 173\n19 173\n100\n24\n112\n1\n1\n0\n0\n0\n1\n0.11%\n5"
+      ],
+      "name": "ДК Север",
+      "place": "89\n-1\nДК Север, Тюменская область\n19 173\n19 173\n100\n24\n112\n1\n1\n0\n0\n0\n1\n0.11%\n5"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-senssukharevskaja-25134488001?region=moskva&regionKey=143443001&organizationId=25134488001",
+      "cells": [
+        "90\n-1\nСЗ Сенс.Сухаревская, г.Москва\n18 939\n0\n0\n0\n1089\n1\n1\n0\n2\n0\n0\n0.11%\nNaN"
+      ],
+      "name": "СЗ Сенс.Сухаревская",
+      "place": "90\n-1\nСЗ Сенс.Сухаревская, г.Москва\n18 939\n0\n0\n0\n1089\n1\n1\n0\n2\n0\n0\n0.11%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/luxe-properties-21258427001?region=moskva&regionKey=143443001&organizationId=21258427001",
+      "cells": [
+        "91\n-1\nLuxe Properties, г.Москва\n18 571\n18 571\n100\n27\n1110\n1\n1\n0\n0\n0\n1\n0.11%\nNaN"
+      ],
+      "name": "Luxe Properties",
+      "place": "91\n-1\nLuxe Properties, г.Москва\n18 571\n18 571\n100\n27\n1110\n1\n1\n0\n0\n0\n1\n0.11%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-granard-28749812001?region=moskva&regionKey=143443001&organizationId=28749812001",
+      "cells": [
+        "92\n-1\nСЗ Гранард, г.Москва\n17 944\n0\n0\n0\n1148\n1\n1\n0\n1\n0\n0\n0.11%\nNaN"
+      ],
+      "name": "СЗ Гранард",
+      "place": "92\n-1\nСЗ Гранард, г.Москва\n17 944\n0\n0\n0\n1148\n1\n1\n0\n1\n0\n0\n0.11%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-dokhodnyj-dom-22060733001?region=moskva&regionKey=143443001&organizationId=22060733001",
+      "cells": [
+        "93\n-1\nСЗ Доходный дом, г.Москва\n17 739\n17 739\n100\n6\n1158\n1\n1\n0\n2\n0\n0\n0.11%\n2"
+      ],
+      "name": "СЗ Доходный дом",
+      "place": "93\n-1\nСЗ Доходный дом, г.Москва\n17 739\n17 739\n100\n6\n1158\n1\n1\n0\n2\n0\n0\n0.11%\n2"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-miks-29540483001?region=moskva&regionKey=143443001&organizationId=29540483001",
+      "cells": [
+        "94\nnew\nСЗ Микс, г.Москва\n16 945\n0\n0\n0\n1189\n1\n1\n0\n1\n0\n0\n0.1%\nNaN"
+      ],
+      "name": "СЗ Микс",
+      "place": "94\nnew\nСЗ Микс, г.Москва\n16 945\n0\n0\n0\n1189\n1\n1\n0\n1\n0\n0\n0.1%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-izmajlovo-29416282001?region=moskva&regionKey=143443001&organizationId=29416282001",
+      "cells": [
+        "95\n-2\nСЗ Измайлово, г.Москва\n16 033\n0\n0\n0\n1227\n1\n2\n0\n2\n0\n0\n0.1%\nNaN"
+      ],
+      "name": "СЗ Измайлово",
+      "place": "95\n-2\nСЗ Измайлово, г.Москва\n16 033\n0\n0\n0\n1227\n1\n2\n0\n2\n0\n0\n0.1%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-centr-na-tessinskom-29446497001?region=moskva&regionKey=143443001&organizationId=29446497001",
+      "cells": [
+        "96\n-2\nСЗ Центр на Тессинском, г.Москва\n15 081\n0\n0\n0\n1302\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+      ],
+      "name": "СЗ Центр на Тессинском",
+      "place": "96\n-2\nСЗ Центр на Тессинском, г.Москва\n15 081\n0\n0\n0\n1302\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-arstroj-28736198001?region=moskva&regionKey=143443001&organizationId=28736198001",
+      "cells": [
+        "97\n-2\nСЗ Арстрой, г.Москва\n14 984\n0\n0\n0\n1312\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+      ],
+      "name": "СЗ Арстрой",
+      "place": "97\n-2\nСЗ Арстрой, г.Москва\n14 984\n0\n0\n0\n1312\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-ekran-18116010001?region=moskva&regionKey=143443001&organizationId=18116010001",
+      "cells": [
+        "98\n-2\nСЗ Экран, г.Москва\n14 345\n14 345\n100\n24\n1358\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+      ],
+      "name": "СЗ Экран",
+      "place": "98\n-2\nСЗ Экран, г.Москва\n14 345\n14 345\n100\n24\n1358\n1\n1\n0\n1\n0\n0\n0.09%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-grodnenskaja-18-27806950001?region=moskva&regionKey=143443001&organizationId=27806950001",
+      "cells": [
+        "99\n-2\nСЗ Гродненская 18, г.Москва\n13 426\n0\n0\n0\n1420\n1\n1\n0\n1\n0\n0\n0.08%\nNaN"
+      ],
+      "name": "СЗ Гродненская 18",
+      "place": "99\n-2\nСЗ Гродненская 18, г.Москва\n13 426\n0\n0\n0\n1420\n1\n1\n0\n1\n0\n0\n0.08%\nNaN"
+    },
+    {
+      "card_url": "https://erzrf.ru/zastroyschiki/brand/specializirovannyj-zastrojshhik-vks-invest-21408629001?region=moskva&regionKey=143443001&organizationId=21408629001",
+      "cells": [
+        "100\n-2\nГК VOSHOD, г.Москва\n12 789\n12 789\n100\n14.52\n1463\n2\n2\n0\n1\n0\n1\n0.08%\n1"
+      ],
+      "name": "ГК VOSHOD",
+      "place": "100\n-2\nГК VOSHOD, г.Москва\n12 789\n12 789\n100\n14.52\n1463\n2\n2\n0\n1\n0\n1\n0.08%\n1"
+    }
+  ]
+}

@@ -1,6 +1,9 @@
 """Главная страница дашборда."""
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+
 import streamlit as st
 
 from app.audit import latest_data_badge
@@ -11,6 +14,38 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+
+# === Сайдбар: свежесть данных + ручная перезагрузка ===
+with st.sidebar:
+    st.markdown("### 🔄 Свежесть данных")
+    realty = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
+    src_freshness = []
+    for name, pattern in [
+        ("Мониторинг 2.0", "nashdom/monitoring_2_0_*.xlsx"),
+        ("Квартирография", "nashdom/kvartirografia_*.xlsx"),
+        ("Распроданность", "nashdom/rasprodannost_*.xlsx"),
+        ("ERZRF топ", "erzrf/top_obyem_stroitelstva_rf_*.xlsx"),
+        ("ERZRF карточки", "erzrf/cards/cards_*.xlsx"),
+        ("Эскроу", "escrow_manual/*.xlsx"),
+    ]:
+        files = list(realty.glob(pattern))
+        files = [f for f in files if "_archive" not in f.parts]
+        if not files:
+            src_freshness.append(f"❌ {name}: нет файла")
+            continue
+        latest = max(files, key=lambda p: p.stat().st_mtime)
+        mtime = datetime.fromtimestamp(latest.stat().st_mtime)
+        days = (datetime.now() - mtime).days
+        icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
+        src_freshness.append(f"{icon} {name}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
+    st.markdown("\n".join(f"- {s}" for s in src_freshness))
+
+    st.markdown("---")
+    if st.button("♻️ Перезагрузить кеш", use_container_width=True,
+                 help="Сбросить кеш данных (полезно после обновления выгрузок)"):
+        st.cache_data.clear()
+        st.success("Кеш сброшен")
+        st.rerun()
 
 st.title("📊 Аналитика Москвы")
 badge = latest_data_badge()

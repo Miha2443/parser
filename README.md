@@ -1,92 +1,246 @@
 # Аналитика Москвы — дашборд
 
-Тестовый дашборд на Streamlit с двумя показателями:
+Streamlit-дашборд с данными о строительстве и социально-экономических
+показателях Москвы. Восемь страниц с данными из 7 источников:
 
-- **Среднемесячная номинальная начисленная заработная плата** (fedstat 57824) — отрасли «Всего» и «Строительство», регионы РФ и Москва.
-- **Индексы потребительских цен** (fedstat 31074, ч.1 + ч.2) — регионы РФ и Москва, типы индекса «к предыдущему месяцу» и «с начала года к АППГ».
+| Источник | Что |
+|---|---|
+| **Мониторинг 2.0** (Google Sheets, ДОМ.РФ) | реестр ОКС + РВ, объекты в строительстве и введённые |
+| **Квартирография** (наш.дом.рф) | агрегаты по комнатности на застройщика и регион |
+| **Распроданность** (наш.дом.рф) | распроданность / стройготовность / отношение Р/С |
+| **ERZRF top** (erzrf.ru) | топы застройщиков по 5 сортировкам × 2 региона |
+| **ERZRF cards** (erzrf.ru) | карточки топ-100 застройщиков, переносы по годам |
+| **Эскроу** (ДОМ.РФ ЕИСЖС) | пообъектный реестр Москвы, кредитная нагрузка |
+| **fedstat / rosstat** | ВРП, ВВП, ИПЦ, зарплата, население и пр. |
 
-Поддерживаются переключатели **Год / Квартал / Месяц**, переключатель **За период / С начала года** для ЗП, multi-select месяцев и кварталов, выбор отраслей и регионов, экспорт таблиц в Excel/CSV и графиков в PNG.
+Уведомления о результатах прогонов парсеров — через TDM Bot API (мэрия Москвы).
 
-## Установка (Windows, Python 3.11–3.14)
+---
 
-В командной строке Windows используйте `py -m pip`, а не `pip` — последний часто не в PATH:
+## Быстрый старт на новом компе
 
-```cmd
-py -m pip install --upgrade pip
-py -m pip install -r requirements.txt
-```
+### Требования
 
-Если на Python 3.14 не ставится `kaleido` — это не критично, просто пропустите его
-(кнопка PNG-экспорта в дашборде не появится, всё остальное работает):
+- Windows 10/11
+- **Python 3.10+** — https://python.org (галочка «Add to PATH»)
+- **Google Chrome** — https://google.com/chrome (для Selenium-парсеров)
+- Доступ к `api.tdm.mos.ru` (для уведомлений, опционально)
 
-```cmd
-py -m pip install pandas streamlit plotly openpyxl xlrd
-```
-
-## Использование
-
-### Полный цикл (одной командой)
-
-`py pipeline\orchestrator.py` делает всё:
-1. Качает изменившиеся xls для каждого индикатора из `pipeline/registry.py`.
-2. Парсит → перезаписывает витрину `data/processed/<id>.pkl`.
-3. Пишет журнал в `data/processed/etl_audit.jsonl`.
-4. (опционально) отправляет сводку в Telegram, если задан `config/telegram.json`.
-
-Один упавший парсер не валит остальные — итог виден на странице «🔄 Журнал обновлений» дашборда.
-
-### Без интернета — пересборка по уже скачанным xls
+### Установка одной командой
 
 ```cmd
-py pipeline\orchestrator.py --skip-download
+git clone <repo-url>
+cd parser
+setup.bat
 ```
 
-или (то же самое):
+`setup.bat` пройдёт 8 шагов:
+
+| | Что | Время |
+|---|---|---:|
+| 1 | Проверка Python ≥ 3.10 | 1с |
+| 2 | Проверка Chrome | 1с |
+| 3 | Создание `.venv` | 30с |
+| 4 | `pip install -r requirements.txt` | 2-5 мин |
+| 5 | `.env` из шаблона | ~1 мин (вписать токены) |
+| 6 | Первичный сбор всех данных | **40-60 мин** |
+| 7 | Регистрация задачи в Task Scheduler на 06:00 | 5с |
+| 8 | Запуск сайта (`http://localhost:8501`) | мгновенно |
+
+**От имени администратора** — Task Scheduler регистрируется как системный.
+**Без прав админа** — Task Scheduler регистрируется как per-user
+(сработает только когда юзер залогинен).
+
+### Флаги setup
 
 ```cmd
-py scripts\manual_ingest.py
+setup.bat --no-scrape       :: не качать данные сразу (быстрый прогон)
+setup.bat --no-scheduler    :: не регистрировать cron
+setup.bat --no-start        :: не запускать сайт в конце
 ```
 
-### Запуск дашборда
+### Заполнение `.env` (TDM-бот)
+
+После шага 5 в Блокноте откроется `.env`. Заполни **три переменные**:
+
+```ini
+TDM_BOT_TOKEN=BOT-<токен_бота>
+TDM_WORKSPACE_ID=<workspaceId>
+TDM_GROUP_ID=<groupId>
+```
+
+- **`TDM_BOT_TOKEN`** — токен бота. Выдаётся при создании бота в TDM.
+  Имеет формат `BOT-<uuid>-<uuid>-<timestamp>-<uuid>`.
+
+- **`TDM_WORKSPACE_ID` и `TDM_GROUP_ID`** — узнаются командой:
+  ```cmd
+  tdm_test.bat
+  ```
+  Перед запуском **добавь бота в нужный чат TDM** и напиши ему что-нибудь.
+  В консоли увидишь:
+  ```
+  Найдено N групп(ы) бота:
+    groupId=3220144879180380  workspaceId=-1  type=GROUP
+      title: «Мой чат»  непрочитано: 1
+  ```
+  Скопируй `groupId` и `workspaceId` в `.env`.
+
+### Заполнение `config\erzrf.json` (логин ERZRF)
+
+Парсер `erzrf.ru` требует авторизации. Скопируй шаблон и впиши **свой логин/пароль**:
 
 ```cmd
-py -m streamlit run app\Home.py
+copy config\erzrf.example.json config\erzrf.json
+notepad config\erzrf.json
 ```
 
-Откройте http://localhost:8501.
+Внутри:
+```json
+{
+  "email": "твой_email@example.com",
+  "password": "твой_пароль_от_erzrf.ru"
+}
+```
 
-### Ежедневное расписание (Windows Task Scheduler)
+Файл `config\erzrf.json` в `.gitignore` — секреты не уйдут в репо.
 
-Из cmd от имени админа:
+Если этот файл не заполнить, парсер ERZRF будет пропускаться (но
+данные из других источников всё равно соберутся).
+
+---
+
+## Команды на каждый день
+
+| Команда | Что делает |
+|---|---|
+| `start.bat` | Запустить сайт (http://localhost:8501) |
+| `update.bat` | Прогон всех парсеров вручную (≈ daily cron в 06:00) |
+| `update.bat fedstat` | Обновить только зарплату/ИПЦ |
+| `update.bat --force` | Игнорировать state, пере-скачать всё |
+| `update.bat --skip-kvart-per-dev` | Без долгого per-dev обхода (~20 мин) |
+| `update.bat --retries 3` | Больше повторов для упавших источников |
+| `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
+
+### Группы источников для `update.bat`
 
 ```cmd
-schtasks /Create /SC DAILY /ST 06:00 /TN "parser_etl" /TR "C:\cloud\scripts\update_all.bat" /RL HIGHEST /F
+update.bat                          :: всё (7 источников)
+update.bat nashdom                  :: monitoring + rasprod + kvart
+update.bat erzrf                    :: erz-top + erz-cards
+update.bat stats                    :: fedstat + rosstat
+update.bat monitoring fedstat       :: точечно
 ```
 
-`scripts\update_all.bat` — точка входа: пишет лог в `data\processed\etl.log` и аккуратно
-обрабатывает зависшие запуски через lock-файл.
+---
 
-### Telegram-уведомления (опционально)
+## Ежедневный режим (Task Scheduler)
 
-1. Создайте бота через `@BotFather`, узнайте `chat_id` (например, через `@userinfobot` для личных сообщений).
-2. Скопируйте `config/telegram.example.json` в `config/telegram.json` и впишите `token` и `chat_id`.
-3. Установите `requests`: `py -m pip install requests`.
+После `setup.bat` зарегистрирована задача `parser_etl_realty` на запуск
+ежедневно в **06:00 локального времени**:
 
-Без файла модуль silent — оркестратор отрабатывает и без него.
+- Скачивает данные со всех источников
+- Дедупликация: если сайт отдал тот же контент с новой датой — файл удаляется
+- Старые версии переезжают в `data\raw\realty\_archive\<дата>\`
+- **По понедельникам** — долгий per-dev обход квартирографии (~90 мин)
+- В остальные дни — без него (~20 мин)
+- Упавшие источники автоматически повторяются (до 2 раз с паузой 30/60 сек)
+- В TDM приходит сводка с бизнес-темами: «Обновилось: ИПЦ, Квартирография, Мониторинг 2.0»
 
-## Структура
+Сайт автоматически подхватывает свежие данные (кеш TTL 5 минут).
+Кнопка «♻️ Перезагрузить кеш» в сайдбаре — для ручного сброса.
+
+---
+
+## Структура папок
 
 ```
-app/                    Streamlit-приложение
-pipeline/               ETL: парсеры xls → витрины pkl
-data/processed/         Витрины (pkl, не коммитится, пересобирается ETL)
-data/derived/           Производные данные (committed CSV)
-downloads/              Сырые xls с источников (вход)
-fedstat_checker.py      Загрузчик fedstat (Selenium + requests)
-rosstat_checker.py      Загрузчик rosstat (requests)
-_to_delete/             Карантин неподключённого (на ревизию перед удалением)
+parser/
+  setup.bat          ← одноразовый setup
+  start.bat          ← запустить сайт
+  update.bat         ← ручное обновление
+  tdm_test.bat       ← тест бота
+  DEPLOY.md          ← подробная инструкция
+
+  .env               ← секреты (не коммитится)
+  .env.example       ← шаблон
+
+  app/               ← Streamlit
+    Home.py          ← главная (со свежестью данных в сайдбаре)
+    data_access.py   ← загрузчики
+    pages/
+      1_Заработная_плата.py
+      2_ИПЦ.py
+      3_ВРП_и_ВВП.py
+      4_Квартирография.py
+      5_Квартирография_по_девелоперу.py
+      6_Распроданность.py
+      7_Профиль_застройщика.py    ← главная страница профиля
+      8_Отправка_в_TDM.py          ← отправка файлов в TDM
+      99_Обновления.py
+
+  pipeline/
+    tdm_notify.py    ← клиент TDM Bot API
+    archive_old.py   ← архивация старых выгрузок
+    deduplicate.py   ← дедупликация по контенту
+    selenium_utils.py ← create_chrome + retry_with_refresh
+    parsers/         ← парсеры xls/json в DataFrame
+
+  scripts/
+    update_realty.py              ← оркестратор всех парсеров
+    update_realty_scheduled.bat   ← runner для cron (грузит .env, venv)
+    register_scheduler.bat        ← регистрация Task Scheduler (admin)
+    register_scheduler_user.bat   ← per-user задача (без admin)
+
+  data/raw/realty/
+    nashdom/         ← monitoring_2_0, rasprodannost, kvartirografia
+    erzrf/           ← top_* + cards/
+    escrow_manual/   ← ручная выгрузка ДОМ.РФ ЕИСЖС
+    _archive/        ← старые версии по датам
+
+  downloads/         ← fedstat + rosstat xls
+
+  nashdom_checker.py ← парсер наш.дом.рф (selenium)
+  erzrf_checker.py   ← парсер erzrf.ru (selenium)
+  fedstat_checker.py ← парсер fedstat.ru (selenium)
+  rosstat_checker.py ← парсер rosstat.gov.ru (requests)
 ```
 
-## Что дальше
+---
 
-После приёмки тестовой версии добавляем разделы из реестра показателей: ВРП, инвестиции, ввод жилья, домрф, ипотека и т.д. — без переписывания UI, через `pipeline/parsers/` и YAML-конфиг.
+## Troubleshooting
+
+**Python не установлен** — поставить https://python.org с галочкой «Add to PATH»
+
+**Chrome не найден** — поставить https://google.com/chrome
+
+**TDM `getaddrinfo failed`** — нет доступа к `api.tdm.mos.ru`. Включи
+VPN мэрии или запусти с рабочего ПК
+
+**Task Scheduler не регистрируется** — `setup.bat` нужно запустить
+от админа, или используется per-user fallback
+
+**Зарплата/ИПЦ не обновляются** — `update.bat fedstat --force`
+игнорирует state и качает заново
+
+**Кеш Streamlit «застрял»** — в сайдбаре главной нажми «♻️ Перезагрузить кеш»
+
+**Парсер падает на одном источнике** — `--retries 3` или запустить только
+его: `update.bat <alias>` (alias: monitoring, rasprod, kvart, erz-top,
+erz-cards, fedstat, rosstat)
+
+**ERZRF не качает** — нет `config\erzrf.json`. Скопируй
+`config\erzrf.example.json` → `config\erzrf.json`, впиши свой логин/пароль
+от erzrf.ru
+
+**Не вижу TDM groupId** — добавь бота в чат TDM и напиши ему сообщение,
+потом `tdm_test.bat`. Если бот ещё ни в одних чатах, команда выведет
+«пусто»
+
+**Логи прогонов** — `data\processed\etl_<YYYY-MM-DD>.log`
+
+---
+
+## Старая инструкция / разработка
+
+Подробности про парсеры, переменные окружения и архитектуру —
+в `DEPLOY.md` и докстрингах модулей.

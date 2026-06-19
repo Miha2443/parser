@@ -111,10 +111,18 @@ def save_state(state):
 
 def create_driver():
     options = Options()
-    options.add_argument("--headless")
+    # --headless=new нужен для Chrome 148+: старый headless ломает
+    # JS-инициализацию fedstat (appendChild на null).
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-features=Translate")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--lang=ru-RU")
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -169,62 +177,101 @@ def get_last_update_date(driver, indicator_id):
 
     wait = WebDriverWait(driver, PAGE_TIMEOUT)
 
-    try:
-        # Закрываем попап если появился
-        time.sleep(2)
-        close_popup(driver)
+    # Ретраи на flaky-ошибки: appendChild (Chrome 148 JS-инициализация
+    # fedstat) и element click intercepted (всплывающее модальное окно
+    # перехватывает клик). На каждой ретре делаем refresh.
+    RETRYABLE_MARKERS = (
+        "appendchild",
+        "cannot read properties of null",
+        "element click intercepted",
+    )
 
-        passport_tab = wait.until(
-            EC.element_to_be_clickable(
-                (By.XPATH, "//a[contains(text(),'ПАСПОРТ') or contains(text(),'Паспорт')]")
-            )
-        )
-        passport_tab.click()
-        time.sleep(2)
-
-        # Закрываем попап если появился после клика
-        close_popup(driver)
-
-        date_label = wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//*[contains(text(),'Последнее обновление данных')]")
-            )
-        )
-
-        # Вариант 1: следующий sibling
+    for attempt in range(3):
         try:
-            el = date_label.find_element(By.XPATH, "following-sibling::*[1]")
-            text = el.text.strip()
-            if re.search(r"\d{2}\.\d{2}\.\d{4}", text):
-                return text
-        except Exception:
-            pass
+            # Закрываем попап если появился
+            time.sleep(2)
+            close_popup(driver)
 
-        # Вариант 2: следующий sibling родителя
-        try:
-            parent = date_label.find_element(By.XPATH, "..")
-            el = parent.find_element(By.XPATH, "following-sibling::*[1]")
-            text = el.text.strip()
-            if re.search(r"\d{2}\.\d{2}\.\d{4}", text):
-                return text
-        except Exception:
-            pass
+            passport_tab = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//a[contains(text(),'ПАСПОРТ') or contains(text(),'Паспорт')]")
+                )
+            )
+            passport_tab.click()
+            time.sleep(2)
 
-        # Вариант 3: regex по тексту родителя
-        parent_text = date_label.find_element(By.XPATH, "..").text
-        match = re.search(r"\d{2}\.\d{2}\.\d{4}", parent_text)
-        if match:
-            return match.group(0)
+            # Закрываем попап если появился после клика
+            close_popup(driver)
 
-        print("  ⚠️  Не удалось извлечь дату")
-        return None
+            date_label = wait.until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//*[contains(text(),'Последнее обновление данных')]")
+                )
+            )
 
-    except Exception as e:
-        print(f"  ❌ Ошибка при чтении страницы: {e}")
-        return None
+            # Вариант 1: следующий sibling
+            try:
+                el = date_label.find_element(By.XPATH, "following-sibling::*[1]")
+                text = el.text.strip()
+                if re.search(r"\d{2}\.\d{2}\.\d{4}", text):
+                    return text
+            except Exception:
+                pass
+
+            # Вариант 2: следующий sibling родителя
+            try:
+                parent = date_label.find_element(By.XPATH, "..")
+                el = parent.find_element(By.XPATH, "following-sibling::*[1]")
+                text = el.text.strip()
+                if re.search(r"\d{2}\.\d{2}\.\d{4}", text):
+                    return text
+            except Exception:
+                pass
+
+            # Вариант 3: regex по тексту родителя
+            parent_text = date_label.find_element(By.XPATH, "..").text
+            match = re.search(r"\d{2}\.\d{2}\.\d{4}", parent_text)
+            if match:
+                return match.group(0)
+
+            print("  ⚠️  Не удалось извлечь дату")
+            return None
+
+        except Exception as e:
+            msg = str(e).lower()
+            if attempt < 2 and any(m in msg for m in RETRYABLE_MARKERS):
+                print(f"  🔄 Попытка {attempt + 2}/3 после ошибки: {str(e)[:80]}")
+                try:
+                    driver.refresh()
+                except Exception:
+                    pass
+                time.sleep(3)
+                continue
+            print(f"  ❌ Ошибка при чтении страницы: {e}")
+            return None
+    return None
 
 
-def download_excel(indicator_id, save_dir):
+def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
+    """«12.05.2026» / «2026-05-12» / «12.05.2026 14:30» → '20260512'.
+
+    Если не парсится — возвращает текущую дату как fallback (чтобы файл
+    точно записался). Используется в имени xls-файла, чтобы оно отражало
+    реальную дату обновления данных с сайта, а не день скачивания.
+    """
+    if s:
+        s = str(s).strip()
+        # Пробуем популярные форматы
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M",
+                    "%d-%m-%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s[:len(fmt) + 6], fmt).strftime("%Y%m%d")
+            except (ValueError, TypeError):
+                continue
+    return datetime.now().strftime("%Y%m%d")
+
+
+def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
     PAYLOADS = {
         "33648": {
             "title": "Индекс предпринимательской уверенности в строительстве (процент)",
@@ -1025,7 +1072,11 @@ def download_excel(indicator_id, save_dir):
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
         safe_title = safe_title[:80]
-        filename = f"{datetime.now().strftime('%Y%m%d')}_{safe_title}.xls"
+        # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
+        # (а не сегодняшняя). Так файл сразу говорит когда контент
+        # реально обновлён.
+        date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
+        filename = f"{date_in_name}_{safe_title}.xls"
         save_path = save_dir / filename
 
         with open(save_path, "wb") as f:
@@ -1040,9 +1091,10 @@ def download_excel(indicator_id, save_dir):
         return None
 
 
-def run():
+def run(force: bool = False):
+    """force=True — игнорируем state, перекачиваем все индикаторы."""
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    state = load_state()
+    state = load_state() if not force else {}
     downloaded_files = []
 
     print(f"\n{'='*60}")
@@ -1072,7 +1124,8 @@ def run():
                 print(f"  ✔️  Без изменений ({remote_date})\n")
                 continue
 
-            saved_path = download_excel(indicator_id, DOWNLOAD_DIR)
+            saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
+                                        remote_date=remote_date)
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date
@@ -1089,8 +1142,14 @@ def run():
         print(f"  • {f}")
     print(f"{'='*60}\n")
 
-    return downloaded_files
+    ok = len(downloaded_files) > 0
+    return downloaded_files, ok
 
 
 if __name__ == "__main__":
-    run()
+    import sys
+    force = "--force" in sys.argv
+    files, ok = run(force=force)
+    # exit 2 если ничего не скачано — даёт update_realty.py сигнал
+    # «парсер провалился» и поднимает retry с задержкой.
+    sys.exit(0 if (ok and files) else 2)

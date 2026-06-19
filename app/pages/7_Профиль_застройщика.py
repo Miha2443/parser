@@ -864,58 +864,73 @@ if not rv_dev.empty:
     mon_vvod_msk_2225 = float(rv_2225["Общая площадь"].sum())
 
 
-# === Ряд 1: текущее строительство (РФ + МСК) ===
+# === 3 ряда × 2 колонки: слева Москва, справа Регионы РФ (= РФ - Москва) ===
+# Левая (МСК) — знаменатели из monitoring 2.0.
+# Правая (Регионы РФ) — разница РФ и МСК для числителя и знаменателя.
+# Если разница даёт отрицательное число (артефакт расхождения источников),
+# клампим к 0 и pct_str вернёт «—» при знаменателе ≤ 0.
+regiony_stroy_value = max((perenos_stroy_rf or 0) - (perenos_stroy_msk or 0), 0.0)
+regiony_stroy_base = max((stroitelstvo_rf or 0) - mon_stroy_msk, 0.0)
+
+regiony_2225_value = max((perenos_2225_rf or 0) - (perenos_msk_2225 or 0), 0.0)
+regiony_2225_base = max(sdano_2225_rf - mon_vvod_msk_2225, 0.0)
+
+regiony_2026_value = max((perenos_vvod_rf_2026 or 0) - (perenos_vvod_msk_2026 or 0), 0.0)
+regiony_2026_base = max((vvod_rf_2026 or 0) - mon_vvod_msk_2026, 0.0)
+
+# === Ряд 1: текущее строительство ===
 r1c1, r1c2 = st.columns(2)
 with r1c1:
-    subs = [
-        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
-         pct_str(perenos_stroy_rf, stroitelstvo_rf)),
-    ]
-    render_delay_card("Перенос в текущем строительстве РФ", perenos_stroy_rf, subs)
-with r1c2:
-    # Москва: знаменатель из monitoring 2.0 (Реестр ОКС, статус «Строящийся»)
     subs = [
         (f"от {ru_num(mon_stroy_msk/1000)} тыс. м² в стройке Москвы",
          pct_str(perenos_stroy_msk, mon_stroy_msk)),
     ]
-    render_delay_card("Перенос в текущем строительстве МСК", perenos_stroy_msk, subs)
+    render_delay_card("Перенос в текущем строительстве в Москве",
+                      perenos_stroy_msk, subs)
+with r1c2:
+    subs = [
+        (f"от {ru_num(regiony_stroy_base/1000)} тыс. м² в стройке регионов РФ",
+         pct_str(regiony_stroy_value, regiony_stroy_base)),
+    ]
+    render_delay_card("Перенос в текущем строительстве в регионах РФ",
+                      regiony_stroy_value, subs)
 
-# === Ряд 2: переносы ввода ===
+# === Ряд 2: переносы ввода 2022-2025 ===
 r2c1, r2c2 = st.columns(2)
 with r2c1:
-    # Москва: знаменатель из monitoring 2.0 (РВ за 2022..2025)
     if exact_years_found:
-        title = f"Перенос в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
-        value = perenos_msk_2225
+        title_msk = f"Перенос ввода в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
     else:
-        title = "Перенос в Москве за 2022-2025 (оценка)"
-        value = perenos_msk_2225_est
+        title_msk = "Перенос ввода в Москве за 2022-2025 (оценка)"
     subs = [
         (f"от {ru_num(mon_vvod_msk_2225/1000)} тыс. м² введённых в Москве 22-25",
-         pct_str(value, mon_vvod_msk_2225)),
+         pct_str(perenos_msk_2225, mon_vvod_msk_2225)),
     ]
-    render_delay_card(title, value, subs)
+    render_delay_card(title_msk, perenos_msk_2225, subs)
 with r2c2:
-    # РФ-карточка: знаменатель оставляем ERZ (как договорились)
     subs = [
-        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке РФ",
-         pct_str(perenos_vvod_rf_2026, stroitelstvo_rf)),
-        # Москва-строка: знаменатель из monitoring 2.0 (РВ за 2026)
-        (f"в Москве: {fmt_thousand_m2(perenos_vvod_msk_2026)} "
-         f"({pct_str(perenos_vvod_msk_2026, mon_vvod_msk_2026)} от ввода МСК)", ""),
+        (f"от {ru_num(regiony_2225_base/1000)} тыс. м² введённых в регионах РФ 22-25",
+         pct_str(regiony_2225_value, regiony_2225_base)),
     ]
-    render_delay_card("Перенос ввода за 2026 (РФ)", perenos_vvod_rf_2026, subs)
+    render_delay_card("Перенос ввода в регионах РФ за 2022-2025",
+                      regiony_2225_value, subs)
 
-# === Ряд 3: в других регионах ===
-r3c1, _ = st.columns(2)
+# === Ряд 3: переносы ввода 2026 ===
+r3c1, r3c2 = st.columns(2)
 with r3c1:
     subs = [
-        (f"от {ru_num((vvod_rf_2026 or 0)/1000)} тыс. м² ввода в РФ за 2026",
-         pct_str(other_perenos_2026, vvod_rf_2026)),
-        (f"от всех переносов РФ ({fmt_thousand_m2(perenos_vvod_rf_2026)})",
-         pct_str(other_perenos_2026, perenos_vvod_rf_2026)),
+        (f"от {ru_num(mon_vvod_msk_2026/1000)} тыс. м² ввода в Москве за 2026",
+         pct_str(perenos_vvod_msk_2026, mon_vvod_msk_2026)),
     ]
-    render_delay_card("В других регионах за 2026", other_perenos_2026, subs)
+    render_delay_card("Перенос ввода в Москве за 2026",
+                      perenos_vvod_msk_2026, subs)
+with r3c2:
+    subs = [
+        (f"от {ru_num(regiony_2026_base/1000)} тыс. м² ввода в регионах РФ за 2026",
+         pct_str(regiony_2026_value, regiony_2026_base)),
+    ]
+    render_delay_card("Перенос ввода в регионах РФ за 2026",
+                      regiony_2026_value, subs)
 
 # === Кредитные лимиты и наполнение Эскроу ===
 st.markdown("### Кредитные лимиты и наполнение Эскроу")
@@ -992,8 +1007,7 @@ with st.expander("📋 Список введённых объектов (Рее�
             hide_index=True, use_container_width=True, height=300,
         )
 
-with st.expander(f"📋 Все объекты с разрешением на строительство — Реестр ОКС "
-                 f"({len(oks_dev_all)} всего, {len(oks_dev)} строящихся)"):
+with st.expander("Все объекты с разрешением на строительство — Реестр ОКС"):
     if oks_dev_all.empty:
         st.info("Нет данных")
     else:

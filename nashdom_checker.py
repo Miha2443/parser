@@ -225,6 +225,92 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
     time.sleep(0.5)
 
 
+# Маркеры в первой ячейке таблицы «Девелоперы» (раздел на сайте «Распроданность»).
+# Таблица детерминируется по тому что в первой строке стоит крупный девелопер.
+_RASPROD_DEV_MARKERS = ("Самолет", "ПИК", "ГК Самолет", "ГК ПИК")
+
+
+def _scroll_developers_table(driver, *, step_px: int = 600, pause: float = 0.3,
+                             no_progress_max: int = 4, max_steps: int = 400) -> int:
+    """Прокручивает виртуальную таблицу «Девелоперы» на странице
+    «Распроданность» до конца — чтобы все строки попали в DOM.
+
+    Возвращает финальное число <tr> в этой таблице.
+
+    Алгоритм: JS на каждом шаге находит нужный tbody по маркеру в первой
+    ячейке, ищет scrollable parent (или скроллит window), шагает на
+    step_px и возвращает текущее число строк. Цикл крутим в Python и
+    останавливаемся когда `no_progress_max` шагов подряд без прироста.
+    """
+    js_step = """
+    const markers = arguments[0];
+    const stepPx = arguments[1];
+
+    let tbody = null;
+    for (const tb of document.querySelectorAll('tbody')) {
+        const firstCell = tb.querySelector('tr td');
+        if (!firstCell) continue;
+        const txt = (firstCell.innerText || '').trim();
+        if (markers.some(m => txt.startsWith(m))) { tbody = tb; break; }
+    }
+    if (!tbody) return {found: false, rows: 0};
+
+    let cont = null;
+    let cur = tbody;
+    while (cur && cur !== document.body) {
+        try {
+            const s = getComputedStyle(cur);
+            if ((s.overflowY === 'auto' || s.overflowY === 'scroll')
+                && cur.scrollHeight > cur.clientHeight + 1) {
+                cont = cur; break;
+            }
+        } catch (e) {}
+        cur = cur.parentElement;
+    }
+
+    if (cont) {
+        cont.scrollTop += stepPx;
+        cont.dispatchEvent(new Event('scroll', {bubbles: true}));
+    } else {
+        // fallback: пробуем скроллить таблицу через scrollIntoView последнего ряда
+        const rows = tbody.querySelectorAll('tr');
+        if (rows.length) {
+            rows[rows.length - 1].scrollIntoView({block: 'end'});
+        } else {
+            window.scrollBy(0, stepPx);
+        }
+    }
+    return {
+        found: true,
+        rows: tbody.querySelectorAll('tr').length,
+        scrollable: !!cont,
+    };
+    """
+    prev = 0
+    no_progress = 0
+    last = {"found": False, "rows": 0}
+    for _ in range(max_steps):
+        try:
+            result = driver.execute_script(
+                js_step, list(_RASPROD_DEV_MARKERS), step_px)
+        except Exception as exc:  # noqa: BLE001
+            print(f"       ⚠️  скролл «Девелоперы» упал: {exc}")
+            return last.get("rows") or 0
+        if not isinstance(result, dict) or not result.get("found"):
+            return 0
+        last = result
+        time.sleep(pause)
+        rows = int(result.get("rows") or 0)
+        if rows == prev:
+            no_progress += 1
+            if no_progress >= no_progress_max:
+                break
+        else:
+            no_progress = 0
+            prev = rows
+    return int(last.get("rows") or 0)
+
+
 KVART_REGIONS = [
     {"key": "rf",  "label": "Российская Федерация", "search": "",       "click_label": "Российская Федерация"},
     {"key": "msk", "label": "Город Москва",          "search": "Москва", "click_label": "Город Москва"},
@@ -2518,6 +2604,10 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                 # Перечислим все доступные периоды (year, month_idx)
                 periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
                 print(f"       · доступных периодов: {len(periods)}")
+                # Самый свежий период — для него отдельно листаем таблицу
+                # «Девелоперы» виртуальным скроллом, чтобы собрать всех (а не
+                # только видимый топ).
+                latest_period = max(periods) if periods else None
 
                 for period_i, (year, m_idx) in enumerate(periods, 1):
                     month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
@@ -2528,6 +2618,13 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         continue
                     _scroll_through_page(driver)
                     time.sleep(1.5)
+
+                    if latest_period and (year, m_idx) == latest_period:
+                        n_rows = _scroll_developers_table(driver)
+                        if n_rows:
+                            print(f"          📥 свежий период: проскроллил «Девелоперы», {n_rows} строк")
+                        else:
+                            print(f"          ⚠️  не удалось проскроллить «Девелоперы»")
 
                     data = _parse_rasprodannost(driver.page_source, driver.current_url)
                     data["region_key"] = region["key"]

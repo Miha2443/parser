@@ -32,6 +32,8 @@ from urllib.parse import quote
 
 import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
+
+from pipeline.dev_name_utils import normalize_developer_name
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -565,22 +567,29 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 flush()
 
                 # === Per-developer обход ===
-                # Управляется KVART_PER_DEV (default=0).
-                # Каждый результат верифицируется против developers-агрегата —
-                # если расхождение >10% → повтор (до 2 раз), иначе пропуск.
+                # Управляется KVART_PER_DEV (default=1).
+                # Источник имён — лист developers (реальный список с сайта
+                # для текущего региона), а НЕ monitoring_2_0.xlsx. Это
+                # ~200-300 застройщиков вместо 745. Для каждого имени
+                # подбираем monitoring_name через _build_dev_mapping —
+                # чтобы в дашборде матчить с другими источниками.
                 if _per_dev_enabled():
-                    dev_names = _read_monitoring_developers()
+                    site_devs = [
+                        d.get("наименование", "")
+                        for d in data.get("developers", [])
+                        if d.get("наименование", "")
+                    ]
                     limit = _per_dev_limit()
                     if limit:
-                        dev_names = dev_names[:limit]
-                    if not dev_names:
-                        print("       ⚠️  monitoring_2_0 не найден — per-dev пропускаем")
+                        site_devs = site_devs[:limit]
+                    if not site_devs:
+                        print("       ⚠️  лист developers пуст — per-dev пропускаем")
                     else:
-                        # Сборка lookup: «нормализованное имя» → ожидаемые числа
-                        # из developers (агрегат уже собран и точно правильный)
+                        # Сборка lookup: site_key → ожидаемые числа из developers.
+                        # Используется и для verification, и для mapping ниже.
                         expected: dict[str, dict] = {}
                         for d_row in data.get("developers", []):
-                            nm = _normalize_dev_name_for_lookup(d_row.get("наименование", ""))
+                            nm = normalize_developer_name(d_row.get("наименование", ""))
                             if not nm:
                                 continue
                             expected[nm] = {
@@ -588,28 +597,50 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                 "all_area": _parse_num_apartments(d_row.get("площадь_тыс_м²", "")),
                             }
 
+                        # Mapping: site_name → monitoring_name (с overrides).
+                        # Сохраняем СРАЗУ в data, до per-dev обхода —
+                        # пользователь может посмотреть mapping даже если
+                        # обход прервётся.
+                        monitoring_devs = _load_monitoring_devs()
+                        overrides = _load_dev_overrides()
+                        mapping = _build_dev_mapping(
+                            site_devs, monitoring_devs, overrides)
+                        data["dev_name_mapping"] = mapping
+                        mapping_by_site = {m["site_name"]: m for m in mapping}
+                        n_matched = sum(1 for m in mapping if m["monitoring_name"])
+                        n_conflict = sum(
+                            1 for m in mapping if m["match_type"] == "conflict_first")
+                        n_none = sum(
+                            1 for m in mapping if m["match_type"] == "none")
+                        print(f"       ── mapping: {len(mapping)} сайтовых, "
+                              f"{n_matched} matched, {n_conflict} conflicts, "
+                              f"{n_none} unmatched")
+                        flush()
+
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
                         per_dev: list[dict] = []
                         # attempts — диагностический лог КАЖДОЙ попытки
-                        # с указанием статуса (ok/switch_fail/empty/rejected).
-                        # Сохраняется в data["per_dev_attempts"] для разбора
-                        # причин если в итоге ok_count маленький.
                         attempts: list[dict] = []
-                        print(f"       ── per-dev обход: {len(dev_names)} девелоперов "
+                        print(f"       ── per-dev обход: {len(site_devs)} девелоперов "
                               f"(KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
-                        for i, dev in enumerate(dev_names, 1):
-                            attempt = {"i": i, "monitoring_name": dev, "status": ""}
-                            # debug-вывод для первых 3 девелоперов чтобы было
-                            # видно как работает сброс фильтра (или KVART_PER_DEV_DEBUG=1)
+                        for i, site_name in enumerate(site_devs, 1):
+                            m = mapping_by_site.get(site_name, {})
+                            attempt = {
+                                "i": i,
+                                "site_name": site_name,
+                                "monitoring_name": m.get("monitoring_name"),
+                                "match_type": m.get("match_type", "none"),
+                                "status": "",
+                            }
                             dbg = debug_first and i <= 3
                             try:
                                 ok = _switch_developer_filter(
-                                    driver, dev, wait_change=True,
+                                    driver, site_name, wait_change=True,
                                     timeout=15, debug=dbg)
                             except Exception as e:  # noqa: BLE001
-                                print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
+                                print(f"          ⚠️  {i}/{len(site_devs)} «{site_name}» — {e}")
                                 attempt.update(status="switch_exception", error=str(e)[:200])
                                 ok = False
                             if not ok:
@@ -619,26 +650,21 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                 attempts.append(attempt)
                                 continue
 
-                            # Парсим (с debug для первого девелопера в каждом регионе
-                            # чтобы видеть какой селектор был выбран)
                             apt = _parse_apartments_live(
                                 driver, debug=(debug_first and i == 1))
 
-                            # ВЕРИФИКАЦИЯ: сравним с агрегатом из developers.
-                            # Если расхождение >10% — это баг (взяли не тот блок),
-                            # повторяем парсинг после паузы.
-                            filter_label = _get_developer_filter_label(driver) or dev
+                            # Verification: ratio с агрегатом developers по site_key.
+                            filter_label = _get_developer_filter_label(driver) or site_name
                             attempt["filter_label"] = filter_label
-                            verify_key = _normalize_dev_name_for_lookup(filter_label)
-                            exp = expected.get(verify_key) or expected.get(
-                                _normalize_dev_name_for_lookup(dev))
+                            site_key = normalize_developer_name(site_name)
+                            exp = expected.get(site_key) or expected.get(
+                                normalize_developer_name(filter_label))
                             if exp and apt and apt.get("all"):
                                 got = _parse_num_apartments(apt["all"].get("count", ""))
-                                want = exp["all_count"] * 1000  # developers даёт тыс. шт
+                                want = exp["all_count"] * 1000
                                 if want > 0:
                                     ratio = got / want
                                     if ratio < 0.9 or ratio > 1.1:
-                                        # Повтор: ещё подождать и перечитать
                                         time.sleep(2.0)
                                         apt = _parse_apartments_live(driver)
                                         got2 = _parse_num_apartments(
@@ -655,7 +681,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                             )
                                             attempts.append(attempt)
                                             if rejected <= 3:
-                                                print(f"          🚫 {i}/{len(dev_names)} «{dev[:30]}»: "
+                                                print(f"          🚫 {i}/{len(site_devs)} «{site_name[:30]}»: "
                                                       f"парсер дал {got2 or got:.0f} шт, "
                                                       f"ожидалось ~{want:.0f} (ratio={ratio:.2f}) — пропускаю")
                                             continue
@@ -663,7 +689,9 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             if apt and apt.get("all"):
                                 per_dev.append({
                                     "наименование": filter_label,
-                                    "monitoring_name": dev,
+                                    "site_name": site_name,
+                                    "monitoring_name": m.get("monitoring_name"),
+                                    "match_type": m.get("match_type", "none"),
                                     "apartments": apt,
                                 })
                                 attempt["status"] = "ok"
@@ -674,7 +702,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             attempts.append(attempt)
 
                             if i % 10 == 0:
-                                print(f"          · {i}/{len(dev_names)}: "
+                                print(f"          · {i}/{len(site_devs)}: "
                                       f"ok={ok_count}, miss={fail_count}, rejected={rejected}")
                                 data["apartments_per_dev"] = per_dev
                                 data["per_dev_attempts"] = attempts
@@ -686,7 +714,6 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         print(f"       ✅ per-dev: {ok_count} собрано, "
                               f"{fail_count} ошибок селектора, "
                               f"{rejected} отвергнуто (не совпадает с агрегатом)")
-                        # Если всё провалилось — выводим первые причины из attempts
                         if ok_count == 0 and attempts:
                             from collections import Counter
                             status_counts = Counter(a["status"] for a in attempts)
@@ -1437,11 +1464,12 @@ def _normalize_dev_name_for_lookup(name: str) -> str:
     return " ".join(s.split())
 
 
-def _read_monitoring_developers() -> list[str]:
+def _load_monitoring_devs() -> list[str]:
     """Свежий список ГК из monitoring_2_0_*.xlsx (объединение Реестр РВ + ОКС).
 
-    Возвращает пустой список если xlsx не найден. Используется
-    для per-dev обхода kvartirografia.
+    Используется как справочник для mapping (site_name → monitoring_name)
+    в per-dev обходе kvartirografia. По обходу мы НЕ итерируем — нам
+    нужно только подобрать matching для каждого имени с сайта.
     """
     files = sorted(DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"))
     if not files:
@@ -1467,7 +1495,6 @@ def _read_monitoring_developers() -> list[str]:
                 if not isinstance(v, str):
                     continue
                 s = v.strip().strip('"').strip("'")
-                # Фильтруем формулы Excel и заведомо невалидные имена
                 if not s or s.startswith("#") or s.startswith("="):
                     continue
                 if s.isdigit() or len(s) < 2:
@@ -1478,6 +1505,105 @@ def _read_monitoring_developers() -> list[str]:
         print(f"     ⚠️  не удалось прочитать monitoring devs: {exc}")
         return []
     return sorted(devs)
+
+
+def _load_dev_overrides() -> dict[str, str]:
+    """Читает ручные overrides для mapping site_name → monitoring_name.
+
+    Формат файла data/raw/realty/nashdom/dev_name_overrides.json:
+        {
+          "<site_key>": "<точное имя из monitoring>",
+          ...
+        }
+    site_key — это normalize_developer_name(site_name).
+
+    Используется чтобы вручную перебить ошибки автоматического матчинга
+    (например конфликты или неправильные совпадения по нормализованному
+    ключу). Если файла нет — пустой dict.
+    """
+    path = DOWNLOAD_DIR / "dev_name_overrides.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): str(v) for k, v in data.items() if v}
+    except Exception as exc:  # noqa: BLE001
+        print(f"     ⚠️  не удалось прочитать dev_name_overrides.json: {exc}")
+        return {}
+
+
+def _build_dev_mapping(site_devs: list[str],
+                       monitoring_devs: list[str],
+                       overrides: dict[str, str]) -> list[dict]:
+    """Сопоставляет имена с сайта (developers) с именами из monitoring.
+
+    Возвращает список dict-записей по одному на каждое site_name.
+    Каждая запись:
+      {
+        "site_name":       <строка с сайта>,
+        "site_key":        <normalize_developer_name(site_name)>,
+        "monitoring_name": <строка из monitoring> | None,
+        "monitoring_key":  <normalize_developer_name(monitoring_name)> | None,
+        "match_type":      "override" | "exact" | "conflict_first" | "none",
+        "candidates":      [<все monitoring-имена с тем же ключом>],
+      }
+    """
+    by_key: dict[str, list[str]] = {}
+    for m in monitoring_devs:
+        k = normalize_developer_name(m)
+        if not k:
+            continue
+        by_key.setdefault(k, []).append(m)
+    for k in by_key:
+        by_key[k].sort()
+
+    mapping: list[dict] = []
+    for site_name in site_devs:
+        site_key = normalize_developer_name(site_name)
+        if site_key in overrides:
+            mon = overrides[site_key]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": normalize_developer_name(mon),
+                "match_type": "override",
+                "candidates": by_key.get(site_key, []),
+            })
+            continue
+        candidates = by_key.get(site_key, [])
+        if len(candidates) == 1:
+            mon = candidates[0]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": site_key,
+                "match_type": "exact",
+                "candidates": candidates,
+            })
+        elif len(candidates) > 1:
+            mon = candidates[0]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": site_key,
+                "match_type": "conflict_first",
+                "candidates": candidates,
+            })
+        else:
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": None,
+                "monitoring_key": None,
+                "match_type": "none",
+                "candidates": [],
+            })
+    return mapping
 
 
 # Per-dev обход ВКЛЮЧЁН по умолчанию.

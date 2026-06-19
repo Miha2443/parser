@@ -468,41 +468,11 @@ ERZRF_PATHS = [
 def _normalize_developer_name(name: str) -> str:
     """Приводит имя застройщика к каноническому ключу для матчинга между источниками.
 
-    Примеры:
-      «ГК Самолет, г.Москва»     → «самолет»
-      «ПИК, г.Москва»            → «пик»
-      «ГК А101, г.Москва»        → «а101»
-      «А101»                     → «а101»
-      «ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО "ПИК-СЗ"» → «пик-сз»
+    Реализация вынесена в pipeline.dev_name_utils — общая для дашборда
+    и парсера nashdom_checker.py.
     """
-    if name is None or (isinstance(name, float) and pd.isna(name)):
-        return ""
-    s = str(name).strip()
-    # 1) Убираем регион после первой запятой:  "ПИК, г.Москва" → "ПИК"
-    if "," in s:
-        s = s.split(",", 1)[0].strip()
-    # 2) Приводим к lower-case и убираем спец.символы
-    s = s.lower()
-    s = s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
-    s = s.replace("\xa0", " ")
-    s = " ".join(s.split())
-    # 3) Снимаем юр.префиксы (повторяем — у некоторых их 2-3 слоя)
-    prefixes = [
-        "публичное акционерное общество ", "акционерное общество ",
-        "закрытое акционерное общество ", "общество с ограниченной ответственностью ",
-        "специализированный застройщик ", "спецзастройщик ", "спз ", "сз ",
-        "группа компаний ", "группа ", "холдинг ", "концерн ", "корпорация ",
-        "гк ", "ао ", "пао ", "ооо ", "зао ", "ик ", "иск ", "ук ", "пкф ", "тк ",
-    ]
-    changed = True
-    while changed:
-        changed = False
-        for p in prefixes:
-            if s.startswith(p):
-                s = s[len(p):].strip()
-                changed = True
-                break
-    return s
+    from pipeline.dev_name_utils import normalize_developer_name
+    return normalize_developer_name(name)
 
 
 @st.cache_data(show_spinner=False, ttl=300)

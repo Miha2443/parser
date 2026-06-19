@@ -574,15 +574,12 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 # подбираем monitoring_name через _build_dev_mapping —
                 # чтобы в дашборде матчить с другими источниками.
                 if _per_dev_enabled():
-                    site_devs = [
+                    site_devs_full = [
                         d.get("наименование", "")
                         for d in data.get("developers", [])
                         if d.get("наименование", "")
                     ]
-                    limit = _per_dev_limit()
-                    if limit:
-                        site_devs = site_devs[:limit]
-                    if not site_devs:
+                    if not site_devs_full:
                         print("       ⚠️  лист developers пуст — per-dev пропускаем")
                     else:
                         # Сборка lookup: site_key → ожидаемые числа из developers.
@@ -598,13 +595,15 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             }
 
                         # Mapping: site_name → monitoring_name (с overrides).
+                        # Строится для ВСЕГО site_devs_full (полный аудит для
+                        # пользователя) до применения лимитов на обход.
                         # Сохраняем СРАЗУ в data, до per-dev обхода —
                         # пользователь может посмотреть mapping даже если
                         # обход прервётся.
                         monitoring_devs = _load_monitoring_devs()
                         overrides = _load_dev_overrides()
                         mapping = _build_dev_mapping(
-                            site_devs, monitoring_devs, overrides)
+                            site_devs_full, monitoring_devs, overrides)
                         data["dev_name_mapping"] = mapping
                         mapping_by_site = {m["site_name"]: m for m in mapping}
                         n_matched = sum(1 for m in mapping if m["monitoring_name"])
@@ -617,13 +616,24 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                               f"{n_none} unmatched")
                         flush()
 
+                        # Per-region лимит per-dev обхода. Для РФ список
+                        # ~1678, без лимита это ~3 часа. Москва обычно
+                        # 200-300 — обходится за 20-30 мин.
+                        site_devs = list(site_devs_full)
+                        region_limit = _per_dev_limit_for_region(region["key"])
+                        if region_limit:
+                            site_devs = site_devs[:region_limit]
+                        glob_limit = _per_dev_limit()
+                        if glob_limit:
+                            site_devs = site_devs[:glob_limit]
+
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
                         per_dev: list[dict] = []
                         # attempts — диагностический лог КАЖДОЙ попытки
                         attempts: list[dict] = []
-                        print(f"       ── per-dev обход: {len(site_devs)} девелоперов "
-                              f"(KVART_PER_DEV=0 чтобы выключить)")
+                        print(f"       ── per-dev обход: {len(site_devs)}/{len(site_devs_full)} "
+                              f"девелоперов (KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
                         for i, site_name in enumerate(site_devs, 1):
                             m = mapping_by_site.get(site_name, {})
@@ -1629,6 +1639,26 @@ def _per_dev_limit() -> int | None:
         return n if n > 0 else None
     except ValueError:
         return None
+
+
+def _per_dev_limit_for_region(region_key: str) -> int | None:
+    """Per-region лимит per-dev обхода.
+
+    - Москва (msk): без лимита (список ~200-300, проходится за 20-30 мин).
+    - РФ (rf): топ-200 по умолчанию (список 1678, без лимита — ~3 часа).
+      Список отсортирован сайтом по убыванию объёма строительства,
+      то есть «первые 200» = топ-200 крупнейших застройщиков РФ.
+
+    Override через env: KVART_PER_DEV_LIMIT_RF=N (0 чтобы выключить).
+    """
+    if region_key == "rf":
+        raw = os.environ.get("KVART_PER_DEV_LIMIT_RF", "200").strip()
+        try:
+            n = int(raw)
+            return n if n > 0 else None
+        except ValueError:
+            return 200
+    return None
 
 
 def _parse_kvartirografia(html: str, url: str) -> dict:

@@ -32,6 +32,15 @@ def create_chrome(
     opts = Options()
     if headless:
         opts.add_argument("--headless=new")
+        # Стабильность в headless при заблокированном экране (Win+L):
+        # GPU не нужен, throttling background-вкладок ломает обход
+        # виртуальных таблиц с долгими паузами.
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--disable-software-rasterizer")
+        opts.add_argument("--mute-audio")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1920,1080")

@@ -64,7 +64,7 @@ KVARTIROGRAFIA_PATH = "аналитика/квартирография"
 DOWNLOAD_DIR = Path("data/raw/realty/nashdom")
 STATE_FILE = Path("state/nashdom_state.json")
 PAGE_TIMEOUT = 60
-HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
+HEADLESS = os.environ.get("HEADLESS", "1") != "0"  # default headless
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
 

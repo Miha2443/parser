@@ -46,8 +46,14 @@ def family_of(path: Path) -> str:
     return f"{base}{path.suffix.lower()}"
 
 
-def scan_source(source_rel: str) -> dict[str, list[Path]]:
-    """Группирует файлы по семействам внутри одной папки источника."""
+def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str, list[Path]]:
+    """Группирует файлы по семействам внутри одной папки источника.
+
+    Если `prefixes` задан, включаем только файлы, чьё имя начинается
+    с одного из префиксов (для архивации только одного источника
+    в общей папке: nashdom содержит monitoring_2_0_*, rasprodannost_*,
+    kvartirografia_*).
+    """
     src_dir = REALTY_ROOT / source_rel
     if not src_dir.exists():
         return {}
@@ -57,18 +63,21 @@ def scan_source(source_rel: str) -> dict[str, list[Path]]:
             continue
         if f.suffix.lower() not in (".xlsx", ".xls", ".json", ".csv"):
             continue
-        fam = family_of(f)
         # Игнорируем файлы без даты в имени (например «Наполняемость счетов.xlsx»
         # — ручная выгрузка, не архивируем)
         if not DATE_RE.search(f.stem):
             continue
+        if prefixes and not any(f.name.startswith(p) for p in prefixes):
+            continue
+        fam = family_of(f)
         families.setdefault(fam, []).append(f)
     return families
 
 
-def archive_directory(source_rel: str, keep: int, dry_run: bool = False) -> int:
+def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
+                      prefixes: list[str] | None = None) -> int:
     """Архивирует устаревшие файлы. Возвращает количество перемещённых."""
-    families = scan_source(source_rel)
+    families = scan_source(source_rel, prefixes=prefixes)
     if not families:
         return 0
     today = datetime.now().strftime("%Y-%m-%d")
@@ -108,18 +117,35 @@ def main():
                         help="Только показать что было бы перемещено")
     parser.add_argument("--source", default=None,
                         help="Только конкретный источник: nashdom / erzrf / erzrf/cards")
+    parser.add_argument("--paths", nargs="*", default=None,
+                        help="Список относительных путей (например realty/nashdom). "
+                             "Если задан, перекрывает --source и SOURCE_DIRS.")
+    parser.add_argument("--prefixes", nargs="*", default=None,
+                        help="Фильтр по префиксам имени файла "
+                             "(например monitoring_2_0_). Архивируем только "
+                             "семейства, чьи файлы начинаются с одного из префиксов.")
     args = parser.parse_args()
 
-    sources = [args.source] if args.source else SOURCE_DIRS
+    if args.paths:
+        # --paths приходит как realty/<source>; внутренние scan_source ждут <source>
+        sources = [p[len("realty/"):] if p.startswith("realty/") else p
+                   for p in args.paths]
+    elif args.source:
+        sources = [args.source]
+    else:
+        sources = SOURCE_DIRS
     total = 0
     print(f"\n{'='*60}")
     print(f"Архивирование устаревших файлов  {'(DRY-RUN)' if args.dry_run else ''}")
     print(f"Каталог: {REALTY_ROOT}")
     print(f"Хранить свежих: {args.keep}")
+    if args.prefixes:
+        print(f"Префиксы: {', '.join(args.prefixes)}")
     print(f"{'='*60}\n")
     for src in sources:
         print(f"📂 {src}")
-        n = archive_directory(src, keep=args.keep, dry_run=args.dry_run)
+        n = archive_directory(src, keep=args.keep, dry_run=args.dry_run,
+                              prefixes=args.prefixes)
         if n == 0:
             print(f"   ✓ нечего архивировать")
         else:

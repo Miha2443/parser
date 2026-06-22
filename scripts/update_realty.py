@@ -35,7 +35,9 @@ import hashlib
 import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +62,85 @@ GROUP_MAP = {
     "all":     ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards",
                 "fedstat", "rosstat"],
 }
+
+# Watchdog-таймауты per-source (минуты). Если subprocess не завершился —
+# убиваем дерево процессов (включая Chrome) и помечаем как failure.
+SOURCE_TIMEOUT_MIN = {
+    "monitoring":  5,
+    "rasprod":     60,
+    "kvart":       180,
+    "erz-top":     15,
+    "erz-cards":   30,
+    "fedstat":     30,
+    "rosstat":     30,
+}
+DEFAULT_TIMEOUT_MIN = 60
+
+# Для архивации после каждого источника: какие префиксы файлов и в
+# каких папках принадлежат этому источнику.
+SOURCE_ARCHIVE_PATHS = {
+    "monitoring":  ["nashdom"],
+    "rasprod":     ["nashdom"],
+    "kvart":       ["nashdom"],
+    "erz-top":     ["erzrf"],
+    "erz-cards":   ["erzrf/cards", "erzrf"],
+}
+SOURCE_PREFIXES = {
+    "monitoring":  ["monitoring_2_0_"],
+    "rasprod":     ["rasprodannost_"],
+    "kvart":       ["kvartirografia_"],
+    "erz-top":     ["top_obyem_", "top_developers_", "top_nakopl_",
+                    "top_skorost_", "top_potreb_"],
+    "erz-cards":   ["cards_", "card_"],
+}
+
+# Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
+PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
+
+# Волны: внутри волны источники запускаются параллельно, между волнами —
+# последовательно (erz-cards зависит от top_developers_*.json от erz-top).
+WAVES_DEFAULT = [
+    ["monitoring", "rasprod", "kvart", "erz-top", "fedstat", "rosstat"],
+    ["erz-cards"],
+]
+
+
+# Lock для упорядоченной печати из параллельных потоков.
+_print_lock = threading.Lock()
+
+
+def _print(msg: str = "") -> None:
+    with _print_lock:
+        print(msg, flush=True)
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Принудительно убивает процесс и всех его потомков (включая Chrome)."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True, check=False,
+        )
+        return
+    # POSIX
+    try:
+        import signal
+        try:
+            import psutil  # type: ignore
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                parent.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        except ImportError:
+            os.kill(pid, signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 SNAPSHOT_DIRS = [
@@ -210,42 +291,120 @@ def diff_snapshots(before: dict, after: dict) -> dict:
     return {"added": added, "changed": changed, "removed": removed}
 
 
-def run_source(alias: str, env: dict, force: bool = False) -> bool:
-    """Запускает один источник. Возвращает True при успехе."""
+def run_source(alias: str, env: dict, force: bool = False,
+               keep: int = 1, do_archive: bool = True) -> bool:
+    """Запускает один источник.
+
+    Запускает subprocess с watchdog'ом (per-source timeout). Stdout
+    стримится с префиксом `[alias]` чтобы вывод параллельных источников
+    не смешивался. После успеха — дедупликация и архивация СВОЕГО
+    семейства (старые файлы → _archive/<date>/<source>/).
+    """
     if alias not in SOURCE_MAP:
-        print(f"⚠️  Неизвестный источник: {alias}")
+        _print(f"⚠️  Неизвестный источник: {alias}")
         return False
     script, args = SOURCE_MAP[alias]
     extra = []
     if force and alias in ("fedstat", "rosstat"):
         extra.append("--force")
     cmd = [sys.executable, str(ROOT / script), *args, *extra]
-    print(f"\n{'─'*60}")
-    print(f"▶ {alias}: {' '.join(cmd[1:])}")
-    print(f"{'─'*60}")
+    timeout_min = SOURCE_TIMEOUT_MIN.get(alias, DEFAULT_TIMEOUT_MIN)
+    prefix = f"[{alias:>10}]"
+
+    _print(f"\n{'─'*60}")
+    _print(f"▶ {alias} (watchdog: {timeout_min}мин)")
+    _print(f"{'─'*60}")
+
+    # Snapshot до источника — для дедупликации только его файлов.
+    before_src = snapshot_files() if do_archive else {}
+
     started = time.time()
     try:
-        result = subprocess.run(cmd, cwd=ROOT, env=env, check=False)
-        elapsed = time.time() - started
-        if result.returncode == 0:
-            print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
-            return True
-        print(f"❌ {alias}: код выхода {result.returncode} (за {elapsed/60:.1f} мин)")
-        return False
-    except KeyboardInterrupt:
-        print(f"\n⚠️  {alias}: прервано пользователем")
-        raise
+        proc = subprocess.Popen(
+            cmd, cwd=ROOT, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            bufsize=1,
+        )
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ {alias}: {exc}")
+        _print(f"❌ {alias}: не удалось запустить процесс: {exc}")
         return False
+
+    # Stream stdout в отдельном потоке с префиксом alias.
+    def _stream() -> None:
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                _print(f"{prefix} {line.rstrip()}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    reader = threading.Thread(target=_stream, daemon=True)
+    reader.start()
+
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout_min * 60)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _print(f"⏰ {alias}: убит по watchdog'у (>{timeout_min}мин), "
+               f"гашу процессы Chrome")
+        _kill_process_tree(proc.pid)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+    except KeyboardInterrupt:
+        _print(f"\n⚠️  {alias}: прервано пользователем")
+        _kill_process_tree(proc.pid)
+        raise
+
+    reader.join(timeout=5)
+    elapsed = time.time() - started
+
+    if timed_out:
+        return False
+    rc = proc.returncode
+    if rc == 0:
+        _print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
+        if do_archive:
+            try:
+                deduplicate_new_files(before_src)
+            except Exception as exc:  # noqa: BLE001
+                _print(f"⚠️  {alias}: дедупликация упала — {exc}")
+            archive_old_for_source(alias, keep=keep)
+        return True
+    _print(f"❌ {alias}: код выхода {rc} (за {elapsed/60:.1f} мин)")
+    return False
 
 
 def archive_old(keep: int = 1) -> None:
-    """Перемещает устаревшие выгрузки в _archive/<date>/."""
+    """Перемещает устаревшие выгрузки в _archive/<date>/ (полная зачистка)."""
     cmd = [sys.executable, "-m", "pipeline.archive_old", "--keep", str(keep)]
-    print(f"\n{'─'*60}")
-    print(f"📦 Архивирование старых файлов (keep={keep})")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"📦 Финальная архивация (safety-net, keep={keep})")
+    _print(f"{'─'*60}")
+    subprocess.run(cmd, cwd=ROOT, check=False)
+
+
+def archive_old_for_source(alias: str, keep: int = 1) -> None:
+    """Архивирует устаревшие файлы только этого источника.
+
+    Принцип: для каждого пути из SOURCE_ARCHIVE_PATHS[alias] зовём
+    pipeline.archive_old с --paths и --prefixes — это ограничивает
+    архивацию только семействами alias'а (важно для nashdom, где
+    monitoring_2_0_*, rasprodannost_* и kvartirografia_* лежат вместе).
+    """
+    paths = SOURCE_ARCHIVE_PATHS.get(alias)
+    prefixes = SOURCE_PREFIXES.get(alias)
+    if not paths or not prefixes:
+        return
+    paths_arg = [f"realty/{p}" for p in paths]
+    cmd = [
+        sys.executable, "-m", "pipeline.archive_old",
+        "--keep", str(keep),
+        "--paths", *paths_arg,
+        "--prefixes", *prefixes,
+    ]
     subprocess.run(cmd, cwd=ROOT, check=False)
 
 
@@ -448,39 +607,61 @@ def main():
 
     started = time.time()
     successes, failures = [], []
-    try:
-        # Первый проход
-        for alias in sources:
-            ok = run_source(alias, env, force=args.force)
-            (successes if ok else failures).append(alias)
+    do_archive = not args.no_archive
 
-        # Повторные попытки для упавших источников
-        # (например страница не загрузилась — пробуем ещё)
+    def _run_wave(wave: list[str], label: str) -> None:
+        """Запускает источники волны параллельно, до PARALLEL_LIMIT одновременно."""
+        wave = [a for a in wave if a in sources]
+        if not wave:
+            return
+        print(f"\n{'═'*60}")
+        print(f"{label}: {', '.join(wave)} (max parallel = {PARALLEL_LIMIT})")
+        print(f"{'═'*60}")
+        with ThreadPoolExecutor(max_workers=PARALLEL_LIMIT) as pool:
+            futures = {
+                pool.submit(run_source, alias, env,
+                            force=args.force, keep=args.keep,
+                            do_archive=do_archive): alias
+                for alias in wave
+            }
+            for f in as_completed(futures):
+                alias = futures[f]
+                try:
+                    ok = f.result()
+                except Exception as exc:  # noqa: BLE001
+                    _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
+                    ok = False
+                (successes if ok else failures).append(alias)
+
+    try:
+        # Первый проход — волнами (внутри волны параллельно)
+        for i, wave in enumerate(WAVES_DEFAULT, 1):
+            _run_wave(wave, f"══ Волна {i}/{len(WAVES_DEFAULT)}")
+
+        # Retry упавших — тоже волнами, чтобы erz-cards не стартовал
+        # пока erz-top в retry не закончил.
         for retry_round in range(1, args.retries + 1):
             if not failures:
                 break
-            stuck = list(failures)
+            stuck = set(failures)
             wait_s = 30 * retry_round
             print(f"\n{'─'*60}")
             print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
-                  f"{len(stuck)} источников: {', '.join(stuck)}")
+                  f"{len(stuck)} источников: {', '.join(sorted(stuck))}")
             print(f"{'─'*60}")
             time.sleep(wait_s)
             failures = []
-            for alias in stuck:
-                ok = run_source(alias, env, force=args.force)
-                if ok:
-                    successes.append(alias)
-                    print(f"   ✅ {alias} починилось со {retry_round}-й попытки")
-                else:
-                    failures.append(alias)
+            for i, wave in enumerate(WAVES_DEFAULT, 1):
+                wave_retry = [a for a in wave if a in stuck]
+                if not wave_retry:
+                    continue
+                _run_wave(wave_retry, f"   Retry #{retry_round} волна {i}")
     except KeyboardInterrupt:
         print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
         sys.exit(130)
 
-    # ДЕДУПЛИКАЦИЯ: убираем файлы которые идентичны последним в архиве.
-    # Это решает проблему «парсер скачал тот же контент с новой датой
-    # в имени» — без дедупа мы бы считали такой файл «обновлением».
+    # Дедупликация (safety-net): на этом этапе всё уже было дедуплицировано
+    # per-source внутри run_source, но если что-то осталось — добьём.
     deduped_count, real_new_count = deduplicate_new_files(before)
 
     # SNAPSHOT ПОСЛЕ прогона и дедупликации (до архивирования).

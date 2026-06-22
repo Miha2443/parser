@@ -318,10 +318,18 @@ def run_source(alias: str, env: dict, force: bool = False,
     # Snapshot до источника — для дедупликации только его файлов.
     before_src = snapshot_files() if do_archive else {}
 
+    # Принудительно utf-8 в child: с stdout=PIPE Python берёт кодировку
+    # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
+    # UnicodeEncodeError. PYTHONIOENCODING переключает sys.stdout/stderr
+    # на utf-8, PYTHONUTF8=1 включает utf-8 mode для всего runtime.
+    env_utf8 = dict(env)
+    env_utf8["PYTHONIOENCODING"] = "utf-8"
+    env_utf8["PYTHONUTF8"] = "1"
+
     started = time.time()
     try:
         proc = subprocess.Popen(
-            cmd, cwd=ROOT, env=env,
+            cmd, cwd=ROOT, env=env_utf8,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
             bufsize=1,

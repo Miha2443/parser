@@ -12,8 +12,12 @@ fedstat_checker.py
     py fedstat_checker.py
 """
 
+import atexit
 import json
+import os
 import re
+import shutil
+import tempfile
 import time
 import requests
 from datetime import datetime
@@ -111,9 +115,22 @@ def save_state(state):
 
 def create_driver():
     options = Options()
-    # --headless=new нужен для Chrome 148+: старый headless ломает
-    # JS-инициализацию fedstat (appendChild на null).
-    options.add_argument("--headless=new")
+
+    # Уникальный профиль на инстанс. update_realty.py гоняет fedstat
+    # параллельно с rasprod/kvart/erz-top — без своего user-data-dir
+    # все Chrome'ы лезут в дефолтный профиль, упираются в Singleton-lock
+    # и в headless=new рендерят битый DOM → `appendChild on null` у
+    # тяжёлого React-фронта fedstat.
+    profile_dir = tempfile.mkdtemp(prefix="chrome-fedstat-")
+    atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
+    options.add_argument(f"--user-data-dir={profile_dir}")
+
+    # HEADLESS_MODE=old → старый headless (медленнее, но надёжнее на
+    # сайтах со сложным DOM). По умолчанию --headless=new.
+    if os.environ.get("HEADLESS_MODE", "new").lower() == "old":
+        options.add_argument("--headless")
+    else:
+        options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
@@ -127,7 +144,15 @@ def create_driver():
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    _orig_quit = driver.quit
+    def _quit_and_cleanup():
+        try:
+            _orig_quit()
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+    driver.quit = _quit_and_cleanup  # type: ignore[method-assign]
+    return driver
 
 
 def close_popup(driver):

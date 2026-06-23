@@ -6,6 +6,7 @@ Chrome и логику ожидания файла из download_dir. Образ
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -28,19 +29,28 @@ def create_chrome(
     """Возвращает Chrome-драйвер с настроенной папкой скачивания.
 
     `headless=False` — для отладки селекторов на локальной машине.
+    Режим headless управляется env `HEADLESS_MODE` (=new по умолчанию,
+    =old если в `=new` сайт ломается с appendChild/null DOM ошибкой —
+    типично для fedstat на Chrome 149).
     """
     opts = Options()
     if headless:
-        opts.add_argument("--headless=new")
-        # Стабильность в headless при заблокированном экране (Win+L):
-        # GPU не нужен, throttling background-вкладок ломает обход
-        # виртуальных таблиц с долгими паузами.
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--disable-software-rasterizer")
+        mode = os.environ.get("HEADLESS_MODE", "new").lower()
+        if mode == "old":
+            opts.add_argument("--headless")
+        else:
+            opts.add_argument("--headless=new")
         opts.add_argument("--mute-audio")
         opts.add_argument("--disable-background-timer-throttling")
         opts.add_argument("--disable-renderer-backgrounding")
         opts.add_argument("--disable-backgrounding-occluded-windows")
+        # Чинит «Cannot read properties of null (reading 'appendChild')»
+        # в Chrome 149 + --headless=new на сайтах со сложным DOM
+        # (fedstat и др.). Также отключает Viz compositor который
+        # иногда виснет в headless без GPU.
+        opts.add_argument(
+            "--disable-features=ChromeRefresh2024,VizDisplayCompositor"
+        )
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1920,1080")

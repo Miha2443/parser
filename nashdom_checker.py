@@ -840,9 +840,16 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
             pass
 
     if all_data:
+        got_regions = {d.get("region_key") for d in all_data}
+        expected_regions = {r["key"] for r in KVART_REGIONS}
+        missing_regions = sorted(expected_regions - got_regions)
+        if missing_regions:
+            print(f"  ⚠️  kvartirografia: НЕ собраны регионы: "
+                  f"{missing_regions}. Собрано только: {sorted(got_regions)}")
         state["kvartirografia"] = {
             "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            "regions": [r["key"] for r in KVART_REGIONS],
+            "regions": sorted(got_regions),
+            "missing_regions": missing_regions,
             "file": target_xlsx.name,
         }
     return new_files

@@ -241,12 +241,12 @@ with cols_top[1]:
           <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>Москва</th>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По вводу</td>
+          <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_rf)}</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_msk)}</td>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По строительству</td>
+          <td style='padding:2px 12px 2px 0;'>По объёму текущего строительства</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_rf)}</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_msk)}</td>
         </tr>

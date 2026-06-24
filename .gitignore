@@ -28,3 +28,6 @@ config/erzrf.json
 .env
 .env.local
 .env.*.local
+
+# Логи прогонов update_realty.py (ротация хранит последние 20 на диске)
+logs/

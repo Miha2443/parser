@@ -43,6 +43,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REALTY_ROOT = ROOT / "data" / "raw" / "realty"
+LOG_DIR = ROOT / "logs"
+
+# Глобальный файл лога текущего прогона. Инициализируется в main().
+_LOG_FILE: Path | None = None
+_LOG_FH = None
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -112,6 +117,43 @@ _print_lock = threading.Lock()
 def _print(msg: str = "") -> None:
     with _print_lock:
         print(msg, flush=True)
+        if _LOG_FH is not None:
+            try:
+                _LOG_FH.write(msg + "\n")
+                _LOG_FH.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _setup_logging() -> Path:
+    """Открывает logs/update_<timestamp>.log на запись; ротирует старые.
+
+    Хранит последние 20 логов прогонов, остальное удаляет — чтоб папка
+    не разрасталась. Возвращает путь к свежему файлу лога.
+    """
+    global _LOG_FILE, _LOG_FH
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _LOG_FILE = LOG_DIR / f"update_{ts}.log"
+    _LOG_FH = open(_LOG_FILE, "w", encoding="utf-8", buffering=1)
+    # Ротация — удаляем всё старше 20-го прогона.
+    old_logs = sorted(LOG_DIR.glob("update_*.log"))
+    for path in old_logs[:-20]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return _LOG_FILE
+
+
+def _close_logging() -> None:
+    global _LOG_FH
+    if _LOG_FH is not None:
+        try:
+            _LOG_FH.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _LOG_FH = None
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -253,9 +295,9 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
     added_paths = sorted(set(after) - set(before_snapshot))
     if not added_paths:
         return 0, 0
-    print(f"\n{'─'*60}")
-    print(f"🔍 Дедупликация новых файлов ({len(added_paths)} шт)")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"🔍 Дедупликация новых файлов ({len(added_paths)} шт)")
+    _print(f"{'─'*60}")
     deduped = 0
     real_new = 0
     prefix_to_base = {p: b for b, p in SNAPSHOT_DIRS}
@@ -276,9 +318,9 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
         else:
             deduped += 1
     if deduped:
-        print(f"  Итого: {real_new} новых, {deduped} дублей удалено")
+        _print(f"  Итого: {real_new} новых, {deduped} дублей удалено")
     else:
-        print(f"  Все {real_new} файлов уникальны (дублей нет)")
+        _print(f"  Все {real_new} файлов уникальны (дублей нет)")
     return deduped, real_new
 
 
@@ -420,16 +462,16 @@ def check_escrow():
     """Подсказка про эскроу."""
     escrow_dir = REALTY_ROOT / "escrow_manual"
     files = list(escrow_dir.glob("*.xlsx")) if escrow_dir.exists() else []
-    print(f"\n{'─'*60}")
-    print(f"📋 Эскроу (ручная выгрузка)")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"📋 Эскроу (ручная выгрузка)")
+    _print(f"{'─'*60}")
     if not files:
-        print(f"⚠️  Папка пустая: {escrow_dir}")
-        print(f"   Скачай «Наполняемость счетов.xlsx» с ДОМ.РФ ЕИСЖС вручную")
+        _print(f"⚠️  Папка пустая: {escrow_dir}")
+        _print(f"   Скачай «Наполняемость счетов.xlsx» с ДОМ.РФ ЕИСЖС вручную")
     else:
         latest = max(files, key=lambda p: p.stat().st_mtime)
         date = datetime.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
-        print(f"✓ Файл есть: {latest.name} (от {date})")
+        _print(f"✓ Файл есть: {latest.name} (от {date})")
 
 
 def collect_site_dates() -> dict:
@@ -604,11 +646,14 @@ def main():
             print("ℹ️  --weekly-kvart-per-dev: сегодня не понедельник → "
                   "KVART_PER_DEV=0 (per-dev пропустится, агрегаты остаются)")
 
-    print(f"\n{'='*60}")
-    print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
-    print(f"Источники: {', '.join(sources)}")
-    print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
-    print(f"{'='*60}")
+    log_path = _setup_logging()
+
+    _print(f"\n{'='*60}")
+    _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+    _print(f"Источники: {', '.join(sources)}")
+    _print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    _print(f"Лог-файл: {log_path}")
+    _print(f"{'='*60}")
 
     # SNAPSHOT ДО прогона
     before = snapshot_files()
@@ -622,9 +667,9 @@ def main():
         wave = [a for a in wave if a in sources]
         if not wave:
             return
-        print(f"\n{'═'*60}")
-        print(f"{label}: {', '.join(wave)} (max parallel = {PARALLEL_LIMIT})")
-        print(f"{'═'*60}")
+        _print(f"\n{'═'*60}")
+        _print(f"{label}: {', '.join(wave)} (max parallel = {PARALLEL_LIMIT})")
+        _print(f"{'═'*60}")
         with ThreadPoolExecutor(max_workers=PARALLEL_LIMIT) as pool:
             futures = {
                 pool.submit(run_source, alias, env,
@@ -653,10 +698,10 @@ def main():
                 break
             stuck = set(failures)
             wait_s = 30 * retry_round
-            print(f"\n{'─'*60}")
-            print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
+            _print(f"\n{'─'*60}")
+            _print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
                   f"{len(stuck)} источников: {', '.join(sorted(stuck))}")
-            print(f"{'─'*60}")
+            _print(f"{'─'*60}")
             time.sleep(wait_s)
             failures = []
             for i, wave in enumerate(WAVES_DEFAULT, 1):
@@ -665,7 +710,8 @@ def main():
                     continue
                 _run_wave(wave_retry, f"   Retry #{retry_round} волна {i}")
     except KeyboardInterrupt:
-        print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
+        _print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
+        _close_logging()
         sys.exit(130)
 
     # Дедупликация (safety-net): на этом этапе всё уже было дедуплицировано
@@ -684,18 +730,19 @@ def main():
     check_escrow()
 
     total_min = (time.time() - started) / 60
-    print(f"\n{'='*60}")
-    print(f"ИТОГ за {total_min:.1f} мин:")
-    print(f"  ✅ Успешно: {len(successes)} — {', '.join(successes) if successes else '—'}")
+    _print(f"\n{'='*60}")
+    _print(f"ИТОГ за {total_min:.1f} мин:")
+    _print(f"  ✅ Успешно: {len(successes)} — {', '.join(successes) if successes else '—'}")
     if failures:
-        print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
+        _print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
     if diff["added"]:
-        print(f"  📥 Новых файлов:    {len(diff['added'])}")
+        _print(f"  📥 Новых файлов:    {len(diff['added'])}")
     if diff["changed"]:
-        print(f"  ✎  Обновлено:       {len(diff['changed'])}")
+        _print(f"  ✎  Обновлено:       {len(diff['changed'])}")
     if deduped_count:
-        print(f"  ↩️  Дублей удалено:  {deduped_count}")
-    print(f"{'='*60}\n")
+        _print(f"  ↩️  Дублей удалено:  {deduped_count}")
+    _print(f"{'='*60}\n")
+    _print(f"📁 Полный лог сохранён: {log_path}")
 
     # === Уведомление в TDM ===
     if not args.no_notify:
@@ -709,6 +756,7 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
+    _close_logging()
     return 0 if not failures else 2
 
 

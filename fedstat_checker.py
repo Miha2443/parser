@@ -125,12 +125,14 @@ def create_driver():
     atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
     options.add_argument(f"--user-data-dir={profile_dir}")
 
-    # HEADLESS_MODE=old → старый headless (медленнее, но надёжнее на
-    # сайтах со сложным DOM). По умолчанию --headless=new.
-    if os.environ.get("HEADLESS_MODE", "new").lower() == "old":
-        options.add_argument("--headless")
-    else:
+    # HEADLESS_MODE=new → новый headless (быстрее, но в Chrome 149 ломает
+    # тяжёлый React-DOM fedstat с `appendChild on null`). По умолчанию
+    # `=old` — старый headless надёжен, разница в скорости несущественна
+    # для 29 индикаторов.
+    if os.environ.get("HEADLESS_MODE", "old").lower() == "new":
         options.add_argument("--headless=new")
+    else:
+        options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")

@@ -67,7 +67,7 @@ GROUP_MAP = {
 # убиваем дерево процессов (включая Chrome) и помечаем как failure.
 SOURCE_TIMEOUT_MIN = {
     "monitoring":  5,
-    "rasprod":     60,
+    "rasprod":     90,
     "kvart":       180,
     "erz-top":     15,
     "erz-cards":   30,

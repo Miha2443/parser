@@ -873,18 +873,20 @@ if not rv_dev.empty:
 
 
 # === 3 ряда × 2 колонки: слева Москва, справа Регионы РФ (= РФ - Москва) ===
-# Левая (МСК) — знаменатели из monitoring 2.0.
-# Правая (Регионы РФ) — разница РФ и МСК для числителя и знаменателя.
-# Если разница даёт отрицательное число (артефакт расхождения источников),
-# клампим к 0 и pct_str вернёт «—» при знаменателе ≤ 0.
+# Левые (Москва) — знаменатели из monitoring 2.0 (полный реестр Москвы).
+# Правые (Регионы РФ) — разница ERZRF-РФ и ERZRF-МСК. ВАЖНО: вычитать
+# нужно ERZRF-МСК (тот же источник что и числитель), а не monitoring —
+# у monitoring другая размерность (Общая площадь со всем нежилым), и для
+# крупных застройщиков monitoring-МСК > ERZRF-РФ, разность становится
+# отрицательной и кламп в 0 даёт «от 0 тыс. м² в регионах».
 regiony_stroy_value = max((perenos_stroy_rf or 0) - (perenos_stroy_msk or 0), 0.0)
-regiony_stroy_base = max((stroitelstvo_rf or 0) - mon_stroy_msk, 0.0)
+regiony_stroy_base = max((stroitelstvo_rf or 0) - (stroitelstvo_msk or 0), 0.0)
 
 regiony_2225_value = max((perenos_2225_rf or 0) - (perenos_msk_2225 or 0), 0.0)
-regiony_2225_base = max(sdano_2225_rf - mon_vvod_msk_2225, 0.0)
+regiony_2225_base = max(sdano_2225_rf - (sdano_msk_2225_exact or 0), 0.0)
 
 regiony_2026_value = max((perenos_vvod_rf_2026 or 0) - (perenos_vvod_msk_2026 or 0), 0.0)
-regiony_2026_base = max((vvod_rf_2026 or 0) - mon_vvod_msk_2026, 0.0)
+regiony_2026_base = max((vvod_rf_2026 or 0) - (vvod_msk_2026 or 0), 0.0)
 
 # === Ряд 1: текущее строительство ===
 r1c1, r1c2 = st.columns(2)

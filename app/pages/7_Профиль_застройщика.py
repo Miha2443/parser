@@ -808,12 +808,21 @@ if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
     msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
 
-# ТОЧНЫЕ числа из per-year ERZ top_obyem_vvoda_msk_YYYY_*.xlsx
+# ТОЧНЫЕ числа из per-year ERZ top_obyem_vvoda_msk/rf_YYYY_*.xlsx
 # (если парсер их собрал — после обновления erzrf_checker)
+# Для регионов важно использовать ПАРНЫЕ годы (где есть и rf, и msk),
+# иначе rf-сумма за 3 года меньше msk-суммы за 4 года → отрицательная
+# разность → «—» в карточке регионов.
 perenos_msk_2225_exact = 0.0
 sdano_msk_2225_exact = 0.0
 exact_years_found = []
+# Парные суммы по годам где есть и RF, и МСК — для региональной карточки
+perenos_rf_paired = 0.0
+sdano_rf_paired = 0.0
+perenos_msk_paired = 0.0
+sdano_msk_paired = 0.0
 by_year_msk = erzrf_top.get("obyem_vvoda_by_year", {}).get("msk", {})
+by_year_rf = erzrf_top.get("obyem_vvoda_by_year", {}).get("rf", {})
 for y in (2022, 2023, 2024, 2025):
     df_y = by_year_msk.get(y)
     if df_y is None or df_y.empty:
@@ -829,11 +838,32 @@ for y in (2022, 2023, 2024, 2025):
                   if "С переносом срока" in c and "м²" in c), None)
     v_col = next((c for c in df_y.columns
                   if "Введено" in c and "м²" in c), None)
-    if p_col:
-        perenos_msk_2225_exact += float(pd.to_numeric(r_y[p_col], errors="coerce") or 0)
-    if v_col:
-        sdano_msk_2225_exact += float(pd.to_numeric(r_y[v_col], errors="coerce") or 0)
+    msk_p = float(pd.to_numeric(r_y[p_col], errors="coerce") or 0) if p_col else 0
+    msk_v = float(pd.to_numeric(r_y[v_col], errors="coerce") or 0) if v_col else 0
+    perenos_msk_2225_exact += msk_p
+    sdano_msk_2225_exact += msk_v
     exact_years_found.append(y)
+
+    # Парный год: ищем RF за тот же год
+    df_rf_y = by_year_rf.get(y)
+    if df_rf_y is None or df_rf_y.empty:
+        continue
+    name_col_rf = next((c for c in df_rf_y.columns if "Наименование" in str(c)), None)
+    if not name_col_rf:
+        continue
+    rows_rf = df_rf_y[df_rf_y[name_col_rf].apply(lambda x: norm(str(x)) == sel_key)]
+    if rows_rf.empty:
+        continue
+    r_rf = rows_rf.iloc[0]
+    p_col_rf = next((c for c in df_rf_y.columns
+                     if "С переносом срока" in c and "м²" in c), None)
+    v_col_rf = next((c for c in df_rf_y.columns
+                     if "Введено" in c and "м²" in c), None)
+    if p_col_rf and v_col_rf:
+        perenos_rf_paired += float(pd.to_numeric(r_rf[p_col_rf], errors="coerce") or 0)
+        sdano_rf_paired += float(pd.to_numeric(r_rf[v_col_rf], errors="coerce") or 0)
+        perenos_msk_paired += msk_p
+        sdano_msk_paired += msk_v
 
 perenos_msk_2225_est = None  # для оценки если точных нет
 if not exact_years_found and sdano_2225_rf > 0 and perenos_2225_rf > 0:
@@ -882,8 +912,8 @@ if not rv_dev.empty:
 regiony_stroy_value = max((perenos_stroy_rf or 0) - (perenos_stroy_msk or 0), 0.0)
 regiony_stroy_base = max((stroitelstvo_rf or 0) - (stroitelstvo_msk or 0), 0.0)
 
-regiony_2225_value = max((perenos_2225_rf or 0) - (perenos_msk_2225 or 0), 0.0)
-regiony_2225_base = max(sdano_2225_rf - (sdano_msk_2225_exact or 0), 0.0)
+regiony_2225_value = max(perenos_rf_paired - perenos_msk_paired, 0.0)
+regiony_2225_base = max(sdano_rf_paired - sdano_msk_paired, 0.0)
 
 regiony_2026_value = max((perenos_vvod_rf_2026 or 0) - (perenos_vvod_msk_2026 or 0), 0.0)
 regiony_2026_base = max((vvod_rf_2026 or 0) - (vvod_msk_2026 or 0), 0.0)

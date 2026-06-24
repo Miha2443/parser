@@ -465,6 +465,14 @@ def _normalize_developer_name(name: str) -> str:
     Реализация вынесена в pipeline.dev_name_utils — общая для дашборда
     и парсера nashdom_checker.py.
     """
+    # Streamlit при запуске страницы из app/pages/ добавляет в sys.path
+    # только app/, поэтому корневой пакет pipeline не виден. Добиваем sys.path
+    # корнем проекта (C:\v6\), один раз за процесс.
+    import sys
+    from pathlib import Path as _Path
+    root = str(_Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
     from pipeline.dev_name_utils import normalize_developer_name
     return normalize_developer_name(name)
 

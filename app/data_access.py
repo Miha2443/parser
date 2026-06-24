@@ -673,9 +673,34 @@ def load_rasprodannost() -> dict:
             "periods": [],
             "latest_period": None,
         }
-    latest = max(files, key=lambda p: p.stat().st_mtime)
-
-    xl = pd.ExcelFile(latest)
+    # Откат к более старому файлу если самый свежий битый: rasprod-чекер
+    # мог быть убит по watchdog'у посреди скачивания и оставить
+    # огрызок xlsx — pandas роняет всё приложение с BadZipFile.
+    import zipfile
+    files_sorted = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    latest = None
+    xl = None
+    for candidate in files_sorted:
+        try:
+            if candidate.stat().st_size < 1024:
+                raise zipfile.BadZipFile(f"too small: {candidate.stat().st_size}b")
+            xl = pd.ExcelFile(candidate)
+            latest = candidate
+            break
+        except (zipfile.BadZipFile, OSError, ValueError) as exc:
+            st.warning(
+                f"Пропускаю битый файл {candidate.name}: {exc}. "
+                f"Откатываюсь на предыдущий."
+            )
+    if xl is None or latest is None:
+        st.error("Все rasprodannost_*.xlsx битые — нечего показать.")
+        return {
+            "kpi": pd.DataFrame(),
+            **{s: pd.DataFrame() for s in RASPROD_TABLE_SHEETS},
+            "regions_available": [],
+            "periods": [],
+            "latest_period": None,
+        }
     out: dict = {"regions_available": [], "periods": [], "latest_period": None}
 
     # KPI

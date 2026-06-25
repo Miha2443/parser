@@ -696,16 +696,25 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         print("       ⚠️  лист developers пуст — per-dev пропускаем")
                     else:
                         # Сборка lookup: site_key → ожидаемые числа из developers.
-                        # Используется и для verification, и для mapping ниже.
+                        # ВАЖНО: разные сайтовые имена могут нормализоваться
+                        # в один ключ (ССК ↔ СЗ ССК, Эталон ↔ СЗ ЭТАЛОН,
+                        # ЮгСтройИнвест ↔ СЗ ЮГСТРОЙИНВЕСТ). Раньше второй
+                        # затирал первый и verification ожидала 1000 кв-р
+                        # вместо 36500 → нормальные числа отбраковывались
+                        # как «ratio=36». Теперь при коллизии оставляем
+                        # запись с большим all_count (агрегат группы > мелкий СЗ).
                         expected: dict[str, dict] = {}
                         for d_row in data.get("developers", []):
                             nm = normalize_developer_name(d_row.get("наименование", ""))
                             if not nm:
                                 continue
-                            expected[nm] = {
+                            cand = {
                                 "all_count": _parse_num_apartments(d_row.get("квартиры_тыс_шт", "")),
                                 "all_area": _parse_num_apartments(d_row.get("площадь_тыс_м²", "")),
                             }
+                            prev = expected.get(nm)
+                            if prev is None or cand["all_count"] > prev["all_count"]:
+                                expected[nm] = cand
 
                         # Mapping: site_name → monitoring_name (с overrides).
                         # Строится для ВСЕГО site_devs_full (полный аудит для
@@ -748,6 +757,8 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         print(f"       ── per-dev обход: {len(site_devs)}/{len(site_devs_full)} "
                               f"девелоперов (KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
+                        consecutive_fail = 0
+                        CONSECUTIVE_FAIL_LIMIT = 5
                         for i, site_name in enumerate(site_devs, 1):
                             m = mapping_by_site.get(site_name, {})
                             attempt = {
@@ -768,10 +779,43 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                 ok = False
                             if not ok:
                                 fail_count += 1
+                                consecutive_fail += 1
                                 if not attempt["status"]:
                                     attempt["status"] = "switch_fail"
                                 attempts.append(attempt)
+                                # Если N подряд фейлов — Chrome / сайт залип.
+                                # Пересоздаём driver и восстанавливаем регион,
+                                # чтобы оставшиеся девелоперы не превратились
+                                # в каскад ошибок (как на МСК 11/83).
+                                if consecutive_fail >= CONSECUTIVE_FAIL_LIMIT:
+                                    print(f"          ♻️  {consecutive_fail} подряд switch_fail "
+                                          f"— пересоздаю Chrome и продолжаю с {i+1}/{len(site_devs)}")
+                                    try:
+                                        driver.quit()
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                                    driver.set_page_load_timeout(PAGE_TIMEOUT)
+                                    try:
+                                        driver.get(url)
+                                        time.sleep(6)
+                                        WebDriverWait(driver, 45).until(
+                                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+                                        )
+                                        time.sleep(3)
+                                        if region["search"]:
+                                            _switch_region_filter(
+                                                driver,
+                                                target_label=region["click_label"],
+                                                search_query=region["search"],
+                                            )
+                                            time.sleep(5)
+                                    except Exception as reset_exc:  # noqa: BLE001
+                                        print(f"          ⚠️  reset не удался ({reset_exc}), останавливаю per-dev")
+                                        break
+                                    consecutive_fail = 0
                                 continue
+                            consecutive_fail = 0
 
                             apt = _parse_apartments_live(
                                 driver, debug=(debug_first and i == 1))
@@ -2674,7 +2718,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                     all_data.append(data)
                     flush()  # incremental save после каждого периода
             except Exception as exc:  # noqa: BLE001
-                print(f"     ❌ ошибка {region['key']}: {exc}")
+                print(f"     ❌ ошибка {region['key']}: {type(exc).__name__}: {exc}")
                 flush()
 
         state["rasprodannost"] = {

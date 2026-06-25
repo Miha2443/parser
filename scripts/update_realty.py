@@ -104,9 +104,13 @@ PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
 
 # Волны: внутри волны источники запускаются параллельно, между волнами —
 # последовательно (erz-cards зависит от top_developers_*.json от erz-top).
+# fedstat вынесен в отдельную волну: на Chrome 149 fedstat-фронт стабильно
+# падает с `appendChild on null` при параллельной нагрузке (4 Chrome'а
+# делят CPU/GPU, рейс в инициализации JS). Соло — работает.
 WAVES_DEFAULT = [
-    ["monitoring", "rasprod", "kvart", "erz-top", "fedstat", "rosstat"],
+    ["monitoring", "rasprod", "kvart", "erz-top", "rosstat"],
     ["erz-cards"],
+    ["fedstat"],
 ]
 
 

@@ -353,7 +353,7 @@ def run_source(alias: str, env: dict, force: bool = False,
     extra = []
     if force and alias in ("fedstat", "rosstat"):
         extra.append("--force")
-    cmd = [sys.executable, str(ROOT / script), *args, *extra]
+    cmd = [sys.executable, "-u", str(ROOT / script), *args, *extra]
     timeout_min = SOURCE_TIMEOUT_MIN.get(alias, DEFAULT_TIMEOUT_MIN)
     prefix = f"[{alias:>10}]"
 
@@ -368,9 +368,13 @@ def run_source(alias: str, env: dict, force: bool = False,
     # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
     # UnicodeEncodeError. PYTHONIOENCODING переключает sys.stdout/stderr
     # на utf-8, PYTHONUTF8=1 включает utf-8 mode для всего runtime.
+    # PYTHONUNBUFFERED=1 + `python -u` отключают stdout-буферизацию child'а
+    # — без этого print() из парсеров накапливается блоками по 4-8КБ и
+    # вываливается «оптом», и пока тишина — непонятно жив парсер или нет.
     env_utf8 = dict(env)
     env_utf8["PYTHONIOENCODING"] = "utf-8"
     env_utf8["PYTHONUTF8"] = "1"
+    env_utf8["PYTHONUNBUFFERED"] = "1"
 
     started = time.time()
     try:

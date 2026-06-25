@@ -620,6 +620,33 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
         for region in KVART_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
+                # Если Chrome был положен в per-dev обходе предыдущего региона
+                # (HTTPConnectionPool timeout / chrome not reachable) —
+                # все дальнейшие selenium-вызовы на этом драйвере фейлят сразу.
+                # Перед переключением региона пробуем простой пинг
+                # current_url; если падает — пересоздаём driver.
+                try:
+                    _ = driver.current_url
+                except Exception as ping_exc:  # noqa: BLE001
+                    print(f"       ⚠️  driver мёртв ({ping_exc.__class__.__name__}), "
+                          f"пересоздаю Chrome перед регионом {region['key']}")
+                    try:
+                        driver.quit()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                    driver.set_page_load_timeout(PAGE_TIMEOUT)
+                    driver.get(url)
+                    time.sleep(6)
+                    try:
+                        WebDriverWait(driver, 45).until(
+                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+                        )
+                    except TimeoutException:
+                        print(f"       ⚠️  после reset: контент не появился, пропускаю {region['key']}")
+                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_after_reset_no_content")
+                        continue
+                    time.sleep(3)
                 if region["search"]:
                     ok = _switch_region_filter(
                         driver,

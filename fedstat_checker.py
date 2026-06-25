@@ -129,10 +129,13 @@ def create_driver():
     # тяжёлый React-DOM fedstat с `appendChild on null`). По умолчанию
     # `=old` — старый headless надёжен, разница в скорости несущественна
     # для 29 индикаторов.
-    if os.environ.get("HEADLESS_MODE", "old").lower() == "new":
+    mode = os.environ.get("HEADLESS_MODE", "old").lower()
+    if mode == "new":
         options.add_argument("--headless=new")
+        print("  🛠  headless=new (HEADLESS_MODE=new)", flush=True)
     else:
         options.add_argument("--headless")
+        print("  🛠  headless=old (HEADLESS_MODE=old, default)", flush=True)
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")

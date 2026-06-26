@@ -216,8 +216,11 @@ with cols_top[1]:
     # 4 рейтинга: по строительству и по вводу × по РФ и по Москве
     str_rf = get_rating("obyem_stroitelstva", "rf")
     str_msk = get_rating("obyem_stroitelstva", "msk")
-    vv_rf = get_rating("obyem_vvoda", "rf")
-    vv_msk = get_rating("obyem_vvoda", "msk")
+    # «По вводу жилья с 2016 г.» — НАКОПИТЕЛЬНЫЙ ввод с 2016 (top_nakopl_vvod),
+    # не «obyem_vvoda» (тот за последний год). ДОНСТРОЙ есть в nakopl
+    # (РФ=5, МСК=2), но за 2026 в obyem_vvoda не было — давало прочерк.
+    vv_rf = get_rating("nakopl_vvod", "rf")
+    vv_msk = get_rating("nakopl_vvod", "msk")
     erz_rating = (str_rf.get("Рейтинг ЕРЗ") or vv_rf.get("Рейтинг ЕРЗ")
                   or str_msk.get("Рейтинг ЕРЗ") or vv_msk.get("Рейтинг ЕРЗ"))
 
@@ -468,7 +471,21 @@ else:
     with chart_col:
         # Сам график — только с 2022 года (более ранние годы видны
         # в легенде слева и в общем итоге за 2017-2026 гг.).
-        by_year_chart = by_year[by_year["Год ввода по Мосстату"].astype(int) >= 2022]
+        # ВАЖНО: дополняем диапазон отсутствующими годами (2022..max),
+        # чтобы столбы были одинаковой ширины и у маленького девелопера
+        # с 1-2 годами данных, и у крупного. Без этого Plotly растягивает
+        # столбы на всю ширину и они «прыгают» по размеру.
+        present_years = set(by_year["Год ввода по Мосстату"].astype(int))
+        max_year_chart = max(present_years) if present_years else last_year_int or 2026
+        all_years = [str(y) for y in range(2022, max_year_chart + 1)]
+        by_year_chart = (
+            by_year[by_year["Год ввода по Мосстату"].astype(int) >= 2022]
+            .set_index("Год ввода по Мосстату")
+            .reindex(all_years)
+            .fillna(0)
+            .reset_index()
+            .rename(columns={"index": "Год ввода по Мосстату"})
+        )
         fig = go.Figure()
         for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
             vals = by_year_chart[f"{CAT_COL_PREFIX}{key}"] / 1000.0
@@ -483,17 +500,30 @@ else:
         totals = by_year_chart[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
         fig.add_trace(go.Scatter(
             x=by_year_chart["Год ввода по Мосстату"], y=totals,
-            mode="text", text=[ru_num(v) for v in totals],
+            mode="text", text=[ru_num(v) if v > 0 else "" for v in totals],
             textposition="top center",
             textfont=dict(size=12, color="#333"),
             showlegend=False, hoverinfo="skip",
         ))
-        y_top = totals.max() * 1.15 if not totals.empty else 1
+        y_top = totals.max() * 1.15 if not totals.empty and totals.max() > 0 else 1
         fig.update_layout(
             barmode="stack", height=400,
             margin=dict(l=0, r=0, t=20, b=0),
             xaxis_title="Год ввода", yaxis_title="тыс. м²",
+            # type='category' фиксирует столбцы как дискретные категории
+            # одинаковой ширины. tickangle=0 + tickmode='array' гарантируют
+            # горизонтальные подписи лет без поворотов и пропусков.
+            xaxis=dict(
+                type="category",
+                categoryorder="array",
+                categoryarray=all_years,
+                tickmode="array",
+                tickvals=all_years,
+                ticktext=all_years,
+                tickangle=0,
+            ),
             yaxis=dict(range=[0, y_top]),
+            bargap=0.25,
             legend=dict(orientation="h", y=-0.15),
         )
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")

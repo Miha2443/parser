@@ -2716,10 +2716,24 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
                     )
                     all_data.append(data)
-                    flush()  # incremental save после каждого периода
+                    # flush раз в 5 периодов: каждый flush пересобирает
+                    # весь xlsx с нуля из all_data (77+ периодов × 6 sections
+                    # × 2500 строк) — это пик памяти, на МСК-40 кончалась
+                    # RAM (MemoryError). После каждого flush явно зовём
+                    # gc.collect() чтобы pandas/openpyxl-промежуточные
+                    # объекты освободились немедленно.
+                    if len(all_data) % 5 == 0:
+                        flush()
+                        import gc
+                        gc.collect()
             except Exception as exc:  # noqa: BLE001
                 print(f"     ❌ ошибка {region['key']}: {type(exc).__name__}: {exc}")
                 flush()
+            # Финальный flush в конце региона — гарантированно сохраняем
+            # все периоды, даже если их < 5 после последнего инкремента.
+            flush()
+            import gc
+            gc.collect()
 
         state["rasprodannost"] = {
             "report_period": (all_data[0] if all_data else {}).get("report_period", ""),

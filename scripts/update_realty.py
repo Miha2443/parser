@@ -104,12 +104,16 @@ PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
 
 # Волны: внутри волны источники запускаются параллельно, между волнами —
 # последовательно (erz-cards зависит от top_developers_*.json от erz-top).
-# fedstat вынесен в отдельную волну: на Chrome 149 fedstat-фронт стабильно
-# падает с `appendChild on null` при параллельной нагрузке (4 Chrome'а
-# делят CPU/GPU, рейс в инициализации JS). Соло — работает.
+# rasprod вынесен в свою волну: держит в памяти tables 77 периодов × ~2500
+# строк, при параллельной нагрузке (4 Chrome'а) на 30-м периоде падает с
+# MemoryError. Соло — RAM хватает.
+# fedstat — отдельной волной по исторической причине (раньше я думал что
+# параллельность ломает; сейчас исправлено downgrade'ом selenium до 4.43,
+# но оставляю в отдельной волне как буфер).
 WAVES_DEFAULT = [
-    ["monitoring", "rasprod", "kvart", "erz-top", "rosstat"],
+    ["monitoring", "kvart", "erz-top", "rosstat"],
     ["erz-cards"],
+    ["rasprod"],
     ["fedstat"],
 ]
 

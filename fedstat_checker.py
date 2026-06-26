@@ -161,7 +161,14 @@ def create_driver():
 
 
 def close_popup(driver):
-    """Закрывает всплывающее окно с ошибкой если оно появилось."""
+    """Закрывает всплывающее окно с ошибкой если оно появилось.
+
+    1) Сначала пытается найти кнопку «×» и кликнуть.
+    2) Если кнопки нет, или клик не сработал — принудительно скрывает
+       через JS любые видимые .modal/#serverMessages. Без этого
+       bootstrap-модал «Server error» от fedstat перехватывает клик на
+       «Паспорт показателя» с ElementClickInterceptedException.
+    """
     try:
         close_btn = driver.find_element(
             By.XPATH,
@@ -171,8 +178,32 @@ def close_popup(driver):
         close_btn.click()
         time.sleep(1)
         print("  ℹ️  Закрыл всплывающее окно")
-    except Exception:
-        pass  # Окна нет — всё нормально
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    # Fallback: скрываем все .modal через JS + убираем .modal-backdrop
+    try:
+        hidden = driver.execute_script(
+            """
+            let n = 0;
+            document.querySelectorAll('.modal, #serverMessages').forEach(el => {
+                if (el.offsetParent !== null || el.style.display !== 'none') {
+                    el.style.display = 'none';
+                    el.classList.remove('in', 'show');
+                    el.setAttribute('aria-hidden', 'true');
+                    n++;
+                }
+            });
+            document.querySelectorAll('.modal-backdrop').forEach(el => { el.remove(); n++; });
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            return n;
+            """
+        )
+        if hidden:
+            print(f"  ℹ️  Скрыл {hidden} модалей через JS")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_last_update_date(driver, indicator_id):

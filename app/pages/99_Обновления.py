@@ -53,6 +53,7 @@ def main() -> None:
         successes = realty_status.get("successes") or []
         failures = realty_status.get("failures") or []
         requested = realty_status.get("sources_requested") or []
+        marts_selected = realty_status.get("marts_selected")
         diff = realty_status.get("diff") or {}
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
@@ -68,6 +69,12 @@ def main() -> None:
                 f"Длительность: {duration_min} мин · "
                 f"log={realty_status.get('log_file', '—')}"
             )
+        if marts_selected is None:
+            st.caption("Realty-витрины: полный rebuild")
+        elif marts_selected:
+            st.caption("Realty-витрины: " + ", ".join(map(str, marts_selected)))
+        else:
+            st.caption("Realty-витрины: сборка не требовалась")
         if failures:
             st.error("Ошибки источников: " + ", ".join(map(str, failures)))
 

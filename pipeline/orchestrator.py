@@ -81,6 +81,20 @@ def _files_newer(files: list[Path], target: Path) -> bool:
     return any(p.exists() and p.stat().st_mtime > t for p in files)
 
 
+def _write_pickle_atomic(value, target: Path) -> None:
+    tmp = target.with_name(f"{target.name}.tmp")
+    try:
+        pd.to_pickle(value, tmp)
+        pd.read_pickle(tmp)
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
 def _process_one(
     indicator: Indicator, audit: AuditRun, *, download: bool
 ) -> None:
@@ -131,7 +145,7 @@ def _process_one(
             if c in df.columns
         ]
         df = df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
-        df.to_pickle(target)
+        _write_pickle_atomic(df, target)
         audit.success(
             indicator.id,
             rows=len(df),

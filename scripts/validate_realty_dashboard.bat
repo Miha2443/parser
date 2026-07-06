@@ -14,6 +14,7 @@ set "PYTHONUTF8=1"
 echo [1/6] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_windows_wrappers.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_orchestrator_atomic_pickle.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_selenium_download_wait.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_kvart_resume.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_contract.py || exit /b %ERRORLEVEL%

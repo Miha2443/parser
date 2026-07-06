@@ -9,7 +9,7 @@
 
 Порядок выполнения:
   1. nashdom_checker monitoring_2_0   (~1 мин, requests)
-  2. nashdom_checker rasprodannost    (~15-30 мин, selenium по всем регионам)
+  2. nashdom_checker rasprodannost    (инкрементально; полный обход ~15-30 мин)
   3. nashdom_checker kvartirografia   (~5 мин агрегаты + ~90 мин per-dev обход)
   4. erzrf_checker top                (~5 мин)
   5. erzrf_checker cards              (~10 мин, по топ-100)

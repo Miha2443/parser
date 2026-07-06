@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.audit import (
+    PROJECT_ROOT,
     last_run_summary,
     last_success_per_indicator,
     load_realty_update_status,
@@ -57,6 +58,17 @@ def main() -> None:
         completed_sources = realty_status.get("completed_sources") or []
         pending_sources = realty_status.get("pending_sources") or []
         current_stage = realty_status.get("current_stage") or ""
+        status_warnings = []
+        if "status" not in realty_status:
+            status_warnings.append("legacy status: нет поля `status`")
+        if "updated_at" not in realty_status:
+            status_warnings.append("нет heartbeat `updated_at`")
+        log_file = realty_status.get("log_file")
+        if isinstance(log_file, str) and log_file and not (PROJECT_ROOT / log_file).is_file():
+            status_warnings.append(f"лог не найден: {log_file}")
+        elif log_file is not None and not isinstance(log_file, str):
+            status_warnings.append("поле `log_file` не строка")
+        status_error = realty_status.get("error") or ""
         run_status = str(realty_status.get("status") or "").lower()
         if not run_status:
             run_status = "failed" if failures or realty_status.get("marts_ok") is False else "success"
@@ -83,6 +95,10 @@ def main() -> None:
         c3.metric("Источники", f"{len(successes)}/{len(requested)}")
         c4.metric("Ошибок", len(failures))
         c5.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
+        if status_warnings:
+            st.warning("Проблемы status-файла: " + "; ".join(status_warnings))
+        if status_error:
+            st.error("Ошибка realty-прогона: " + str(status_error))
         if run_status == "running":
             if stale_running:
                 st.warning("Realty-прогон давно не обновлял heartbeat. Проверьте лог и процессы Python/Chrome.")

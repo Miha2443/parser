@@ -4,6 +4,8 @@ from __future__ import annotations
 import sys
 import tempfile
 import time
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
@@ -50,6 +52,17 @@ def main() -> int:
             active.write_bytes(b"SAME-CONTENT")
             changed_hash = dd._file_sha256(active)
             _require(changed_hash != first_hash, "same-size content change should invalidate hash cache")
+
+            duplicate_active = root / "nashdom" / "monitoring_2_0_20260703.xlsx"
+            duplicate_active.write_bytes(b"same-content")
+            duplicate_key = str(duplicate_active.resolve())
+            with redirect_stdout(StringIO()):
+                kept, is_update = dd.deduplicate(duplicate_active, log_prefix="")
+            _require(kept == archive, "deduplicate should keep archive duplicate")
+            _require(not is_update, "duplicate should not be marked as update")
+            _require(not duplicate_active.exists(), "duplicate active file should be removed")
+            _require(duplicate_key not in dd._SHA256_CACHE, "removed duplicate hash should be pruned")
+            _require(str(archive.resolve()) in dd._SHA256_CACHE, "archive hash should stay cached")
     finally:
         dd.REALTY_ROOT = original_realty_root
         dd.ARCHIVE_ROOT = original_archive_root

@@ -59,6 +59,12 @@ def _file_sha256(path: Path) -> str:
     return digest
 
 
+def _prune_sha256_cache() -> None:
+    stale = [path for path in _SHA256_CACHE if not Path(path).exists()]
+    for path in stale:
+        _SHA256_CACHE.pop(path, None)
+
+
 def find_archive_versions(family: str) -> list[Path]:
     """Все файлы того же семейства в архиве (отсортированы по mtime)."""
     if not ARCHIVE_ROOT.exists():
@@ -144,6 +150,7 @@ def deduplicate(new_file: Path, *,
             new_file.unlink()
         except OSError:
             pass
+        _prune_sha256_cache()
         print(f"{log_prefix}↩️  без изменений (дубль {dup.name}) — удалён {new_file.name}")
         return dup, False
     print(f"{log_prefix}✨ новые данные: {new_file.name}")

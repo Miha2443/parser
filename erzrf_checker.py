@@ -49,6 +49,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from pipeline.selenium_utils import create_chrome, selenium_sleep, wait_for_download
+from pipeline.state_utils import load_json_state
 
 
 # ─────────────────────────────────────────────
@@ -120,31 +121,8 @@ SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 # ─────────────────────────────────────────────
 
 
-def _bad_state_path(path: Path) -> Path:
-    first = path.with_name(f"{path.name}.bad")
-    if not first.exists():
-        return first
-    for i in range(1, 1000):
-        candidate = path.with_name(f"{path.name}.{i}.bad")
-        if not candidate.exists():
-            return candidate
-    raise RuntimeError(f"cannot allocate bad state backup path for {path}")
-
-
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError) as exc:
-            bad = _bad_state_path(STATE_FILE)
-            try:
-                STATE_FILE.replace(bad)
-                print(f"  ⚠️  Состояние {STATE_FILE} повреждено ({exc}); перенесено в {bad}")
-            except OSError:
-                print(f"  ⚠️  Состояние {STATE_FILE} повреждено ({exc}); продолжаю с пустым state")
-    return {}
+    return load_json_state(STATE_FILE, label="erzrf")
 
 
 def save_state(state: dict) -> None:

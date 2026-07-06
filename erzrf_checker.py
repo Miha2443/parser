@@ -34,7 +34,6 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -49,7 +48,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from pipeline.selenium_utils import create_chrome, wait_for_download
+from pipeline.selenium_utils import create_chrome, selenium_sleep, wait_for_download
 
 
 # ─────────────────────────────────────────────
@@ -178,7 +177,7 @@ def _ensure_logged_in(driver) -> bool:
         for attempt in range(1, MAX_PAGE_ATTEMPTS + 1):
             try:
                 driver.get(BASE)
-                time.sleep(4)
+                selenium_sleep(4)
                 # Проверяем что страница нормальная (не «temporarily unavailable»)
                 page_text = (driver.execute_script(
                     "return document.body && document.body.innerText || ''"
@@ -186,7 +185,7 @@ def _ensure_logged_in(driver) -> bool:
                 if "temporarily unavailable" in page_text or "the page you are looking for" in page_text:
                     print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: страница "
                           f"temporarily unavailable, ждём 10 сек...")
-                    time.sleep(10)
+                    selenium_sleep(10)
                     continue
                 # Шаг 2: кликнуть кнопку открытия модалки
                 opened = driver.execute_script(
@@ -225,10 +224,10 @@ def _ensure_logged_in(driver) -> bool:
                 # Не нашёл кнопку — пробуем refresh ещё раз
                 print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: кнопка логина "
                       f"не появилась, обновляю страницу...")
-                time.sleep(5)
+                selenium_sleep(5)
             except Exception as e:  # noqa: BLE001
                 print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: {e}, повторяю...")
-                time.sleep(5)
+                selenium_sleep(5)
         if not opened:
             print(f"  ⚠️  Не нашёл кнопку открытия модалки логина "
                   f"за {MAX_PAGE_ATTEMPTS} попыток")
@@ -247,7 +246,7 @@ def _ensure_logged_in(driver) -> bool:
             print("  ⚠️  Модалка логина не появилась")
             _save_debug_snapshot(driver, "login_modal_timeout")
             return False
-        time.sleep(1)
+        selenium_sleep(1)
 
         # Шаг 4: найти поле логина. По скрину placeholder = «Логин или
         # адрес электронной почты», иногда тип input может быть text/email.
@@ -302,7 +301,7 @@ def _ensure_logged_in(driver) -> bool:
         email_input.send_keys(email)
         password_input.clear()
         password_input.send_keys(password)
-        time.sleep(0.5)
+        selenium_sleep(0.5)
 
         # Шаг 5: кликнуть оранжевую кнопку «Войти» В МОДАЛКЕ.
         clicked = driver.execute_script(
@@ -382,7 +381,7 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
     «Весь список» (вся выгрузка ~2900 застройщиков).
     """
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(1)
+    selenium_sleep(1)
 
     return driver.execute_script(
         """
@@ -531,7 +530,7 @@ def _collect_top_n_developers(driver, region: dict, n: int) -> list[dict]:
         url = _build_top_url(region, "obyem_stroitelstva") + f"&page={page_num}"
         print(f"     · страница {page_num}/{pages_needed}: {url}")
         driver.get(url)
-        time.sleep(4)
+        selenium_sleep(4)
         if not _wait_for_top_content(driver):
             print(f"       ⚠️  страница {page_num} не загрузилась")
             _save_debug_snapshot(driver, f"top_{region['key']}_page{page_num}_timeout")
@@ -560,7 +559,7 @@ def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) ->
     last_height = 0
     for _ in range(max_scrolls):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(pause)
+        selenium_sleep(pause)
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
@@ -624,7 +623,7 @@ def _switch_year_filter(driver, year: int) -> bool:
     if not ok:
         return False
     # Ждём пока контент перерисуется (можно по смене таблицы)
-    time.sleep(4)
+    selenium_sleep(4)
     return True
 
 
@@ -678,7 +677,7 @@ def fetch_top(state: dict) -> list[Path]:
                 print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
                 print(f"       URL: {url}")
                 driver.get(url)
-                time.sleep(4)
+                selenium_sleep(4)
 
                 if not _wait_for_top_content(driver):
                     print(f"       ⚠️  контент не появился")
@@ -907,7 +906,7 @@ def fetch_cards(state: dict) -> list[Path]:
                 driver.get(card_url)
                 # 10 сек на отрисовку Angular SPA. WebDriverWait здесь
                 # давал ложные таймауты при том что данные были в page_source.
-                time.sleep(10)
+                selenium_sleep(10)
 
                 # Сохраняем HTML первой карточки для аудита
                 if not debug_saved:

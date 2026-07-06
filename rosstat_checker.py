@@ -34,7 +34,7 @@ import requests
 import urllib3
 from bs4 import BeautifulSoup
 
-from pipeline.file_utils import stream_response_atomic
+from pipeline.file_utils import stream_response_atomic, validate_excel_file
 from pipeline.state_utils import load_json_state, write_json_atomic
 
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
@@ -309,7 +309,7 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
             verify=VERIFY_SSL,
         )
         resp.raise_for_status()
-        stream_response_atomic(resp, save_path)
+        stream_response_atomic(resp, save_path, validate=validate_excel_file)
         size_kb = save_path.stat().st_size // 1024
         print(f"  ✅ Сохранён: {save_path.name} ({size_kb} КБ)")
         return True

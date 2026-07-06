@@ -39,7 +39,7 @@ import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from pipeline.dev_name_utils import normalize_developer_name
-from pipeline.file_utils import write_bytes_atomic
+from pipeline.file_utils import validate_excel_file, write_bytes_atomic
 from pipeline.state_utils import load_json_state, write_json_atomic
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -281,7 +281,7 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
         return [], True
 
     try:
-        write_bytes_atomic(target, r.content)
+        write_bytes_atomic(target, r.content, validate=validate_excel_file)
     except (OSError, ValueError) as exc:
         print(f"  ERROR: failed to save {target.name}: {exc}")
         return [], False

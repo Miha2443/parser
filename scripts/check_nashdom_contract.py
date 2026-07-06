@@ -26,7 +26,7 @@ def _require(condition: bool, message: str) -> None:
 def test_monitoring_same_day_helpers() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "monitoring_2_0_20260706.xlsx"
-        content = b"same content"
+        content = b"PK\x03\x04same content"
         digest = nc._sha256_bytes(content)
 
         target.write_bytes(content)
@@ -72,7 +72,7 @@ def test_monitoring_fetch_force_overrides_same_day_skip() -> None:
     class Response:
         url = "https://docs.google.com/export"
         status_code = 200
-        content = b"workbook-bytes"
+        content = b"PK\x03\x04workbook-bytes"
         headers = {
             "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         }

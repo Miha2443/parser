@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.file_utils import stream_response_atomic, write_bytes_atomic  # noqa: E402
+from pipeline.file_utils import stream_response_atomic, validate_excel_file, write_bytes_atomic  # noqa: E402
 
 
 def _require(condition: bool, message: str) -> None:
@@ -75,6 +75,20 @@ def main() -> int:
             raise AssertionError("empty stream should fail")
         _require(stream_target.read_bytes() == b"old-content", "empty stream replaced old target")
         _require(not (root / "stream.xlsx.tmp").exists(), "empty stream left temp file")
+
+        excel_target = root / "validated.xlsx"
+        write_bytes_atomic(excel_target, b"PK\x03\x04xlsx-bytes", validate=validate_excel_file)
+        _require(excel_target.read_bytes().startswith(b"PK"), "valid xlsx signature was rejected")
+
+        excel_target.write_bytes(b"PK\x03\x04old-xlsx")
+        try:
+            write_bytes_atomic(excel_target, b"<html>login</html>", validate=validate_excel_file)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("HTML response should fail Excel validation")
+        _require(excel_target.read_bytes() == b"PK\x03\x04old-xlsx", "invalid Excel replaced old target")
+        _require(not (root / "validated.xlsx.tmp").exists(), "invalid Excel left temp file")
 
     print("atomic file write checks: ok")
     return 0

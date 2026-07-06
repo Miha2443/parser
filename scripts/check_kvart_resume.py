@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -12,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from nashdom_checker import (  # noqa: E402
+    _initial_kvart_data,
     _kvart_resume_per_dev,
     _load_kvart_resume,
     _upsert_region_snapshot,
@@ -40,6 +42,23 @@ def test_load_kvart_resume() -> None:
             _load_kvart_resume(Path(tmp) / "missing.json") == [],
             "missing checkpoint should be empty",
         )
+
+
+def test_force_ignores_kvart_resume() -> None:
+    previous = os.environ.get("NASHDOM_FORCE")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "kvartirografia_20260706.json"
+        path.write_text(json.dumps([{"region_key": "rf"}]), encoding="utf-8")
+        try:
+            os.environ.pop("NASHDOM_FORCE", None)
+            _require(_initial_kvart_data(path), "normal mode should load checkpoint")
+            os.environ["NASHDOM_FORCE"] = "1"
+            _require(_initial_kvart_data(path) == [], "force mode should ignore checkpoint")
+        finally:
+            if previous is None:
+                os.environ.pop("NASHDOM_FORCE", None)
+            else:
+                os.environ["NASHDOM_FORCE"] = previous
 
 
 def test_upsert_region_snapshot() -> None:
@@ -75,6 +94,7 @@ def test_resume_per_dev() -> None:
 
 def main() -> int:
     test_load_kvart_resume()
+    test_force_ignores_kvart_resume()
     test_upsert_region_snapshot()
     test_resume_per_dev()
     print("kvartirografia resume checks: ok")

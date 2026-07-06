@@ -129,6 +129,12 @@ def save_state(state: dict) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
+def _nashdom_force_enabled() -> bool:
+    return os.environ.get("NASHDOM_FORCE", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
@@ -251,11 +257,15 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
     target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}.xlsx"
     content_sha256 = _sha256_bytes(r.content)
     state_entry = state.get("monitoring_2_0") or {}
-    if isinstance(state_entry, dict) and _monitoring_same_day_unchanged(
-        state_entry=state_entry,
-        target=target,
-        content_sha256=content_sha256,
-        size_bytes=len(r.content),
+    if (
+        not _nashdom_force_enabled()
+        and isinstance(state_entry, dict)
+        and _monitoring_same_day_unchanged(
+            state_entry=state_entry,
+            target=target,
+            content_sha256=content_sha256,
+            size_bytes=len(r.content),
+        )
     ):
         _record_monitoring_state(
             state,
@@ -627,6 +637,12 @@ def _load_kvart_resume(path: Path) -> list[dict]:
     return [row for row in data if isinstance(row, dict)]
 
 
+def _initial_kvart_data(path: Path) -> list[dict]:
+    if _nashdom_force_enabled():
+        return []
+    return _load_kvart_resume(path)
+
+
 def _upsert_region_snapshot(all_data: list[dict], snapshot: dict) -> None:
     """Replace a region snapshot in-place so resume never duplicates regions."""
     region_key = snapshot.get("region_key")
@@ -691,7 +707,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
     target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
 
-    all_data: list[dict] = _load_kvart_resume(target_json)
+    all_data: list[dict] = _initial_kvart_data(target_json)
     existing_by_region: dict[str, dict] = {
         str(row.get("region_key")): row
         for row in all_data
@@ -3056,6 +3072,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.force:
+        os.environ["NASHDOM_FORCE"] = "1"
         os.environ["RASPROD_FULL_HISTORY"] = "1"
     _files, ok = run(only=args.sources if args.sources else None)
     sys.exit(0 if ok else 2)

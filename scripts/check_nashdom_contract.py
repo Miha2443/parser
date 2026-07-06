@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -61,6 +62,47 @@ def test_monitoring_same_day_helpers() -> None:
             ),
             "bad stored size should be treated as changed",
         )
+
+
+def test_monitoring_fetch_force_overrides_same_day_skip() -> None:
+    original_download_dir = nc.DOWNLOAD_DIR
+    original_get = nc.requests.get
+    previous_force = os.environ.get("NASHDOM_FORCE")
+
+    class Response:
+        url = "https://docs.google.com/export"
+        status_code = 200
+        content = b"workbook-bytes"
+        headers = {
+            "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            nc.DOWNLOAD_DIR = Path(tmp)
+            nc.requests.get = lambda *args, **kwargs: Response()
+            state: dict = {}
+            os.environ.pop("NASHDOM_FORCE", None)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                files, ok = nc.fetch_monitoring_2_0(state)
+            _require(ok and len(files) == 1, "first monitoring fetch should write file")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                files, ok = nc.fetch_monitoring_2_0(state)
+            _require(ok and files == [], "unchanged monitoring fetch should skip")
+
+            os.environ["NASHDOM_FORCE"] = "1"
+            with contextlib.redirect_stdout(io.StringIO()):
+                files, ok = nc.fetch_monitoring_2_0(state)
+            _require(ok and len(files) == 1, "force monitoring fetch should rewrite")
+        finally:
+            nc.DOWNLOAD_DIR = original_download_dir
+            nc.requests.get = original_get
+            if previous_force is None:
+                os.environ.pop("NASHDOM_FORCE", None)
+            else:
+                os.environ["NASHDOM_FORCE"] = previous_force
 
 
 def test_run_contract_allows_successful_skip() -> None:
@@ -149,6 +191,7 @@ def test_pipeline_wrapper_unpacks_run_result() -> None:
 
 def main() -> int:
     test_monitoring_same_day_helpers()
+    test_monitoring_fetch_force_overrides_same_day_skip()
     test_run_contract_allows_successful_skip()
     test_pipeline_wrapper_unpacks_run_result()
     print("nashdom contract checks: ok")

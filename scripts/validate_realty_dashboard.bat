@@ -59,6 +59,7 @@ echo [5/6] realty mart manifest check
 
 echo [6/6] realty dashboard loader smoke
 "%PY%" scripts\check_realty_marts_smoke.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_realty_data_quality.py || exit /b %ERRORLEVEL%
 
 echo.
 echo validate_realty_dashboard: OK

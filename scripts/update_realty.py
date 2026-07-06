@@ -422,6 +422,12 @@ def _snapshot_file_digest(path: Path, stat) -> str:
     return digest
 
 
+def _prune_snapshot_digest_cache() -> None:
+    stale = [path for path in _SNAPSHOT_DIGEST_CACHE if not Path(path).exists()]
+    for path in stale:
+        _SNAPSHOT_DIGEST_CACHE.pop(path, None)
+
+
 def snapshot_files(
     *,
     roots: list[tuple[Path, str, str]] | None = None,
@@ -450,6 +456,7 @@ def snapshot_files(
                 out[f"{namespace}:{rel_prefix}{rel}"] = (size, digest)
             except OSError:
                 pass
+    _prune_snapshot_digest_cache()
     return out
 
 

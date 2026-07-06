@@ -80,6 +80,14 @@ def main() -> int:
             changed = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
             if changed == first:
                 raise AssertionError("snapshot cache did not detect same-size content change")
+            cache_key = str(target.resolve())
+            if cache_key not in ur._SNAPSHOT_DIGEST_CACHE:
+                raise AssertionError("snapshot cache missing live file")
+            target.unlink()
+            removed = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            _assert_equal(removed, {}, "removed file should disappear from snapshot")
+            if cache_key in ur._SNAPSHOT_DIGEST_CACHE:
+                raise AssertionError("snapshot cache retained deleted file")
     finally:
         ur.REALTY_ROOT = original_realty_root
 

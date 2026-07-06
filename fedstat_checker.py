@@ -29,6 +29,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from pipeline.state_utils import load_json_state
+
 
 # ─────────────────────────────────────────────
 # НАСТРОЙКИ
@@ -102,10 +104,7 @@ PAGE_TIMEOUT = 30
 
 
 def load_state():
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_state(STATE_FILE, label="fedstat")
 
 
 def save_state(state):

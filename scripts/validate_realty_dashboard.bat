@@ -23,6 +23,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_kvart_resume.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_contract.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_atomic_json.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_stat_state_recovery.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_monitoring_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_kvartirografia_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_rasprodannost_parser.py || exit /b %ERRORLEVEL%

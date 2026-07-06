@@ -45,6 +45,11 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pipeline.state_utils import load_json_state
+
 REALTY_ROOT = ROOT / "data" / "raw" / "realty"
 LOG_DIR = ROOT / "logs"
 PROCESSED_DIR = ROOT / "data" / "processed"
@@ -872,14 +877,9 @@ def collect_site_dates() -> dict:
         (ROOT / "state" / "nashdom_state.json", "nashdom"),
         (ROOT / "state" / "erzrf_state.json", "erzrf"),
     ]:
-        if not state_file.is_file():
-            continue
-        try:
-            import json as _j
-            data = _j.loads(state_file.read_text(encoding="utf-8"))
+        data = load_json_state(state_file, label=key)
+        if data:
             out[key] = data
-        except (OSError, ValueError):
-            pass
     return out
 
 

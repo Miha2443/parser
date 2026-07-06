@@ -35,6 +35,8 @@ import requests
 import urllib3
 from bs4 import BeautifulSoup
 
+from pipeline.state_utils import load_json_state
+
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
 # стандартном trust store Python. Поскольку мы GET-им только публичные
 # страницы и качаем xlsx (без передачи чувствительных данных), проверку
@@ -74,10 +76,7 @@ USER_AGENT = (
 
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_state(STATE_FILE, label="rosstat")
 
 
 def save_state(state: dict) -> None:

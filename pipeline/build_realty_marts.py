@@ -119,6 +119,85 @@ def _tmp_files() -> list[Path]:
     )
 
 
+def check_manifest(*, strict: bool = False) -> int:
+    """Validate mart manifest/files without rebuilding anything."""
+    failures = 0
+    warnings = 0
+    tmp = _tmp_files()
+    if tmp:
+        print("WARNING: raw realty contains temporary download files:")
+        for path in tmp:
+            print(f"  - {path.relative_to(ROOT)}")
+        if strict:
+            failures += 1
+
+    if not MANIFEST.exists():
+        print(f"ERROR: missing {MANIFEST.relative_to(ROOT)}")
+        return 1
+
+    try:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: cannot read manifest: {exc}")
+        return 1
+
+    marts = manifest.get("marts") if isinstance(manifest, dict) else {}
+    if not isinstance(marts, dict) or not marts:
+        print("ERROR: manifest has no marts")
+        return 1
+
+    print(f"checking {len(marts)} realty marts ...")
+    manifest_built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
+    for name, info in sorted(marts.items()):
+        if not isinstance(info, dict):
+            print(f"  ERROR {name}: invalid manifest entry")
+            failures += 1
+            continue
+        if info.get("error"):
+            print(f"  ERROR {name}: {info['error']}")
+            failures += 1
+            continue
+        mart_file = ROOT / str(info.get("file", ""))
+        if not mart_file.is_file():
+            print(f"  ERROR {name}: missing {mart_file.relative_to(ROOT)}")
+            failures += 1
+            continue
+
+        built_at = pd.to_datetime(info.get("built_at"), errors="coerce")
+        if pd.isna(built_at):
+            built_at = manifest_built_at
+
+        latest_source = None
+        missing_sources = 0
+        for source in info.get("sources") or []:
+            if not isinstance(source, dict) or not source.get("path"):
+                continue
+            path = ROOT / str(source["path"])
+            if not path.exists():
+                missing_sources += 1
+                continue
+            ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+            if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                latest_source = ts
+        if missing_sources:
+            print(f"  WARN  {name}: missing sources listed in manifest: {missing_sources}")
+            warnings += 1
+        if latest_source is not None and not pd.isna(built_at) and latest_source > built_at:
+            print(
+                f"  ERROR {name}: stale "
+                f"(source {latest_source}, mart {built_at})"
+            )
+            failures += 1
+            continue
+        print(f"  ok    {name}: {mart_file.relative_to(ROOT)}")
+
+    if failures:
+        print(f"check failed: {failures} error(s), {warnings} warning(s)")
+        return 1
+    print(f"check ok: {len(marts)} marts, {warnings} warning(s)")
+    return 0
+
+
 def _specs(da) -> list[MartSpec]:
     return [
         MartSpec(
@@ -253,7 +332,14 @@ def main() -> int:
         nargs="*",
         help="optional mart names to rebuild",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="validate manifest and mart freshness without rebuilding",
+    )
     args = parser.parse_args()
+    if args.check:
+        return check_manifest(strict=args.strict)
     return build(strict=args.strict, only=set(args.only or []) or None)
 
 

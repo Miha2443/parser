@@ -122,6 +122,7 @@ notepad config\erzrf.json
 | `update.bat --full-rasprod-history` | Полный исторический пересбор распроданности вместо инкремента |
 | `update.bat --retries 3` | Больше повторов для упавших источников |
 | `scripts\build_realty_marts.bat` | Полностью пересобрать быстрые витрины сайта из `data\raw\realty` |
+| `scripts\build_realty_marts.bat --check` | Проверить manifest/свежесть realty-витрин без пересборки |
 | `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
 
 ### Группы источников для `update.bat`

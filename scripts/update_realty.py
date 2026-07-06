@@ -656,7 +656,8 @@ def main():
                              "только новые периоды и самый свежий месяц")
     parser.add_argument("--force", action="store_true",
                         help="Передать --force в чекеры (игнорировать state, "
-                             "пере-скачать всё)")
+                             "пере-скачать всё; для rasprodannost включает "
+                             "--full-rasprod-history)")
     parser.add_argument("--retries", type=int, default=2,
                         help="Сколько раз повторять упавшие источники "
                              "(default: 2; задержка 30/60с между раундами)")
@@ -688,7 +689,7 @@ def main():
         if not is_monday():
             print("ℹ️  --weekly-kvart-per-dev: сегодня не понедельник → "
                   "KVART_PER_DEV=0 (per-dev пропустится, агрегаты остаются)")
-    if args.full_rasprod_history:
+    if args.full_rasprod_history or args.force:
         env["RASPROD_FULL_HISTORY"] = "1"
 
     log_path = _setup_logging()

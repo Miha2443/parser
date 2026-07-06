@@ -11,7 +11,10 @@ REM    setup.bat --no-start       skip launching site at the end
 REM ============================================================
 
 setlocal enabledelayedexpansion
-cd /d %~dp0
+cd /d "%~dp0"
+
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
 
 set DO_SCRAPE=1
 set DO_SCHEDULER=1
@@ -135,15 +138,39 @@ if !DO_SCRAPE!==1 (
     echo This takes 40-60 min. You can minimize the window.
     echo.
     "%VENV_PY%" scripts\update_realty.py
+    if errorlevel 1 (
+        echo [ERROR] First data scrape failed
+        pause
+        exit /b 1
+    )
     echo.
 ) else (
     echo [6/8] First scrape skipped --no-scrape
     echo        Rebuilding processed pickles from existing downloads/...
     "%VENV_PY%" pipeline\orchestrator.py --skip-download
+    if errorlevel 1 (
+        echo [ERROR] Rebuilding processed pickles failed
+        pause
+        exit /b 1
+    )
     echo        Rebuilding realty marts from existing data/raw/realty/...
-    "%VENV_PY%" -m pipeline.build_realty_marts
+    "%VENV_PY%" -m pipeline.build_realty_marts --strict
+    if errorlevel 1 (
+        echo [ERROR] Rebuilding realty marts failed
+        pause
+        exit /b 1
+    )
     echo.
 )
+
+echo        Validating dashboard data...
+call scripts\validate_realty_dashboard.bat
+if errorlevel 1 (
+    echo [ERROR] Dashboard validation failed
+    pause
+    exit /b 1
+)
+echo.
 
 REM --- Step 7: Task Scheduler ---
 if !DO_SCHEDULER!==1 (

@@ -35,6 +35,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_realty_mart_atomic_write.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_manifest_atomic_write.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_status_atomic_write.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_update_realty_lock.py || exit /b %ERRORLEVEL%
 
 echo [2/6] streamlit page runtime smoke
 "%PY%" scripts\check_streamlit_pages_smoke.py || exit /b %ERRORLEVEL%

@@ -31,6 +31,7 @@ Escrow (data/raw/realty/escrow_manual/) — РУЧНАЯ выгрузка с
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
@@ -48,11 +49,14 @@ LOG_DIR = ROOT / "logs"
 PROCESSED_DIR = ROOT / "data" / "processed"
 REALTY_STATUS_FILE = PROCESSED_DIR / "realty_update_status.json"
 REALTY_MARTS_MANIFEST = ROOT / "data" / "marts" / "realty" / "manifest.json"
+REALTY_UPDATE_LOCK = ROOT / "state" / ".realty_update.lock"
+REALTY_UPDATE_LOCK_STALE_SEC = 12 * 3600
 
 # Глобальный файл лога текущего прогона. Инициализируется в main().
 _LOG_FILE: Path | None = None
 _LOG_FH = None
 _ACTIVE_REALTY_RUN = None
+_REALTY_UPDATE_LOCK_HELD = False
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -177,6 +181,57 @@ def _close_logging() -> None:
         except Exception:  # noqa: BLE001
             pass
         _LOG_FH = None
+
+
+def acquire_realty_update_lock(
+    lock_path: Path = REALTY_UPDATE_LOCK,
+    *,
+    stale_after_sec: int = REALTY_UPDATE_LOCK_STALE_SEC,
+) -> bool:
+    """Atomically acquire the top-level realty update lock."""
+    global _REALTY_UPDATE_LOCK_HELD
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_lock = False
+    try:
+        age_sec = time.time() - lock_path.stat().st_mtime
+        stale_lock = age_sec > stale_after_sec
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+
+    if stale_lock:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"pid={os.getpid()}\n")
+        fh.write(f"started_at={datetime.now().isoformat(timespec='seconds')}\n")
+    _REALTY_UPDATE_LOCK_HELD = True
+    return True
+
+
+def release_realty_update_lock(lock_path: Path = REALTY_UPDATE_LOCK) -> None:
+    """Release the top-level realty update lock if this process acquired it."""
+    global _REALTY_UPDATE_LOCK_HELD
+    if not _REALTY_UPDATE_LOCK_HELD:
+        return
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    _REALTY_UPDATE_LOCK_HELD = False
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:
@@ -980,6 +1035,11 @@ def main():
         print_update_plan(sources, env, no_marts=args.no_marts)
         return 0
 
+    if not acquire_realty_update_lock():
+        print(f"update_realty.py: another realty update is already running ({REALTY_UPDATE_LOCK})")
+        return 0
+    atexit.register(release_realty_update_lock)
+
     started = time.time()
     log_path = _setup_logging()
 
@@ -1086,6 +1146,7 @@ def main():
         )
         clear_active_realty_run()
         _close_logging()
+        release_realty_update_lock()
         sys.exit(130)
 
     # Дедупликация (safety-net): на этом этапе всё уже было дедуплицировано
@@ -1173,6 +1234,7 @@ def main():
 
     clear_active_realty_run()
     _close_logging()
+    release_realty_update_lock()
     return 0 if not failures and marts_ok else 2
 
 
@@ -1184,4 +1246,5 @@ if __name__ == "__main__":
         mark_active_realty_run_failed(exc)
         clear_active_realty_run()
         _close_logging()
+        release_realty_update_lock()
         sys.exit(2)

@@ -4,9 +4,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
-from app.audit import latest_data_badge
+from app.audit import latest_data_badge, realty_marts_status
 from app.data_access import latest_loaded_at, load_ipc, load_salary
 
 st.set_page_config(
@@ -38,6 +39,14 @@ with st.sidebar:
         days = (datetime.now() - mtime).days
         icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
         src_freshness.append(f"{icon} {name}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
+
+    marts = realty_marts_status()
+    if not marts.empty:
+        built_at = marts["built_at"].max()
+        errors = int((marts["status"] == "error").sum())
+        icon = "🟢" if errors == 0 else "🔴"
+        built_text = built_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(built_at) else "—"
+        src_freshness.append(f"{icon} Витрины сайта: {built_text}")
     st.markdown("\n".join(f"- {s}" for s in src_freshness))
 
     st.markdown("---")

@@ -11,9 +11,12 @@ venv/
 
 # Производные данные (восстанавливаются из downloads/ через ETL)
 data/processed/
+data/marts/
 
 # Бэкапы и устаревшие выгрузки
 data/raw/_archive/
+data/raw/realty/**/*.tmp
+data/raw/realty/**/*.crdownload
 
 # Состояние парсеров (актуально на машине, где запускается ETL)
 state/

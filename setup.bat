@@ -140,6 +140,8 @@ if !DO_SCRAPE!==1 (
     echo [6/8] First scrape skipped --no-scrape
     echo        Rebuilding processed pickles from existing downloads/...
     "%VENV_PY%" pipeline\orchestrator.py --skip-download
+    echo        Rebuilding realty marts from existing data/raw/realty/...
+    "%VENV_PY%" -m pipeline.build_realty_marts
     echo.
 )
 

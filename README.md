@@ -119,6 +119,7 @@ notepad config\erzrf.json
 | `update.bat --force` | Игнорировать state, пере-скачать всё |
 | `update.bat --skip-kvart-per-dev` | Без долгого per-dev обхода (~20 мин) |
 | `update.bat --retries 3` | Больше повторов для упавших источников |
+| `scripts\build_realty_marts.bat` | Пересобрать быстрые витрины сайта из `data\raw\realty` |
 | `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
 
 ### Группы источников для `update.bat`
@@ -141,6 +142,7 @@ update.bat monitoring fedstat       :: точечно
 - Скачивает данные со всех источников
 - Дедупликация: если сайт отдал тот же контент с новой датой — файл удаляется
 - Старые версии переезжают в `data\raw\realty\_archive\<дата>\`
+- После скачивания пересобираются быстрые витрины `data\marts\realty\*.pkl`
 - **По понедельникам** — долгий per-dev обход квартирографии (~90 мин)
 - В остальные дни — без него (~20 мин)
 - Упавшие источники автоматически повторяются (до 2 раз с паузой 30/60 сек)
@@ -181,12 +183,14 @@ parser/
   pipeline/
     tdm_notify.py    ← клиент TDM Bot API
     archive_old.py   ← архивация старых выгрузок
+    build_realty_marts.py ← быстрые витрины realty для Streamlit
     deduplicate.py   ← дедупликация по контенту
     selenium_utils.py ← create_chrome + retry_with_refresh
     parsers/         ← парсеры xls/json в DataFrame
 
   scripts/
     update_realty.py              ← оркестратор всех парсеров
+    build_realty_marts.bat        ← ручная пересборка data\marts\realty
     update_realty_scheduled.bat   ← runner для cron (грузит .env, venv)
     register_scheduler.bat        ← регистрация Task Scheduler (admin)
     register_scheduler_user.bat   ← per-user задача (без admin)

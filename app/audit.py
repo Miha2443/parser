@@ -1,12 +1,17 @@
 """Чтение audit log для UI: группировка по запускам, агрегаты."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from pipeline.audit import read_audit
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
 
 
 def load_runs() -> pd.DataFrame:
@@ -57,15 +62,82 @@ def last_success_per_indicator(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("indicator").reset_index(drop=True)
 
 
+def load_realty_marts_manifest() -> dict[str, Any]:
+    if not REALTY_MARTS_MANIFEST.exists():
+        return {}
+    try:
+        return json.loads(REALTY_MARTS_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def realty_marts_status() -> pd.DataFrame:
+    """One row per realty mart from data/marts/realty/manifest.json."""
+    manifest = load_realty_marts_manifest()
+    marts = manifest.get("marts") if isinstance(manifest, dict) else {}
+    if not isinstance(marts, dict) or not marts:
+        return pd.DataFrame(columns=[
+            "mart", "status", "rows", "cols", "built_at", "duration_sec",
+            "sources", "latest_source_mtime", "error",
+        ])
+
+    built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
+    rows: list[dict[str, Any]] = []
+    for mart, info in sorted(marts.items()):
+        if not isinstance(info, dict):
+            continue
+        summary = info.get("summary") if isinstance(info.get("summary"), dict) else {}
+        sources = info.get("sources") if isinstance(info.get("sources"), list) else []
+        latest_source = None
+        for source in sources:
+            if isinstance(source, dict):
+                ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                    latest_source = ts
+
+        row_count = None
+        col_count = None
+        if summary.get("type") == "dataframe":
+            row_count = summary.get("rows")
+            col_count = summary.get("cols")
+        elif isinstance(summary.get("frames"), dict):
+            frame_rows = [
+                v.get("rows") for v in summary["frames"].values()
+                if isinstance(v, dict) and isinstance(v.get("rows"), int)
+            ]
+            row_count = sum(frame_rows) if frame_rows else None
+
+        rows.append({
+            "mart": mart,
+            "status": "error" if info.get("error") else "ok",
+            "rows": row_count,
+            "cols": col_count,
+            "built_at": built_at,
+            "duration_sec": info.get("duration_sec"),
+            "sources": len(sources),
+            "latest_source_mtime": latest_source,
+            "error": info.get("error", ""),
+        })
+    return pd.DataFrame(rows)
+
+
 def latest_data_badge() -> str:
-    """Строка для шапки страниц: «Данные на ДД.ММ.ГГГГ ЧЧ:ММ»."""
+    """Строка для шапки страниц: «Данные сайта на ДД.ММ.ГГГГ ЧЧ:ММ»."""
+    candidates = []
     df = load_runs()
-    if df.empty:
+    if not df.empty:
+        successes = df[(df["status"] == "success") & (df["indicator"] != "_run")]
+        if not successes.empty:
+            candidates.append(successes["ts"].max())
+
+    manifest = load_realty_marts_manifest()
+    if manifest:
+        candidates.append(pd.to_datetime(manifest.get("built_at"), errors="coerce"))
+
+    candidates = [ts for ts in candidates if not pd.isna(ts)]
+    if not candidates:
         return ""
-    successes = df[(df["status"] == "success") & (df["indicator"] != "_run")]
-    if successes.empty:
-        return ""
-    ts = successes["ts"].max()
+    ts = max(candidates)
     if pd.isna(ts):
         return ""
-    return f"Данные на {ts.strftime('%d.%m.%Y %H:%M')}"
+    return f"Данные сайта на {ts.strftime('%d.%m.%Y %H:%M')}"

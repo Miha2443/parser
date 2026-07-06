@@ -486,6 +486,32 @@ def check_escrow():
         _print(f"✓ Файл есть: {latest.name} (от {date})")
 
 
+def build_realty_marts() -> bool:
+    """Пересобирает быстрые витрины для Streamlit из raw realty-файлов."""
+    _print(f"\n{'─'*60}")
+    _print("⚙️  Сборка realty-витрин для дашборда")
+    _print(f"{'─'*60}")
+    cmd = [sys.executable, "-m", "pipeline.build_realty_marts"]
+    proc = subprocess.run(
+        cmd,
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if proc.stdout:
+        for line in proc.stdout.splitlines():
+            _print(f"[marts] {line}")
+    if proc.returncode == 0:
+        _print("✅ realty-витрины собраны")
+        return True
+    _print(f"❌ realty-витрины: код выхода {proc.returncode}")
+    return False
+
+
 def collect_site_dates() -> dict:
     """Собирает «дата последнего обновления на сайте» из state-файлов.
 
@@ -623,6 +649,8 @@ def main():
                         help="Сколько свежих файлов оставить в активной папке (default: 1)")
     parser.add_argument("--no-notify", action="store_true",
                         help="Не отправлять уведомление в TDM")
+    parser.add_argument("--no-marts", action="store_true",
+                        help="Не пересобирать data/marts/realty после прогона")
     parser.add_argument("--force", action="store_true",
                         help="Передать --force в чекеры (игнорировать state, "
                              "пере-скачать всё)")
@@ -741,6 +769,10 @@ def main():
     # Эскроу-подсказка
     check_escrow()
 
+    marts_ok = True
+    if not args.no_marts:
+        marts_ok = build_realty_marts()
+
     total_min = (time.time() - started) / 60
     _print(f"\n{'='*60}")
     _print(f"ИТОГ за {total_min:.1f} мин:")
@@ -753,6 +785,8 @@ def main():
         _print(f"  ✎  Обновлено:       {len(diff['changed'])}")
     if deduped_count:
         _print(f"  ↩️  Дублей удалено:  {deduped_count}")
+    if not marts_ok:
+        _print("  ⚠️  Витрины сайта: ошибка сборки")
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
 
@@ -769,7 +803,7 @@ def main():
             pass
 
     _close_logging()
-    return 0 if not failures else 2
+    return 0 if not failures and marts_ok else 2
 
 
 if __name__ == "__main__":

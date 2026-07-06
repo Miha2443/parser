@@ -1,4 +1,4 @@
-"""Журнал обновлений ETL. Читает data/processed/etl_audit.jsonl."""
+"""Журнал обновлений ETL и состояние realty-витрин."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -6,7 +6,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from app.audit import last_run_summary, last_success_per_indicator, load_runs
+from app.audit import (
+    last_run_summary,
+    last_success_per_indicator,
+    load_runs,
+    realty_marts_status,
+)
 from pipeline.notifier import format_summary
 from pipeline.registry import INDICATORS
 
@@ -23,22 +28,52 @@ def main() -> None:
     df = load_runs()
     if df.empty:
         st.info("Лог `data/processed/etl_audit.jsonl` пуст. Запустите `py pipeline/orchestrator.py`.")
-        return
+        last = {}
+    else:
+        last = last_run_summary(df)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Последний запуск", last["ts"].strftime("%d.%m.%Y %H:%M") if last.get("ts") is not None else "—")
+        c2.metric("✅ Успехов", last.get("success", 0))
+        c3.metric("⏭ Без изменений", last.get("skip", 0))
+        c4.metric("❌ Ошибок", last.get("error", 0))
+        if last.get("duration_sec") is not None:
+            st.caption(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
 
-    last = last_run_summary(df)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Последний запуск", last["ts"].strftime("%d.%m.%Y %H:%M") if last.get("ts") is not None else "—")
-    c2.metric("✅ Успехов", last.get("success", 0))
-    c3.metric("⏭ Без изменений", last.get("skip", 0))
-    c4.metric("❌ Ошибок", last.get("error", 0))
-    if last.get("duration_sec") is not None:
-        st.caption(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
+    st.divider()
+
+    # ─── Быстрые realty-витрины ─────────────────────────────────
+    st.subheader("Realty-витрины сайта")
+    marts = realty_marts_status()
+    if marts.empty:
+        st.info("Нет `data/marts/realty/manifest.json`. Запустите `scripts\\build_realty_marts.bat`.")
+    else:
+        has_errors = (marts["status"] == "error").any()
+        c1, c2, c3, c4 = st.columns(4)
+        built_at = pd.to_datetime(marts["built_at"], errors="coerce").max()
+        c1.metric("Собраны", built_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(built_at) else "—")
+        c2.metric("Витрин", len(marts))
+        c3.metric("Ошибок", int((marts["status"] == "error").sum()))
+        c4.metric("Строк", int(marts["rows"].dropna().sum()) if "rows" in marts else 0)
+        view = pd.DataFrame({
+            "Витрина": marts["mart"],
+            "Статус": marts["status"].map(lambda s: "✅ ok" if s == "ok" else "❌ error"),
+            "Строк": marts["rows"],
+            "Источников": marts["sources"],
+            "Сборка, c": marts["duration_sec"],
+            "Свежий source": pd.to_datetime(
+                marts["latest_source_mtime"], errors="coerce"
+            ).dt.strftime("%d.%m.%Y %H:%M"),
+            "Ошибка": marts["error"],
+        })
+        st.dataframe(view, width="stretch", hide_index=True)
+        if has_errors:
+            st.error("Есть ошибки сборки realty-витрин. Сайт откатится на raw-чтение, но страницы будут медленнее.")
 
     st.divider()
 
     # ─── Сводка последних запусков по показателям ─────────────────
     st.subheader("По показателям")
-    per_ind = last_success_per_indicator(df)
+    per_ind = last_success_per_indicator(df) if not df.empty else pd.DataFrame()
     if per_ind.empty:
         st.info("Нет данных по показателям.")
     else:
@@ -59,37 +94,43 @@ def main() -> None:
     period_days = st.selectbox("Период", options=[7, 30, 90], index=1, format_func=lambda d: f"{d} дней")
     only_errors = st.checkbox("Только ошибки", value=False)
 
-    since = datetime.now() - timedelta(days=period_days)
-    filt = df[(df["ts"] >= since) & (df["indicator"] != "_run")].copy()
-    if only_errors:
-        filt = filt[filt["status"] == "error"]
-    filt = filt.sort_values("ts", ascending=False)
-    if filt.empty:
+    if df.empty:
         st.caption("Нет событий за выбранный период.")
     else:
-        show = pd.DataFrame({
-            "Время": filt["ts"].dt.strftime("%d.%m.%Y %H:%M:%S"),
-            "Показатель": filt["indicator"].map(lambda i: INDICATOR_TITLES.get(i, i)),
-            "Статус": filt["status"].map(lambda s: f"{STATUS_ICON.get(s, '·')} {s}"),
-            "Сообщение": filt.apply(
-                lambda r: r.get("reason") or r.get("error") or r.get("message") or "", axis=1
-            ),
-            "Строк": filt.get("rows", pd.Series([None] * len(filt))),
-        })
-        st.dataframe(show, width="stretch", hide_index=True)
+        since = datetime.now() - timedelta(days=period_days)
+        filt = df[(df["ts"] >= since) & (df["indicator"] != "_run")].copy()
+        if only_errors:
+            filt = filt[filt["status"] == "error"]
+        filt = filt.sort_values("ts", ascending=False)
+        if filt.empty:
+            st.caption("Нет событий за выбранный период.")
+        else:
+            show = pd.DataFrame({
+                "Время": filt["ts"].dt.strftime("%d.%m.%Y %H:%M:%S"),
+                "Показатель": filt["indicator"].map(lambda i: INDICATOR_TITLES.get(i, i)),
+                "Статус": filt["status"].map(lambda s: f"{STATUS_ICON.get(s, '·')} {s}"),
+                "Сообщение": filt.apply(
+                    lambda r: r.get("reason") or r.get("error") or r.get("message") or "", axis=1
+                ),
+                "Строк": filt.get("rows", pd.Series([None] * len(filt))),
+            })
+            st.dataframe(show, width="stretch", hide_index=True)
 
-        st.download_button(
-            "Скачать журнал (CSV)",
-            data=show.to_csv(index=False).encode("utf-8-sig"),
-            file_name="etl_audit.csv",
-            mime="text/csv",
-        )
+            st.download_button(
+                "Скачать журнал (CSV)",
+                data=show.to_csv(index=False).encode("utf-8-sig"),
+                file_name="etl_audit.csv",
+                mime="text/csv",
+            )
 
     # ─── Preview Telegram-сообщения ───────────────────────────────
     st.divider()
     st.subheader("Telegram — превью последнего сообщения")
-    last_entries = df[df["run_id"] == last["run_id"]].to_dict("records")
-    st.code(format_summary(last_entries) or "(пусто)", language="markdown")
+    if df.empty or not last:
+        st.code("(пусто)", language="markdown")
+    else:
+        last_entries = df[df["run_id"] == last["run_id"]].to_dict("records")
+        st.code(format_summary(last_entries) or "(пусто)", language="markdown")
     st.caption(
         "Чтобы реально отправлять — создайте `config/telegram.json` с полями `token` и `chat_id`. "
         "Без файла модуль ничего не шлёт."

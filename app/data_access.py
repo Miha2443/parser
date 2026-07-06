@@ -1,13 +1,16 @@
 """Загрузка Parquet-витрин с кэшированием Streamlit."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_PROCESSED = Path(__file__).resolve().parent.parent / "data" / "processed"
 DATA_DERIVED = Path(__file__).resolve().parent.parent / "data" / "derived"
+DATA_MARTS_REALTY = PROJECT_ROOT / "data" / "marts" / "realty"
 
 MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -19,6 +22,39 @@ MONTH_SHORT_RU = [
 ]
 QUARTER_NAMES_RU = ["I квартал", "II квартал", "III квартал", "IV квартал"]
 QUARTER_ROMAN = ["I", "II", "III", "IV"]
+
+
+def _realty_marts_enabled() -> bool:
+    return os.environ.get("PARSER_USE_REALTY_MARTS", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _raw_files(paths: list[Path], patterns: list[str], *, recursive: bool = False) -> list[Path]:
+    files: list[Path] = []
+    for base in paths:
+        if not base.exists():
+            continue
+        for pattern in patterns:
+            iterator = base.rglob(pattern) if recursive else base.glob(pattern)
+            files.extend(sorted(p for p in iterator if p.is_file()))
+    return files
+
+
+def _load_realty_mart(name: str, raw_files: list[Path]):
+    """Read a prebuilt realty mart when it is present and not older than raw."""
+    if not _realty_marts_enabled():
+        return None
+    path = DATA_MARTS_REALTY / f"{name}.pkl"
+    if not path.exists():
+        return None
+    try:
+        mart_mtime = path.stat().st_mtime
+        if raw_files and any(p.exists() and p.stat().st_mtime > mart_mtime for p in raw_files):
+            return None
+        return pd.read_pickle(path)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def month_label(year: int, month: int) -> str:
@@ -180,10 +216,10 @@ def load_kvartirografia() -> dict:
     Оригинальные строковые колонки сохраняются для отображения «как на сайте».
     """
     import json
-    files = []
-    for base in KVART_PATHS:
-        if base.exists():
-            files.extend(sorted(base.glob("kvartirografia_*.json")))
+    files = _raw_files(KVART_PATHS, ["kvartirografia_*.json"])
+    mart = _load_realty_mart("kvartirografia", files)
+    if mart is not None:
+        return mart
     if not files:
         return {
             "apartments": pd.DataFrame(),
@@ -303,10 +339,10 @@ def load_monitoring_2_0() -> dict:
       'developers': sorted list[str] — уникальные «Группа компаний» из всех листов
       'min_year' / 'max_year': диапазон годов ввода
     """
-    files = []
-    for base in MONITORING_PATHS:
-        if base.exists():
-            files.extend(sorted(base.glob("monitoring_2_0_*.xlsx")))
+    files = _raw_files(MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+    mart = _load_realty_mart("monitoring_2_0", files)
+    if mart is not None:
+        return mart
     if not files:
         return {
             "rv": pd.DataFrame(),
@@ -503,6 +539,12 @@ def load_erzrf_top() -> dict:
     # Доп. структура: per-year файлы obyem_vvoda
     # result['obyem_vvoda_by_year'] = {region: {year: DataFrame}}
     result["obyem_vvoda_by_year"] = {"rf": {}, "msk": {}}
+    mart = _load_realty_mart(
+        "erzrf_top",
+        _raw_files(ERZRF_PATHS, ["top_*.xlsx", "top_developers_*.json"]),
+    )
+    if mart is not None:
+        return mart
 
     import re as _re
     year_pat = _re.compile(r"_(\d{4})_\d{8}\.xlsx$")
@@ -565,10 +607,10 @@ def load_erzrf_cards() -> pd.DataFrame:
     Все «Сдано_YYYY_м²» и «Перенос_YYYY_м²» в xlsx — строки с пробелами
     как разделителями тысяч («2 185 178»). Конвертим их в _num колонки.
     """
-    files = []
-    for base in ERZRF_PATHS:
-        if base.exists():
-            files.extend(sorted(base.rglob("cards_*.xlsx")))
+    files = _raw_files(ERZRF_PATHS, ["cards_*.xlsx"], recursive=True)
+    mart = _load_realty_mart("erzrf_cards", files)
+    if mart is not None:
+        return mart
     if not files:
         return pd.DataFrame()
     latest = max(files, key=lambda p: p.stat().st_mtime)
@@ -616,10 +658,10 @@ def load_escrow_manual() -> pd.DataFrame:
     Первая строка xlsx — длинный заголовок, реальная шапка во второй
     строке → header=1.
     """
-    files = []
-    for base in ESCROW_PATHS:
-        if base.exists():
-            files.extend(sorted(base.glob("*.xlsx")))
+    files = _raw_files(ESCROW_PATHS, ["*.xlsx"])
+    mart = _load_realty_mart("escrow_manual", files)
+    if mart is not None:
+        return mart
     if not files:
         return pd.DataFrame()
     latest = max(files, key=lambda p: p.stat().st_mtime)
@@ -669,10 +711,10 @@ def load_rasprodannost() -> dict:
       'periods': list[(year, month)] отсортированных
       'latest_period': (year, month) последний доступный
     """
-    files = []
-    for base in RASPROD_PATHS:
-        if base.exists():
-            files.extend(sorted(base.glob("rasprodannost_*.xlsx")))
+    files = _raw_files(RASPROD_PATHS, ["rasprodannost_*.xlsx"])
+    mart = _load_realty_mart("rasprodannost", files)
+    if mart is not None:
+        return mart
     if not files:
         return {
             "kpi": pd.DataFrame(),
@@ -836,6 +878,9 @@ def load_vvod_static() -> dict:
     base = _vvod_dir()
     if base is None:
         return empty
+    mart = _load_realty_mart("vvod_static", _raw_files([base], ["*.xls*", "*.txt"]))
+    if mart is not None:
+        return mart
     vvod_path = base / "vvod.xlsx"
     stroi_path = base / "Stroi_111_2025.xls"
     out = dict(empty)
@@ -1011,6 +1056,20 @@ def load_emiss_34118() -> pd.DataFrame:
     Берёт статичную базу (emiss_34118_base.xls) + свежий живой экспорт из
     downloads/ (если есть); живые годы перекрывают базу.
     """
+    raw_sources: list[Path] = []
+    base_for_raw = _vvod_dir()
+    if base_for_raw is not None:
+        raw_sources.extend(_raw_files([base_for_raw], ["emiss_34118_base.xls"]))
+    downloads_for_raw = PROJECT_ROOT / "downloads"
+    if downloads_for_raw.exists():
+        raw_sources.extend(_raw_files(
+            [downloads_for_raw],
+            ["*Введено в действие общей площади жилых домов*.xls*"],
+        ))
+    mart = _load_realty_mart("emiss_34118", raw_sources)
+    if mart is not None:
+        return mart
+
     merged: dict[int, dict] = {}
     base = _vvod_dir()
     if base is not None:

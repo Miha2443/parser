@@ -25,6 +25,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 MART_DIR = ROOT / "data" / "marts" / "realty"
 MANIFEST = MART_DIR / "manifest.json"
+TEMP_DOWNLOAD_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
 
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
@@ -177,7 +178,7 @@ def _tmp_files() -> list[Path]:
         return []
     return sorted(
         p for p in raw.rglob("*")
-        if p.is_file() and p.suffix.lower() in {".tmp", ".crdownload"}
+        if p.is_file() and p.suffix.lower() in TEMP_DOWNLOAD_SUFFIXES
     )
 
 

@@ -44,6 +44,34 @@ def main() -> int:
         _require(pd.read_pickle(target)["version"] == 1, "failed write replaced old mart")
         _require(not (Path(tmp) / "mart.pkl.tmp").exists(), "temporary pickle was not removed")
 
+    original_root = brm.ROOT
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            brm.ROOT = Path(tmp)
+            raw = brm.ROOT / "data" / "raw" / "realty" / "nashdom"
+            raw.mkdir(parents=True)
+            for name in (
+                "monitoring_2_0_20260702.xlsx.crdownload",
+                "rasprodannost_20260702.xlsx.download",
+                "kvartirografia_20260702.xlsx.part",
+                "manifest.json.tmp",
+            ):
+                (raw / name).write_bytes(b"partial")
+            (raw / "monitoring_2_0_20260702.xlsx").write_bytes(b"complete")
+
+            tmp_names = sorted(path.name for path in brm._tmp_files())
+            _require(
+                tmp_names == [
+                    "kvartirografia_20260702.xlsx.part",
+                    "manifest.json.tmp",
+                    "monitoring_2_0_20260702.xlsx.crdownload",
+                    "rasprodannost_20260702.xlsx.download",
+                ],
+                "temporary realty download suffixes were not detected",
+            )
+    finally:
+        brm.ROOT = original_root
+
     print("realty mart atomic write checks: ok")
     return 0
 

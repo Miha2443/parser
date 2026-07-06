@@ -538,7 +538,7 @@ def build_realty_marts(only: set[str] | None = None) -> bool:
     else:
         _print("⚙️  Сборка realty-витрин для дашборда")
     _print(f"{'─'*60}")
-    cmd = [sys.executable, "-m", "pipeline.build_realty_marts"]
+    cmd = [sys.executable, "-m", "pipeline.build_realty_marts", "--strict"]
     if only:
         cmd.extend(["--only", *sorted(only)])
     proc = subprocess.run(

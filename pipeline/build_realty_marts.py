@@ -117,6 +117,22 @@ def _pickle_load_error(path: Path) -> str | None:
     return None
 
 
+def _write_pickle_atomic(value: Any, target: Path) -> None:
+    tmp = target.with_name(f"{target.name}.tmp")
+    try:
+        pd.to_pickle(value, tmp)
+        error = _pickle_load_error(tmp)
+        if error:
+            raise RuntimeError(f"temporary pickle is unreadable: {error}")
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
 def _tmp_files() -> list[Path]:
     raw = ROOT / "data" / "raw" / "realty"
     if not raw.exists():
@@ -340,7 +356,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             with contextlib.redirect_stderr(io.StringIO()):
                 value = loader()
             target = MART_DIR / f"{spec.name}.pkl"
-            pd.to_pickle(value, target)
+            _write_pickle_atomic(value, target)
             raw_files = spec.raw_files(da)
             manifest["marts"][spec.name] = {
                 "file": str(target.relative_to(ROOT)).replace("\\", "/"),

@@ -179,15 +179,29 @@ def _close_logging() -> None:
         _LOG_FH = None
 
 
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
 def write_realty_status(payload: dict) -> None:
     """Пишет машинно-читаемый статус последнего realty-прогона для дашборда."""
     try:
         PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-        REALTY_STATUS_FILE.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError as exc:
+        _write_json_atomic(REALTY_STATUS_FILE, payload)
+    except (OSError, json.JSONDecodeError) as exc:
         _print(f"⚠️  Не удалось записать {REALTY_STATUS_FILE}: {exc}")
 
 

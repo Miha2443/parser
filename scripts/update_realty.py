@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -44,6 +45,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REALTY_ROOT = ROOT / "data" / "raw" / "realty"
 LOG_DIR = ROOT / "logs"
+PROCESSED_DIR = ROOT / "data" / "processed"
+REALTY_STATUS_FILE = PROCESSED_DIR / "realty_update_status.json"
 
 # Глобальный файл лога текущего прогона. Инициализируется в main().
 _LOG_FILE: Path | None = None
@@ -162,6 +165,18 @@ def _close_logging() -> None:
         except Exception:  # noqa: BLE001
             pass
         _LOG_FH = None
+
+
+def write_realty_status(payload: dict) -> None:
+    """Пишет машинно-читаемый статус последнего realty-прогона для дашборда."""
+    try:
+        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        REALTY_STATUS_FILE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        _print(f"⚠️  Не удалось записать {REALTY_STATUS_FILE}: {exc}")
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -798,6 +813,25 @@ def main():
         _print("  ⚠️  Витрины сайта: ошибка сборки")
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
+
+    write_realty_status({
+        "started_at": datetime.fromtimestamp(started).isoformat(timespec="seconds"),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "duration_sec": round(time.time() - started, 2),
+        "sources_requested": sources,
+        "successes": successes,
+        "failures": failures,
+        "marts_ok": marts_ok,
+        "archive": not args.no_archive,
+        "keep": args.keep,
+        "force": args.force,
+        "full_rasprod_history": bool(args.full_rasprod_history or args.force),
+        "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
+        "deduped_count": deduped_count,
+        "real_new_count": real_new_count,
+        "diff": diff,
+        "log_file": str(log_path.relative_to(ROOT)).replace("\\", "/"),
+    })
 
     # === Уведомление в TDM ===
     if not args.no_notify:

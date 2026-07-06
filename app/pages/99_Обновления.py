@@ -9,6 +9,7 @@ import streamlit as st
 from app.audit import (
     last_run_summary,
     last_success_per_indicator,
+    load_realty_update_status,
     load_runs,
     realty_marts_status,
 )
@@ -38,6 +39,37 @@ def main() -> None:
         c4.metric("❌ Ошибок", last.get("error", 0))
         if last.get("duration_sec") is not None:
             st.caption(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
+
+    st.divider()
+
+    # ─── Последний прогон update_realty.py ────────────────────────
+    st.subheader("Последний realty-прогон")
+    realty_status = load_realty_update_status()
+    if not realty_status:
+        st.info("Нет `data/processed/realty_update_status.json`. Запустите `scripts\\update_realty.py`.")
+    else:
+        finished_at = pd.to_datetime(realty_status.get("finished_at"), errors="coerce")
+        duration_sec = realty_status.get("duration_sec")
+        successes = realty_status.get("successes") or []
+        failures = realty_status.get("failures") or []
+        requested = realty_status.get("sources_requested") or []
+        diff = realty_status.get("diff") or {}
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
+        c2.metric("Источники", f"{len(successes)}/{len(requested)}")
+        c3.metric("Ошибок", len(failures))
+        c4.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
+        try:
+            duration_min = round(float(duration_sec) / 60, 1) if duration_sec is not None else None
+        except (TypeError, ValueError):
+            duration_min = None
+        if duration_min is not None:
+            st.caption(
+                f"Длительность: {duration_min} мин · "
+                f"log={realty_status.get('log_file', '—')}"
+            )
+        if failures:
+            st.error("Ошибки источников: " + ", ".join(map(str, failures)))
 
     st.divider()
 

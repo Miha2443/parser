@@ -12,6 +12,7 @@ from pipeline.audit import read_audit
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
+REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
 
 
 def load_runs() -> pd.DataFrame:
@@ -69,6 +70,17 @@ def load_realty_marts_manifest() -> dict[str, Any]:
         return json.loads(REALTY_MARTS_MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def load_realty_update_status() -> dict[str, Any]:
+    """Последний machine-readable статус `scripts/update_realty.py`."""
+    if not REALTY_UPDATE_STATUS.exists():
+        return {}
+    try:
+        data = json.loads(REALTY_UPDATE_STATUS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def realty_marts_status() -> pd.DataFrame:

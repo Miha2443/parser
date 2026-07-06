@@ -39,10 +39,12 @@ def main() -> int:
 
             old_active = realty_root / "nashdom" / "monitoring_2_0_20260701.xlsx"
             new_active = realty_root / "nashdom" / "monitoring_2_0_20260702.xlsx"
+            temp_active = realty_root / "nashdom" / "monitoring_2_0_20260701.xlsx.crdownload"
             existing_archive = archive_root / "2026-07-01" / "nashdom" / old_active.name
 
             _write(old_active, "old active", 100)
             _write(new_active, "new active", 200)
+            _write(temp_active, "partial browser download", 75)
             _write(existing_archive, "existing archive", 50)
 
             with redirect_stdout(StringIO()):
@@ -51,6 +53,7 @@ def main() -> int:
             _require(moved == 1, "one stale file should be archived")
             _require(not old_active.exists(), "stale active file should be moved")
             _require(new_active.exists(), "fresh active file should remain")
+            _require(temp_active.exists(), "partial browser download should remain outside archive")
             _require(existing_archive.read_text(encoding="utf-8") == "existing archive", "existing archive file should remain")
 
             collision_copy = existing_archive.with_name("monitoring_2_0_20260701_1.xlsx")

@@ -31,6 +31,8 @@ DATE_RE = re.compile(r"[_-]?(\d{8}|\d{4}-\d{2}-\d{2})(?=\.|$)")
 
 # Папки источников для обхода (без _archive)
 SOURCE_DIRS = ["nashdom", "erzrf", "erzrf/cards"]
+ARCHIVABLE_SUFFIXES = {".xlsx", ".xls", ".json", ".csv"}
+TEMP_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
 
 
 def family_of(path: Path) -> str:
@@ -44,6 +46,12 @@ def family_of(path: Path) -> str:
     match = DATE_RE.search(stem)
     base = stem[: match.start()].rstrip("_-") if match else stem
     return f"{base}{path.suffix.lower()}"
+
+
+def is_archivable_file(path: Path) -> bool:
+    """Return whether an active raw file can be considered for archiving."""
+    suffix = path.suffix.lower()
+    return suffix in ARCHIVABLE_SUFFIXES and suffix not in TEMP_SUFFIXES
 
 
 def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str, list[Path]]:
@@ -61,7 +69,7 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
     for f in src_dir.iterdir():
         if not f.is_file():
             continue
-        if f.suffix.lower() not in (".xlsx", ".xls", ".json", ".csv"):
+        if not is_archivable_file(f):
             continue
         # Игнорируем файлы без даты в имени (например «Наполняемость счетов.xlsx»
         # — ручная выгрузка, не архивируем)

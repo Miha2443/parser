@@ -30,6 +30,7 @@ def _write_valid_workbook(path: Path, version: int) -> None:
 
 def main() -> int:
     original_state = ec.STATE_FILE
+    original_download_dir = ec.DOWNLOAD_DIR
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
 
@@ -98,8 +99,20 @@ def main() -> int:
                 "existing bad state backup should not be overwritten",
             )
             _require((ec.STATE_FILE.parent / "erzrf_state.json.1.bad").is_file(), "suffixed bad state backup missing")
+
+            ec.DOWNLOAD_DIR = base / "erzrf"
+            ec.DOWNLOAD_DIR.mkdir()
+            (ec.DOWNLOAD_DIR / "top_developers_rf_20260701.json").write_text(
+                json.dumps({"developers": [{"name": "valid-old"}]}),
+                encoding="utf-8",
+            )
+            (ec.DOWNLOAD_DIR / "top_developers_rf_20260702.json").write_text("{bad-json", encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                developers = ec._load_top_developers()
+            _require(developers == [{"name": "valid-old"}], "top developers loader should fall back to previous valid JSON")
         finally:
             ec.STATE_FILE = original_state
+            ec.DOWNLOAD_DIR = original_download_dir
 
     print("erzrf atomic output checks: ok")
     return 0

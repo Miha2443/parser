@@ -786,10 +786,16 @@ def _developer_slug(card_url: str) -> str | None:
 
 def _load_top_developers() -> list[dict]:
     candidates = sorted(DOWNLOAD_DIR.glob("top_developers_rf_*.json"))
-    if not candidates:
-        return []
-    payload = json.loads(candidates[-1].read_text(encoding="utf-8"))
-    return list(payload.get("developers", []))
+    for path in reversed(candidates):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("payload is not an object")
+            developers = payload.get("developers", [])
+            return list(developers) if isinstance(developers, list) else []
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"  ⚠️  Пропускаю битый top_developers JSON {path.name}: {exc}")
+    return []
 
 
 def _parse_card_html(html: str) -> dict:

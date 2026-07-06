@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -57,6 +58,7 @@ _LOG_FILE: Path | None = None
 _LOG_FH = None
 _ACTIVE_REALTY_RUN = None
 _REALTY_UPDATE_LOCK_HELD = False
+_REALTY_UPDATE_LOCK_TOKEN: str | None = None
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -189,7 +191,7 @@ def acquire_realty_update_lock(
     stale_after_sec: int = REALTY_UPDATE_LOCK_STALE_SEC,
 ) -> bool:
     """Atomically acquire the top-level realty update lock."""
-    global _REALTY_UPDATE_LOCK_HELD
+    global _REALTY_UPDATE_LOCK_HELD, _REALTY_UPDATE_LOCK_TOKEN
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     stale_lock = False
     try:
@@ -215,23 +217,31 @@ def acquire_realty_update_lock(
     except OSError:
         return False
 
+    token = uuid.uuid4().hex
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"token={token}\n")
         fh.write(f"pid={os.getpid()}\n")
         fh.write(f"started_at={datetime.now().isoformat(timespec='seconds')}\n")
     _REALTY_UPDATE_LOCK_HELD = True
+    _REALTY_UPDATE_LOCK_TOKEN = token
     return True
 
 
 def release_realty_update_lock(lock_path: Path = REALTY_UPDATE_LOCK) -> None:
     """Release the top-level realty update lock if this process acquired it."""
-    global _REALTY_UPDATE_LOCK_HELD
+    global _REALTY_UPDATE_LOCK_HELD, _REALTY_UPDATE_LOCK_TOKEN
     if not _REALTY_UPDATE_LOCK_HELD:
         return
     try:
-        lock_path.unlink(missing_ok=True)
+        text = lock_path.read_text(encoding="utf-8")
+        if _REALTY_UPDATE_LOCK_TOKEN and f"token={_REALTY_UPDATE_LOCK_TOKEN}\n" in text:
+            lock_path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
     except OSError:
         pass
     _REALTY_UPDATE_LOCK_HELD = False
+    _REALTY_UPDATE_LOCK_TOKEN = None
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

@@ -24,6 +24,7 @@ import os
 import sys
 import time
 import traceback
+import uuid
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -97,14 +98,23 @@ DEDUP_IDENTITY_COLUMNS = [
     "name_table",
 ]
 
+_ETL_LOCK_HELD = False
+_ETL_LOCK_TOKEN: str | None = None
+
 
 def _try_create_lock_file() -> bool:
+    global _ETL_LOCK_HELD, _ETL_LOCK_TOKEN
     try:
         fd = os.open(str(ETL_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         return False
+    token = uuid.uuid4().hex
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(f"{os.getpid()} {datetime.now().isoformat()}\n")
+        f.write(f"token={token}\n")
+        f.write(f"pid={os.getpid()}\n")
+        f.write(f"started_at={datetime.now().isoformat(timespec='seconds')}\n")
+    _ETL_LOCK_HELD = True
+    _ETL_LOCK_TOKEN = token
     return True
 
 
@@ -126,10 +136,19 @@ def _acquire_lock() -> bool:
 
 
 def _release_lock() -> None:
+    global _ETL_LOCK_HELD, _ETL_LOCK_TOKEN
+    if not _ETL_LOCK_HELD:
+        return
     try:
-        ETL_LOCK.unlink(missing_ok=True)
+        text = ETL_LOCK.read_text(encoding="utf-8")
+        if _ETL_LOCK_TOKEN and f"token={_ETL_LOCK_TOKEN}\n" in text:
+            ETL_LOCK.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
     except OSError:
         pass
+    _ETL_LOCK_HELD = False
+    _ETL_LOCK_TOKEN = None
 
 
 def _parser_module(name: str):

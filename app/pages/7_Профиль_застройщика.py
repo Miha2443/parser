@@ -24,6 +24,8 @@ from app.data_access import (
     load_rasprodannost,
     load_kvartirografia,
     load_escrow_manual,
+    latest_raw_source_date,
+    latest_realty_mart_source_date,
     _normalize_developer_name as norm,
 )
 
@@ -104,26 +106,16 @@ kvart = load_kvartirografia()
 escrow = load_escrow_manual()
 
 
-# Даты файлов источников (mtime) для подписей
-def _mtime_for(*patterns: str) -> str:
-    """Возвращает дату последней модификации первого найденного файла."""
-    from datetime import datetime as _dt
-    from pathlib import Path as _P
-    base = _P("/home/user/parser/data/raw/realty")
-    for pat in patterns:
-        files = list(base.rglob(pat))
-        if files:
-            latest = max(files, key=lambda p: p.stat().st_mtime)
-            return _dt.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
-    return ""
+def _source_date(mart_name: str, *fallback_patterns: str) -> str:
+    return latest_realty_mart_source_date(mart_name) or latest_raw_source_date(*fallback_patterns)
 
 
-date_monitoring = _mtime_for("monitoring_2_0_*.xlsx")
-date_kvart = _mtime_for("kvartirografia_*.xlsx", "kvartirografia_*.json")
-date_erzrf_top = _mtime_for("top_obyem_stroitelstva_rf_*.xlsx")
-date_erzrf_cards = _mtime_for("cards_*.xlsx")
-date_rasprod = _mtime_for("rasprodannost_*.xlsx")
-date_escrow = _mtime_for("Наполняемость*.xlsx", "наполняемость*.xlsx", "*эскроу*.xlsx")
+date_monitoring = _source_date("monitoring_2_0", "monitoring_2_0_*.xlsx")
+date_kvart = _source_date("kvartirografia", "kvartirografia_*.xlsx", "kvartirografia_*.json")
+date_erzrf_top = _source_date("erzrf_top", "top_obyem_stroitelstva_rf_*.xlsx")
+date_erzrf_cards = _source_date("erzrf_cards", "cards_*.xlsx")
+date_rasprod = _source_date("rasprodannost", "rasprodannost_*.xlsx")
+date_escrow = _source_date("escrow_manual", "Наполняемость*.xlsx", "наполняемость*.xlsx", "*эскроу*.xlsx")
 
 # === Собираем все имена застройщиков ===
 # Селектор показывает ТОЛЬКО имена из monitoring (главный источник).

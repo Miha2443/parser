@@ -81,6 +81,39 @@ def _realty_mart_manifest_entry(name: str, *, required: bool = False) -> dict | 
     return entry if isinstance(entry, dict) else None
 
 
+def latest_realty_mart_source_date(name: str) -> str:
+    """Return DD.MM.YYYY for the latest source recorded in the realty mart manifest."""
+    entry = _realty_mart_manifest_entry(name)
+    if not entry:
+        return ""
+    latest = None
+    for source in entry.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+        if pd.isna(ts):
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    return latest.strftime("%d.%m.%Y") if latest is not None else ""
+
+
+def latest_raw_source_date(*patterns: str, base: Path | None = None) -> str:
+    """Return DD.MM.YYYY for the newest raw realty file matching any pattern."""
+    from datetime import datetime as _dt
+
+    root = base or PROJECT_ROOT / "data" / "raw" / "realty"
+    if not root.exists():
+        return ""
+    files: list[Path] = []
+    for pattern in patterns:
+        files.extend(p for p in root.rglob(pattern) if p.is_file())
+    if not files:
+        return ""
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    return _dt.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
+
+
 def _load_realty_mart(name: str, raw_files: list[Path]):
     """Read a prebuilt realty mart when it is present and not older than raw."""
     required = _realty_marts_required()

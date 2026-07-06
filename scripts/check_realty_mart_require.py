@@ -106,6 +106,27 @@ def main() -> int:
             loaded = da._load_realty_mart("good", [])
             _require("ok" in loaded, "valid mart should load")
 
+            _write_manifest(mart_dir, {
+                "good": {
+                    "file": str(good),
+                    "sources": [
+                        {"path": "older.xlsx", "mtime": "2026-07-01T10:00:00"},
+                        {"path": "newer.xlsx", "mtime": "2026-07-03T10:00:00"},
+                    ],
+                },
+            })
+            _require(
+                da.latest_realty_mart_source_date("good") == "03.07.2026",
+                "latest mart source date should come from manifest",
+            )
+            raw_file = raw_dir / "monitoring_2_0_20260704.xlsx"
+            raw_file.write_bytes(b"raw")
+            os.utime(raw_file, (100, 100))
+            _require(
+                da.latest_raw_source_date("monitoring_2_0_*.xlsx", base=raw_dir) == "01.01.1970",
+                "latest raw source date should use provided base path",
+            )
+
             stale = mart_dir / "stale.pkl"
             pd.to_pickle({"stale": pd.DataFrame()}, stale)
             _write_manifest(mart_dir, {

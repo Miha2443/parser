@@ -75,6 +75,27 @@ def main() -> int:
     if selected is not None:
         _assert_equal(selected, set(), "no changed paths skips marts")
 
+    selected = ur.select_realty_marts_for_changes([
+        "realty:vvod/vvod.xlsx",
+        "realty:vvod/emiss_34118_base.xls",
+    ])
+    if selected is not None:
+        _assert_equal(
+            sorted(selected),
+            ["emiss_34118", "escrow_manual", "vvod_static"],
+            "affected marts from vvod static paths",
+        )
+
+    selected = ur.select_realty_marts_for_changes([
+        "realty:escrow_manual/escrow_20260702.xlsx",
+    ])
+    if selected is not None:
+        _assert_equal(
+            sorted(selected),
+            ["escrow_manual"],
+            "affected marts from escrow manual paths",
+        )
+
     original_repair = ur.select_repair_realty_marts
     try:
         ur.select_repair_realty_marts = lambda: {"escrow_manual"}
@@ -162,6 +183,17 @@ def main() -> int:
         ur.source_alias_for_changed_path("downloads:Введено в действие общей площади жилых домов.xlsx"),
         "rosstat",
         "downloads rosstat mapping",
+    )
+
+    _assert_equal(
+        ur.source_alias_for_changed_path("realty:vvod/Stroi_111_2025.xls"),
+        "rosstat",
+        "vvod rosstat mapping",
+    )
+    _assert_equal(
+        ur.source_alias_for_changed_path("realty:escrow_manual/escrow.xlsx"),
+        "escrow-manual",
+        "escrow manual mapping",
     )
 
     print("update_realty plan checks: ok")

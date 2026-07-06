@@ -110,6 +110,7 @@ SOURCE_MARTS = {
     "kvart": {"kvartirografia"},
     "erz-top": {"erzrf_top"},
     "erz-cards": {"erzrf_cards"},
+    "escrow-manual": {"escrow_manual"},
     "rosstat": {"vvod_static", "emiss_34118"},
 }
 
@@ -641,8 +642,23 @@ def source_alias_for_changed_path(rel_with_prefix: str) -> str | None:
         "top_potreb_",
     )):
         return "erz-top"
+    if (
+        "realty:vvod/" in p
+        or "emiss_34118" in p
+        or "stroi_111" in p
+        or "vvod.xlsx" in p
+        or "34118_filter" in p
+    ):
+        return "rosstat"
     if "emiss_34118" in p or "введено в действие общей площади жилых домов" in p:
         return "rosstat"
+    if (
+        "realty:escrow_manual/" in p
+        or "escrow" in p
+        or "эскроу" in p
+        or "наполняемость" in p
+    ):
+        return "escrow-manual"
     return None
 
 

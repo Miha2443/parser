@@ -185,6 +185,11 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
             if isinstance(existing.get("marts"), dict):
                 existing_marts = existing["marts"]
+                existing_built_at = existing.get("built_at")
+                if existing_built_at:
+                    for info in existing_marts.values():
+                        if isinstance(info, dict) and "built_at" not in info:
+                            info["built_at"] = existing_built_at
         except (OSError, json.JSONDecodeError):
             existing_marts = {}
 
@@ -211,6 +216,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             raw_files = spec.raw_files(da)
             manifest["marts"][spec.name] = {
                 "file": str(target.relative_to(ROOT)).replace("\\", "/"),
+                "built_at": datetime.now().isoformat(timespec="seconds"),
                 "duration_sec": round(time.time() - started, 2),
                 "summary": _shape_summary(value),
                 "sources": _source_summary(raw_files),
@@ -222,6 +228,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             failures += 1
             manifest["marts"][spec.name] = {
                 "error": f"{type(exc).__name__}: {exc}",
+                "built_at": datetime.now().isoformat(timespec="seconds"),
                 "duration_sec": round(time.time() - started, 2),
             }
             print(f"  ERROR: {type(exc).__name__}: {exc}")

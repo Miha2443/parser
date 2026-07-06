@@ -81,7 +81,7 @@ def realty_marts_status() -> pd.DataFrame:
             "sources", "latest_source_mtime", "error",
         ])
 
-    built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
+    manifest_built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
     rows: list[dict[str, Any]] = []
     for mart, info in sorted(marts.items()):
         if not isinstance(info, dict):
@@ -114,7 +114,8 @@ def realty_marts_status() -> pd.DataFrame:
             "status": "error" if info.get("error") else "ok",
             "rows": row_count,
             "cols": col_count,
-            "built_at": built_at,
+            "built_at": pd.to_datetime(info.get("built_at"), errors="coerce")
+            if info.get("built_at") else manifest_built_at,
             "duration_sec": info.get("duration_sec"),
             "sources": len(sources),
             "latest_source_mtime": latest_source,
@@ -134,7 +135,15 @@ def latest_data_badge() -> str:
 
     manifest = load_realty_marts_manifest()
     if manifest:
-        candidates.append(pd.to_datetime(manifest.get("built_at"), errors="coerce"))
+        marts = manifest.get("marts") if isinstance(manifest.get("marts"), dict) else {}
+        mart_dates = [
+            pd.to_datetime(info.get("built_at"), errors="coerce")
+            for info in marts.values()
+            if isinstance(info, dict) and info.get("built_at")
+        ]
+        candidates.extend(mart_dates)
+        if not mart_dates:
+            candidates.append(pd.to_datetime(manifest.get("built_at"), errors="coerce"))
 
     candidates = [ts for ts in candidates if not pd.isna(ts)]
     if not candidates:

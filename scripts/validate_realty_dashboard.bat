@@ -17,6 +17,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_selenium_download_wait.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_kvart_resume.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_contract.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_nashdom_atomic_json.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_require.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_manifest_pickle.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_atomic_write.py || exit /b %ERRORLEVEL%

@@ -125,8 +125,24 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    _write_json_atomic(STATE_FILE, state)
+
+
+def _write_json_atomic(path: Path, payload) -> None:
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def _nashdom_force_enabled() -> bool:
@@ -733,9 +749,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
             return
         # JSON — приоритет, всегда сохраняем
         try:
-            target_json.write_text(
-                json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            _write_json_atomic(target_json, all_data)
             if target_json not in new_files:
                 new_files.append(target_json)
         except Exception as exc:  # noqa: BLE001
@@ -2311,10 +2325,7 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
 
         date_str = datetime.now().strftime("%Y%m%d")
         target = DOWNLOAD_DIR / f"{source_key}_{date_str}.json"
-        target.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _write_json_atomic(target, data)
         summary = ", ".join(
             f"{k}={len(v) if isinstance(v, list) else 'есть'}"
             for k, v in data.items()
@@ -2808,9 +2819,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
     def flush():
         if not all_data:
             return
-        target_json.write_text(
-            json.dumps(all_data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _write_json_atomic(target_json, all_data)
         try:
             import pandas as pd
         except ImportError:

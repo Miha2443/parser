@@ -117,6 +117,7 @@ notepad config\erzrf.json
 | `update.bat` | Прогон всех парсеров вручную (≈ daily cron в 06:00) |
 | `update.bat fedstat` | Обновить только зарплату/ИПЦ |
 | `update.bat --force` | Игнорировать state, пере-скачать всё |
+| `update.bat --plan` | Показать источники, волны и затронутые realty-витрины без запуска |
 | `update.bat --skip-kvart-per-dev` | Без долгого per-dev обхода (~20 мин) |
 | `update.bat --full-rasprod-history` | Полный исторический пересбор распроданности вместо инкремента |
 | `update.bat --retries 3` | Больше повторов для упавших источников |

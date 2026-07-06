@@ -678,6 +678,50 @@ def is_monday() -> bool:
     return datetime.now().weekday() == 0
 
 
+def expand_requested_sources(requested: list[str]) -> tuple[list[str], list[str]]:
+    """Раскрывает группы источников в aliases, сохраняя порядок."""
+    sources: list[str] = []
+    unknown: list[str] = []
+    for source in requested:
+        if source in GROUP_MAP:
+            for sub in GROUP_MAP[source]:
+                if sub not in sources:
+                    sources.append(sub)
+        elif source in SOURCE_MAP:
+            if source not in sources:
+                sources.append(source)
+        else:
+            unknown.append(source)
+    return sources, unknown
+
+
+def print_update_plan(sources: list[str], env: dict, *, no_marts: bool) -> None:
+    """Печатает быстрый план без запуска скачивателей."""
+    print("\nПлан realty-прогона")
+    print("=" * 60)
+    print(f"Источники: {', '.join(sources)}")
+    print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
+    print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
+    print("")
+    for i, wave in enumerate(WAVES_DEFAULT, 1):
+        planned = [alias for alias in wave if alias in sources]
+        if planned:
+            print(f"Волна {i}: {', '.join(planned)}")
+    print("")
+    if no_marts:
+        print("Realty-витрины: пропущены (--no-marts)")
+    else:
+        marts = select_realty_marts_for_sources(sources)
+        if marts is None:
+            print("Realty-витрины: полный bootstrap-build (manifest отсутствует)")
+        elif marts:
+            print(f"Realty-витрины: {', '.join(sorted(marts))}")
+        else:
+            print("Realty-витрины: не затронуты")
+    print("=" * 60)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -700,6 +744,8 @@ def main():
                         help="Не отправлять уведомление в TDM")
     parser.add_argument("--no-marts", action="store_true",
                         help="Не пересобирать data/marts/realty после прогона")
+    parser.add_argument("--plan", action="store_true",
+                        help="Показать план источников/волн/витрин и выйти без запуска")
     parser.add_argument("--full-rasprod-history", action="store_true",
                         help="Для rasprodannost перекачать всю историю, а не "
                              "только новые периоды и самый свежий месяц")
@@ -713,17 +759,11 @@ def main():
     args = parser.parse_args()
 
     # Разворачиваем группы в отдельные источники
-    sources: list[str] = []
-    for s in args.sources:
-        if s in GROUP_MAP:
-            for sub in GROUP_MAP[s]:
-                if sub not in sources:
-                    sources.append(sub)
-        elif s in SOURCE_MAP:
-            if s not in sources:
-                sources.append(s)
-        else:
-            print(f"⚠️  Игнорирую неизвестный аргумент: {s}")
+    sources, unknown = expand_requested_sources(args.sources)
+    if unknown:
+        print(f"❌ Неизвестные источники: {', '.join(unknown)}")
+        print("   Доступно: " + ", ".join(sorted(set(SOURCE_MAP) | set(GROUP_MAP))))
+        return 1
 
     if not sources:
         parser.print_help()
@@ -741,6 +781,10 @@ def main():
     if args.full_rasprod_history or args.force:
         env["RASPROD_FULL_HISTORY"] = "1"
     env.setdefault("SELENIUM_SLEEP_SCALE", "0.8")
+
+    if args.plan:
+        print_update_plan(sources, env, no_marts=args.no_marts)
+        return 0
 
     log_path = _setup_logging()
 

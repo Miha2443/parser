@@ -792,7 +792,11 @@ def _load_top_developers() -> list[dict]:
             if not isinstance(payload, dict):
                 raise ValueError("payload is not an object")
             developers = payload.get("developers", [])
-            return list(developers) if isinstance(developers, list) else []
+            if not isinstance(developers, list):
+                raise ValueError("developers is not a list")
+            if not developers:
+                raise ValueError("developers list is empty")
+            return list(developers)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             print(f"  ⚠️  Пропускаю битый top_developers JSON {path.name}: {exc}")
     return []

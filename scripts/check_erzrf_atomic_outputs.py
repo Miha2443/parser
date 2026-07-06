@@ -110,6 +110,14 @@ def main() -> int:
             with redirect_stdout(StringIO()):
                 developers = ec._load_top_developers()
             _require(developers == [{"name": "valid-old"}], "top developers loader should fall back to previous valid JSON")
+
+            (ec.DOWNLOAD_DIR / "top_developers_rf_20260703.json").write_text(
+                json.dumps({"developers": []}),
+                encoding="utf-8",
+            )
+            with redirect_stdout(StringIO()):
+                developers = ec._load_top_developers()
+            _require(developers == [{"name": "valid-old"}], "top developers loader should skip empty latest JSON")
         finally:
             ec.STATE_FILE = original_state
             ec.DOWNLOAD_DIR = original_download_dir

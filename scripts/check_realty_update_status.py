@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,9 +17,12 @@ from update_realty import SOURCE_MAP
 
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.audit import REALTY_RUNNING_STALE_MIN, REALTY_UPDATE_STATUSES  # noqa: E402
+
 STATUS_FILE = ROOT / "data" / "processed" / "realty_update_status.json"
-VALID_STATUSES = {"running", "success", "failed", "interrupted"}
-STALE_RUNNING_MIN = 360
 
 
 def _parse_dt(value: Any, field: str, failures: list[str]) -> datetime | None:
@@ -81,7 +85,7 @@ def check_status_file(
         warnings.append("legacy status has no 'status' field")
         status = "failed" if data.get("failures") or data.get("marts_ok") is False else "success"
     status = str(status).lower()
-    if status not in VALID_STATUSES:
+    if status not in REALTY_UPDATE_STATUSES:
         failures.append(f"unknown status: {status!r}")
 
     requested = _list_field(data, "sources_requested", failures)
@@ -130,7 +134,7 @@ def check_status_file(
             failures.append("running status must not have finished_at")
         if updated_at is not None:
             age_min = (datetime.now(updated_at.tzinfo) - updated_at).total_seconds() / 60
-            if age_min > STALE_RUNNING_MIN:
+            if age_min > REALTY_RUNNING_STALE_MIN:
                 warnings.append(f"running heartbeat is stale: {age_min:.0f} min")
     elif finished_at is None:
         warnings.append(f"{status} status has no finished_at")

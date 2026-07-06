@@ -19,6 +19,7 @@ logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.E
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
 REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
+REALTY_UPDATE_STATUSES = {"running", "success", "failed", "interrupted"}
 REALTY_RUNNING_STALE_MIN = 360
 
 

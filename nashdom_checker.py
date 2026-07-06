@@ -10,6 +10,9 @@ nashdom_checker.py
 2. **rasprodannost** — DOM-скрейп
    https://наш.дом.рф/аналитика/распроданность-стройготовность
    с query-параметрами ?repYear=YYYY&repMonth=N&foCd=all&regionCd=all
+   По умолчанию обновляет инкрементально: берет прошлую JSON-историю,
+   перекачивает новые периоды и самый свежий месяц. Для полного обхода
+   всей истории: RASPROD_FULL_HISTORY=1.
 
 3. **kvartirografia** — DOM-скрейп
    https://наш.дом.рф/аналитика/квартирография
@@ -2563,6 +2566,45 @@ def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, i
     return periods
 
 
+def _rasprod_entry_key(entry: dict) -> tuple[str, int, int] | None:
+    try:
+        region_key = str(entry.get("region_key") or "")
+        year = int(entry.get("year") or 0)
+        month = int(entry.get("month_num") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not region_key or not year or not month:
+        return None
+    return region_key, year, month
+
+
+def _load_rasprod_history() -> tuple[list[dict], Path | None]:
+    """Возвращает свежую сохраненную JSON-историю rasprodannost."""
+    candidates = sorted(
+        DOWNLOAD_DIR.glob("rasprodannost_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, list) and data:
+            return [x for x in data if isinstance(x, dict)], path
+    return [], None
+
+
+def _latest_rasprod_entry(entries: list[dict]) -> dict:
+    def sort_key(entry: dict) -> tuple[int, int]:
+        key = _rasprod_entry_key(entry)
+        if key is None:
+            return 0, 0
+        return key[1], key[2]
+
+    return max(entries, key=sort_key, default={})
+
+
 def fetch_rasprodannost(state: dict) -> list[Path]:
     """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
     kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
@@ -2576,8 +2618,29 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
     target_xlsx = DOWNLOAD_DIR / f"rasprodannost_{date_str}.xlsx"
     target_json = DOWNLOAD_DIR / f"rasprodannost_{date_str}.json"
 
+    full_history = os.environ.get("RASPROD_FULL_HISTORY", "0").lower() in {
+        "1", "true", "yes", "on",
+    }
+    history_data: list[dict] = []
+    history_keys: set[tuple[str, int, int]] = set()
+    if full_history:
+        print("     · режим: полный обход истории")
+    else:
+        history_data, history_path = _load_rasprod_history()
+        history_keys = {
+            key for row in history_data
+            if (key := _rasprod_entry_key(row)) is not None
+        }
+        if history_data:
+            print(
+                f"     · режим: incremental, база {history_path.name} "
+                f"({len(history_data)} записей)"
+            )
+        else:
+            print("     · режим: incremental, истории нет → полный первый обход")
+
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    all_data: list[dict] = []
+    all_data: list[dict] = list(history_data)
     new_files: list[Path] = []
 
     def flush():
@@ -2687,10 +2750,29 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                 # только видимый топ).
                 latest_period = max(periods) if periods else None
 
-                for period_i, (year, m_idx) in enumerate(periods, 1):
+                periods_to_scrape = periods
+                if history_keys:
+                    refresh_keys: set[tuple[str, int, int]] = set()
+                    periods_to_scrape = []
+                    for year, m_idx in periods:
+                        key = (region["key"], year, m_idx + 1)
+                        if key not in history_keys or (latest_period and (year, m_idx) == latest_period):
+                            periods_to_scrape.append((year, m_idx))
+                            refresh_keys.add(key)
+                    skipped = len(periods) - len(periods_to_scrape)
+                    if skipped:
+                        print(f"       · incremental: пропускаю уже сохранённых периодов: {skipped}")
+                    if refresh_keys:
+                        all_data = [
+                            row for row in all_data
+                            if _rasprod_entry_key(row) not in refresh_keys
+                        ]
+                        history_keys.difference_update(refresh_keys)
+
+                for period_i, (year, m_idx) in enumerate(periods_to_scrape, 1):
                     month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
                                   "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][m_idx]
-                    print(f"       ▸ {period_i}/{len(periods)}: {month_name} {year}")
+                    print(f"       ▸ {period_i}/{len(periods_to_scrape)}: {month_name} {year}")
                     ok = _switch_period(driver, year, m_idx)
                     if not ok:
                         continue
@@ -2735,8 +2817,9 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             import gc
             gc.collect()
 
+        latest_entry = _latest_rasprod_entry(all_data)
         state["rasprodannost"] = {
-            "report_period": (all_data[0] if all_data else {}).get("report_period", ""),
+            "report_period": latest_entry.get("report_period", ""),
             "filename": target_xlsx.name,
             "regions": [r["key"] for r in RASPROD_REGIONS],
             "has_content": bool(all_data),

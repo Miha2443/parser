@@ -651,6 +651,9 @@ def main():
                         help="Не отправлять уведомление в TDM")
     parser.add_argument("--no-marts", action="store_true",
                         help="Не пересобирать data/marts/realty после прогона")
+    parser.add_argument("--full-rasprod-history", action="store_true",
+                        help="Для rasprodannost перекачать всю историю, а не "
+                             "только новые периоды и самый свежий месяц")
     parser.add_argument("--force", action="store_true",
                         help="Передать --force в чекеры (игнорировать state, "
                              "пере-скачать всё)")
@@ -685,6 +688,8 @@ def main():
         if not is_monday():
             print("ℹ️  --weekly-kvart-per-dev: сегодня не понедельник → "
                   "KVART_PER_DEV=0 (per-dev пропустится, агрегаты остаются)")
+    if args.full_rasprod_history:
+        env["RASPROD_FULL_HISTORY"] = "1"
 
     log_path = _setup_logging()
 
@@ -692,6 +697,7 @@ def main():
     _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     _print(f"Источники: {', '.join(sources)}")
     _print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    _print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
 

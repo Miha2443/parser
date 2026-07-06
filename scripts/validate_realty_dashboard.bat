@@ -24,6 +24,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_erzrf_atomic_outputs.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_downloader_contract.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_parsers.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_escrow_manual_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_require.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_manifest_pickle.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_atomic_write.py || exit /b %ERRORLEVEL%

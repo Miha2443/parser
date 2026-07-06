@@ -35,6 +35,13 @@ def _must_raise(fn, exc_type: type[BaseException], label: str) -> None:
     raise AssertionError(f"{label}: expected {exc_type.__name__}")
 
 
+def _write_manifest(mart_dir: Path, marts: dict) -> None:
+    (mart_dir / "manifest.json").write_text(
+        json.dumps({"marts": marts}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     original_marts = da.DATA_MARTS_REALTY
     previous_require = os.environ.get("PARSER_REQUIRE_REALTY_MARTS")
@@ -60,11 +67,33 @@ def main() -> int:
 
             good = mart_dir / "good.pkl"
             pd.to_pickle({"ok": pd.DataFrame({"x": [1]})}, good)
+            _must_raise(
+                lambda: da._load_realty_mart("good", []),
+                RuntimeError,
+                "missing strict manifest",
+            )
+            (mart_dir / "manifest.json").write_text("{bad-json", encoding="utf-8")
+            _must_raise(
+                lambda: da._load_realty_mart("good", []),
+                RuntimeError,
+                "bad strict manifest",
+            )
+            _write_manifest(mart_dir, {})
+            _must_raise(
+                lambda: da._load_realty_mart("good", []),
+                RuntimeError,
+                "missing strict manifest entry",
+            )
+            _write_manifest(mart_dir, {"good": {"file": str(good)}})
             loaded = da._load_realty_mart("good", [])
             _require("ok" in loaded, "valid mart should load")
 
             stale = mart_dir / "stale.pkl"
             pd.to_pickle({"stale": pd.DataFrame()}, stale)
+            _write_manifest(mart_dir, {
+                "good": {"file": str(good)},
+                "stale": {"file": str(stale)},
+            })
             os.utime(stale, (1, 1))
             _must_raise(
                 lambda: da._load_realty_mart("stale", [raw_file]),
@@ -74,6 +103,11 @@ def main() -> int:
 
             bad = mart_dir / "bad.pkl"
             bad.write_bytes(b"not a pickle")
+            _write_manifest(mart_dir, {
+                "good": {"file": str(good)},
+                "stale": {"file": str(stale)},
+                "bad": {"file": str(bad)},
+            })
             _must_raise(
                 lambda: da._load_realty_mart("bad", []),
                 RuntimeError,
@@ -82,17 +116,15 @@ def main() -> int:
 
             error_marked = mart_dir / "error_marked.pkl"
             pd.to_pickle({"old": pd.DataFrame({"x": [1]})}, error_marked)
-            (mart_dir / "manifest.json").write_text(
-                json.dumps({
-                    "marts": {
-                        "error_marked": {
-                            "file": str(error_marked),
-                            "error": "synthetic",
-                        }
-                    }
-                }),
-                encoding="utf-8",
-            )
+            _write_manifest(mart_dir, {
+                "good": {"file": str(good)},
+                "stale": {"file": str(stale)},
+                "bad": {"file": str(bad)},
+                "error_marked": {
+                    "file": str(error_marked),
+                    "error": "synthetic",
+                },
+            })
             _must_raise(
                 lambda: da._load_realty_mart("error_marked", []),
                 RuntimeError,

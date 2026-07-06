@@ -48,18 +48,36 @@ def _raw_files(paths: list[Path], patterns: list[str], *, recursive: bool = Fals
     return files
 
 
-def _realty_mart_manifest_entry(name: str) -> dict | None:
+def _realty_mart_manifest(required: bool = False) -> dict | None:
     manifest_path = DATA_MARTS_REALTY / "manifest.json"
     if not manifest_path.exists():
+        if required:
+            raise FileNotFoundError(f"missing realty mart manifest: {manifest_path}")
         return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        if required:
+            raise RuntimeError(f"cannot load realty mart manifest: {exc}") from exc
         return None
     marts = manifest.get("marts") if isinstance(manifest, dict) else None
     if not isinstance(marts, dict):
+        if required:
+            raise RuntimeError("invalid realty mart manifest: missing marts object")
         return None
+    return manifest
+
+
+def _realty_mart_manifest_entry(name: str, *, required: bool = False) -> dict | None:
+    manifest = _realty_mart_manifest(required=required)
+    if manifest is None:
+        return None
+    marts = manifest["marts"]
     entry = marts.get(name)
+    if not isinstance(entry, dict):
+        if required:
+            raise KeyError(f"missing realty mart manifest entry: {name}")
+        return None
     return entry if isinstance(entry, dict) else None
 
 
@@ -76,7 +94,7 @@ def _load_realty_mart(name: str, raw_files: list[Path]):
             raise FileNotFoundError(f"missing realty mart: {path}")
         return None
     try:
-        manifest_entry = _realty_mart_manifest_entry(name)
+        manifest_entry = _realty_mart_manifest_entry(name, required=required)
         if manifest_entry and manifest_entry.get("error"):
             if required:
                 raise RuntimeError(f"manifest marks realty mart as error: {name}")

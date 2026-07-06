@@ -120,6 +120,17 @@ SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 # ─────────────────────────────────────────────
 
 
+def _bad_state_path(path: Path) -> Path:
+    first = path.with_name(f"{path.name}.bad")
+    if not first.exists():
+        return first
+    for i in range(1, 1000):
+        candidate = path.with_name(f"{path.name}.{i}.bad")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"cannot allocate bad state backup path for {path}")
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
@@ -127,7 +138,7 @@ def load_state() -> dict:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError) as exc:
-            bad = STATE_FILE.with_name(f"{STATE_FILE.name}.bad")
+            bad = _bad_state_path(STATE_FILE)
             try:
                 STATE_FILE.replace(bad)
                 print(f"  ⚠️  Состояние {STATE_FILE} повреждено ({exc}); перенесено в {bad}")

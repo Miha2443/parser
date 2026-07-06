@@ -60,6 +60,17 @@ def main() -> int:
             _require(recovered == {}, "bad state should recover as empty dict")
             _require(not nc.STATE_FILE.exists(), "bad state should be moved aside")
             _require((nc.STATE_FILE.parent / "nashdom_state.json.bad").is_file(), "bad state backup missing")
+            (nc.STATE_FILE.parent / "nashdom_state.json.bad").write_text("previous bad", encoding="utf-8")
+
+            nc.STATE_FILE.write_text("{bad-json-again", encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                recovered = nc.load_state()
+            _require(recovered == {}, "second bad state should recover as empty dict")
+            _require(
+                (nc.STATE_FILE.parent / "nashdom_state.json.bad").read_text(encoding="utf-8") == "previous bad",
+                "existing bad state backup should not be overwritten",
+            )
+            _require((nc.STATE_FILE.parent / "nashdom_state.json.1.bad").is_file(), "suffixed bad state backup missing")
         finally:
             nc.STATE_FILE = original_state
 

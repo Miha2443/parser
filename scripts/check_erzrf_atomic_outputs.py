@@ -87,6 +87,17 @@ def main() -> int:
             _require(recovered == {}, "bad state should recover as empty dict")
             _require(not ec.STATE_FILE.exists(), "bad state should be moved aside")
             _require((ec.STATE_FILE.parent / "erzrf_state.json.bad").is_file(), "bad state backup missing")
+            (ec.STATE_FILE.parent / "erzrf_state.json.bad").write_text("previous bad", encoding="utf-8")
+
+            ec.STATE_FILE.write_text("{bad-json-again", encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                recovered = ec.load_state()
+            _require(recovered == {}, "second bad state should recover as empty dict")
+            _require(
+                (ec.STATE_FILE.parent / "erzrf_state.json.bad").read_text(encoding="utf-8") == "previous bad",
+                "existing bad state backup should not be overwritten",
+            )
+            _require((ec.STATE_FILE.parent / "erzrf_state.json.1.bad").is_file(), "suffixed bad state backup missing")
         finally:
             ec.STATE_FILE = original_state
 

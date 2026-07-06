@@ -44,7 +44,8 @@ with st.sidebar:
     if not marts.empty:
         built_at = marts["built_at"].max()
         errors = int((marts["status"] == "error").sum())
-        icon = "🟢" if errors == 0 else "🔴"
+        stale = int((marts["status"] == "stale").sum())
+        icon = "🔴" if errors else "🟡" if stale else "🟢"
         built_text = built_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(built_at) else "—"
         src_freshness.append(f"{icon} Витрины сайта: {built_text}")
     st.markdown("\n".join(f"- {s}" for s in src_freshness))

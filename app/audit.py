@@ -121,13 +121,26 @@ def realty_marts_status() -> pd.DataFrame:
             ]
             row_count = sum(frame_rows) if frame_rows else None
 
+        built_at = pd.to_datetime(info.get("built_at"), errors="coerce") \
+            if info.get("built_at") else manifest_built_at
+        if info.get("error"):
+            status = "error"
+        elif (
+            latest_source is not None
+            and not pd.isna(latest_source)
+            and not pd.isna(built_at)
+            and latest_source > built_at
+        ):
+            status = "stale"
+        else:
+            status = "ok"
+
         rows.append({
             "mart": mart,
-            "status": "error" if info.get("error") else "ok",
+            "status": status,
             "rows": row_count,
             "cols": col_count,
-            "built_at": pd.to_datetime(info.get("built_at"), errors="coerce")
-            if info.get("built_at") else manifest_built_at,
+            "built_at": built_at,
             "duration_sec": info.get("duration_sec"),
             "sources": len(sources),
             "latest_source_mtime": latest_source,

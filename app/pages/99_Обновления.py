@@ -80,15 +80,21 @@ def main() -> None:
         st.info("Нет `data/marts/realty/manifest.json`. Запустите `scripts\\build_realty_marts.bat`.")
     else:
         has_errors = (marts["status"] == "error").any()
+        has_stale = (marts["status"] == "stale").any()
         c1, c2, c3, c4 = st.columns(4)
         built_at = pd.to_datetime(marts["built_at"], errors="coerce").max()
         c1.metric("Собраны", built_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(built_at) else "—")
         c2.metric("Витрин", len(marts))
-        c3.metric("Ошибок", int((marts["status"] == "error").sum()))
+        c3.metric("Проблем", int((marts["status"].isin(["error", "stale"])).sum()))
         c4.metric("Строк", int(marts["rows"].dropna().sum()) if "rows" in marts else 0)
+        status_label = {
+            "ok": "✅ ok",
+            "stale": "🟡 stale",
+            "error": "❌ error",
+        }
         view = pd.DataFrame({
             "Витрина": marts["mart"],
-            "Статус": marts["status"].map(lambda s: "✅ ok" if s == "ok" else "❌ error"),
+            "Статус": marts["status"].map(lambda s: status_label.get(s, str(s))),
             "Строк": marts["rows"],
             "Источников": marts["sources"],
             "Сборка, c": marts["duration_sec"],
@@ -100,6 +106,8 @@ def main() -> None:
         st.dataframe(view, width="stretch", hide_index=True)
         if has_errors:
             st.error("Есть ошибки сборки realty-витрин. Сайт откатится на raw-чтение, но страницы будут медленнее.")
+        elif has_stale:
+            st.warning("Есть устаревшие realty-витрины: raw-файл свежее mart. Сайт откатится на raw-чтение для этих страниц.")
 
     st.divider()
 

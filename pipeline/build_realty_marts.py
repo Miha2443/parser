@@ -133,6 +133,23 @@ def _write_pickle_atomic(value: Any, target: Path) -> None:
             pass
 
 
+def _write_json_atomic(value: Any, target: Path) -> None:
+    tmp = target.with_name(f"{target.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
 def _tmp_files() -> list[Path]:
     raw = ROOT / "data" / "raw" / "realty"
     if not raw.exists():
@@ -377,10 +394,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             }
             print(f"  ERROR: {type(exc).__name__}: {exc}")
 
-    MANIFEST.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    _write_json_atomic(manifest, MANIFEST)
     print(f"manifest -> {MANIFEST.relative_to(ROOT)}")
     return 1 if failures else 0
 

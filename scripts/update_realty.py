@@ -909,13 +909,21 @@ def main():
     marts_ok = True
     marts_selected: set[str] | None = set()
     if not args.no_marts:
-        marts_selected = select_realty_marts_for_changes(diff["added"] + diff["changed"])
+        changed_for_marts = diff["added"] + diff["changed"]
+        marts_changed_aliases = sorted({
+            alias for path in changed_for_marts
+            if (alias := source_alias_for_changed_path(path)) is not None
+        })
+        marts_selected = select_realty_marts_for_changes(changed_for_marts)
         if marts_selected == set():
             _print(f"\n{'─'*60}")
             _print("⚙️  Realty-витрины: нет затронутых источников, сборка пропущена")
             _print(f"{'─'*60}")
         else:
             marts_ok = build_realty_marts(only=marts_selected)
+    else:
+        changed_for_marts = []
+        marts_changed_aliases = []
 
     total_min = (time.time() - started) / 60
     _print(f"\n{'='*60}")
@@ -943,6 +951,8 @@ def main():
         "failures": failures,
         "marts_ok": marts_ok,
         "marts_selected": None if marts_selected is None else sorted(marts_selected),
+        "marts_changed_aliases": marts_changed_aliases,
+        "marts_changed_paths": changed_for_marts,
         "archive": not args.no_archive,
         "keep": args.keep,
         "force": args.force,

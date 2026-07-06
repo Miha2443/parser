@@ -54,6 +54,7 @@ def main() -> None:
         failures = realty_status.get("failures") or []
         requested = realty_status.get("sources_requested") or []
         marts_selected = realty_status.get("marts_selected")
+        marts_changed_aliases = realty_status.get("marts_changed_aliases") or []
         diff = realty_status.get("diff") or {}
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
@@ -75,6 +76,8 @@ def main() -> None:
             st.caption("Realty-витрины: " + ", ".join(map(str, marts_selected)))
         else:
             st.caption("Realty-витрины: сборка не требовалась")
+        if marts_changed_aliases:
+            st.caption("Причина rebuild: " + ", ".join(map(str, marts_changed_aliases)))
         if failures:
             st.error("Ошибки источников: " + ", ".join(map(str, failures)))
 

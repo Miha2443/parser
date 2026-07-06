@@ -67,6 +67,17 @@ def main() -> int:
                 ["realty:nashdom/rasprodannost_20260702.xlsx"],
                 "rasprod scoped snapshot",
             )
+
+            target = nashdom / "monitoring_2_0_20260702.xlsx"
+            roots, prefixes = ur.snapshot_scope_for_source("monitoring")
+            first = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            second = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            _assert_equal(second, first, "unchanged snapshot should be stable")
+            time.sleep(0.01)
+            target.write_bytes(b"MONITORING")
+            changed = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            if changed == first:
+                raise AssertionError("snapshot cache did not detect same-size content change")
     finally:
         ur.REALTY_ROOT = original_realty_root
 

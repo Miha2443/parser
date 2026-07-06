@@ -400,6 +400,25 @@ SNAPSHOT_DIRS = [
     (REALTY_ROOT, "realty", ""),
     (ROOT / "downloads", "downloads", ""),
 ]
+_SNAPSHOT_DIGEST_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
+
+
+def _snapshot_file_digest(path: Path, stat) -> str:
+    cache_key = str(path.resolve())
+    stat_key = (
+        int(stat.st_size),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000))),
+    )
+    cached = _SNAPSHOT_DIGEST_CACHE.get(cache_key)
+    if cached and cached[0] == stat_key:
+        return cached[1]
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        h.update(fh.read(256 * 1024))
+    digest = h.hexdigest()[:16]
+    _SNAPSHOT_DIGEST_CACHE[cache_key] = (stat_key, digest)
+    return digest
 
 
 def snapshot_files(
@@ -421,12 +440,11 @@ def snapshot_files(
             if file_prefixes and not any(f.name.startswith(prefix) for prefix in file_prefixes):
                 continue
             try:
-                size = f.stat().st_size
-                h = hashlib.sha256()
-                with f.open("rb") as fh:
-                    h.update(fh.read(256 * 1024))
+                stat = f.stat()
+                size = stat.st_size
+                digest = _snapshot_file_digest(f, stat)
                 rel = str(f.relative_to(base)).replace("\\", "/")
-                out[f"{namespace}:{rel_prefix}{rel}"] = (size, h.hexdigest()[:16])
+                out[f"{namespace}:{rel_prefix}{rel}"] = (size, digest)
             except OSError:
                 pass
     return out

@@ -934,9 +934,11 @@ def format_site_dates(site_dates: dict) -> list[str]:
 def build_tdm_report(successes: list[str], failures: list[str],
                      diff: dict, total_min: float,
                      deduped: int = 0,
-                     site_dates: dict | None = None) -> str:
+                     site_dates: dict | None = None,
+                     marts_ok: bool = True,
+                     final_archive_ok: bool = True) -> str:
     """Формирует текст сводки для TDM."""
-    icon = "✅" if not failures else "⚠️"
+    icon = "✅" if not failures and marts_ok and final_archive_ok else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
     lines = [
         f"{icon} **Прогон realty** {today} (за {total_min:.1f} мин)",
@@ -946,6 +948,10 @@ def build_tdm_report(successes: list[str], failures: list[str],
         lines.append(f"✓ OK: {', '.join(successes)}")
     if failures:
         lines.append(f"✗ FAIL: {', '.join(failures)}")
+    if not marts_ok:
+        lines.append("Marts build failed")
+    if not final_archive_ok:
+        lines.append("Final archive failed")
 
     added = diff.get("added", [])
     changed = diff.get("changed", [])
@@ -976,6 +982,22 @@ def is_monday() -> bool:
 
 def realty_update_exit_code(*, failures: list[str], marts_ok: bool, final_archive_ok: bool) -> int:
     return 0 if not failures and marts_ok and final_archive_ok else 2
+
+
+def realty_update_error_message(
+    *,
+    failures: list[str],
+    marts_ok: bool,
+    final_archive_ok: bool,
+) -> str:
+    parts: list[str] = []
+    if failures:
+        parts.append(f"source failures: {', '.join(failures)}")
+    if not marts_ok:
+        parts.append("realty marts failed")
+    if not final_archive_ok:
+        parts.append("final archive failed")
+    return "; ".join(parts)
 
 
 def expand_requested_sources(requested: list[str]) -> tuple[list[str], list[str]]:
@@ -1256,6 +1278,8 @@ def main():
         _print(f"  ↩️  Дублей удалено:  {deduped_count}")
     if not marts_ok:
         _print("  ⚠️  Витрины сайта: ошибка сборки")
+    if not final_archive_ok:
+        _print("  ⚠️  Final archive: failed")
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
 
@@ -1272,7 +1296,11 @@ def main():
         marts_changed_paths=changed_for_marts,
         marts_repair_selected=marts_repair_selected,
         final_archive_ok=final_archive_ok,
-        error="" if final_archive_ok else "final archive failed",
+        error=realty_update_error_message(
+            failures=failures,
+            marts_ok=marts_ok,
+            final_archive_ok=final_archive_ok,
+        ),
         **run_meta,
         deduped_count=deduped_count,
         real_new_count=real_new_count,
@@ -1286,7 +1314,9 @@ def main():
             from pipeline.tdm_notify import notify
             text = build_tdm_report(successes, failures, diff, total_min,
                                     deduped=deduped_count,
-                                    site_dates=collect_site_dates())
+                                    site_dates=collect_site_dates(),
+                                    marts_ok=marts_ok,
+                                    final_archive_ok=final_archive_ok)
             notify(text, silent=True)
         except Exception:  # noqa: BLE001
             pass

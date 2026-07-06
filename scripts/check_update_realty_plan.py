@@ -302,6 +302,27 @@ def main() -> int:
         2,
         "final archive failure exit code",
     )
+    _assert_equal(
+        ur.realty_update_error_message(
+            failures=["monitoring"],
+            marts_ok=False,
+            final_archive_ok=False,
+        ),
+        "source failures: monitoring; realty marts failed; final archive failed",
+        "combined update error message",
+    )
+    report = ur.build_tdm_report(
+        successes=["monitoring"],
+        failures=[],
+        diff={"added": [], "changed": []},
+        total_min=1.2,
+        marts_ok=False,
+        final_archive_ok=False,
+    )
+    if "Marts build failed" not in report:
+        raise AssertionError("TDM report should mention mart failure")
+    if "Final archive failed" not in report:
+        raise AssertionError("TDM report should mention final archive failure")
 
     print("update_realty plan checks: ok")
     return 0

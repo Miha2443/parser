@@ -282,6 +282,27 @@ def main() -> int:
         "escrow manual mapping",
     )
 
+    _assert_equal(
+        ur.realty_update_exit_code(failures=[], marts_ok=True, final_archive_ok=True),
+        0,
+        "clean run exit code",
+    )
+    _assert_equal(
+        ur.realty_update_exit_code(failures=["monitoring"], marts_ok=True, final_archive_ok=True),
+        2,
+        "source failure exit code",
+    )
+    _assert_equal(
+        ur.realty_update_exit_code(failures=[], marts_ok=False, final_archive_ok=True),
+        2,
+        "mart failure exit code",
+    )
+    _assert_equal(
+        ur.realty_update_exit_code(failures=[], marts_ok=True, final_archive_ok=False),
+        2,
+        "final archive failure exit code",
+    )
+
     print("update_realty plan checks: ok")
     return 0
 

@@ -974,6 +974,10 @@ def is_monday() -> bool:
     return datetime.now().weekday() == 0
 
 
+def realty_update_exit_code(*, failures: list[str], marts_ok: bool, final_archive_ok: bool) -> int:
+    return 0 if not failures and marts_ok and final_archive_ok else 2
+
+
 def expand_requested_sources(requested: list[str]) -> tuple[list[str], list[str]]:
     """Раскрывает группы источников в aliases, сохраняя порядок."""
     sources: list[str] = []
@@ -1290,7 +1294,11 @@ def main():
     clear_active_realty_run()
     _close_logging()
     release_realty_update_lock()
-    return 0 if not failures and marts_ok else 2
+    return realty_update_exit_code(
+        failures=failures,
+        marts_ok=marts_ok,
+        final_archive_ok=final_archive_ok,
+    )
 
 
 if __name__ == "__main__":

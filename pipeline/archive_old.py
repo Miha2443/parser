@@ -74,6 +74,17 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
     return families
 
 
+def _unique_archive_dest(dest: Path) -> Path:
+    """Return a non-existing archive destination, preserving the original suffix."""
+    if not dest.exists():
+        return dest
+    for i in range(1, 1000):
+        candidate = dest.with_name(f"{dest.stem}_{i}{dest.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"cannot allocate unique archive path for {dest}")
+
+
 def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
                       prefixes: list[str] | None = None) -> int:
     """Архивирует устаревшие файлы. Возвращает количество перемещённых."""
@@ -103,6 +114,7 @@ def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
                 print(f"  [DRY] {old.relative_to(REALTY_ROOT)} → _archive/{date_tag}/{source_rel}/{old.name}")
             else:
                 dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _unique_archive_dest(dest)
                 shutil.move(str(old), str(dest))
                 print(f"  📦 {old.name} → _archive/{date_tag}/{source_rel}/")
             moved += 1

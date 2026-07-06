@@ -108,6 +108,19 @@ def main() -> int:
             loaded = da._load_realty_mart("good", [])
             _require("ok" in loaded, "valid mart should load")
 
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "0"
+            lazy_called = False
+
+            def lazy_raw_files():
+                nonlocal lazy_called
+                lazy_called = True
+                raise AssertionError("raw files should not be loaded for an available optional mart")
+
+            loaded = da._load_realty_mart("good", lazy_raw_files)
+            _require("ok" in loaded, "optional mart should load with lazy raw files")
+            _require(not lazy_called, "optional mart should not force raw file lookup")
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
+
             _write_manifest(mart_dir, {
                 "good": {
                     "file": str(good),
@@ -154,6 +167,11 @@ def main() -> int:
                 lambda: da._load_realty_mart("stale", [raw_file]),
                 RuntimeError,
                 "stale strict mart",
+            )
+            _must_raise(
+                lambda: da._load_realty_mart("stale", lambda: [raw_file]),
+                RuntimeError,
+                "stale strict mart with lazy raw files",
             )
 
             bad = mart_dir / "bad.pkl"

@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from app.audit import latest_data_badge, realty_marts_status
+from app.audit import PROJECT_ROOT, latest_data_badge, load_realty_update_status, realty_marts_status
 from app.data_access import latest_loaded_at, load_ipc, load_salary
 
 st.set_page_config(
@@ -48,6 +48,41 @@ with st.sidebar:
         icon = "🔴" if errors else "🟡" if stale else "🟢"
         built_text = built_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(built_at) else "—"
         src_freshness.append(f"{icon} Витрины сайта: {built_text}")
+
+    realty_run = load_realty_update_status()
+    if realty_run:
+        status_warnings = []
+        status = str(realty_run.get("status") or "").lower()
+        if not status:
+            status = "failed" if realty_run.get("failures") or realty_run.get("marts_ok") is False else "success"
+            status_warnings.append("legacy")
+        updated_at = pd.to_datetime(realty_run.get("updated_at"), errors="coerce")
+        if pd.isna(updated_at):
+            status_warnings.append("no heartbeat")
+        log_file = realty_run.get("log_file")
+        if isinstance(log_file, str) and log_file and not (PROJECT_ROOT / log_file).is_file():
+            status_warnings.append("log missing")
+        heartbeat_age_min = None
+        if not pd.isna(updated_at):
+            heartbeat_age = pd.Timestamp.now(tz=updated_at.tz) - updated_at
+            heartbeat_age_min = heartbeat_age.total_seconds() / 60
+        stale_running = status == "running" and (
+            heartbeat_age_min is None or heartbeat_age_min > 360
+        )
+        failures = realty_run.get("failures") or []
+        status_label = {
+            "running": "в работе",
+            "success": "успех",
+            "failed": "ошибка",
+            "interrupted": "прерван",
+        }.get(status, status or "—")
+        if stale_running:
+            status_label = "возможно завис"
+        icon = "🔴" if status in {"failed", "interrupted"} or stale_running else "🟡" if status_warnings else "🟢"
+        suffix = f", ошибок: {len(failures)}" if failures else ""
+        if status_warnings:
+            suffix += f" ({', '.join(status_warnings)})"
+        src_freshness.append(f"{icon} Realty-прогон: {status_label}{suffix}")
     st.markdown("\n".join(f"- {s}" for s in src_freshness))
 
     st.markdown("---")

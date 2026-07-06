@@ -28,6 +28,7 @@ REALTY_ROOT = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
 ARCHIVE_ROOT = REALTY_ROOT / "_archive"
 
 DATE_RE = re.compile(r"[_-]?(\d{8}|\d{4}-\d{2}-\d{2})(?=\.|$)")
+_SHA256_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
 
 
 def _family_key(path: Path) -> str:
@@ -39,11 +40,23 @@ def _family_key(path: Path) -> str:
 
 
 def _file_sha256(path: Path) -> str:
+    stat = path.stat()
+    cache_key = str(path.resolve())
+    stat_key = (
+        int(stat.st_size),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000))),
+    )
+    cached = _SHA256_CACHE.get(cache_key)
+    if cached and cached[0] == stat_key:
+        return cached[1]
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    _SHA256_CACHE[cache_key] = (stat_key, digest)
+    return digest
 
 
 def find_archive_versions(family: str) -> list[Path]:

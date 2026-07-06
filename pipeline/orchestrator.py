@@ -24,6 +24,7 @@ import os
 import sys
 import time
 import traceback
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -179,6 +180,17 @@ def _deduplicate_processed(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
 
 
+def _parse_source_file(parser, path: Path) -> pd.DataFrame:
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Workbook contains no default style.*",
+            category=UserWarning,
+            module="openpyxl.styles.stylesheet",
+        )
+        return parser.parse(path)
+
+
 def _process_one(
     indicator: Indicator, audit: AuditRun, *, download: bool
 ) -> None:
@@ -219,7 +231,7 @@ def _process_one(
 
     try:
         parser = _parser_module(indicator.parser)
-        frames = [parser.parse(p) for p in local_files]
+        frames = [_parse_source_file(parser, p) for p in local_files]
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         if df.empty:
             audit.skip(indicator.id, reason="парсер вернул пустой DataFrame")

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
+from pipeline.downloaders.local_files import list_local_files
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
@@ -27,16 +28,7 @@ def _find_local(patterns: list[str]) -> list[Path]:
     выгрузка + новая объединённая) парсер должен видеть оба источника. Дубликаты
     схлопываются `drop_duplicates` в оркестраторе.
     """
-    seen: set[Path] = set()
-    out: list[Path] = []
-    for pat in patterns:
-        for p in sorted(DOWNLOADS_DIR.glob(pat)):
-            r = p.resolve()
-            if r in seen:
-                continue
-            seen.add(r)
-            out.append(p)
-    return out
+    return list_local_files(DOWNLOADS_DIR, patterns)
 
 
 def _archive_old(patterns: list[str], keep: list[Path]) -> None:

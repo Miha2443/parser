@@ -15,19 +15,11 @@ from pathlib import Path
 
 from pipeline.paths import DATA_RAW, ROOT, STATE_DIR
 from pipeline.registry import Indicator
+from pipeline.downloaders.local_files import list_local_files
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
-    seen: set[Path] = set()
-    out: list[Path] = []
-    for pat in patterns:
-        for p in sorted(DATA_RAW.glob(pat)):
-            r = p.resolve()
-            if r in seen:
-                continue
-            seen.add(r)
-            out.append(p)
-    return out
+    return list_local_files(DATA_RAW, patterns)
 
 
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:

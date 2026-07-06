@@ -15,6 +15,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_windows_wrappers.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_atomic_pickle.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_downloader_local_files.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_lock.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_dedup_keys.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_realty_offline.py || exit /b %ERRORLEVEL%

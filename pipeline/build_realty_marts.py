@@ -264,7 +264,16 @@ def _specs(da) -> list[MartSpec]:
 
 def build(*, strict: bool = False, only: set[str] | None = None) -> int:
     da = _prepare_imports()
+    specs = _specs(da)
     MART_DIR.mkdir(parents=True, exist_ok=True)
+
+    known_names = {spec.name for spec in specs}
+    if only:
+        unknown = sorted(only - known_names)
+        if unknown:
+            print(f"ERROR: unknown realty mart(s): {', '.join(unknown)}")
+            print(f"Known marts: {', '.join(sorted(known_names))}")
+            return 2
 
     tmp = _tmp_files()
     if tmp:
@@ -297,7 +306,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
     }
 
     failures = 0
-    for spec in _specs(da):
+    for spec in specs:
         if only and spec.name not in only:
             continue
         started = time.time()

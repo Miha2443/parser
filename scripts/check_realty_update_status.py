@@ -55,7 +55,12 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def check_status_file(status_file: Path, *, strict: bool = False) -> int:
+def check_status_file(
+    status_file: Path,
+    *,
+    strict: bool = False,
+    quiet_warnings: bool = False,
+) -> int:
     if not status_file.exists():
         print("realty update status: missing (ok before first run)")
         return 0
@@ -147,7 +152,7 @@ def check_status_file(status_file: Path, *, strict: bool = False) -> int:
     if failures:
         for item in failures:
             print(f"ERROR: {item}")
-    if warnings:
+    if warnings and (strict or not quiet_warnings):
         for item in warnings:
             print(f"WARNING: {item}")
 
@@ -171,8 +176,13 @@ def main() -> int:
         default=STATUS_FILE,
         help="status JSON to validate (default: data/processed/realty_update_status.json)",
     )
+    parser.add_argument(
+        "--quiet-warnings",
+        action="store_true",
+        help="suppress warning details in non-strict mode while keeping the warning count",
+    )
     args = parser.parse_args()
-    return check_status_file(args.file, strict=args.strict)
+    return check_status_file(args.file, strict=args.strict, quiet_warnings=args.quiet_warnings)
 
 
 if __name__ == "__main__":

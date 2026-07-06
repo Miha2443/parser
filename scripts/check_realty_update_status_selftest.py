@@ -15,9 +15,9 @@ def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def _check(path: Path, *, strict: bool) -> int:
+def _check(path: Path, *, strict: bool, quiet_warnings: bool = False) -> int:
     with redirect_stdout(StringIO()):
-        return check_status_file(path, strict=strict)
+        return check_status_file(path, strict=strict, quiet_warnings=quiet_warnings)
 
 
 def main() -> int:
@@ -52,6 +52,8 @@ def main() -> int:
         })
         if _check(legacy_status, strict=False) != 0:
             raise AssertionError("legacy status should pass non-strict mode")
+        if _check(legacy_status, strict=False, quiet_warnings=True) != 0:
+            raise AssertionError("legacy status should pass quiet non-strict mode")
         if _check(legacy_status, strict=True) == 0:
             raise AssertionError("legacy status should fail strict mode")
 

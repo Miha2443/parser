@@ -18,7 +18,7 @@ echo [2/5] update_realty planning checks
 "%PY%" scripts\check_realty_status_summary.py || exit /b %ERRORLEVEL%
 
 echo [3/5] realty update status check
-"%PY%" scripts\check_realty_update_status.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_realty_update_status.py --quiet-warnings || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_update_status_selftest.py || exit /b %ERRORLEVEL%
 
 echo [4/5] realty mart manifest check

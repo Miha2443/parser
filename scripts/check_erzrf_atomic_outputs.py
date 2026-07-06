@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import pandas as pd
@@ -78,6 +80,13 @@ def main() -> int:
             ec.STATE_FILE = base / "state" / "erzrf_state.json"
             ec.save_state({"ok": True})
             _require(ec.load_state() == {"ok": True}, "save_state/load_state should round-trip")
+
+            ec.STATE_FILE.write_text("{bad-json", encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                recovered = ec.load_state()
+            _require(recovered == {}, "bad state should recover as empty dict")
+            _require(not ec.STATE_FILE.exists(), "bad state should be moved aside")
+            _require((ec.STATE_FILE.parent / "erzrf_state.json.bad").is_file(), "bad state backup missing")
         finally:
             ec.STATE_FILE = original_state
 

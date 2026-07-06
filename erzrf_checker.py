@@ -122,8 +122,17 @@ SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 
 def load_state() -> dict:
     if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            bad = STATE_FILE.with_name(f"{STATE_FILE.name}.bad")
+            try:
+                STATE_FILE.replace(bad)
+                print(f"  ⚠️  Состояние {STATE_FILE} повреждено ({exc}); перенесено в {bad}")
+            except OSError:
+                print(f"  ⚠️  Состояние {STATE_FILE} повреждено ({exc}); продолжаю с пустым state")
     return {}
 
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
@@ -51,6 +53,13 @@ def main() -> int:
             nc.STATE_FILE = base / "state" / "nashdom_state.json"
             nc.save_state({"ok": True})
             _require(nc.load_state() == {"ok": True}, "save_state/load_state should round-trip")
+
+            nc.STATE_FILE.write_text("{bad-json", encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                recovered = nc.load_state()
+            _require(recovered == {}, "bad state should recover as empty dict")
+            _require(not nc.STATE_FILE.exists(), "bad state should be moved aside")
+            _require((nc.STATE_FILE.parent / "nashdom_state.json.bad").is_file(), "bad state backup missing")
         finally:
             nc.STATE_FILE = original_state
 

@@ -75,6 +75,23 @@ def main() -> int:
         _require(not ok, "invalid browser download should fail")
         _require(not invalid_download.exists(), "invalid browser download should be removed")
 
+        final_target = base / "final.xlsx"
+        final_target.write_bytes(b"PK\x03\x04old-xlsx")
+        valid_download = base / "download.xlsx"
+        valid_download.write_bytes(b"PK\x03\x04new-xlsx")
+        _require(ec._finalize_downloaded_excel(valid_download, final_target), "valid browser download should finalize")
+        _require(final_target.read_bytes() == b"PK\x03\x04new-xlsx", "valid browser download did not replace target")
+        _require(not valid_download.exists(), "finalized browser download should be moved")
+
+        final_target.write_bytes(b"PK\x03\x04old-xlsx")
+        invalid_download = base / "download-invalid.xlsx"
+        invalid_download.write_bytes(b"<html>login</html>")
+        with redirect_stdout(StringIO()):
+            ok = ec._finalize_downloaded_excel(invalid_download, final_target)
+        _require(not ok, "invalid browser download should not finalize")
+        _require(final_target.read_bytes() == b"PK\x03\x04old-xlsx", "invalid browser download replaced target")
+        _require(not invalid_download.exists(), "invalid browser download should be removed during finalize")
+
         def write_bad_workbook(path: Path) -> None:
             path.write_bytes(b"not an xlsx")
 

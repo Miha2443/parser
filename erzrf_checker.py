@@ -166,6 +166,18 @@ def _validate_downloaded_excel(path: Path) -> bool:
         return False
 
 
+def _finalize_downloaded_excel(source: Path, target: Path) -> bool:
+    if not _validate_downloaded_excel(source):
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        source.replace(target)
+        return True
+    except OSError as exc:
+        print(f"       ERROR: failed to finalize {target.name}: {exc}")
+        return False
+
+
 def _load_credentials() -> dict | None:
     if not CONFIG_FILE.exists():
         return None
@@ -694,13 +706,10 @@ def fetch_top(state: dict) -> list[Path]:
                 print(f"       ⚠️  xlsx не появился в папке за 180 сек")
                 _save_debug_snapshot(driver, f"{filename_base}_after_click")
                 return None
-            if not _validate_downloaded_excel(new_file):
+            target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
+            if not _finalize_downloaded_excel(new_file, target):
                 _save_debug_snapshot(driver, f"{filename_base}_invalid_download")
                 return None
-            target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
-            if target.exists():
-                target.unlink()
-            new_file.rename(target)
             print(f"       ✅ {target.name}")
             return target
 

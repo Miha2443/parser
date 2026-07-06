@@ -552,7 +552,7 @@ def deduplicate_new_files(
       real_new — сколько файлов реально новых/изменённых
     """
     sys.path.insert(0, str(ROOT))
-    from pipeline.deduplicate import deduplicate as _dedupe
+    from pipeline.deduplicate import build_version_index, deduplicate as _dedupe
 
     after = snapshot_files(roots=roots, file_prefixes=file_prefixes)
     added_paths = sorted(set(after) - set(before_snapshot))
@@ -563,6 +563,7 @@ def deduplicate_new_files(
     _print(f"{'─'*60}")
     deduped = 0
     real_new = 0
+    version_index = build_version_index()
     prefix_to_base = {namespace: base for base, namespace, _ in SNAPSHOT_DIRS}
     for rel in added_paths:
         if ":" in rel:
@@ -575,7 +576,7 @@ def deduplicate_new_files(
             f = REALTY_ROOT / rel  # backward compat для старых snapshot
         if not f.exists():
             continue
-        kept, is_update = _dedupe(f, log_prefix="  ")
+        kept, is_update = _dedupe(f, log_prefix="  ", index=version_index)
         if is_update:
             real_new += 1
         else:

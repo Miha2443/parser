@@ -44,6 +44,14 @@ def main() -> int:
             _require(str(active.resolve()) in dd._SHA256_CACHE, "active hash should be cached")
             _require(str(archive.resolve()) in dd._SHA256_CACHE, "archive hash should be cached")
 
+            index = dd.build_version_index()
+            dd.REALTY_ROOT = root / "missing-realty"
+            dd.ARCHIVE_ROOT = root / "missing-archive"
+            duplicate_from_index = dd.is_duplicate_of_latest(active, index=index)
+            _require(duplicate_from_index == archive, "deduplicate index should avoid repeated tree scans")
+            dd.REALTY_ROOT = root
+            dd.ARCHIVE_ROOT = root / "_archive"
+
             first_hash = dd._file_sha256(active)
             second_hash = dd._file_sha256(active)
             _require(second_hash == first_hash, "unchanged hash should be stable")

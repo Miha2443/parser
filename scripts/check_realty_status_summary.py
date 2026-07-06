@@ -5,13 +5,20 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
+
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app import audit  # noqa: E402
-from app.audit import REALTY_RUNNING_STALE_MIN, realty_marts_status, realty_update_status_summary  # noqa: E402
+from app.audit import (  # noqa: E402
+    REALTY_RUNNING_STALE_MIN,
+    realty_marts_status,
+    realty_source_freshness_lines,
+    realty_update_status_summary,
+)
 
 
 def _assert_equal(actual, expected, label: str) -> None:
@@ -101,6 +108,26 @@ def main() -> int:
         audit._current_realty_sources = lambda _mart: [NewerSource()]
         live = realty_marts_status(live_check=True)
         _assert_equal(live.loc[0, "status"], "stale", "live mart status")
+
+        source_lines = realty_source_freshness_lines(
+            pd.DataFrame([
+                {
+                    "mart": "monitoring_2_0",
+                    "latest_source_mtime": pd.Timestamp("2026-07-03T10:00:00"),
+                },
+            ]),
+            now=datetime(2026, 7, 4, 10, 0, 0),
+        )
+        _assert_equal(
+            source_lines[0],
+            "🟢 Мониторинг 2.0: 03.07.2026 (1д.)",
+            "source freshness from manifest status",
+        )
+        _assert_equal(
+            source_lines[1],
+            "❌ Квартирография: нет файла",
+            "missing source freshness",
+        )
     finally:
         audit.load_realty_marts_manifest = original_manifest
         audit._current_realty_sources = original_current_sources

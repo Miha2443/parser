@@ -1,9 +1,6 @@
 """Главная страница дашборда."""
 from __future__ import annotations
 
-from datetime import datetime
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -11,6 +8,7 @@ from app.audit import (
     latest_data_badge,
     load_realty_update_status,
     realty_marts_status,
+    realty_source_freshness_lines,
     realty_update_status_summary,
 )
 from app.data_access import latest_loaded_at, load_ipc, load_salary
@@ -24,28 +22,8 @@ st.set_page_config(
 # === Сайдбар: свежесть данных + ручная перезагрузка ===
 with st.sidebar:
     st.markdown("### 🔄 Свежесть данных")
-    realty = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
-    src_freshness = []
-    for name, pattern in [
-        ("Мониторинг 2.0", "nashdom/monitoring_2_0_*.xlsx"),
-        ("Квартирография", "nashdom/kvartirografia_*.xlsx"),
-        ("Распроданность", "nashdom/rasprodannost_*.xlsx"),
-        ("ERZRF топ", "erzrf/top_obyem_stroitelstva_rf_*.xlsx"),
-        ("ERZRF карточки", "erzrf/cards/cards_*.xlsx"),
-        ("Эскроу", "escrow_manual/*.xlsx"),
-    ]:
-        files = list(realty.glob(pattern))
-        files = [f for f in files if "_archive" not in f.parts]
-        if not files:
-            src_freshness.append(f"❌ {name}: нет файла")
-            continue
-        latest = max(files, key=lambda p: p.stat().st_mtime)
-        mtime = datetime.fromtimestamp(latest.stat().st_mtime)
-        days = (datetime.now() - mtime).days
-        icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
-        src_freshness.append(f"{icon} {name}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
-
     marts = realty_marts_status()
+    src_freshness = realty_source_freshness_lines(marts)
     if not marts.empty:
         built_at = marts["built_at"].max()
         errors = int((marts["status"] == "error").sum())

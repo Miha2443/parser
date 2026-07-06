@@ -21,6 +21,14 @@ REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.j
 REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
 REALTY_UPDATE_STATUSES = {"running", "success", "failed", "interrupted"}
 REALTY_RUNNING_STALE_MIN = 360
+REALTY_SOURCE_LABELS = [
+    ("monitoring_2_0", "Мониторинг 2.0"),
+    ("kvartirografia", "Квартирография"),
+    ("rasprodannost", "Распроданность"),
+    ("erzrf_top", "ERZRF топ"),
+    ("erzrf_cards", "ERZRF карточки"),
+    ("escrow_manual", "Эскроу"),
+]
 
 
 def load_runs() -> pd.DataFrame:
@@ -253,6 +261,41 @@ def realty_marts_status(*, live_check: bool = False) -> pd.DataFrame:
             "error": info.get("error", ""),
         })
     return pd.DataFrame(rows)
+
+
+def realty_source_freshness_lines(
+    marts: pd.DataFrame | None = None,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    """Sidebar freshness lines for key realty sources, using mart manifest metadata."""
+    if marts is None:
+        marts = realty_marts_status()
+    if marts.empty:
+        return []
+
+    now = now or datetime.now()
+    by_mart = {
+        str(row["mart"]): row
+        for _, row in marts.iterrows()
+        if "mart" in row
+    }
+    lines: list[str] = []
+    for mart, label in REALTY_SOURCE_LABELS:
+        row = by_mart.get(mart)
+        if row is None:
+            lines.append(f"❌ {label}: нет файла")
+            continue
+        mtime = pd.to_datetime(row.get("latest_source_mtime"), errors="coerce")
+        if pd.isna(mtime):
+            lines.append(f"❌ {label}: нет файла")
+            continue
+        if getattr(mtime, "tzinfo", None) is not None:
+            mtime = mtime.tz_convert(None)
+        days = max(0, (now - mtime.to_pydatetime()).days)
+        icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
+        lines.append(f"{icon} {label}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
+    return lines
 
 
 def latest_data_badge() -> str:

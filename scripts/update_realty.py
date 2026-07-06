@@ -249,6 +249,37 @@ def mark_active_realty_run_failed(exc: BaseException) -> None:
         pass
 
 
+def write_active_realty_run_progress(**fields) -> None:
+    """Best-effort progress update for the dashboard while a run is still active."""
+    if not _ACTIVE_REALTY_RUN:
+        return
+    ctx = dict(_ACTIVE_REALTY_RUN)
+    successes = list(ctx.get("successes") or [])
+    failures = list(ctx.get("failures") or [])
+    sources = list(ctx.get("sources") or [])
+    completed = list(dict.fromkeys(successes + failures))
+    pending = [source for source in sources if source not in completed]
+    try:
+        write_realty_run_status(
+            "running",
+            started=ctx["started"],
+            sources=sources,
+            log_path=ctx.get("log_path"),
+            successes=successes,
+            failures=failures,
+            completed_sources=completed,
+            pending_sources=pending,
+            archive=ctx.get("archive"),
+            keep=ctx.get("keep"),
+            force=ctx.get("force"),
+            full_rasprod_history=ctx.get("full_rasprod_history"),
+            selenium_sleep_scale=ctx.get("selenium_sleep_scale"),
+            **fields,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _kill_process_tree(pid: int) -> None:
     """Принудительно убивает процесс и всех его потомков (включая Chrome)."""
     if sys.platform == "win32":
@@ -931,6 +962,8 @@ def main():
         started=started,
         sources=sources,
         log_path=log_path,
+        completed_sources=[],
+        pending_sources=sources,
         **run_meta,
     )
     set_active_realty_run(
@@ -968,6 +1001,11 @@ def main():
                     _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
                     ok = False
                 (successes if ok else failures).append(alias)
+                write_active_realty_run_progress(
+                    current_stage=label,
+                    last_completed_source=alias,
+                    last_completed_ok=ok,
+                )
 
     try:
         # Первый проход — волнами (внутри волны параллельно)

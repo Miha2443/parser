@@ -125,6 +125,31 @@ def main() -> int:
         _assert_equal(captured["status"], "failed", "active failed status is written")
         _assert_equal(captured["error"], "RuntimeError: synthetic", "active failed error")
         ur.clear_active_realty_run()
+
+        successes = ["monitoring"]
+        failures = []
+        ur.set_active_realty_run(
+            started=started,
+            sources=["monitoring", "rasprod"],
+            log_path=None,
+            successes=successes,
+            failures=failures,
+            archive=True,
+            keep=1,
+            force=False,
+            full_rasprod_history=False,
+            selenium_sleep_scale="0.8",
+        )
+        ur.write_active_realty_run_progress(
+            current_stage="wave 1",
+            last_completed_source="monitoring",
+            last_completed_ok=True,
+        )
+        _assert_equal(captured["status"], "running", "progress status is running")
+        _assert_equal(captured["completed_sources"], ["monitoring"], "progress completed sources")
+        _assert_equal(captured["pending_sources"], ["rasprod"], "progress pending sources")
+        _assert_equal(captured["last_completed_source"], "monitoring", "progress last source")
+        ur.clear_active_realty_run()
     finally:
         ur.clear_active_realty_run()
         ur.write_realty_status = original_write_status

@@ -53,6 +53,9 @@ def main() -> None:
         successes = realty_status.get("successes") or []
         failures = realty_status.get("failures") or []
         requested = realty_status.get("sources_requested") or []
+        completed_sources = realty_status.get("completed_sources") or []
+        pending_sources = realty_status.get("pending_sources") or []
+        current_stage = realty_status.get("current_stage") or ""
         run_status = str(realty_status.get("status") or "").lower()
         if not run_status:
             run_status = "failed" if failures or realty_status.get("marts_ok") is False else "success"
@@ -74,6 +77,13 @@ def main() -> None:
         c5.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
         if run_status == "running":
             st.info("Realty-прогон сейчас выполняется или был прерван до финальной записи статуса.")
+            if completed_sources or pending_sources:
+                parts = [f"готово: {len(completed_sources)}/{len(requested)}"]
+                if current_stage:
+                    parts.append(f"этап: {current_stage}")
+                if pending_sources:
+                    parts.append("ожидает: " + ", ".join(map(str, pending_sources)))
+                st.caption(" · ".join(parts))
         elif run_status == "interrupted":
             st.warning("Последний realty-прогон был прерван.")
         elif run_status == "failed":

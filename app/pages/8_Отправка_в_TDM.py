@@ -28,6 +28,12 @@ from pipeline.tdm_notify import (  # noqa: E402
 st.set_page_config(page_title="Отправка в TDM — Аналитика Москвы", layout="wide")
 st.title("📤 Отправка файлов в TDM")
 
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _cached_tdm_realty_files(root: str):
+    return list_tdm_realty_files(Path(root))
+
+
 # === Статус подключения ===
 all_ok = bool(_get_token() and _get_workspace_id() and _get_group_id())
 with st.expander("🔌 Статус подключения", expanded=not all_ok):
@@ -101,7 +107,7 @@ upload_buffer = None
 
 if source == "Из data/raw/realty/":
     realty_root = ROOT / "data" / "raw" / "realty"
-    file_options = list_tdm_realty_files(realty_root)
+    file_options = _cached_tdm_realty_files(str(realty_root))
     if not file_options:
         st.info("В data/raw/realty/ нет файлов")
     else:

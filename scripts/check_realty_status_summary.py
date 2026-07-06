@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.audit import REALTY_RUNNING_STALE_MIN, realty_update_status_summary  # noqa: E402
+from app import audit  # noqa: E402
+from app.audit import REALTY_RUNNING_STALE_MIN, realty_marts_status, realty_update_status_summary  # noqa: E402
 
 
 def _assert_equal(actual, expected, label: str) -> None:
@@ -67,6 +68,42 @@ def main() -> int:
     })
     _assert_equal(bad_log["warnings"], ["bad log_file"], "bad log warning")
     _assert_equal(bad_log["error"], "synthetic", "error passthrough")
+
+    original_manifest = audit.load_realty_marts_manifest
+    original_current_sources = audit._current_realty_sources
+    try:
+        audit.load_realty_marts_manifest = lambda: {
+            "built_at": "2026-07-03T12:00:00",
+            "marts": {
+                "sample": {
+                    "built_at": "2026-07-03T12:00:00",
+                    "summary": {"type": "dataframe", "rows": 10, "cols": 2},
+                    "sources": [
+                        {"path": "data/raw/realty/source.xlsx", "mtime": "2026-07-03T10:00:00"},
+                    ],
+                },
+            },
+        }
+
+        def fail_if_scanned(_mart: str):
+            raise AssertionError("default realty_marts_status should use manifest sources")
+
+        audit._current_realty_sources = fail_if_scanned
+        marts = realty_marts_status()
+        _assert_equal(marts.loc[0, "status"], "ok", "manifest-only mart status")
+
+        class NewerSource:
+            def stat(self):
+                class Stat:
+                    st_mtime = datetime(2026, 7, 4, 10, 0, 0).timestamp()
+                return Stat()
+
+        audit._current_realty_sources = lambda _mart: [NewerSource()]
+        live = realty_marts_status(live_check=True)
+        _assert_equal(live.loc[0, "status"], "stale", "live mart status")
+    finally:
+        audit.load_realty_marts_manifest = original_manifest
+        audit._current_realty_sources = original_current_sources
 
     print("realty status summary checks: ok")
     return 0

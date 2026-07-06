@@ -166,7 +166,29 @@ def _current_realty_sources(mart: str) -> list[Path]:
         return []
 
 
-def realty_marts_status() -> pd.DataFrame:
+def _latest_manifest_source_mtime(sources: list) -> pd.Timestamp | None:
+    latest = None
+    for source in sources:
+        if isinstance(source, dict):
+            ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+            if not pd.isna(ts) and (latest is None or ts > latest):
+                latest = ts
+    return latest
+
+
+def _latest_current_source_mtime(mart: str) -> pd.Timestamp | None:
+    latest = None
+    for path in _current_realty_sources(mart):
+        try:
+            ts = pd.to_datetime(datetime.fromtimestamp(path.stat().st_mtime), errors="coerce")
+        except OSError:
+            continue
+        if not pd.isna(ts) and (latest is None or ts > latest):
+            latest = ts
+    return latest
+
+
+def realty_marts_status(*, live_check: bool = False) -> pd.DataFrame:
     """One row per realty mart from data/marts/realty/manifest.json."""
     manifest = load_realty_marts_manifest()
     marts = manifest.get("marts") if isinstance(manifest, dict) else {}
@@ -183,22 +205,13 @@ def realty_marts_status() -> pd.DataFrame:
             continue
         summary = info.get("summary") if isinstance(info.get("summary"), dict) else {}
         sources = info.get("sources") if isinstance(info.get("sources"), list) else []
-        latest_source = None
-        current_sources = _current_realty_sources(str(mart))
-        if current_sources:
-            for path in current_sources:
-                try:
-                    ts = pd.to_datetime(datetime.fromtimestamp(path.stat().st_mtime), errors="coerce")
-                except OSError:
-                    continue
-                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
-                    latest_source = ts
-        else:
-            for source in sources:
-                if isinstance(source, dict):
-                    ts = pd.to_datetime(source.get("mtime"), errors="coerce")
-                    if not pd.isna(ts) and (latest_source is None or ts > latest_source):
-                        latest_source = ts
+        latest_source = (
+            _latest_current_source_mtime(str(mart))
+            if live_check
+            else _latest_manifest_source_mtime(sources)
+        )
+        if latest_source is None and live_check:
+            latest_source = _latest_manifest_source_mtime(sources)
 
         row_count = None
         col_count = None

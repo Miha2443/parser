@@ -857,7 +857,7 @@ def select_repair_realty_marts() -> set[str]:
     except Exception:  # noqa: BLE001
         return set()
     try:
-        marts = realty_marts_status()
+        marts = realty_marts_status(live_check=True)
     except Exception:  # noqa: BLE001
         return set()
     if marts.empty or "status" not in marts or "mart" not in marts:

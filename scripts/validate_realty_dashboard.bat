@@ -31,6 +31,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_escrow_manual_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_require.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_manifest_pickle.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_realty_mart_partial_build.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_atomic_write.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_manifest_atomic_write.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_status_atomic_write.py || exit /b %ERRORLEVEL%

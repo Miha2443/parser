@@ -150,6 +150,27 @@ def _write_json_atomic(value: Any, target: Path) -> None:
             pass
 
 
+def _load_existing_marts_for_partial_build() -> dict[str, Any] | None:
+    if not MANIFEST.exists():
+        print(f"ERROR: --only requires existing manifest: {MANIFEST.relative_to(ROOT)}")
+        return None
+    try:
+        existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: cannot read existing manifest for --only build: {exc}")
+        return None
+    marts = existing.get("marts") if isinstance(existing, dict) else None
+    if not isinstance(marts, dict) or not marts:
+        print("ERROR: existing manifest has no marts; run full build first")
+        return None
+    existing_built_at = existing.get("built_at")
+    if existing_built_at:
+        for info in marts.values():
+            if isinstance(info, dict) and "built_at" not in info:
+                info["built_at"] = existing_built_at
+    return dict(marts)
+
+
 def _tmp_files() -> list[Path]:
     raw = ROOT / "data" / "raw" / "realty"
     if not raw.exists():
@@ -341,18 +362,11 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             return 2
 
     existing_marts: dict[str, Any] = {}
-    if only and MANIFEST.exists():
-        try:
-            existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
-            if isinstance(existing.get("marts"), dict):
-                existing_marts = existing["marts"]
-                existing_built_at = existing.get("built_at")
-                if existing_built_at:
-                    for info in existing_marts.values():
-                        if isinstance(info, dict) and "built_at" not in info:
-                            info["built_at"] = existing_built_at
-        except (OSError, json.JSONDecodeError):
-            existing_marts = {}
+    if only:
+        existing = _load_existing_marts_for_partial_build()
+        if existing is None:
+            return 2
+        existing_marts = existing
 
     manifest: dict[str, Any] = {
         "built_at": datetime.now().isoformat(timespec="seconds"),

@@ -29,6 +29,7 @@ State в `state/erzrf_state.json`. Запуск:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -1012,6 +1013,7 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     keys = set(only) if only else {"top", "cards"}
+    unknown = sorted(keys - {"top", "cards"})
 
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1019,7 +1021,9 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     print(f"{'='*60}\n")
 
     all_new: list[Path] = []
-    failed = False
+    failed = bool(unknown)
+    for key in unknown:
+        print(f"  ⚠️  Неизвестный ключ: {key}")
     if "top" in keys:
         try:
             files = fetch_top(state)
@@ -1052,6 +1056,13 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    _files, ok = run(only=args if args else None)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "sources",
+        nargs="*",
+        choices=["top", "cards"],
+        help="Источники для запуска",
+    )
+    args = parser.parse_args()
+    _files, ok = run(only=args.sources if args.sources else None)
     sys.exit(0 if ok else 2)

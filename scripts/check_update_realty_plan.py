@@ -74,6 +74,15 @@ def main() -> int:
     if selected is not None:
         _assert_equal(selected, set(), "no changed paths skips marts")
 
+    original_repair = ur.select_repair_realty_marts
+    try:
+        ur.select_repair_realty_marts = lambda: {"escrow_manual"}
+        selected = ur.select_realty_marts_for_changes([])
+        if selected is not None:
+            _assert_equal(selected, {"escrow_manual"}, "repair marts are selected")
+    finally:
+        ur.select_repair_realty_marts = original_repair
+
     _assert_equal(
         ur.source_alias_for_changed_path("downloads:Введено в действие общей площади жилых домов.xlsx"),
         "rosstat",

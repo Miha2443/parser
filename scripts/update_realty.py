@@ -561,7 +561,27 @@ def select_realty_marts_for_changes(changed_paths: list[str]) -> set[str] | None
         alias for path in changed_paths
         if (alias := source_alias_for_changed_path(path)) is not None
     })
-    return select_realty_marts_for_sources(aliases)
+    selected = select_realty_marts_for_sources(aliases)
+    if selected is None:
+        return None
+    selected.update(select_repair_realty_marts())
+    return selected
+
+
+def select_repair_realty_marts() -> set[str]:
+    """Marts that are currently stale/error and should be repaired."""
+    try:
+        from app.audit import realty_marts_status  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return set()
+    try:
+        marts = realty_marts_status()
+    except Exception:  # noqa: BLE001
+        return set()
+    if marts.empty or "status" not in marts or "mart" not in marts:
+        return set()
+    repair = marts[marts["status"].isin(["stale", "error"])]
+    return set(repair["mart"].dropna().astype(str))
 
 
 def build_realty_marts(only: set[str] | None = None) -> bool:
@@ -748,12 +768,17 @@ def print_update_plan(sources: list[str], env: dict, *, no_marts: bool) -> None:
         print("Realty-витрины: пропущены (--no-marts)")
     else:
         marts = select_realty_marts_for_sources(sources)
+        repair_marts = select_repair_realty_marts()
+        if marts is not None:
+            marts.update(repair_marts)
         if marts is None:
             print("Realty-витрины: полный bootstrap-build (manifest отсутствует)")
         elif marts:
             print(f"Realty-витрины: {', '.join(sorted(marts))}")
         else:
             print("Realty-витрины: не затронуты")
+        if repair_marts:
+            print(f"Repair-витрины: {', '.join(sorted(repair_marts))}")
     print("=" * 60)
 
 
@@ -914,6 +939,7 @@ def main():
             alias for path in changed_for_marts
             if (alias := source_alias_for_changed_path(path)) is not None
         })
+        marts_repair_selected = sorted(select_repair_realty_marts())
         marts_selected = select_realty_marts_for_changes(changed_for_marts)
         if marts_selected == set():
             _print(f"\n{'─'*60}")
@@ -924,6 +950,7 @@ def main():
     else:
         changed_for_marts = []
         marts_changed_aliases = []
+        marts_repair_selected = []
 
     total_min = (time.time() - started) / 60
     _print(f"\n{'='*60}")
@@ -953,6 +980,7 @@ def main():
         "marts_selected": None if marts_selected is None else sorted(marts_selected),
         "marts_changed_aliases": marts_changed_aliases,
         "marts_changed_paths": changed_for_marts,
+        "marts_repair_selected": marts_repair_selected,
         "archive": not args.no_archive,
         "keep": args.keep,
         "force": args.force,

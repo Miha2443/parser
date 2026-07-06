@@ -35,12 +35,19 @@ import hashlib
 import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REALTY_ROOT = ROOT / "data" / "raw" / "realty"
+LOG_DIR = ROOT / "logs"
+
+# Глобальный файл лога текущего прогона. Инициализируется в main().
+_LOG_FILE: Path | None = None
+_LOG_FH = None
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -60,6 +67,130 @@ GROUP_MAP = {
     "all":     ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards",
                 "fedstat", "rosstat"],
 }
+
+# Watchdog-таймауты per-source (минуты). Если subprocess не завершился —
+# убиваем дерево процессов (включая Chrome) и помечаем как failure.
+SOURCE_TIMEOUT_MIN = {
+    "monitoring":  5,
+    "rasprod":     180,
+    "kvart":       180,
+    "erz-top":     15,
+    "erz-cards":   30,
+    "fedstat":     30,
+    "rosstat":     30,
+}
+DEFAULT_TIMEOUT_MIN = 60
+
+# Для архивации после каждого источника: какие префиксы файлов и в
+# каких папках принадлежат этому источнику.
+SOURCE_ARCHIVE_PATHS = {
+    "monitoring":  ["nashdom"],
+    "rasprod":     ["nashdom"],
+    "kvart":       ["nashdom"],
+    "erz-top":     ["erzrf"],
+    "erz-cards":   ["erzrf/cards", "erzrf"],
+}
+SOURCE_PREFIXES = {
+    "monitoring":  ["monitoring_2_0_"],
+    "rasprod":     ["rasprodannost_"],
+    "kvart":       ["kvartirografia_"],
+    "erz-top":     ["top_obyem_", "top_developers_", "top_nakopl_",
+                    "top_skorost_", "top_potreb_"],
+    "erz-cards":   ["cards_", "card_"],
+}
+
+# Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
+PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
+
+# Волны: внутри волны источники запускаются параллельно, между волнами —
+# последовательно (erz-cards зависит от top_developers_*.json от erz-top).
+# rasprod вынесен в свою волну: держит в памяти tables 77 периодов × ~2500
+# строк, при параллельной нагрузке (4 Chrome'а) на 30-м периоде падает с
+# MemoryError. Соло — RAM хватает.
+# fedstat — отдельной волной по исторической причине (раньше я думал что
+# параллельность ломает; сейчас исправлено downgrade'ом selenium до 4.43,
+# но оставляю в отдельной волне как буфер).
+WAVES_DEFAULT = [
+    ["monitoring", "kvart", "erz-top", "rosstat"],
+    ["erz-cards"],
+    ["rasprod"],
+    ["fedstat"],
+]
+
+
+# Lock для упорядоченной печати из параллельных потоков.
+_print_lock = threading.Lock()
+
+
+def _print(msg: str = "") -> None:
+    with _print_lock:
+        print(msg, flush=True)
+        if _LOG_FH is not None:
+            try:
+                _LOG_FH.write(msg + "\n")
+                _LOG_FH.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _setup_logging() -> Path:
+    """Открывает logs/update_<timestamp>.log на запись; ротирует старые.
+
+    Хранит последние 20 логов прогонов, остальное удаляет — чтоб папка
+    не разрасталась. Возвращает путь к свежему файлу лога.
+    """
+    global _LOG_FILE, _LOG_FH
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _LOG_FILE = LOG_DIR / f"update_{ts}.log"
+    _LOG_FH = open(_LOG_FILE, "w", encoding="utf-8", buffering=1)
+    # Ротация — удаляем всё старше 20-го прогона.
+    old_logs = sorted(LOG_DIR.glob("update_*.log"))
+    for path in old_logs[:-20]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return _LOG_FILE
+
+
+def _close_logging() -> None:
+    global _LOG_FH
+    if _LOG_FH is not None:
+        try:
+            _LOG_FH.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _LOG_FH = None
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Принудительно убивает процесс и всех его потомков (включая Chrome)."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True, check=False,
+        )
+        return
+    # POSIX
+    try:
+        import signal
+        try:
+            import psutil  # type: ignore
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                parent.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        except ImportError:
+            os.kill(pid, signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 SNAPSHOT_DIRS = [
@@ -172,9 +303,9 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
     added_paths = sorted(set(after) - set(before_snapshot))
     if not added_paths:
         return 0, 0
-    print(f"\n{'─'*60}")
-    print(f"🔍 Дедупликация новых файлов ({len(added_paths)} шт)")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"🔍 Дедупликация новых файлов ({len(added_paths)} шт)")
+    _print(f"{'─'*60}")
     deduped = 0
     real_new = 0
     prefix_to_base = {p: b for b, p in SNAPSHOT_DIRS}
@@ -195,9 +326,9 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
         else:
             deduped += 1
     if deduped:
-        print(f"  Итого: {real_new} новых, {deduped} дублей удалено")
+        _print(f"  Итого: {real_new} новых, {deduped} дублей удалено")
     else:
-        print(f"  Все {real_new} файлов уникальны (дублей нет)")
+        _print(f"  Все {real_new} файлов уникальны (дублей нет)")
     return deduped, real_new
 
 
@@ -210,42 +341,132 @@ def diff_snapshots(before: dict, after: dict) -> dict:
     return {"added": added, "changed": changed, "removed": removed}
 
 
-def run_source(alias: str, env: dict, force: bool = False) -> bool:
-    """Запускает один источник. Возвращает True при успехе."""
+def run_source(alias: str, env: dict, force: bool = False,
+               keep: int = 1, do_archive: bool = True) -> bool:
+    """Запускает один источник.
+
+    Запускает subprocess с watchdog'ом (per-source timeout). Stdout
+    стримится с префиксом `[alias]` чтобы вывод параллельных источников
+    не смешивался. После успеха — дедупликация и архивация СВОЕГО
+    семейства (старые файлы → _archive/<date>/<source>/).
+    """
     if alias not in SOURCE_MAP:
-        print(f"⚠️  Неизвестный источник: {alias}")
+        _print(f"⚠️  Неизвестный источник: {alias}")
         return False
     script, args = SOURCE_MAP[alias]
     extra = []
     if force and alias in ("fedstat", "rosstat"):
         extra.append("--force")
-    cmd = [sys.executable, str(ROOT / script), *args, *extra]
-    print(f"\n{'─'*60}")
-    print(f"▶ {alias}: {' '.join(cmd[1:])}")
-    print(f"{'─'*60}")
+    cmd = [sys.executable, "-u", str(ROOT / script), *args, *extra]
+    timeout_min = SOURCE_TIMEOUT_MIN.get(alias, DEFAULT_TIMEOUT_MIN)
+    prefix = f"[{alias:>10}]"
+
+    _print(f"\n{'─'*60}")
+    _print(f"▶ {alias} (watchdog: {timeout_min}мин)")
+    _print(f"{'─'*60}")
+
+    # Snapshot до источника — для дедупликации только его файлов.
+    before_src = snapshot_files() if do_archive else {}
+
+    # Принудительно utf-8 в child: с stdout=PIPE Python берёт кодировку
+    # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
+    # UnicodeEncodeError. PYTHONIOENCODING переключает sys.stdout/stderr
+    # на utf-8, PYTHONUTF8=1 включает utf-8 mode для всего runtime.
+    # PYTHONUNBUFFERED=1 + `python -u` отключают stdout-буферизацию child'а
+    # — без этого print() из парсеров накапливается блоками по 4-8КБ и
+    # вываливается «оптом», и пока тишина — непонятно жив парсер или нет.
+    env_utf8 = dict(env)
+    env_utf8["PYTHONIOENCODING"] = "utf-8"
+    env_utf8["PYTHONUTF8"] = "1"
+    env_utf8["PYTHONUNBUFFERED"] = "1"
+
     started = time.time()
     try:
-        result = subprocess.run(cmd, cwd=ROOT, env=env, check=False)
-        elapsed = time.time() - started
-        if result.returncode == 0:
-            print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
-            return True
-        print(f"❌ {alias}: код выхода {result.returncode} (за {elapsed/60:.1f} мин)")
-        return False
-    except KeyboardInterrupt:
-        print(f"\n⚠️  {alias}: прервано пользователем")
-        raise
+        proc = subprocess.Popen(
+            cmd, cwd=ROOT, env=env_utf8,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            bufsize=1,
+        )
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ {alias}: {exc}")
+        _print(f"❌ {alias}: не удалось запустить процесс: {exc}")
         return False
+
+    # Stream stdout в отдельном потоке с префиксом alias.
+    def _stream() -> None:
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                _print(f"{prefix} {line.rstrip()}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    reader = threading.Thread(target=_stream, daemon=True)
+    reader.start()
+
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout_min * 60)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _print(f"⏰ {alias}: убит по watchdog'у (>{timeout_min}мин), "
+               f"гашу процессы Chrome")
+        _kill_process_tree(proc.pid)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+    except KeyboardInterrupt:
+        _print(f"\n⚠️  {alias}: прервано пользователем")
+        _kill_process_tree(proc.pid)
+        raise
+
+    reader.join(timeout=5)
+    elapsed = time.time() - started
+
+    if timed_out:
+        return False
+    rc = proc.returncode
+    if rc == 0:
+        _print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
+        if do_archive:
+            try:
+                deduplicate_new_files(before_src)
+            except Exception as exc:  # noqa: BLE001
+                _print(f"⚠️  {alias}: дедупликация упала — {exc}")
+            archive_old_for_source(alias, keep=keep)
+        return True
+    _print(f"❌ {alias}: код выхода {rc} (за {elapsed/60:.1f} мин)")
+    return False
 
 
 def archive_old(keep: int = 1) -> None:
-    """Перемещает устаревшие выгрузки в _archive/<date>/."""
+    """Перемещает устаревшие выгрузки в _archive/<date>/ (полная зачистка)."""
     cmd = [sys.executable, "-m", "pipeline.archive_old", "--keep", str(keep)]
-    print(f"\n{'─'*60}")
-    print(f"📦 Архивирование старых файлов (keep={keep})")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"📦 Финальная архивация (safety-net, keep={keep})")
+    _print(f"{'─'*60}")
+    subprocess.run(cmd, cwd=ROOT, check=False)
+
+
+def archive_old_for_source(alias: str, keep: int = 1) -> None:
+    """Архивирует устаревшие файлы только этого источника.
+
+    Принцип: для каждого пути из SOURCE_ARCHIVE_PATHS[alias] зовём
+    pipeline.archive_old с --paths и --prefixes — это ограничивает
+    архивацию только семействами alias'а (важно для nashdom, где
+    monitoring_2_0_*, rasprodannost_* и kvartirografia_* лежат вместе).
+    """
+    paths = SOURCE_ARCHIVE_PATHS.get(alias)
+    prefixes = SOURCE_PREFIXES.get(alias)
+    if not paths or not prefixes:
+        return
+    paths_arg = [f"realty/{p}" for p in paths]
+    cmd = [
+        sys.executable, "-m", "pipeline.archive_old",
+        "--keep", str(keep),
+        "--paths", *paths_arg,
+        "--prefixes", *prefixes,
+    ]
     subprocess.run(cmd, cwd=ROOT, check=False)
 
 
@@ -253,16 +474,16 @@ def check_escrow():
     """Подсказка про эскроу."""
     escrow_dir = REALTY_ROOT / "escrow_manual"
     files = list(escrow_dir.glob("*.xlsx")) if escrow_dir.exists() else []
-    print(f"\n{'─'*60}")
-    print(f"📋 Эскроу (ручная выгрузка)")
-    print(f"{'─'*60}")
+    _print(f"\n{'─'*60}")
+    _print(f"📋 Эскроу (ручная выгрузка)")
+    _print(f"{'─'*60}")
     if not files:
-        print(f"⚠️  Папка пустая: {escrow_dir}")
-        print(f"   Скачай «Наполняемость счетов.xlsx» с ДОМ.РФ ЕИСЖС вручную")
+        _print(f"⚠️  Папка пустая: {escrow_dir}")
+        _print(f"   Скачай «Наполняемость счетов.xlsx» с ДОМ.РФ ЕИСЖС вручную")
     else:
         latest = max(files, key=lambda p: p.stat().st_mtime)
         date = datetime.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
-        print(f"✓ Файл есть: {latest.name} (от {date})")
+        _print(f"✓ Файл есть: {latest.name} (от {date})")
 
 
 def collect_site_dates() -> dict:
@@ -437,50 +658,76 @@ def main():
             print("ℹ️  --weekly-kvart-per-dev: сегодня не понедельник → "
                   "KVART_PER_DEV=0 (per-dev пропустится, агрегаты остаются)")
 
-    print(f"\n{'='*60}")
-    print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
-    print(f"Источники: {', '.join(sources)}")
-    print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
-    print(f"{'='*60}")
+    log_path = _setup_logging()
+
+    _print(f"\n{'='*60}")
+    _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+    _print(f"Источники: {', '.join(sources)}")
+    _print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    _print(f"Лог-файл: {log_path}")
+    _print(f"{'='*60}")
 
     # SNAPSHOT ДО прогона
     before = snapshot_files()
 
     started = time.time()
     successes, failures = [], []
-    try:
-        # Первый проход
-        for alias in sources:
-            ok = run_source(alias, env, force=args.force)
-            (successes if ok else failures).append(alias)
+    do_archive = not args.no_archive
 
-        # Повторные попытки для упавших источников
-        # (например страница не загрузилась — пробуем ещё)
+    def _run_wave(wave: list[str], label: str) -> None:
+        """Запускает источники волны параллельно, до PARALLEL_LIMIT одновременно."""
+        wave = [a for a in wave if a in sources]
+        if not wave:
+            return
+        _print(f"\n{'═'*60}")
+        _print(f"{label}: {', '.join(wave)} (max parallel = {PARALLEL_LIMIT})")
+        _print(f"{'═'*60}")
+        with ThreadPoolExecutor(max_workers=PARALLEL_LIMIT) as pool:
+            futures = {
+                pool.submit(run_source, alias, env,
+                            force=args.force, keep=args.keep,
+                            do_archive=do_archive): alias
+                for alias in wave
+            }
+            for f in as_completed(futures):
+                alias = futures[f]
+                try:
+                    ok = f.result()
+                except Exception as exc:  # noqa: BLE001
+                    _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
+                    ok = False
+                (successes if ok else failures).append(alias)
+
+    try:
+        # Первый проход — волнами (внутри волны параллельно)
+        for i, wave in enumerate(WAVES_DEFAULT, 1):
+            _run_wave(wave, f"══ Волна {i}/{len(WAVES_DEFAULT)}")
+
+        # Retry упавших — тоже волнами, чтобы erz-cards не стартовал
+        # пока erz-top в retry не закончил.
         for retry_round in range(1, args.retries + 1):
             if not failures:
                 break
-            stuck = list(failures)
+            stuck = set(failures)
             wait_s = 30 * retry_round
-            print(f"\n{'─'*60}")
-            print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
-                  f"{len(stuck)} источников: {', '.join(stuck)}")
-            print(f"{'─'*60}")
+            _print(f"\n{'─'*60}")
+            _print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
+                  f"{len(stuck)} источников: {', '.join(sorted(stuck))}")
+            _print(f"{'─'*60}")
             time.sleep(wait_s)
             failures = []
-            for alias in stuck:
-                ok = run_source(alias, env, force=args.force)
-                if ok:
-                    successes.append(alias)
-                    print(f"   ✅ {alias} починилось со {retry_round}-й попытки")
-                else:
-                    failures.append(alias)
+            for i, wave in enumerate(WAVES_DEFAULT, 1):
+                wave_retry = [a for a in wave if a in stuck]
+                if not wave_retry:
+                    continue
+                _run_wave(wave_retry, f"   Retry #{retry_round} волна {i}")
     except KeyboardInterrupt:
-        print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
+        _print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
+        _close_logging()
         sys.exit(130)
 
-    # ДЕДУПЛИКАЦИЯ: убираем файлы которые идентичны последним в архиве.
-    # Это решает проблему «парсер скачал тот же контент с новой датой
-    # в имени» — без дедупа мы бы считали такой файл «обновлением».
+    # Дедупликация (safety-net): на этом этапе всё уже было дедуплицировано
+    # per-source внутри run_source, но если что-то осталось — добьём.
     deduped_count, real_new_count = deduplicate_new_files(before)
 
     # SNAPSHOT ПОСЛЕ прогона и дедупликации (до архивирования).
@@ -495,18 +742,19 @@ def main():
     check_escrow()
 
     total_min = (time.time() - started) / 60
-    print(f"\n{'='*60}")
-    print(f"ИТОГ за {total_min:.1f} мин:")
-    print(f"  ✅ Успешно: {len(successes)} — {', '.join(successes) if successes else '—'}")
+    _print(f"\n{'='*60}")
+    _print(f"ИТОГ за {total_min:.1f} мин:")
+    _print(f"  ✅ Успешно: {len(successes)} — {', '.join(successes) if successes else '—'}")
     if failures:
-        print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
+        _print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
     if diff["added"]:
-        print(f"  📥 Новых файлов:    {len(diff['added'])}")
+        _print(f"  📥 Новых файлов:    {len(diff['added'])}")
     if diff["changed"]:
-        print(f"  ✎  Обновлено:       {len(diff['changed'])}")
+        _print(f"  ✎  Обновлено:       {len(diff['changed'])}")
     if deduped_count:
-        print(f"  ↩️  Дублей удалено:  {deduped_count}")
-    print(f"{'='*60}\n")
+        _print(f"  ↩️  Дублей удалено:  {deduped_count}")
+    _print(f"{'='*60}\n")
+    _print(f"📁 Полный лог сохранён: {log_path}")
 
     # === Уведомление в TDM ===
     if not args.no_notify:
@@ -520,6 +768,7 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
+    _close_logging()
     return 0 if not failures else 2
 
 

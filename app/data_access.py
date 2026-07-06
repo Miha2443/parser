@@ -366,19 +366,20 @@ def load_monitoring_2_0() -> dict:
     rv["Год ввода по Мосстату"] = pd.to_numeric(
         rv["Год ввода по Мосстату"], errors="coerce")
 
-    # Категории площадей — 4 группы:
-    # РВ (Отрасли + Группировка):
+    # Категории площадей:
+    # РВ (Отрасли + Группировка) — 4 категории, без изменений:
     #   Жилое = Жилая (Отрасли=Жилые объекты AND Группировка=Жилье)
     #   МОП = Общая - Жилая (Отрасли=Жилые объекты AND Группировка=Жилье)
     #   Нежилое в жилом = Общая (Отрасли=Жилые объекты AND Группировка=Нежилье)
     #     — 1-е этажи МКД, паркинги внутри ЖК
     #   Нежилое отдельное = Общая (Отрасли != Жилые объекты)
     #     — соцобъекты, офисы, отдельно стоящие
-    # ОКС (Назначение + Подтип объекта — Отрасли в ОКС нет):
-    #   Жилое = Жилая (Назначение=Жилье)
-    #   МОП = Общая - Жилая (Назначение=Жилье)
-    #   Нежилое в жилом = Общая (Назначение=Нежилье AND Подтип IN {МПТ, Подземный паркинг, Кладовые})
-    #   Нежилое отдельное = Общая (всё остальное Нежилье — Социалка, Прочие, Отд.паркинг)
+    # ОКС (только Назначение, Подтип НЕ используется) — 3 категории,
+    # но раскладка в те же 4 столбца, чтобы не ломать схему DataFrame:
+    #   Жилое = Жилая (Назначение=Жилье) → category_жилое
+    #   МОП = Общая - Жилая (Назначение=Жилье) → category_моп
+    #   Нежилое = Общая (Назначение=Нежилье) → category_нежилое_отдельное
+    #   category_нежилое_в_жилом всегда 0 (для совместимости).
     def categorize_rv(df):
         df = df.copy()
         df["category_жилое"] = 0.0
@@ -410,27 +411,20 @@ def load_monitoring_2_0() -> dict:
         df = df.copy()
         df["category_жилое"] = 0.0
         df["category_моп"] = 0.0
-        df["category_нежилое_в_жилом"] = 0.0
-        df["category_нежилое_отдельное"] = 0.0
+        df["category_нежилое_в_жилом"] = 0.0     # не используется — оставлено для совместимости
+        df["category_нежилое_отдельное"] = 0.0   # сюда теперь идёт ВСЁ нежилое
         if "Общая площадь" not in df.columns:
             return df
         df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
         df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
         naznachenie = df.get("Назначение", "")
-        podtip = df.get("Подтип объекта", "")
-        # Жилое + МОП
         is_zh = naznachenie == "Жилье"
         df.loc[is_zh, "category_жилое"] = df.loc[is_zh, "Жилая площадь"]
         df.loc[is_zh, "category_моп"] = (
             df.loc[is_zh, "Общая площадь"] - df.loc[is_zh, "Жилая площадь"]
         ).clip(lower=0)
-        # Нежилое в жилом (парковки/кладовые внутри ЖК)
-        in_complex_subtypes = {"МПТ", "Подземный паркинг", "Кладовые помещения"}
-        is_nzh_in_zh = (naznachenie == "Нежилье") & podtip.isin(in_complex_subtypes)
-        df.loc[is_nzh_in_zh, "category_нежилое_в_жилом"] = df.loc[is_nzh_in_zh, "Общая площадь"]
-        # Нежилое отдельное (соцобъекты, прочие, отдельные паркинги)
-        is_nzh_alone = (naznachenie == "Нежилье") & ~podtip.isin(in_complex_subtypes)
-        df.loc[is_nzh_alone, "category_нежилое_отдельное"] = df.loc[is_nzh_alone, "Общая площадь"]
+        is_nzh = naznachenie == "Нежилье"
+        df.loc[is_nzh, "category_нежилое_отдельное"] = df.loc[is_nzh, "Общая площадь"]
         return df
 
     rv = categorize_rv(rv)
@@ -468,41 +462,19 @@ ERZRF_PATHS = [
 def _normalize_developer_name(name: str) -> str:
     """Приводит имя застройщика к каноническому ключу для матчинга между источниками.
 
-    Примеры:
-      «ГК Самолет, г.Москва»     → «самолет»
-      «ПИК, г.Москва»            → «пик»
-      «ГК А101, г.Москва»        → «а101»
-      «А101»                     → «а101»
-      «ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО "ПИК-СЗ"» → «пик-сз»
+    Реализация вынесена в pipeline.dev_name_utils — общая для дашборда
+    и парсера nashdom_checker.py.
     """
-    if name is None or (isinstance(name, float) and pd.isna(name)):
-        return ""
-    s = str(name).strip()
-    # 1) Убираем регион после первой запятой:  "ПИК, г.Москва" → "ПИК"
-    if "," in s:
-        s = s.split(",", 1)[0].strip()
-    # 2) Приводим к lower-case и убираем спец.символы
-    s = s.lower()
-    s = s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
-    s = s.replace("\xa0", " ")
-    s = " ".join(s.split())
-    # 3) Снимаем юр.префиксы (повторяем — у некоторых их 2-3 слоя)
-    prefixes = [
-        "публичное акционерное общество ", "акционерное общество ",
-        "закрытое акционерное общество ", "общество с ограниченной ответственностью ",
-        "специализированный застройщик ", "спецзастройщик ", "спз ", "сз ",
-        "группа компаний ", "группа ", "холдинг ", "концерн ", "корпорация ",
-        "гк ", "ао ", "пао ", "ооо ", "зао ", "ик ", "иск ", "ук ", "пкф ", "тк ",
-    ]
-    changed = True
-    while changed:
-        changed = False
-        for p in prefixes:
-            if s.startswith(p):
-                s = s[len(p):].strip()
-                changed = True
-                break
-    return s
+    # Streamlit при запуске страницы из app/pages/ добавляет в sys.path
+    # только app/, поэтому корневой пакет pipeline не виден. Добиваем sys.path
+    # корнем проекта (C:\v6\), один раз за процесс.
+    import sys
+    from pathlib import Path as _Path
+    root = str(_Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from pipeline.dev_name_utils import normalize_developer_name
+    return normalize_developer_name(name)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -709,9 +681,34 @@ def load_rasprodannost() -> dict:
             "periods": [],
             "latest_period": None,
         }
-    latest = max(files, key=lambda p: p.stat().st_mtime)
-
-    xl = pd.ExcelFile(latest)
+    # Откат к более старому файлу если самый свежий битый: rasprod-чекер
+    # мог быть убит по watchdog'у посреди скачивания и оставить
+    # огрызок xlsx — pandas роняет всё приложение с BadZipFile.
+    import zipfile
+    files_sorted = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    latest = None
+    xl = None
+    for candidate in files_sorted:
+        try:
+            if candidate.stat().st_size < 1024:
+                raise zipfile.BadZipFile(f"too small: {candidate.stat().st_size}b")
+            xl = pd.ExcelFile(candidate)
+            latest = candidate
+            break
+        except (zipfile.BadZipFile, OSError, ValueError) as exc:
+            st.warning(
+                f"Пропускаю битый файл {candidate.name}: {exc}. "
+                f"Откатываюсь на предыдущий."
+            )
+    if xl is None or latest is None:
+        st.error("Все rasprodannost_*.xlsx битые — нечего показать.")
+        return {
+            "kpi": pd.DataFrame(),
+            **{s: pd.DataFrame() for s in RASPROD_TABLE_SHEETS},
+            "regions_available": [],
+            "periods": [],
+            "latest_period": None,
+        }
     out: dict = {"regions_available": [], "periods": [], "latest_period": None}
 
     # KPI
@@ -761,3 +758,320 @@ def load_rasprodannost() -> dict:
         out["periods"] = periods
         out["latest_period"] = periods[-1] if periods else None
     return out
+
+
+# ─────────────────────────────────────────────
+# Ввод недвижимости — статичные справочники (vvod.xlsx, Stroi_111) + ЕМИСС 34118
+# ─────────────────────────────────────────────
+
+VVOD_PATHS = [
+    Path(__file__).resolve().parent.parent / "data" / "raw" / "realty" / "vvod",
+    Path(__file__).resolve().parent.parent / "vvod",
+]
+
+
+def _vvod_dir() -> Path | None:
+    for base in VVOD_PATHS:
+        if base.exists():
+            return base
+    return None
+
+
+def _to_float(v) -> float:
+    """«2 185 178» / «6,8» / «<1» / NaN → float (NaN если не парсится)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return float("nan")
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).replace("\xa0", "").replace(" ", "").replace(",", ".").strip()
+    s = s.lstrip("<>").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return float("nan")
+
+
+def _extract_year(v) -> int | None:
+    """Достаёт год из ячейки-заголовка, в т.ч. со сноской («20221)» → 2022)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, (int, float)) and not pd.isna(v):
+        y = int(v)
+        return y if 2000 <= y <= 2030 else None
+    import re as _re
+    m = _re.search(r"(20\d{2})", str(v))
+    if m:
+        y = int(m.group(1))
+        return y if 2000 <= y <= 2030 else None
+    return None
+
+
+def _year_rows(df: pd.DataFrame, ycol: int, lo: int = 2011, hi: int = 2026,
+               start: int = 0, stop: int | None = None) -> list[int]:
+    """Индексы строк, где df[ycol] — целый год в [lo, hi]. Для split-блоков
+    в одном листе (нежилая: №1 и №3) ограничиваем диапазоном [start, stop)."""
+    out = []
+    stop = len(df) if stop is None else stop
+    for i in range(start, stop):
+        y = _to_float(df.iat[i, ycol])
+        if not pd.isna(y) and lo <= int(y) <= hi and float(int(y)) == y:
+            out.append(i)
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_vvod_static() -> dict:
+    """Статичные справочники ввода недвижимости (млн м²).
+
+    Возвращает tidy-DataFrame'ы:
+      'msk_total'      : year, жильё, нежильё            (vvod «ввод недвижимости»)
+      'rf_total'       : year, жильё, нежильё, общая     (Stroi_111)
+      'msk_residential': year, МКД, ИЖС                  (vvod «жилая»)
+      'msk_nonres'     : year, нежильё, нежилые_в_жилье, общая (vvod «нежилая» №1)
+      'msk_nonres_branches': year, офисы, соц, пром, гостиницы (vvod «нежилая» №3)
+    """
+    empty = {k: pd.DataFrame() for k in
+             ("msk_total", "rf_total", "msk_residential",
+              "msk_nonres", "msk_nonres_branches")}
+    base = _vvod_dir()
+    if base is None:
+        return empty
+    vvod_path = base / "vvod.xlsx"
+    stroi_path = base / "Stroi_111_2025.xls"
+    out = dict(empty)
+
+    if vvod_path.exists():
+        xl = pd.ExcelFile(vvod_path)
+        # имена листов могут быть обрезаны Excel'ем до 31 символа — матчим по префиксу
+        def _sheet(prefix: str) -> str | None:
+            return next((s for s in xl.sheet_names if s.startswith(prefix)), None)
+
+        s_total = _sheet("ввод недвижимости")
+        if s_total:
+            df = pd.read_excel(vvod_path, sheet_name=s_total, header=None)
+            rows = _year_rows(df, 0)
+            out["msk_total"] = pd.DataFrame({
+                "year": [int(_to_float(df.iat[i, 0])) for i in rows],
+                "жильё": [_to_float(df.iat[i, 1]) for i in rows],
+                "нежильё": [_to_float(df.iat[i, 2]) for i in rows],
+            })
+
+        s_res = _sheet("жилая недвижимость")
+        if s_res:
+            df = pd.read_excel(vvod_path, sheet_name=s_res, header=None)
+            rows = _year_rows(df, 0)
+            out["msk_residential"] = pd.DataFrame({
+                "year": [int(_to_float(df.iat[i, 0])) for i in rows],
+                "МКД": [_to_float(df.iat[i, 1]) for i in rows],
+                "ИЖС": [_to_float(df.iat[i, 2]) for i in rows],
+            })
+
+        s_non = _sheet("нежилая недвижимость")
+        if s_non:
+            df = pd.read_excel(vvod_path, sheet_name=s_non, header=None)
+            # лист содержит 2 блока: №1 (нежильё/нежилые-в-жилье/общая) и
+            # №3 (офисы/соц/пром/гостиницы), разделённые строкой-маркером «№3».
+            n3 = None
+            for i in range(len(df)):
+                if str(df.iat[i, 0]).strip() == "№3":
+                    n3 = i
+                    break
+            stop1 = n3 if n3 is not None else len(df)
+            rows1 = _year_rows(df, 0, start=0, stop=stop1)
+            out["msk_nonres"] = pd.DataFrame({
+                "year": [int(_to_float(df.iat[i, 0])) for i in rows1],
+                "нежильё": [_to_float(df.iat[i, 1]) for i in rows1],
+                "нежилые_в_жилье": [_to_float(df.iat[i, 2]) for i in rows1],
+                "общая": [_to_float(df.iat[i, 3]) for i in rows1],
+            })
+            if n3 is not None:
+                rows3 = _year_rows(df, 0, start=n3, stop=len(df))
+                out["msk_nonres_branches"] = pd.DataFrame({
+                    "year": [int(_to_float(df.iat[i, 0])) for i in rows3],
+                    "офисы": [_to_float(df.iat[i, 1]) for i in rows3],
+                    "соц": [_to_float(df.iat[i, 2]) for i in rows3],
+                    "пром": [_to_float(df.iat[i, 3]) for i in rows3],
+                    "гостиницы": [_to_float(df.iat[i, 4]) for i in rows3],
+                })
+
+    if stroi_path.exists():
+        df = pd.read_excel(stroi_path, sheet_name=0, header=None)
+        # ищем строку-заголовок с годами (в т.ч. со сносками «20221)»)
+        yrow = None
+        for i in range(min(6, len(df))):
+            yrs = sum(1 for j in range(1, df.shape[1])
+                      if _extract_year(df.iat[i, j]) is not None)
+            if yrs >= 10:
+                yrow = i
+                break
+        if yrow is not None:
+            year_cols = {}
+            for j in range(1, df.shape[1]):
+                y = _extract_year(df.iat[yrow, j])
+                if y is not None:
+                    year_cols[y] = j
+
+            def _row_by_label(needle: str) -> int | None:
+                for i in range(len(df)):
+                    if needle in str(df.iat[i, 0]).lower():
+                        return i
+                return None
+
+            r_total = _row_by_label("общая площадь зданий")
+            # «жилого назначения» / «нежилого назначения» встречаются дважды
+            # (количество зданий и площадь) — берём те, что НИЖЕ строки «Общая площадь»
+            r_zh = r_nzh = None
+            for i in range(len(df)):
+                lab = str(df.iat[i, 0]).lower()
+                if r_total is not None and i > r_total:
+                    if r_zh is None and "жилого назначения" in lab and "нежилого" not in lab:
+                        r_zh = i
+                    elif r_nzh is None and "нежилого назначения" in lab:
+                        r_nzh = i
+            yrs = sorted(y for y in year_cols if 2011 <= y <= 2025)
+            out["rf_total"] = pd.DataFrame({
+                "year": yrs,
+                "жильё": [_to_float(df.iat[r_zh, year_cols[y]]) if r_zh else float("nan") for y in yrs],
+                "нежильё": [_to_float(df.iat[r_nzh, year_cols[y]]) if r_nzh else float("nan") for y in yrs],
+                "общая": [_to_float(df.iat[r_total, year_cols[y]]) if r_total else float("nan") for y in yrs],
+            })
+
+    return out
+
+
+def _parse_emiss_34118_file(path: Path) -> dict:
+    """Парсит один ЕМИСС-34118 .xls → {year: {'МКД': млн м², 'ИЖС': млн м²}} для РФ.
+
+    Объединяет 2 РФ-строки («Российская Федерация» 2015-2022 +
+    «… без учета новых субъектов» 2023-2025): для каждого года берём ту,
+    где есть значение. МКД = «многоквартирные», если нет — «Жилые здания».
+    ИЖС = «построенные населением». Значения тыс. м² → млн (÷1000).
+    """
+    try:
+        df = pd.read_excel(path, sheet_name="Данные", header=None)
+    except Exception:  # noqa: BLE001
+        return {}
+    # строка с годами
+    yrow = None
+    for i in range(min(6, len(df))):
+        yrs = sum(1 for j in range(df.shape[1])
+                  if _extract_year(df.iat[i, j]) is not None)
+        if yrs >= 2:
+            yrow = i
+            break
+    if yrow is None:
+        return {}
+    year_cols = {}
+    for j in range(df.shape[1]):
+        y = _extract_year(df.iat[yrow, j])
+        if y is not None:
+            year_cols[y] = j
+
+    # собираем по (категория) → {year: value} для РФ-строк (обе вариации)
+    cat = {"многокв": {}, "здания": {}, "ижс": {}}
+    for i in range(yrow + 1, len(df)):
+        region = str(df.iat[i, 0]).lower()
+        if "российская федерация" not in region:
+            continue
+        label = str(df.iat[i, 1]).lower()
+        if "многоквартирн" in label:
+            key = "многокв"
+        elif "построенные населением" in label or "построенных населением" in label:
+            key = "ижс"
+        elif "жилые здания" in label:
+            key = "здания"
+        else:
+            continue
+        for y, j in year_cols.items():
+            val = _to_float(df.iat[i, j])
+            if not pd.isna(val):
+                # перекрываем только если ещё нет (первая РФ-строка приоритетна,
+                # но варианты не пересекаются по годам, так что неважно)
+                cat[key].setdefault(y, val)
+
+    out: dict[int, dict] = {}
+    for y in sorted(year_cols):
+        mkd = cat["многокв"].get(y)
+        if mkd is None:
+            mkd = cat["здания"].get(y)
+        izhs = cat["ижс"].get(y)
+        if mkd is None and izhs is None:
+            continue
+        out[y] = {
+            "МКД": (mkd / 1000.0) if mkd is not None else float("nan"),
+            "ИЖС": (izhs / 1000.0) if izhs is not None else float("nan"),
+        }
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_emiss_34118() -> pd.DataFrame:
+    """РФ-ввод жилья из ЕМИСС 34118: DataFrame[year, МКД, ИЖС] в млн м².
+
+    Берёт статичную базу (emiss_34118_base.xls) + свежий живой экспорт из
+    downloads/ (если есть); живые годы перекрывают базу.
+    """
+    merged: dict[int, dict] = {}
+    base = _vvod_dir()
+    if base is not None:
+        bp = base / "emiss_34118_base.xls"
+        if bp.exists():
+            merged.update(_parse_emiss_34118_file(bp))
+
+    downloads = Path(__file__).resolve().parent.parent / "downloads"
+    if downloads.exists():
+        live = sorted(
+            list(downloads.glob("*Введено в действие общей площади жилых домов*.xls*")),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if live:
+            for y, v in _parse_emiss_34118_file(live[-1]).items():
+                merged[y] = v  # живые перекрывают базу
+
+    if not merged:
+        return pd.DataFrame(columns=["year", "МКД", "ИЖС"])
+    rows = sorted(merged)
+    return pd.DataFrame({
+        "year": rows,
+        "МКД": [merged[y].get("МКД", float("nan")) for y in rows],
+        "ИЖС": [merged[y].get("ИЖС", float("nan")) for y in rows],
+    })
+
+
+def monitoring_by_year(
+    rv: pd.DataFrame,
+    *,
+    gruppirovka: str | None = None,
+    istochnik: list[str] | None = None,
+    gk: str | None = None,
+    year_from: int = 2011,
+    year_to: int = 2026,
+) -> pd.DataFrame:
+    """Σ «Общая площадь» (млн м²) Реестра РВ по «Год ввода по Мосстату».
+
+    Фильтры: gruppirovka (Жилье/Нежилье), istochnik (список «Источник
+    финансирования»), gk (точное «Группа компаний»). Возвращает
+    DataFrame[year, value] за [year_from, year_to].
+    """
+    if rv is None or rv.empty:
+        return pd.DataFrame(columns=["year", "value"])
+    df = rv
+    if gruppirovka is not None and "Группировка" in df.columns:
+        df = df[df["Группировка"] == gruppirovka]
+    if istochnik is not None and "Источник финансирования" in df.columns:
+        df = df[df["Источник финансирования"].isin(istochnik)]
+    if gk is not None and "Группа компаний" in df.columns:
+        df = df[df["Группа компаний"].astype(str).str.strip() == gk]
+    if df.empty or "Год ввода по Мосстату" not in df.columns:
+        return pd.DataFrame(columns=["year", "value"])
+    y = pd.to_numeric(df["Год ввода по Мосстату"], errors="coerce")
+    area = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0.0)
+    g = (
+        pd.DataFrame({"year": y, "area": area})
+        .dropna(subset=["year"])
+        .assign(year=lambda d: d["year"].astype(int))
+        .query("@year_from <= year <= @year_to")
+        .groupby("year", as_index=False)["area"].sum()
+    )
+    g["value"] = g["area"] / 1e6  # м² → млн м²
+    return g[["year", "value"]]

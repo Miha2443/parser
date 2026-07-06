@@ -12,7 +12,10 @@ xlrd>=2.0       # чтение старых xls (fedstat выгружает в x
 kaleido==0.2.1
 
 # Для скриптов-загрузчиков fedstat / nashdom / erzrf (на машине, где они запускаются):
-selenium>=4.20          # fedstat_checker + nashdom_checker + erzrf_checker
+# selenium == 4.43.0 (НЕ обновлять до 4.45!): в 4.45 + Chrome 149 fedstat
+# падает с `Cannot read properties of null (reading 'appendChild')` на
+# первом же индикаторе. 4.43 стабильно работает в headless=old.
+selenium==4.43.0        # fedstat_checker + nashdom_checker + erzrf_checker
 requests>=2.32          # rosstat_checker + опционально fedstat
 beautifulsoup4>=4.12    # парсинг html-страниц Росстата/Мосстата
 lxml>=5                 # быстрый парсер HTML для BS4 (опционально, но рекомендуется)

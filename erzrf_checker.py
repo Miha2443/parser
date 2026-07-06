@@ -30,6 +30,7 @@ State в `state/erzrf_state.json`. Запуск:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -109,7 +110,7 @@ CARDS_DIR = DOWNLOAD_DIR / "cards"
 STATE_FILE = Path("state/erzrf_state.json")
 CONFIG_FILE = Path("config/erzrf.json")
 PAGE_TIMEOUT = 60
-HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
+HEADLESS = os.environ.get("HEADLESS", "1") != "0"  # default headless
 
 SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 

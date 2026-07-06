@@ -1,0 +1,1012 @@
+
+============================================================
+Прогон realty | старт 26.06.2026 13:53:53
+Источники: monitoring, rasprod, kvart, erz-top, erz-cards, fedstat, rosstat
+KVART_PER_DEV=0
+Лог-файл: C:\v7\logs\update_20260626_135353.log
+============================================================
+
+════════════════════════════════════════════════════════════
+══ Волна 1/4: monitoring, kvart, erz-top, rosstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ monitoring (watchdog: 5мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ kvart (watchdog: 180мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ rosstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+▶ erz-top (watchdog: 15мин)
+────────────────────────────────────────────────────────────
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Запуск: 2026-06-26 13:53:54
+[   erz-top] Источники: top
+[   erz-top] ============================================================
+[   erz-top] 
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] rosstat_checker: 2026-06-26 13:53:54
+[   rosstat] ============================================================
+[   rosstat] 
+[   rosstat] 📄 Страница: https://77.rosstat.gov.ru/folder/134924
+[   rosstat]   🌐 GET https://77.rosstat.gov.ru/folder/134924
+[   rosstat]      найдено xlsx-ссылок: 7
+[   rosstat]   🔎 vrp_msk: ищу ['ВРП с 1998']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat]   🔎 vds_msk_s2016: ищу ['ВДС годы ОКВЭД2 (с 2016']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat] 
+[   rosstat] 📄 Страница: https://www.rosstat.gov.ru/statistics/accounts
+[   rosstat]   🌐 GET https://www.rosstat.gov.ru/statistics/accounts
+[monitoring] 
+[monitoring] ============================================================
+[     kvart] 
+[monitoring] наш.дом.рф / GSheets | Запуск: 2026-06-26 13:53:55
+[monitoring] Источники: monitoring_2_0
+[monitoring] ============================================================
+[monitoring] 
+[monitoring]   🌐 monitoring_2_0 (Google Sheets export):
+[     kvart] ============================================================
+[     kvart] наш.дом.рф / GSheets | Запуск: 2026-06-26 13:53:55
+[     kvart] Источники: kvartirografia
+[monitoring]      https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx
+[     kvart] ============================================================
+[     kvart] 
+[     kvart]   🌐 kvartirografia: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D0%BA%D0%B2%D0%B0%D1%80%D1%82%D0%B8%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D1%84%D0%B8%D1%8F
+[   erz-top]   🔐 Логин как Tsa***
+[   rosstat]      найдено xlsx-ссылок: 52
+[   rosstat]   🔎 vvp_god: ищу ['VVP_god_s1995', 'ВВП годы (с 1995']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vvp_na_dushu: ищу ['VVP_na_dushu', 'ВВП на душу населения']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vds_rf_s2011: ищу ['VDS_god_OKVED2_s2011', 'ВДС годы ОКВЭД2 (с 2011']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vrp_okved2007: ищу ['VRP_OKVED2007', 'VRP_god_OKVED2007', 'ВРП ОКВЭД 2007']
+[   rosstat]      ✔️  без изменений (09.03.2022)
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] Итог: скачано — 0
+[   rosstat] ============================================================
+[   rosstat] 
+✅ rosstat: успех (за 0.0 мин)
+[   erz-top]   ✅ Авторизация прошла
+[   erz-top]   🌐 регион: rf (РФ)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0
+[monitoring]   ✅ monitoring_2_0_20260626.xlsx (4,921 KB)
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] Итог: новых/обновлённых файлов — 1
+[monitoring]   • data\raw\realty\nashdom\monitoring_2_0_20260626.xlsx
+[monitoring] ============================================================
+[monitoring] 
+✅ monitoring: успех (за 0.2 мин)
+[     kvart]      ── регион: rf (Российская Федерация)
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=52972px (≈2788 строк)
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_stroitelstva_rf_20260626.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=1&regionKey=0
+[     kvart]          · шаг 20, pos=11400/52972, собрано 392/2788
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]          · шаг 40, pos=23400/52972, собрано 783/2788
+[   erz-top]        ✅ top_obyem_vvoda_rf_20260626.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[     kvart]          · шаг 60, pos=35400/52972, собрано 1160/2788
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2022_20260626.xlsx
+[     kvart]          · шаг 80, pos=47400/52972, собрано 1527/2788
+[     kvart]        финал: 1685 строк за 90 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]        финал: 65 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=1685, regs=65
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 0}
+[   erz-top]        ✅ top_obyem_vvoda_rf_2023_20260626.xlsx
+[     kvart]        ── mapping: 1685 сайтовых, 100 matched, 9 conflicts, 1585 unmatched
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 0}
+[     kvart]        ── per-dev обход: 200/1685 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2024_20260626.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2025_20260626.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2026_20260626.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=2&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_rf_20260626.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=3&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_rf_20260626.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=4&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_skorost_rf_20260626.xlsx
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=1
+[   erz-top]        + 20 новых (всего 20)
+[   erz-top]      · страница 2/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=2
+[     kvart]           · 10/200: ok=10, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 10}
+[   erz-top]        + 20 новых (всего 40)
+[   erz-top]      · страница 3/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=3
+[   erz-top]        + 20 новых (всего 60)
+[   erz-top]      · страница 4/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=4
+[   erz-top]        + 20 новых (всего 80)
+[   erz-top]      · страница 5/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=5
+[   erz-top]        + 20 новых (всего 100)
+[   erz-top]      ✅ top_developers_rf_20260626.json (100 застройщиков)
+[   erz-top]   🌐 регион: msk (г.Москва)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_stroitelstva_msk_20260626.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=1&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_20260626.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2022_20260626.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2023_20260626.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2024_20260626.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2025_20260626.xlsx
+[     kvart]           · 20/200: ok=20, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 20}
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2026_20260626.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=2&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_msk_20260626.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=3&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_msk_20260626.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=4&regionKey=143443001&region=moskva
+[     kvart]           · 30/200: ok=30, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 30}
+[   erz-top]        ⚠️  контент не появился
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=1
+[     kvart]           🚫 39/200 «ПСК»: парсер дал 89 шт, ожидалось ~4900 (ratio=0.02) — пропускаю
+[     kvart]           · 40/200: ok=39, miss=0, rejected=1
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 39}
+[   erz-top]        ⚠️  страница 1 не загрузилась
+[   erz-top]      ⚠️  не удалось собрать ТОП-100
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Итог: новых/обновлённых файлов — 20
+[   erz-top] ============================================================
+[   erz-top] 
+✅ erz-top: успех (за 5.9 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (7 шт)
+────────────────────────────────────────────────────────────
+  Все 7 файлов уникальны (дублей нет)
+[     kvart]           🚫 47/200 «СТРОЙГРАД»: парсер дал 240 шт, ожидалось ~4900 (ratio=0.05) — пропускаю
+[     kvart]           · 50/200: ok=48, miss=0, rejected=2
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 48}
+[     kvart]           · 60/200: ok=58, miss=0, rejected=2
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 58}
+[     kvart]           🚫 63/200 «Союз»: парсер дал 917 шт, ожидалось ~3200 (ratio=0.29) — пропускаю
+[     kvart]           · 70/200: ok=67, miss=0, rejected=3
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 67}
+[     kvart]           · 90/200: ok=86, miss=1, rejected=3
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 86}
+[     kvart]           · 100/200: ok=96, miss=1, rejected=3
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 96}
+[     kvart]           · 110/200: ok=106, miss=1, rejected=3
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 106}
+[     kvart]           · 120/200: ok=115, miss=1, rejected=4
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 115}
+[     kvart]           · 130/200: ok=125, miss=1, rejected=4
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 125}
+[     kvart]           · 140/200: ok=134, miss=1, rejected=5
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 134}
+[     kvart]           · 150/200: ok=143, miss=1, rejected=6
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 143}
+[     kvart]           · 160/200: ok=153, miss=1, rejected=6
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 153}
+[     kvart]           · 180/200: ok=170, miss=1, rejected=9
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 170}
+[     kvart]           · 190/200: ok=179, miss=1, rejected=10
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 179}
+[     kvart]           · 200/200: ok=188, miss=1, rejected=11
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 188}
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1685, 'regions': 65, 'per_dev': 188}
+[     kvart]        ✅ per-dev: 188 собрано, 1 ошибок селектора, 11 отвергнуто (не совпадает с агрегатом)
+[     kvart]      ── регион: msk (Город Москва)
+[     kvart]        · baseline «Все квартиры»: 2 448 420
+[     kvart]        · текущий регион: «Российская Федерация»
+[     kvart]        · клик на trigger
+[     kvart]        · ввёл в поиск: 'Москва' (ok=True)
+[     kvart]        · клик на «Город Москва» (ok=True)
+[     kvart]        ✅ данные сменились: 2 448 420 → 291 214
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=2204px (≈116 строк)
+[     kvart]        финал: 81 строк за 5 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[     kvart]        финал: 64 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=81, regs=64
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 188}
+[     kvart]        ── mapping: 81 сайтовых, 39 matched, 2 conflicts, 42 unmatched
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 188}
+[     kvart]        ── per-dev обход: 81/81 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[     kvart]           · 10/81: ok=10, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 198}
+[     kvart]           · 20/81: ok=20, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 208}
+[     kvart]           🚫 29/81 «Vesper»: парсер дал 743 шт, ожидалось ~1000 (ratio=0.74) — пропускаю
+[     kvart]           · 30/81: ok=29, miss=0, rejected=1
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 217}
+[     kvart]           · 40/81: ok=39, miss=0, rejected=1
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 227}
+[     kvart]           🚫 41/81 «СЗ ПАРК РАЗВЛЕЧЕНИЙ»: парсер дал 790 шт, ожидалось ~1000 (ratio=0.79) — пропускаю
+[     kvart]           🚫 43/81 «СЗ БИЗНЕС КОНТАКТ»: парсер дал 856 шт, ожидалось ~1000 (ratio=0.86) — пропускаю
+[     kvart]           ♻️  5 подряд switch_fail — пересоздаю Chrome и продолжаю с 56/81
+[     kvart]           ⚠️  reset не удался (Message:
+[     kvart] ), останавливаю per-dev
+[     kvart]      💾 kvartirografia_20260626.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1766, 'regions': 129, 'per_dev': 228}
+[     kvart]        ✅ per-dev: 40 собрано, 5 ошибок селектора, 10 отвергнуто (не совпадает с агрегатом)
+[     kvart] 
+[     kvart] ============================================================
+[     kvart] Итог: новых/обновлённых файлов — 2
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260626.json
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260626.xlsx
+[     kvart] ============================================================
+[     kvart] 
+✅ kvart: успех (за 30.3 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (9 шт)
+────────────────────────────────────────────────────────────
+  Все 9 файлов уникальны (дублей нет)
+
+════════════════════════════════════════════════════════════
+══ Волна 2/4: erz-cards (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ erz-cards (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[ erz-cards] 
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Запуск: 2026-06-26 14:24:10
+[ erz-cards] Источники: cards
+[ erz-cards] ============================================================
+[ erz-cards] 
+[ erz-cards]   🔐 Логин как Tsa***
+[ erz-cards]   ✅ Авторизация прошла
+[ erz-cards]      · 1 | 0 | ГК Самолет,   ГК Самолет  →  brand/gruppa-kompanij-samolet-2366201001
+[ erz-cards]      · 2 | 0 | ПИК, г.Москв  ПИК  →  brand/pik-429726001
+[ erz-cards]      · 3 | 0 | DOGMA, Красн  DOGMA  →  brand/dogma-5699998001
+[ erz-cards]      · 4 | 0 | ГК ТОЧНО, Кр  ГК ТОЧНО  →  brand/gruppa-kompanij-tochno-2894925001
+[ erz-cards]      · 5 | 0 | ГК ФСК, г.Мо  ГК ФСК  →  brand/gruppa-kompanij-fsk-755344001
+[ erz-cards]      · 6 | +1 | ГК ССК, Кра  ГК ССК  →  brand/gruppa-kompanij-ssk-5360409001
+[ erz-cards]      · 7 | -1 | Брусника, С  Брусника  →  brand/brusnika-733498001
+[ erz-cards]      · 8 | 0 | ГК ЮгСтройИн  ГК ЮгСтройИнвест  →  brand/gruppa-kompanij-jugstrojinvest-1705946001
+[ erz-cards]      · 9 | 0 | Холдинг Setl  Холдинг Setl Group  →  brand/kholding-setl-group-363697001
+[ erz-cards]      · 10 | 0 | ГК Страна Д  ГК Страна Девелопмент  →  brand/gruppa-kompanij-strana-development-5339663001
+[ erz-cards]      · 11 | +1 | Группа Эта  Группа Эталон  →  brand/gruppa-etalon-1331499001
+[ erz-cards]      · 12 | -1 | Группа ЛСР  Группа ЛСР  →  brand/gruppa-lsr-429468001
+[ erz-cards]      · 13 | 0 | MR Group, г  MR Group  →  brand/mr-group-430836001
+[ erz-cards]      · 14 | 0 | ГК Развитие  ГК Развитие  →  brand/gruppa-kompanij-razvitie-461175001
+[ erz-cards]      · 15 | 0 | Талан, Удму  Талан  →  brand/talan-2493968001
+[ erz-cards]      · 16 | +1 | ГК Гранель  ГК Гранель  →  brand/gruppa-kompanij-granel-955386001
+[ erz-cards]      · 17 | +1 | ГК Расцвет  ГК Расцветай  →  brand/gruppa-kompanij-rascvetaj-5799295001
+[ erz-cards]      · 18 | +1 | ДОНСТРОЙ,   ДОНСТРОЙ  →  brand/donstroj-430278001
+[ erz-cards]      · 19 | -3 | Группа Акв  Группа Аквилон  →  brand/gruppa-akvilon-391375001
+[ erz-cards]      · 20 | 0 | ГК GloraX,   ГК GloraX  →  brand/gruppa-kompanij-glorax-1931581001
+[ erz-cards]      · 21 | 0 | Level Group  Level Group  →  brand/level-group-6150430001
+[ erz-cards]      · 22 | 0 | ГК ЭНКО, Тю  ГК ЭНКО  →  brand/gruppa-kompanij-enko-402466001
+[ erz-cards]      · 23 | 0 | Унистрой, Р  Унистрой  →  brand/unistroj-1130405001
+[ erz-cards]      · 24 | 0 | ГК А101, г.  ГК А101  →  brand/gruppa-kompanij-a101-1075233001
+[ erz-cards]      · 25 | 0 | РАЗУМ, Астр  РАЗУМ  →  brand/razum-4296089001
+[ erz-cards]      · 26 | 0 | ГК АБСОЛЮТ,  ГК АБСОЛЮТ  →  brand/gruppa-kompanij-absoljut-934095001
+[ erz-cards]      · 27 | 0 | СЗ Градстро  СЗ Градстройпроект  →  brand/specializirovannyj-zastrojshchik-gradstrojproekt-21975
+[ erz-cards]      · 28 | +2 | ГК Единств  ГК Единство  →  brand/gruppa-kompanij-edinstvo-156056001
+[ erz-cards]      · 29 | 0 | ГК КОРТРОС,  ГК КОРТРОС  →  brand/gruppa-kompanij-kortros-429541001
+[ erz-cards]      · 30 | +1 | LEGENDA In  LEGENDA Intelligent Development  →  brand/legenda-intelligent-development-1824654001
+[ erz-cards]      · 31 | +2 | Железно, К  Железно  →  brand/zhelezno-5896105001
+[ erz-cards]      · 32 | 0 | ГК АльфаСтр  ГК АльфаСтройИнвест  →  brand/gruppa-kompanij-alfastrojinvest-5380617001
+[ erz-cards]        ⚠️  пусто — не удалось распарсить
+[ erz-cards]      · 33 | +5 | КОМОССТРОЙ  КОМОССТРОЙ®  →  brand/komosstroj-851697001
+[ erz-cards]        ⚠️  пусто — не удалось распарсить
+[ erz-cards]      · 34 | +1 | ГК Новый Д  ГК Новый ДОН  →  brand/gruppa-kompanij-novyj-don-1164353001
+[ erz-cards]      · 35 | +1 | ГК ОСНОВА,  ГК ОСНОВА  →  brand/gruppa-kompanij-osnova-6201034001
+[ erz-cards]      · 36 | +1 | ГК ОСТ, Ту  ГК ОСТ  →  brand/gruppa-kompanij-ost-10977487001
+[ erz-cards]      · 37 | +5 | ГК Первый   ГК Первый Трест  →  brand/gruppa-kompanij-pervyj-trest-4053794001
+[ erz-cards]      · 38 | +1 | СК Семья,   СК Семья  →  brand/stroitelnaja-kompanija-semja-5696040001
+[ erz-cards]      · 39 | -5 | ИнтерСтрой  ИнтерСтрой  →  brand/interstroj-2987923001
+[ erz-cards]      · 40 | -12 | Seven Sun  Seven Suns Development  →  brand/seven-suns-development-2488380001
+[ erz-cards]      · 41 | -1 | СЗ КАП, Кр  СЗ КАП  →  brand/specializirovannyj-zastrojshhik-kubanaljansproekt-2819
+[ erz-cards]      · 42 | -1 | СК 10, Рос  СК 10  →  brand/stroitelnaja-kompanija-sk-10-5827081001
+[ erz-cards]      · 43 | 0 | Лидер Групп  Лидер Групп  →  brand/lider-grupp-430857001
+[ erz-cards]      · 44 | +1 | ГК Капитал  ГК Капитал  →  brand/gruppa-kompanij-kapital-261190001
+[ erz-cards]      · 45 | +1 | СЗ Стройдо  СЗ СтройдомКраснодар  →  brand/specializirovannyj-zastrojshhik-strojdomkrasnodar-2775
+[ erz-cards]      · 46 | +1 | ДСК, Ворон  ДСК  →  brand/domostroitelnyj-kombinat-561250001
+[ erz-cards]      · 47 | -3 | ПЗСП, Перм  ПЗСП  →  brand/pzsp-2991496001
+[ erz-cards]      · 48 | +1 | ГК Паритет  ГК Паритет Девелопмент  →  brand/gruppa-kompanij-paritet-development-16664888001
+[ erz-cards]      · 49 | +1 | ГК КВС, г.  ГК КВС  →  brand/gruppa-kompanij-kvs-1288457001
+[ erz-cards]      · 50 | +8 | ГК Террито  ГК Территория жизни  →  brand/gruppa-kompanij-territorija-zhizni-7333890001
+[ erz-cards]      · 51 | +13 | TEN Девел  TEN Девелопмент  →  brand/ten-development-931046001
+[ erz-cards]      · 52 | +4 | Sminex, г.  Sminex  →  brand/sminex-4354668001
+[ erz-cards]      · 53 | 0 | Фонд ренова  Фонд реновации  →  brand/moskovskij-fond-renovacii-zhiloj-zastrojki-14543898001
+[ erz-cards]      · 54 | 0 | СЗ Стройпар  СЗ Стройпарк  →  brand/specializirovannyj-zastrojshhik-strojpark-28787766001
+[ erz-cards]      · 55 | 0 | ПРОФИ-ИНВЕС  ПРОФИ-ИНВЕСТ  →  brand/profi-invest-3732427001
+[ erz-cards]      · 56 | -8 | ГК ИНСИТИ   ГК ИНСИТИ девелопмент  →  brand/gruppa-kompanij-insiti-5696575001
+[ erz-cards]      · 57 | +2 | Суварстрои  Суварстроит  →  brand/suvarstroit-5372083001
+[ erz-cards]      · 58 | +19 | ГК Атомст  ГК Атомстройкомплекс  →  brand/atomstrojkompleks-691686001
+[ erz-cards]      · 59 | +1 | Юникей, г.  Юникей  →  brand/unikey-22031811001
+[ erz-cards]      · 60 | +1 | Атлас Деве  Атлас Девелопмент  →  brand/atlas-development-7814301001
+[ erz-cards]      · 61 | +1 | ГК СМК, Ар  ГК СМК  →  brand/gruppa-kompanij-smk-1567563001
+[ erz-cards]      · 62 | +1 | ГК Главстр  ГК Главстрой  →  brand/gruppa-kompanij-glavstroj-1961151001
+[ erz-cards]      · 63 | +15 | Трест Маг  Трест Магнитострой  →  brand/trest-magnitostroj-922602001
+[ erz-cards]      · 64 | +1 | ГК ПСК, г.  ГК ПСК  →  brand/gruppa-kompanij-psk-2153371001
+[ erz-cards]      · 65 | -14 | Ак Барс Д  Ак Барс Дом  →  brand/ak-bars-dom-2923318001
+[ erz-cards]      · 66 | -14 | СИК Девел  СИК Девелопмент-Юг  →  brand/stroitelno-investicionnaja-korporacija-development-jug
+[ erz-cards]      · 67 | -1 | ГК ПАО АПР  ГК ПАО АПРИ  →  brand/gruppa-kompanij-pao-apri-5392618001
+[ erz-cards]      · 68 | -11 | СЕВЕРНАЯ   СЕВЕРНАЯ КОМПАНИЯ  →  brand/severnaja-kompanija-4856325001
+[ erz-cards]      · 69 | -2 | ГК НОСТА,   ГК НОСТА  →  brand/gruppa-kompanij-nosta-22810761001
+[ erz-cards]      · 70 | -2 | ГК ИКАР, Ч  ГК ИКАР  →  brand/gruppa-kompanij-ikar-7080922001
+[ erz-cards]      · 71 | 0 | ДК Прогресс  ДК Прогресс  →  brand/developerskaja-kompanija-progress-5599108001
+[ erz-cards]      · 72 | 0 | ГК Географи  ГК География  →  brand/gruppa-kompanij-geografiya-22466965001
+[ erz-cards]      · 73 | 0 | СПК Зелёный  СПК Зелёный сад  →  brand/stroitelno-promyshlennaja-kompanija-zelenyj-sad-559542
+[ erz-cards]      · 74 | 0 | ГК Эскадра,  ГК Эскадра  →  brand/gruppa-kompanij-eskadra-451521001
+[ erz-cards]      · 75 | 0 | ИСК г. Уфы,  ИСК г. Уфы  →  brand/investicionno-stroitelnyj-komitet-gorodskogo-okruga-go
+[ erz-cards]      · 76 | +17 | ГК Екатер  ГК ЕкатеринодарИнвест-Строй  →  brand/gruppa-kompanij-ekaterinodarinvest-stroj-10146399001
+[ erz-cards]      · 77 | -1 | ГК ТРЕСТ,   ГК ТРЕСТ  →  brand/gruppa-kompanij-trest-1738274001
+[ erz-cards]      · 78 | +7 | ГК СТРОЙГР  ГК СТРОЙГРАД  →  brand/gruppa-kompanij-strojgrad-4752097001
+[ erz-cards]      · 79 | -10 | DARS Deve  DARS Development  →  brand/dars-development-7537722001
+[ erz-cards]      · 80 | 0 | Группа RBI,  Группа RBI  →  brand/gruppa-rbi-1813315001
+[ erz-cards]      · 81 | 0 | ГК ДОМ, Рес  ГК ДОМ  →  brand/gruppa-kompanij-dom-22417441001
+[ erz-cards]      · 82 | -3 | СХ ТЕРМОДО  СХ ТЕРМОДОМ  →  brand/stroitelnyj-kholding-termodom-4784610001
+[ erz-cards]      · 83 | 0 | ГК Метрикс   ГК Метрикс Develoрment  →  brand/gruppa-kompanij-metriks-develorment-9337739001
+[ erz-cards]      · 84 | -14 | ИСГ МАВИС  ИСГ МАВИС  →  brand/investicionno-stroitelnaja-gruppa-mavis-2110139001
+[ erz-cards]      · 85 | +195 | ГК СКАЙГ  ГК СКАЙГРУПП ДЕВЕЛОПМЕНТ  →  brand/gruppa-kompanij-SKAJGRUPP-DEVELOPMENT-21696327001
+[ erz-cards]      · 86 | -2 | ГК КамаСтр  ГК КамаСтройИнвест  →  brand/gruppa-kompanij-kamastrojinvest-2436482001
+[ erz-cards]      · 87 | -5 | ГК Prime D  ГК Prime Development  →  brand/gruppa-kompanij-prime-development-24447747001
+[ erz-cards]      · 88 | -2 | ГСК Арбан,  ГСК Арбан  →  brand/gruppa-stroitelnykh-kompanij-arban-2224464001
+[ erz-cards]      · 89 | +3 | СГ Рисан,   СГ Рисан  →  brand/stroitelnaja-gruppa-risan-451437001
+[ erz-cards]      · 90 | -1 | Неометрия,  Неометрия  →  brand/neometrija-1734816001
+[ erz-cards]      · 91 | -1 | ГК СДК, Ре  ГК СДК  →  brand/gruppa-kompanij-simferopolskaya-developerskaya-kompani
+[ erz-cards]      · 92 | +21 | ИСГ Марма  ИСГ Мармакс  →  brand/investicionno-stroitelnaja-gruppa-marmaks-559678001
+[ erz-cards]      · 93 | -2 | Мангазея,   Мангазея  →  brand/mangazeja-3126628001
+[ erz-cards]      · 94 | 0 | МСК, Ростов  МСК  →  brand/moskovskaja-stroitelnaja-kompanija-3772776001
+[ erz-cards]      · 95 | 0 | Группа Роди  Группа Родина  →  brand/gruppa-rodina-21959217001
+[ erz-cards]      · 96 | 0 | ГК Монолит,  ГК Монолит  →  brand/gruppa-kompanij-monolit-3086478001
+[ erz-cards]      · 97 | 0 | СЗ СБЕРСИТИ  СЗ СБЕРСИТИ  →  brand/sbercity-21161735001
+[ erz-cards]      · 98 | 0 | ЕвроИнвест   ЕвроИнвест Девелопмент  →  brand/evroinvest-development-7897128001
+[ erz-cards]      · 99 | +1 | УГАИК, Рес  УГАИК  →  brand/ufimskoe-gorodskoe-agentstvo-ipotechnogo-kreditovanija
+[ erz-cards]      · 100 | +1 | Группа Ме  Группа Мета  →  brand/gruppa-meta-5203863001
+[ erz-cards]      ✅ cards_20260626.xlsx (карточек: 98, лет: 11 ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'], ошибок: 2)
+[ erz-cards] 
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Итог: новых/обновлённых файлов — 1
+[ erz-cards] ============================================================
+[ erz-cards] 
+✅ erz-cards: успех (за 19.4 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (6 шт)
+────────────────────────────────────────────────────────────
+  Все 6 файлов уникальны (дублей нет)
+
+════════════════════════════════════════════════════════════
+══ Волна 3/4: rasprod (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ rasprod (watchdog: 180мин)
+────────────────────────────────────────────────────────────
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] наш.дом.рф / GSheets | Запуск: 2026-06-26 14:43:37
+[   rasprod] Источники: rasprodannost
+[   rasprod] ============================================================
+[   rasprod] 
+[   rasprod]   🌐 rasprodannost: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D1%80%D0%B0%D1%81%D0%BF%D1%80%D0%BE%D0%B4%D0%B0%D0%BD%D0%BD%D0%BE%D1%81%D1%82%D1%8C-%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%B3%D0%BE%D1%82%D0%BE%D0%B2%D0%BD%D0%BE%D1%81%D1%82%D1%8C
+[   rasprod]      ── регион: rf (Все)
+[   rasprod]      · перешли к самому свежему году: 2026
+[   rasprod]        · доступных периодов: 77
+[   rasprod]        ▸ 1/77: Май 2026
+[   rasprod]           📥 свежий период: проскроллил «Девелоперы», 2761 строк
+[   rasprod]           KPI=4, tables=2793 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=1)
+[   rasprod]        ▸ 2/77: Апрель 2026
+[   rasprod]           KPI=4, tables=2782 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=2)
+[   rasprod]        ▸ 3/77: Март 2026
+[   rasprod]           KPI=4, tables=2761 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=3)
+[   rasprod]        ▸ 4/77: Февраль 2026
+[   rasprod]           KPI=4, tables=2755 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=4)
+[   rasprod]        ▸ 5/77: Январь 2026
+[   rasprod]           KPI=4, tables=2727 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=5)
+[   rasprod]        ▸ 6/77: Декабрь 2025
+[   rasprod]           KPI=4, tables=2744 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=6)
+[   rasprod]        ▸ 7/77: Ноябрь 2025
+[   rasprod]           KPI=4, tables=2790 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=7)
+[   rasprod]        ▸ 8/77: Октябрь 2025
+[   rasprod]           KPI=4, tables=2781 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=8)
+[   rasprod]        ▸ 9/77: Сентябрь 2025
+[   rasprod]           KPI=4, tables=2789 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=9)
+[   rasprod]        ▸ 10/77: Август 2025
+[   rasprod]           KPI=4, tables=2764 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=10)
+[   rasprod]        ▸ 11/77: Июль 2025
+[   rasprod]           KPI=4, tables=2739 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=11)
+[   rasprod]        ▸ 12/77: Июнь 2025
+[   rasprod]           KPI=4, tables=2709 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=12)
+[   rasprod]        ▸ 13/77: Май 2025
+[   rasprod]           KPI=4, tables=2703 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=13)
+[   rasprod]        ▸ 14/77: Апрель 2025
+[   rasprod]           KPI=4, tables=2693 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=14)
+[   rasprod]        ▸ 15/77: Март 2025
+[   rasprod]           KPI=4, tables=2646 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=15)
+[   rasprod]        ▸ 16/77: Февраль 2025
+[   rasprod]           KPI=4, tables=2623 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=16)
+[   rasprod]        ▸ 17/77: Январь 2025
+[   rasprod]           KPI=4, tables=2617 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=17)
+[   rasprod]        ▸ 18/77: Декабрь 2024
+[   rasprod]           KPI=4, tables=2625 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=18)
+[   rasprod]        ▸ 19/77: Ноябрь 2024
+[   rasprod]           KPI=4, tables=2701 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=19)
+[   rasprod]        ▸ 20/77: Октябрь 2024
+[   rasprod]           KPI=4, tables=2691 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=20)
+[   rasprod]        ▸ 21/77: Сентябрь 2024
+[   rasprod]           KPI=4, tables=2676 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=21)
+[   rasprod]        ▸ 22/77: Август 2024
+[   rasprod]           KPI=4, tables=2762 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=22)
+[   rasprod]        ▸ 23/77: Июль 2024
+[   rasprod]           KPI=4, tables=2775 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=23)
+[   rasprod]        ▸ 24/77: Июнь 2024
+[   rasprod]           KPI=4, tables=2765 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=24)
+[   rasprod]        ▸ 25/77: Май 2024
+[   rasprod]           KPI=4, tables=2729 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=25)
+[   rasprod]        ▸ 26/77: Апрель 2024
+[   rasprod]           KPI=4, tables=2686 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=26)
+[   rasprod]        ▸ 27/77: Март 2024
+[   rasprod]           KPI=4, tables=2642 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=27)
+[   rasprod]        ▸ 28/77: Февраль 2024
+[   rasprod]           KPI=4, tables=2613 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=28)
+[   rasprod]        ▸ 29/77: Январь 2024
+[   rasprod]           KPI=4, tables=2601 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=29)
+[   rasprod]        ▸ 30/77: Декабрь 2023
+[   rasprod]           KPI=4, tables=2623 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=30)
+[   rasprod]        ▸ 31/77: Ноябрь 2023
+[   rasprod]           KPI=4, tables=2621 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=31)
+[   rasprod]        ▸ 32/77: Октябрь 2023
+[   rasprod]           KPI=4, tables=2586 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=32)
+[   rasprod]        ▸ 33/77: Сентябрь 2023
+[   rasprod]           KPI=4, tables=2551 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=33)
+[   rasprod]        ▸ 34/77: Август 2023
+[   rasprod]           KPI=4, tables=2516 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=34)
+[   rasprod]        ▸ 35/77: Июль 2023
+[   rasprod]           KPI=4, tables=2469 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=35)
+[   rasprod]        ▸ 36/77: Июнь 2023
+[   rasprod]           KPI=4, tables=2437 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=36)
+[   rasprod]        ▸ 37/77: Май 2023
+[   rasprod]           KPI=4, tables=2404 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=37)
+[   rasprod]        ▸ 38/77: Апрель 2023
+[   rasprod]           KPI=4, tables=2382 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=38)
+[   rasprod]        ▸ 39/77: Март 2023
+[   rasprod]           KPI=4, tables=2391 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=39)
+[   rasprod]        ▸ 40/77: Февраль 2023
+[   rasprod]           KPI=4, tables=2374 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=40)
+[   rasprod]        ▸ 41/77: Январь 2023
+[   rasprod]           KPI=4, tables=2358 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=41)
+[   rasprod]        ▸ 42/77: Декабрь 2022
+[   rasprod]           KPI=4, tables=2410 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=42)
+[   rasprod]        ▸ 43/77: Ноябрь 2022
+[   rasprod]           KPI=4, tables=2424 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=43)
+[   rasprod]        ▸ 44/77: Октябрь 2022
+[   rasprod]           KPI=4, tables=2445 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=44)
+[   rasprod]        ▸ 45/77: Сентябрь 2022
+[   rasprod]           KPI=4, tables=2430 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=45)
+[   rasprod]        ▸ 46/77: Август 2022
+[   rasprod]           KPI=4, tables=2399 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=46)
+[   rasprod]        ▸ 47/77: Июль 2022
+[   rasprod]           KPI=4, tables=2372 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=47)
+[   rasprod]        ▸ 48/77: Июнь 2022
+[   rasprod]           KPI=4, tables=2326 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=48)
+[   rasprod]        ▸ 49/77: Май 2022
+[   rasprod]           KPI=4, tables=2263 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=49)
+[   rasprod]        ▸ 50/77: Апрель 2022
+[   rasprod]           KPI=4, tables=2259 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=50)
+[   rasprod]        ▸ 51/77: Март 2022
+[   rasprod]           KPI=4, tables=2236 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=51)
+[   rasprod]        ▸ 52/77: Февраль 2022
+[   rasprod]           KPI=4, tables=2247 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=52)
+[   rasprod]        ▸ 53/77: Январь 2022
+[   rasprod]           KPI=4, tables=2247 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=53)
+[   rasprod]        ▸ 54/77: Декабрь 2021
+[   rasprod]           KPI=4, tables=2239 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=54)
+[   rasprod]        ▸ 55/77: Ноябрь 2021
+[   rasprod]           KPI=4, tables=2247 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=55)
+[   rasprod]        ▸ 56/77: Октябрь 2021
+[   rasprod]           KPI=4, tables=2204 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=56)
+[   rasprod]        ▸ 57/77: Сентябрь 2021
+[   rasprod]           KPI=4, tables=2222 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=57)
+[   rasprod]        ▸ 58/77: Август 2021
+[   rasprod]           KPI=4, tables=2214 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=58)
+[   rasprod]        ▸ 59/77: Июль 2021
+[   rasprod]           KPI=4, tables=2215 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=59)
+[   rasprod]        ▸ 60/77: Июнь 2021
+[   rasprod]           KPI=4, tables=2176 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=60)
+[   rasprod]        ▸ 61/77: Май 2021
+[   rasprod]           KPI=4, tables=2124 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=61)
+[   rasprod]        ▸ 62/77: Апрель 2021
+[   rasprod]           KPI=4, tables=2084 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=62)
+[   rasprod]        ▸ 63/77: Март 2021
+[   rasprod]           KPI=4, tables=2051 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=63)
+[   rasprod]        ▸ 64/77: Февраль 2021
+[   rasprod]           KPI=4, tables=2057 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=64)
+[   rasprod]        ▸ 65/77: Январь 2021
+[   rasprod]           KPI=4, tables=2156 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=65)
+[   rasprod]        ▸ 66/77: Декабрь 2020
+[   rasprod]           KPI=4, tables=2206 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=66)
+[   rasprod]        ▸ 67/77: Ноябрь 2020
+[   rasprod]           KPI=4, tables=2281 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=67)
+[   rasprod]        ▸ 68/77: Октябрь 2020
+[   rasprod]           KPI=4, tables=2284 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=68)
+[   rasprod]        ▸ 69/77: Сентябрь 2020
+[   rasprod]           KPI=4, tables=2291 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=69)
+[   rasprod]        ▸ 70/77: Август 2020
+[   rasprod]           KPI=4, tables=2256 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=70)
+[   rasprod]        ▸ 71/77: Июль 2020
+[   rasprod]           KPI=4, tables=2239 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=71)
+[   rasprod]        ▸ 72/77: Июнь 2020
+[   rasprod]           KPI=4, tables=2240 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=72)
+[   rasprod]        ▸ 73/77: Май 2020
+[   rasprod]           KPI=4, tables=2213 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=73)
+[   rasprod]        ▸ 74/77: Апрель 2020
+[   rasprod]           KPI=4, tables=2237 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=74)
+[   rasprod]        ▸ 75/77: Март 2020
+[   rasprod]           KPI=4, tables=2376 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=75)
+[   rasprod]        ▸ 76/77: Февраль 2020
+[   rasprod]           KPI=4, tables=2386 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=76)
+[   rasprod]        ▸ 77/77: Январь 2020
+[   rasprod]           KPI=4, tables=2397 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=77)
+[   rasprod]      ── регион: msk (Город Москва)
+[   rasprod]        · baseline объём: 102 849
+[   rasprod]        · клик на trigger #regionSelect
+[   rasprod]        · ввёл в поиск: 'Москва' (ok=True)
+[   rasprod]        · клик на «Город Москва» (ok=True)
+[   rasprod]        ✅ данные сменились: 102 849 → 15 680
+[   rasprod]      · перешли к самому свежему году: 2026
+[   rasprod]        · доступных периодов: 77
+[   rasprod]        ▸ 1/77: Май 2026
+[   rasprod]           📥 свежий период: проскроллил «Девелоперы», 120 строк
+[   rasprod]           KPI=4, tables=132 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=78)
+[   rasprod]        ▸ 2/77: Апрель 2026
+[   rasprod]           KPI=4, tables=130 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=79)
+[   rasprod]        ▸ 3/77: Март 2026
+[   rasprod]           KPI=4, tables=128 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=80)
+[   rasprod]        ▸ 4/77: Февраль 2026
+[   rasprod]           KPI=4, tables=125 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=81)
+[   rasprod]        ▸ 5/77: Январь 2026
+[   rasprod]           KPI=4, tables=121 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=82)
+[   rasprod]        ▸ 6/77: Декабрь 2025
+[   rasprod]           KPI=4, tables=121 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=83)
+[   rasprod]        ▸ 7/77: Ноябрь 2025
+[   rasprod]           KPI=4, tables=112 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=84)
+[   rasprod]        ▸ 8/77: Октябрь 2025
+[   rasprod]           KPI=4, tables=113 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=85)
+[   rasprod]        ▸ 9/77: Сентябрь 2025
+[   rasprod]           KPI=4, tables=112 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=86)
+[   rasprod]        ▸ 10/77: Август 2025
+[   rasprod]           KPI=4, tables=114 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=87)
+[   rasprod]        ▸ 11/77: Июль 2025
+[   rasprod]           KPI=4, tables=114 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=88)
+[   rasprod]        ▸ 12/77: Июнь 2025
+[   rasprod]           KPI=4, tables=111 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=89)
+[   rasprod]        ▸ 13/77: Май 2025
+[   rasprod]           KPI=4, tables=110 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=90)
+[   rasprod]        ▸ 14/77: Апрель 2025
+[   rasprod]           KPI=4, tables=110 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=91)
+[   rasprod]        ▸ 15/77: Март 2025
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=92)
+[   rasprod]        ▸ 16/77: Февраль 2025
+[   rasprod]           KPI=4, tables=104 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=93)
+[   rasprod]        ▸ 17/77: Январь 2025
+[   rasprod]           KPI=4, tables=104 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=94)
+[   rasprod]        ▸ 18/77: Декабрь 2024
+[   rasprod]           KPI=4, tables=104 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=95)
+[   rasprod]        ▸ 19/77: Ноябрь 2024
+[   rasprod]           KPI=4, tables=102 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=96)
+[   rasprod]        ▸ 20/77: Октябрь 2024
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=97)
+[   rasprod]        ▸ 21/77: Сентябрь 2024
+[   rasprod]           KPI=4, tables=101 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=98)
+[   rasprod]        ▸ 22/77: Август 2024
+[   rasprod]           KPI=4, tables=101 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=99)
+[   rasprod]        ▸ 23/77: Июль 2024
+[   rasprod]           KPI=4, tables=108 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=100)
+[   rasprod]        ▸ 24/77: Июнь 2024
+[   rasprod]           KPI=4, tables=111 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=101)
+[   rasprod]        ▸ 25/77: Май 2024
+[   rasprod]           KPI=4, tables=110 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=102)
+[   rasprod]        ▸ 26/77: Апрель 2024
+[   rasprod]           KPI=4, tables=108 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=103)
+[   rasprod]        ▸ 27/77: Март 2024
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=104)
+[   rasprod]        ▸ 28/77: Февраль 2024
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=105)
+[   rasprod]        ▸ 29/77: Январь 2024
+[   rasprod]           KPI=4, tables=103 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=106)
+[   rasprod]        ▸ 30/77: Декабрь 2023
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=107)
+[   rasprod]        ▸ 31/77: Ноябрь 2023
+[   rasprod]           KPI=4, tables=102 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=108)
+[   rasprod]        ▸ 32/77: Октябрь 2023
+[   rasprod]           KPI=4, tables=103 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=109)
+[   rasprod]        ▸ 33/77: Сентябрь 2023
+[   rasprod]           KPI=4, tables=106 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=110)
+[   rasprod]        ▸ 34/77: Август 2023
+[   rasprod]           KPI=4, tables=103 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=111)
+[   rasprod]        ▸ 35/77: Июль 2023
+[   rasprod]           KPI=4, tables=102 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=112)
+[   rasprod]        ▸ 36/77: Июнь 2023
+[   rasprod]           KPI=4, tables=101 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=113)
+[   rasprod]        ▸ 37/77: Май 2023
+[   rasprod]           KPI=4, tables=99 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=114)
+[   rasprod]        ▸ 38/77: Апрель 2023
+[   rasprod]           KPI=4, tables=100 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=115)
+[   rasprod]        ▸ 39/77: Март 2023
+[   rasprod]           KPI=4, tables=99 строк
+[   rasprod]      💾 rasprodannost_20260626.xlsx (записей=116)
+[   rasprod]        ▸ 40/77: Февраль 2023
+[   rasprod]           KPI=4, tables=102 строк
+[   rasprod]      ❌ ошибка msk: MemoryError:
+[   rasprod]   ❌ rasprodannost:
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] Итог: новых/обновлённых файлов — 0
+[   rasprod] ============================================================
+[   rasprod] 
+✅ rasprod: успех (за 99.3 мин)
+
+════════════════════════════════════════════════════════════
+══ Волна 4/4: fedstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ fedstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Запуск: 2026-06-26 16:23:05
+[   fedstat] Индикаторов: 29
+[   fedstat] ============================================================
+[   fedstat] 
+[   fedstat]   🛠  headless=old (HEADLESS_MODE=old, default)
+[   fedstat] 📊 [33648] Индекс предпринимательской уверенности в строительстве
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33648
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (23.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [61497] Валовой региональный продукт в основных ценах (ОКВЭД 2)
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61497
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59449] Индексы физического объема валового регионального проду
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59449
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [61483] Валовой региональный продукт на душу населения (ОКВЭД 2
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61483
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (15.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [45341] Индекс физического объема валового регионального продук
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/45341
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (22.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59450] Структура валового регионального продукта (ОКВЭД 2) (пр
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59450
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [55370] Доля продукции высокотехнологичных и наукоемких отрасле
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55370
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [55373] Индекс производительности труда относительно уровня 201
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55373
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [31557] Численность постоянного населения на 1 января (Раздел 1
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31557
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31556] Численность постоянного населения в среднем за год (чел
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31556
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2025)
+[   fedstat] 
+[   fedstat] 📊 [36730] Среднегодовая численность трудовых ресурсов (значение п
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36730
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.09.2025)
+[   fedstat] 
+[   fedstat] 📊 [58994] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58994
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.09.2025)
+[   fedstat] 
+[   fedstat] 📊 [43211] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43211
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (11.03.2019)
+[   fedstat] 
+[   fedstat] 📊 [57824] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/57824
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (04.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [43246] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43246
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.07.2025)
+[   fedstat] 
+[   fedstat] 📊 [34475] Инвестиции в основной капитал по полному кругу организа
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34475
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (28.02.2026)
+[   fedstat] 
+[   fedstat] 📊 [59047] Инвестиции в основной капитал по полному кругу хозяйств
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59047
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (30.12.2025)
+[   fedstat] 
+[   fedstat] 📊 [36078] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36078
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (31.07.2018)
+[   fedstat] 
+[   fedstat] 📊 [34129] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34129
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (30.12.2025)
+[   fedstat] 
+[   fedstat] 📊 [58089] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58089
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (21.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [34118] Введено в действие общей площади жилых домов (оперативн
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34118
+[   fedstat]   ℹ️  Скрыл 16 модалей через JS
+[   fedstat]   ℹ️  Первая загрузка. Дата: 17.06.2026
+[   fedstat]   ⬇️  Скачиваю Excel...
+[   fedstat]   ✅ Сохранён: downloads\20260617_Введено в действие общей площади жилых домов (оперативные данные) (тысяча квадра.xls
+[   fedstat] 
+[   fedstat] 📊 [33575] Введено в действие общей площади жилых домов, построенн
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33575
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (17.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [33574] Введено в действие общей площади жилых домов на 1000 че
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33574
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2025)
+[   fedstat] 
+[   fedstat] 📊 [33738] Количество построенных квартир (значение показателя за
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33738
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (28.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [40466] Общая площадь жилых помещений, приходящаяся в среднем н
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/40466
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (23.04.2025)
+[   fedstat] 
+[   fedstat] 📊 [31074_часть1] Индексы потребительских цен на товары и услуги часть1 (
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31074
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (12.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [31074_часть2] Индексы потребительских цен на товары и услуги часть2 (
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31074
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (12.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [31452] Средняя цена 1 кв. м  общей площади квартир на рынке жи
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31452
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (29.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [31448] Средние потребительские цены (тарифы) на товары и услуг
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31448
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (15.06.2026)
+[   fedstat] 
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Итог: скачано файлов — 1
+[   fedstat]   • downloads\20260617_Введено в действие общей площади жилых домов (оперативные данные) (тысяча квадра.xls
+[   fedstat] ============================================================
+[   fedstat] 
+✅ fedstat: успех (за 29.7 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (1 шт)
+────────────────────────────────────────────────────────────
+  Все 1 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (16 шт)
+────────────────────────────────────────────────────────────
+  Все 16 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+📦 Финальная архивация (safety-net, keep=1)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+📋 Эскроу (ручная выгрузка)
+────────────────────────────────────────────────────────────
+✓ Файл есть: Наполняемость счетов.xlsx (от 18.06.2026)
+
+============================================================
+ИТОГ за 178.9 мин:
+  ✅ Успешно: 7 — rosstat, monitoring, erz-top, kvart, erz-cards, rasprod, fedstat
+  📥 Новых файлов:    16
+  ✎  Обновлено:       24
+============================================================
+
+📁 Полный лог сохранён: C:\v7\logs\update_20260626_135353.log

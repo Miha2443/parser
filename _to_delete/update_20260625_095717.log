@@ -1,0 +1,1442 @@
+
+============================================================
+Прогон realty | старт 25.06.2026 09:57:17
+Источники: monitoring, rasprod, kvart, erz-top, erz-cards, fedstat, rosstat
+KVART_PER_DEV=0
+Лог-файл: C:\v7\logs\update_20260625_095717.log
+============================================================
+
+════════════════════════════════════════════════════════════
+══ Волна 1/2: monitoring, rasprod, kvart, erz-top, fedstat, rosstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ monitoring (watchdog: 5мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ kvart (watchdog: 180мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ rasprod (watchdog: 90мин)
+────────────────────────────────────────────────────────────
+▶ erz-top (watchdog: 15мин)
+────────────────────────────────────────────────────────────
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] наш.дом.рф / GSheets | Запуск: 2026-06-25 09:57:35
+[monitoring] Источники: monitoring_2_0
+[monitoring] ============================================================
+[monitoring] 
+[monitoring]   🌐 monitoring_2_0 (Google Sheets export):
+[monitoring]      https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx
+[monitoring]   ✅ monitoring_2_0_20260625.xlsx (4,921 KB)
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] Итог: новых/обновлённых файлов — 1
+[monitoring]   • data\raw\realty\nashdom\monitoring_2_0_20260625.xlsx
+[monitoring] ============================================================
+[monitoring] 
+✅ monitoring: успех (за 0.3 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (1 шт)
+────────────────────────────────────────────────────────────
+  Все 1 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+▶ fedstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Запуск: 2026-06-25 09:57:51
+[   fedstat] Индикаторов: 29
+[   fedstat] ============================================================
+[   fedstat] 
+[   fedstat]   🛠  headless=old (HEADLESS_MODE=old, default)
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Запуск: 2026-06-25 09:57:31
+[   erz-top] Источники: top
+[   erz-top] ============================================================
+[   erz-top] 
+[   erz-top]   🔐 Логин как Tsa***
+[   erz-top]   ✅ Авторизация прошла
+[   erz-top]   🌐 регион: rf (РФ)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_stroitelstva_rf_20260625.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=1&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_20260625.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2022_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2023_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2024_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2025_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2026_20260625.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=2&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_rf_20260625.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=3&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_rf_20260625.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=4&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_skorost_rf_20260625.xlsx
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=1
+[   erz-top]        + 20 новых (всего 20)
+[   erz-top]      · страница 2/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=2
+[   erz-top]        + 20 новых (всего 40)
+[   erz-top]      · страница 3/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=3
+[   erz-top]        + 20 новых (всего 60)
+[   erz-top]      · страница 4/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=4
+[   erz-top]        + 20 новых (всего 80)
+[   erz-top]      · страница 5/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=5
+[   erz-top]        + 20 новых (всего 100)
+[   erz-top]      ✅ top_developers_rf_20260625.json (100 застройщиков)
+[   erz-top]   🌐 регион: msk (г.Москва)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_stroitelstva_msk_20260625.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=1&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_20260625.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2022_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2023_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2024_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2025_20260625.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2026_20260625.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=2&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_msk_20260625.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=3&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_msk_20260625.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=4&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_skorost_msk_20260625.xlsx
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=1
+[   erz-top]        + 20 новых (всего 20)
+[   erz-top]      · страница 2/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=2
+[   erz-top]        + 20 новых (всего 40)
+[   erz-top]      · страница 3/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=3
+[   erz-top]        + 20 новых (всего 60)
+[   erz-top]      · страница 4/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=4
+[   erz-top]        + 20 новых (всего 80)
+[   erz-top]      · страница 5/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=5
+[   erz-top]        + 20 новых (всего 100)
+[   erz-top]      ✅ top_developers_msk_20260625.json (100 застройщиков)
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Итог: новых/обновлённых файлов — 22
+[   erz-top] ============================================================
+[   erz-top] 
+✅ erz-top: успех (за 3.9 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (29 шт)
+────────────────────────────────────────────────────────────
+  Все 29 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+▶ rosstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] rosstat_checker: 2026-06-25 10:01:36
+[   rosstat] ============================================================
+[   rosstat] 
+[   rosstat] 📄 Страница: https://77.rosstat.gov.ru/folder/134924
+[   rosstat]   🌐 GET https://77.rosstat.gov.ru/folder/134924
+[   rosstat]      найдено xlsx-ссылок: 7
+[   rosstat]   🔎 vrp_msk: ищу ['ВРП с 1998']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat]   🔎 vds_msk_s2016: ищу ['ВДС годы ОКВЭД2 (с 2016']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat] 
+[   rosstat] 📄 Страница: https://www.rosstat.gov.ru/statistics/accounts
+[   rosstat]   🌐 GET https://www.rosstat.gov.ru/statistics/accounts
+[   rosstat]      найдено xlsx-ссылок: 52
+[   rosstat]   🔎 vvp_god: ищу ['VVP_god_s1995', 'ВВП годы (с 1995']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vvp_na_dushu: ищу ['VVP_na_dushu', 'ВВП на душу населения']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vds_rf_s2011: ищу ['VDS_god_OKVED2_s2011', 'ВДС годы ОКВЭД2 (с 2011']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vrp_okved2007: ищу ['VRP_OKVED2007', 'VRP_god_OKVED2007', 'ВРП ОКВЭД 2007']
+[   rosstat]      ✔️  без изменений (09.03.2022)
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] Итог: скачано — 0
+[   rosstat] ============================================================
+[   rosstat] 
+✅ rosstat: успех (за 0.0 мин)
+[   fedstat] 📊 [33648] Индекс предпринимательской уверенности в строительстве
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33648
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [61497] Валовой региональный продукт в основных ценах (ОКВЭД 2)
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61497
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [59449] Индексы физического объема валового регионального проду
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59449
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [61483] Валовой региональный продукт на душу населения (ОКВЭД 2
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61483
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [45341] Индекс физического объема валового регионального продук
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/45341
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [59450] Структура валового регионального продукта (ОКВЭД 2) (пр
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59450
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [55370] Доля продукции высокотехнологичных и наукоемких отрасле
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55370
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [55373] Индекс производительности труда относительно уровня 201
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55373
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31557] Численность постоянного населения на 1 января (Раздел 1
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31557
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31556] Численность постоянного населения в среднем за год (чел
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31556
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [36730] Среднегодовая численность трудовых ресурсов (значение п
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36730
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [58994] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58994
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43211] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43211
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [57824] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/57824
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43246] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43246
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [34475] Инвестиции в основной капитал по полному кругу организа
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34475
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [59047] Инвестиции в основной капитал по полному кругу хозяйств
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59047
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [36078] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36078
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [34129] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34129
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [58089] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58089
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [34118] Введено в действие общей площади жилых домов (оперативн
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34118
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [33575] Введено в действие общей площади жилых домов, построенн
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33575
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [33574] Введено в действие общей площади жилых домов на 1000 че
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33574
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [33738] Количество построенных квартир (значение показателя за
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33738
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [40466] Общая площадь жилых помещений, приходящаяся в среднем н
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/40466
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31074_часть1] Индексы потребительских цен на товары и услуги часть1 (
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31074
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31074_часть2] Индексы потребительских цен на товары и услуги часть2 (
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31074
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31452] Средняя цена 1 кв. м  общей площади квартир на рынке жи
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31452
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31448] Средние потребительские цены (тарифы) на товары и услуг
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31448
+[   fedstat]   🔄 Попытка 2/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   🔄 Попытка 3/3 после ошибки: Message: javascript error: Cannot read properties of null (reading 'appendChild'
+[   fedstat]   ❌ Ошибка при чтении страницы: Message: javascript error: Cannot read properties of null (reading 'appendChild')
+[   fedstat]   (Session info: chrome=149.0.7827.156)
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ed4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a1f8b1]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a22c0f]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715ac0748]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a9a3ca]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715abf39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a6401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff715a64f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b7591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164b1902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7164d7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ef1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715efa82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715edd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff715ec1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ff923077344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ff92509cc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Итог: скачано файлов — 0
+[   fedstat] ============================================================
+[   fedstat] 
+❌ fedstat: код выхода 2 (за 15.0 мин)
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] наш.дом.рф / GSheets | Запуск: 2026-06-25 09:57:35
+[   rasprod] Источники: rasprodannost
+[   rasprod] ============================================================
+[   rasprod] 
+[   rasprod]   🌐 rasprodannost: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D1%80%D0%B0%D1%81%D0%BF%D1%80%D0%BE%D0%B4%D0%B0%D0%BD%D0%BD%D0%BE%D1%81%D1%82%D1%8C-%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%B3%D0%BE%D1%82%D0%BE%D0%B2%D0%BD%D0%BE%D1%81%D1%82%D1%8C
+[   rasprod]      ── регион: rf (Все)
+[   rasprod]      · перешли к самому свежему году: 2026
+[   rasprod]        · доступных периодов: 77
+[   rasprod]        ▸ 1/77: Май 2026
+[   rasprod]           📥 свежий период: проскроллил «Девелоперы», 2761 строк
+[   rasprod]           KPI=4, tables=2793 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=1)
+[   rasprod]        ▸ 2/77: Апрель 2026
+[   rasprod]           KPI=4, tables=2782 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=2)
+[   rasprod]        ▸ 3/77: Март 2026
+[   rasprod]           KPI=4, tables=2761 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=3)
+[   rasprod]        ▸ 4/77: Февраль 2026
+[   rasprod]           KPI=4, tables=2755 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=4)
+[   rasprod]        ▸ 5/77: Январь 2026
+[   rasprod]           KPI=4, tables=2727 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=5)
+[   rasprod]        ▸ 6/77: Декабрь 2025
+[   rasprod]           KPI=4, tables=2744 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=6)
+[   rasprod]        ▸ 7/77: Ноябрь 2025
+[   rasprod]           KPI=4, tables=2790 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=7)
+[   rasprod]        ▸ 8/77: Октябрь 2025
+[   rasprod]           KPI=4, tables=2781 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=8)
+[   rasprod]        ▸ 9/77: Сентябрь 2025
+[   rasprod]           KPI=4, tables=2789 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=9)
+[   rasprod]        ▸ 10/77: Август 2025
+[   rasprod]           KPI=4, tables=2764 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=10)
+[   rasprod]        ▸ 11/77: Июль 2025
+[   rasprod]           KPI=4, tables=2739 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=11)
+[   rasprod]        ▸ 12/77: Июнь 2025
+[   rasprod]           KPI=4, tables=2709 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=12)
+[   rasprod]        ▸ 13/77: Май 2025
+[   rasprod]           KPI=4, tables=2703 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=13)
+[   rasprod]        ▸ 14/77: Апрель 2025
+[   rasprod]           KPI=4, tables=2693 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=14)
+[   rasprod]        ▸ 15/77: Март 2025
+[   rasprod]           KPI=4, tables=2646 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=15)
+[   rasprod]        ▸ 16/77: Февраль 2025
+[   rasprod]           KPI=4, tables=2623 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=16)
+[   rasprod]        ▸ 17/77: Январь 2025
+[   rasprod]           KPI=4, tables=2617 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=17)
+[   rasprod]        ▸ 18/77: Декабрь 2024
+[   rasprod]           KPI=4, tables=2625 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=18)
+[   rasprod]        ▸ 19/77: Ноябрь 2024
+[   rasprod]           KPI=4, tables=2701 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=19)
+[   rasprod]        ▸ 20/77: Октябрь 2024
+[   rasprod]           KPI=4, tables=2691 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=20)
+[   rasprod]        ▸ 21/77: Сентябрь 2024
+[   rasprod]           KPI=4, tables=2676 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=21)
+[   rasprod]        ▸ 22/77: Август 2024
+[   rasprod]           KPI=4, tables=2762 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=22)
+[   rasprod]        ▸ 23/77: Июль 2024
+[   rasprod]           KPI=4, tables=2775 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=23)
+[   rasprod]        ▸ 24/77: Июнь 2024
+[   rasprod]           KPI=4, tables=2765 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=24)
+[   rasprod]        ▸ 25/77: Май 2024
+[   rasprod]           KPI=4, tables=2765 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=25)
+[   rasprod]        ▸ 26/77: Апрель 2024
+[   rasprod]           KPI=4, tables=2686 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=26)
+[   rasprod]        ▸ 27/77: Март 2024
+[   rasprod]           KPI=4, tables=2642 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=27)
+[   rasprod]        ▸ 28/77: Февраль 2024
+[   rasprod]           KPI=4, tables=2613 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=28)
+[   rasprod]        ▸ 29/77: Январь 2024
+[   rasprod]           KPI=4, tables=2601 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=29)
+[   rasprod]        ▸ 30/77: Декабрь 2023
+[   rasprod]           KPI=4, tables=2623 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=30)
+[   rasprod]        ▸ 31/77: Ноябрь 2023
+[   rasprod]           KPI=4, tables=2621 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=31)
+[   rasprod]        ▸ 32/77: Октябрь 2023
+[   rasprod]           KPI=4, tables=2586 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=32)
+[   rasprod]        ▸ 33/77: Сентябрь 2023
+[   rasprod]           KPI=4, tables=2551 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=33)
+[   rasprod]        ▸ 34/77: Август 2023
+[   rasprod]           KPI=4, tables=2516 строк
+[   rasprod]      💾 rasprodannost_20260625.xlsx (записей=34)
+[   rasprod]        ▸ 35/77: Июль 2023
+[   rasprod]           KPI=4, tables=2469 строк
+[   rasprod]      ❌ ошибка rf:
+[   rasprod]   ❌ rasprodannost:
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] Итог: новых/обновлённых файлов — 0
+[   rasprod] ============================================================
+[   rasprod] 
+✅ rasprod: успех (за 19.2 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (29 шт)
+────────────────────────────────────────────────────────────
+  Все 29 файлов уникальны (дублей нет)
+[     kvart] 
+[     kvart] ============================================================
+[     kvart] наш.дом.рф / GSheets | Запуск: 2026-06-25 09:57:35
+[     kvart] Источники: kvartirografia
+[     kvart] ============================================================
+[     kvart] 
+[     kvart]   🌐 kvartirografia: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D0%BA%D0%B2%D0%B0%D1%80%D1%82%D0%B8%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D1%84%D0%B8%D1%8F
+[     kvart]      ── регион: rf (Российская Федерация)
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=52934px (≈2786 строк)
+[     kvart]          · шаг 20, pos=11400/52934, собрано 393/2786
+[     kvart]          · шаг 40, pos=23400/52934, собрано 784/2786
+[     kvart]          · шаг 60, pos=35400/52934, собрано 1164/2786
+[     kvart]          · шаг 80, pos=47400/52934, собрано 1532/2786
+[     kvart]        финал: 1686 строк за 90 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[     kvart]        финал: 65 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=1686, regs=65
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 0}
+[     kvart]        ── mapping: 1686 сайтовых, 94 matched, 8 conflicts, 1592 unmatched
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 0}
+[     kvart]        ── per-dev обход: 200/1686 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[     kvart]           🚫 8/200 «ССК»: парсер дал 36542 шт, ожидалось ~1000 (ratio=36.54) — пропускаю
+[     kvart]           🚫 9/200 «ЮгСтройИнвест»: парсер дал 31745 шт, ожидалось ~1000 (ratio=31.75) — пропускаю
+[     kvart]           · 10/200: ok=8, miss=0, rejected=2
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 8}
+[     kvart]           🚫 12/200 «Эталон»: парсер дал 20631 шт, ожидалось ~1000 (ratio=20.63) — пропускаю
+[     kvart]           · 20/200: ok=17, miss=0, rejected=3
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 17}
+[     kvart]           · 30/200: ok=27, miss=0, rejected=3
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 27}
+[     kvart]           · 40/200: ok=35, miss=0, rejected=5
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 35}
+[     kvart]           · 50/200: ok=44, miss=0, rejected=6
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 44}
+[     kvart]           · 60/200: ok=54, miss=0, rejected=6
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 54}
+[     kvart]           · 70/200: ok=63, miss=0, rejected=7
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 63}
+[     kvart]           · 100/200: ok=86, miss=1, rejected=13
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 86}
+[     kvart]           · 110/200: ok=96, miss=1, rejected=13
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 96}
+[     kvart]           · 120/200: ok=105, miss=1, rejected=14
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 105}
+[     kvart]           · 130/200: ok=115, miss=1, rejected=14
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 115}
+[     kvart]           · 140/200: ok=124, miss=1, rejected=15
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 124}
+[     kvart]           · 150/200: ok=131, miss=1, rejected=18
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 131}
+[     kvart]           · 160/200: ok=140, miss=1, rejected=19
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 140}
+[     kvart]           · 170/200: ok=148, miss=1, rejected=21
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 148}
+[     kvart]           · 180/200: ok=155, miss=1, rejected=24
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 155}
+[     kvart]           · 190/200: ok=163, miss=1, rejected=26
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 163}
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 5, 'distribution': 8, 'developers': 1686, 'regions': 65, 'per_dev': 171}
+[     kvart]        ✅ per-dev: 171 собрано, 1 ошибок селектора, 28 отвергнуто (не совпадает с агрегатом)
+[     kvart]      ── регион: msk (Город Москва)
+[     kvart]        · baseline «Все квартиры»: 2 447 192
+[     kvart]        · текущий регион: «Российская Федерация»
+[     kvart]        · клик на trigger
+[     kvart]        · ввёл в поиск: 'Москва' (ok=True)
+[     kvart]        · клик на «Город Москва» (ok=True)
+[     kvart]        ✅ данные сменились: 2 447 192 → 290 861
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=2242px (≈118 строк)
+[     kvart]        финал: 83 строк за 5 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[     kvart]        финал: 64 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=83, regs=64
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1769, 'regions': 129, 'per_dev': 171}
+[     kvart]        ── mapping: 83 сайтовых, 40 matched, 2 conflicts, 43 unmatched
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1769, 'regions': 129, 'per_dev': 171}
+[     kvart]        ── per-dev обход: 83/83 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[     kvart]           · 10/83: ok=10, miss=0, rejected=0
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1769, 'regions': 129, 'per_dev': 181}
+[     kvart]      💾 kvartirografia_20260625.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1769, 'regions': 129, 'per_dev': 182}
+[     kvart]        ✅ per-dev: 11 собрано, 72 ошибок селектора, 0 отвергнуто (не совпадает с агрегатом)
+[     kvart] 
+[     kvart] ============================================================
+[     kvart] Итог: новых/обновлённых файлов — 2
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260625.json
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260625.xlsx
+[     kvart] ============================================================
+[     kvart] 
+✅ kvart: успех (за 28.2 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (31 шт)
+────────────────────────────────────────────────────────────
+  Все 31 файлов уникальны (дублей нет)
+
+════════════════════════════════════════════════════════════
+══ Волна 2/2: erz-cards (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ erz-cards (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[ erz-cards] 
+✅ erz-cards: успех (за 18.9 мин)
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Запуск: 2026-06-25 10:25:43
+[ erz-cards] Источники: cards
+[ erz-cards] ============================================================
+[ erz-cards] 
+[ erz-cards]   🔐 Логин как Tsa***
+[ erz-cards]   ✅ Авторизация прошла
+[ erz-cards]      · 1 | 0 | ГК Самолет,   ГК Самолет  →  brand/gruppa-kompanij-samolet-2366201001
+[ erz-cards]      · 2 | 0 | ПИК, г.Москв  ПИК  →  brand/pik-429726001
+[ erz-cards]      · 3 | 0 | DOGMA, Красн  DOGMA  →  brand/dogma-5699998001
+[ erz-cards]      · 4 | 0 | ГК ТОЧНО, Кр  ГК ТОЧНО  →  brand/gruppa-kompanij-tochno-2894925001
+[ erz-cards]      · 5 | 0 | ГК ФСК, г.Мо  ГК ФСК  →  brand/gruppa-kompanij-fsk-755344001
+[ erz-cards]      · 6 | +1 | ГК ССК, Кра  ГК ССК  →  brand/gruppa-kompanij-ssk-5360409001
+[ erz-cards]      · 7 | -1 | Брусника, С  Брусника  →  brand/brusnika-733498001
+[ erz-cards]      · 8 | 0 | ГК ЮгСтройИн  ГК ЮгСтройИнвест  →  brand/gruppa-kompanij-jugstrojinvest-1705946001
+[ erz-cards]      · 9 | 0 | Холдинг Setl  Холдинг Setl Group  →  brand/kholding-setl-group-363697001
+[ erz-cards]      · 10 | 0 | ГК Страна Д  ГК Страна Девелопмент  →  brand/gruppa-kompanij-strana-development-5339663001
+[ erz-cards]      · 11 | +1 | Группа Эта  Группа Эталон  →  brand/gruppa-etalon-1331499001
+[ erz-cards]      · 12 | -1 | Группа ЛСР  Группа ЛСР  →  brand/gruppa-lsr-429468001
+[ erz-cards]      · 13 | 0 | MR Group, г  MR Group  →  brand/mr-group-430836001
+[ erz-cards]      · 14 | 0 | ГК Развитие  ГК Развитие  →  brand/gruppa-kompanij-razvitie-461175001
+[ erz-cards]      · 15 | 0 | Талан, Удму  Талан  →  brand/talan-2493968001
+[ erz-cards]      · 16 | +1 | ГК Гранель  ГК Гранель  →  brand/gruppa-kompanij-granel-955386001
+[ erz-cards]      · 17 | +1 | ГК Расцвет  ГК Расцветай  →  brand/gruppa-kompanij-rascvetaj-5799295001
+[ erz-cards]      · 18 | +1 | ДОНСТРОЙ,   ДОНСТРОЙ  →  brand/donstroj-430278001
+[ erz-cards]      · 19 | -3 | Группа Акв  Группа Аквилон  →  brand/gruppa-akvilon-391375001
+[ erz-cards]      · 20 | 0 | ГК GloraX,   ГК GloraX  →  brand/gruppa-kompanij-glorax-1931581001
+[ erz-cards]      · 21 | 0 | Level Group  Level Group  →  brand/level-group-6150430001
+[ erz-cards]      · 22 | 0 | ГК ЭНКО, Тю  ГК ЭНКО  →  brand/gruppa-kompanij-enko-402466001
+[ erz-cards]      · 23 | 0 | Унистрой, Р  Унистрой  →  brand/unistroj-1130405001
+[ erz-cards]      · 24 | 0 | ГК А101, г.  ГК А101  →  brand/gruppa-kompanij-a101-1075233001
+[ erz-cards]      · 25 | 0 | РАЗУМ, Астр  РАЗУМ  →  brand/razum-4296089001
+[ erz-cards]      · 26 | 0 | ГК АБСОЛЮТ,  ГК АБСОЛЮТ  →  brand/gruppa-kompanij-absoljut-934095001
+[ erz-cards]      · 27 | 0 | СЗ Градстро  СЗ Градстройпроект  →  brand/specializirovannyj-zastrojshchik-gradstrojproekt-21975
+[ erz-cards]      · 28 | +2 | ГК Единств  ГК Единство  →  brand/gruppa-kompanij-edinstvo-156056001
+[ erz-cards]      · 29 | 0 | ГК КОРТРОС,  ГК КОРТРОС  →  brand/gruppa-kompanij-kortros-429541001
+[ erz-cards]      · 30 | +1 | LEGENDA In  LEGENDA Intelligent Development  →  brand/legenda-intelligent-development-1824654001
+[ erz-cards]      · 31 | +2 | Железно, К  Железно  →  brand/zhelezno-5896105001
+[ erz-cards]      · 32 | 0 | ГК АльфаСтр  ГК АльфаСтройИнвест  →  brand/gruppa-kompanij-alfastrojinvest-5380617001
+[ erz-cards]      · 33 | +5 | КОМОССТРОЙ  КОМОССТРОЙ®  →  brand/komosstroj-851697001
+[ erz-cards]      · 34 | +1 | ГК Новый Д  ГК Новый ДОН  →  brand/gruppa-kompanij-novyj-don-1164353001
+[ erz-cards]      · 35 | +1 | ГК ОСНОВА,  ГК ОСНОВА  →  brand/gruppa-kompanij-osnova-6201034001
+[ erz-cards]      · 36 | +1 | ГК ОСТ, Ту  ГК ОСТ  →  brand/gruppa-kompanij-ost-10977487001
+[ erz-cards]      · 37 | +5 | ГК Первый   ГК Первый Трест  →  brand/gruppa-kompanij-pervyj-trest-4053794001
+[ erz-cards]      · 38 | +1 | СК Семья,   СК Семья  →  brand/stroitelnaja-kompanija-semja-5696040001
+[ erz-cards]      · 39 | -5 | ИнтерСтрой  ИнтерСтрой  →  brand/interstroj-2987923001
+[ erz-cards]      · 40 | -12 | Seven Sun  Seven Suns Development  →  brand/seven-suns-development-2488380001
+[ erz-cards]      · 41 | -1 | СЗ КАП, Кр  СЗ КАП  →  brand/specializirovannyj-zastrojshhik-kubanaljansproekt-2819
+[ erz-cards]      · 42 | -1 | СК 10, Рос  СК 10  →  brand/stroitelnaja-kompanija-sk-10-5827081001
+[ erz-cards]      · 43 | 0 | Лидер Групп  Лидер Групп  →  brand/lider-grupp-430857001
+[ erz-cards]      · 44 | +1 | ГК Капитал  ГК Капитал  →  brand/gruppa-kompanij-kapital-261190001
+[ erz-cards]      · 45 | +1 | СЗ Стройдо  СЗ СтройдомКраснодар  →  brand/specializirovannyj-zastrojshhik-strojdomkrasnodar-2775
+[ erz-cards]      · 46 | +1 | ДСК, Ворон  ДСК  →  brand/domostroitelnyj-kombinat-561250001
+[ erz-cards]      · 47 | -3 | ПЗСП, Перм  ПЗСП  →  brand/pzsp-2991496001
+[ erz-cards]      · 48 | +1 | ГК Паритет  ГК Паритет Девелопмент  →  brand/gruppa-kompanij-paritet-development-16664888001
+[ erz-cards]      · 49 | +1 | ГК КВС, г.  ГК КВС  →  brand/gruppa-kompanij-kvs-1288457001
+[ erz-cards]      · 50 | +8 | ГК Террито  ГК Территория жизни  →  brand/gruppa-kompanij-territorija-zhizni-7333890001
+[ erz-cards]      · 51 | +13 | TEN Девел  TEN Девелопмент  →  brand/ten-development-931046001
+[ erz-cards]      · 52 | +4 | Sminex, г.  Sminex  →  brand/sminex-4354668001
+[ erz-cards]      · 53 | 0 | Фонд ренова  Фонд реновации  →  brand/moskovskij-fond-renovacii-zhiloj-zastrojki-14543898001
+[ erz-cards]      · 54 | 0 | СЗ Стройпар  СЗ Стройпарк  →  brand/specializirovannyj-zastrojshhik-strojpark-28787766001
+[ erz-cards]      · 55 | 0 | ПРОФИ-ИНВЕС  ПРОФИ-ИНВЕСТ  →  brand/profi-invest-3732427001
+[ erz-cards]      · 56 | -8 | ГК ИНСИТИ   ГК ИНСИТИ девелопмент  →  brand/gruppa-kompanij-insiti-5696575001
+[ erz-cards]      · 57 | +2 | Суварстрои  Суварстроит  →  brand/suvarstroit-5372083001
+[ erz-cards]      · 58 | +19 | ГК Атомст  ГК Атомстройкомплекс  →  brand/atomstrojkompleks-691686001
+[ erz-cards]      · 59 | +1 | Юникей, г.  Юникей  →  brand/unikey-22031811001
+[ erz-cards]      · 60 | +1 | Атлас Деве  Атлас Девелопмент  →  brand/atlas-development-7814301001
+[ erz-cards]      · 61 | +1 | ГК СМК, Ар  ГК СМК  →  brand/gruppa-kompanij-smk-1567563001
+[ erz-cards]      · 62 | +1 | ГК Главстр  ГК Главстрой  →  brand/gruppa-kompanij-glavstroj-1961151001
+[ erz-cards]      · 63 | +15 | Трест Маг  Трест Магнитострой  →  brand/trest-magnitostroj-922602001
+[ erz-cards]      · 64 | +1 | ГК ПСК, г.  ГК ПСК  →  brand/gruppa-kompanij-psk-2153371001
+[ erz-cards]      · 65 | -14 | Ак Барс Д  Ак Барс Дом  →  brand/ak-bars-dom-2923318001
+[ erz-cards]      · 66 | -14 | СИК Девел  СИК Девелопмент-Юг  →  brand/stroitelno-investicionnaja-korporacija-development-jug
+[ erz-cards]      · 67 | -1 | ГК ПАО АПР  ГК ПАО АПРИ  →  brand/gruppa-kompanij-pao-apri-5392618001
+[ erz-cards]      · 68 | -11 | СЕВЕРНАЯ   СЕВЕРНАЯ КОМПАНИЯ  →  brand/severnaja-kompanija-4856325001
+[ erz-cards]      · 69 | -2 | ГК НОСТА,   ГК НОСТА  →  brand/gruppa-kompanij-nosta-22810761001
+[ erz-cards]      · 70 | -2 | ГК ИКАР, Ч  ГК ИКАР  →  brand/gruppa-kompanij-ikar-7080922001
+[ erz-cards]      · 71 | 0 | ДК Прогресс  ДК Прогресс  →  brand/developerskaja-kompanija-progress-5599108001
+[ erz-cards]      · 72 | 0 | ГК Географи  ГК География  →  brand/gruppa-kompanij-geografiya-22466965001
+[ erz-cards]      · 73 | 0 | СПК Зелёный  СПК Зелёный сад  →  brand/stroitelno-promyshlennaja-kompanija-zelenyj-sad-559542
+[ erz-cards]      · 74 | 0 | ГК Эскадра,  ГК Эскадра  →  brand/gruppa-kompanij-eskadra-451521001
+[ erz-cards]      · 75 | 0 | ИСК г. Уфы,  ИСК г. Уфы  →  brand/investicionno-stroitelnyj-komitet-gorodskogo-okruga-go
+[ erz-cards]      · 76 | +17 | ГК Екатер  ГК ЕкатеринодарИнвест-Строй  →  brand/gruppa-kompanij-ekaterinodarinvest-stroj-10146399001
+[ erz-cards]      · 77 | -1 | ГК ТРЕСТ,   ГК ТРЕСТ  →  brand/gruppa-kompanij-trest-1738274001
+[ erz-cards]      · 78 | +7 | ГК СТРОЙГР  ГК СТРОЙГРАД  →  brand/gruppa-kompanij-strojgrad-4752097001
+[ erz-cards]      · 79 | -10 | DARS Deve  DARS Development  →  brand/dars-development-7537722001
+[ erz-cards]      · 80 | 0 | Группа RBI,  Группа RBI  →  brand/gruppa-rbi-1813315001
+[ erz-cards]      · 81 | 0 | ГК ДОМ, Рес  ГК ДОМ  →  brand/gruppa-kompanij-dom-22417441001
+[ erz-cards]      · 82 | -3 | СХ ТЕРМОДО  СХ ТЕРМОДОМ  →  brand/stroitelnyj-kholding-termodom-4784610001
+[ erz-cards]      · 83 | 0 | ГК Метрикс   ГК Метрикс Develoрment  →  brand/gruppa-kompanij-metriks-develorment-9337739001
+[ erz-cards]      · 84 | -14 | ИСГ МАВИС  ИСГ МАВИС  →  brand/investicionno-stroitelnaja-gruppa-mavis-2110139001
+[ erz-cards]      · 85 | +195 | ГК СКАЙГ  ГК СКАЙГРУПП ДЕВЕЛОПМЕНТ  →  brand/gruppa-kompanij-SKAJGRUPP-DEVELOPMENT-21696327001
+[ erz-cards]      · 86 | -2 | ГК КамаСтр  ГК КамаСтройИнвест  →  brand/gruppa-kompanij-kamastrojinvest-2436482001
+[ erz-cards]      · 87 | -5 | ГК Prime D  ГК Prime Development  →  brand/gruppa-kompanij-prime-development-24447747001
+[ erz-cards]      · 88 | -2 | ГСК Арбан,  ГСК Арбан  →  brand/gruppa-stroitelnykh-kompanij-arban-2224464001
+[ erz-cards]      · 89 | +3 | СГ Рисан,   СГ Рисан  →  brand/stroitelnaja-gruppa-risan-451437001
+[ erz-cards]      · 90 | -1 | Неометрия,  Неометрия  →  brand/neometrija-1734816001
+[ erz-cards]      · 91 | -1 | ГК СДК, Ре  ГК СДК  →  brand/gruppa-kompanij-simferopolskaya-developerskaya-kompani
+[ erz-cards]      · 92 | +21 | ИСГ Марма  ИСГ Мармакс  →  brand/investicionno-stroitelnaja-gruppa-marmaks-559678001
+[ erz-cards]      · 93 | -2 | Мангазея,   Мангазея  →  brand/mangazeja-3126628001
+[ erz-cards]      · 94 | 0 | МСК, Ростов  МСК  →  brand/moskovskaja-stroitelnaja-kompanija-3772776001
+[ erz-cards]      · 95 | 0 | Группа Роди  Группа Родина  →  brand/gruppa-rodina-21959217001
+[ erz-cards]      · 96 | 0 | ГК Монолит,  ГК Монолит  →  brand/gruppa-kompanij-monolit-3086478001
+[ erz-cards]      · 97 | 0 | СЗ СБЕРСИТИ  СЗ СБЕРСИТИ  →  brand/sbercity-21161735001
+[ erz-cards]      · 98 | 0 | ЕвроИнвест   ЕвроИнвест Девелопмент  →  brand/evroinvest-development-7897128001
+[ erz-cards]      · 99 | +1 | УГАИК, Рес  УГАИК  →  brand/ufimskoe-gorodskoe-agentstvo-ipotechnogo-kreditovanija
+[ erz-cards]      · 100 | +1 | Группа Ме  Группа Мета  →  brand/gruppa-meta-5203863001
+[ erz-cards]      ✅ cards_20260625.xlsx (карточек: 100, лет: 11 ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'], ошибок: 0)
+[ erz-cards] 
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Итог: новых/обновлённых файлов — 1
+[ erz-cards] ============================================================
+[ erz-cards] 
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (3 шт)
+────────────────────────────────────────────────────────────
+  Все 3 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+🔁 Retry #1: жду 30с и повторяю 1 источников: fedstat
+────────────────────────────────────────────────────────────
+
+
+⚠️  Прогон прерван. Готово: 6 из 7

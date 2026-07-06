@@ -12,8 +12,12 @@ fedstat_checker.py
     py fedstat_checker.py
 """
 
+import atexit
 import json
+import os
 import re
+import shutil
+import tempfile
 import time
 import requests
 from datetime import datetime
@@ -111,9 +115,27 @@ def save_state(state):
 
 def create_driver():
     options = Options()
-    # --headless=new нужен для Chrome 148+: старый headless ломает
-    # JS-инициализацию fedstat (appendChild на null).
-    options.add_argument("--headless=new")
+
+    # Уникальный профиль на инстанс. update_realty.py гоняет fedstat
+    # параллельно с rasprod/kvart/erz-top — без своего user-data-dir
+    # все Chrome'ы лезут в дефолтный профиль, упираются в Singleton-lock
+    # и в headless=new рендерят битый DOM → `appendChild on null` у
+    # тяжёлого React-фронта fedstat.
+    profile_dir = tempfile.mkdtemp(prefix="chrome-fedstat-")
+    atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
+    options.add_argument(f"--user-data-dir={profile_dir}")
+
+    # HEADLESS_MODE=new → новый headless (быстрее, но в Chrome 149 ломает
+    # тяжёлый React-DOM fedstat с `appendChild on null`). По умолчанию
+    # `=old` — старый headless надёжен, разница в скорости несущественна
+    # для 29 индикаторов.
+    mode = os.environ.get("HEADLESS_MODE", "old").lower()
+    if mode == "new":
+        options.add_argument("--headless=new")
+        print("  🛠  headless=new (HEADLESS_MODE=new)", flush=True)
+    else:
+        options.add_argument("--headless")
+        print("  🛠  headless=old (HEADLESS_MODE=old, default)", flush=True)
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
@@ -127,11 +149,26 @@ def create_driver():
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    _orig_quit = driver.quit
+    def _quit_and_cleanup():
+        try:
+            _orig_quit()
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+    driver.quit = _quit_and_cleanup  # type: ignore[method-assign]
+    return driver
 
 
 def close_popup(driver):
-    """Закрывает всплывающее окно с ошибкой если оно появилось."""
+    """Закрывает всплывающее окно с ошибкой если оно появилось.
+
+    1) Сначала пытается найти кнопку «×» и кликнуть.
+    2) Если кнопки нет, или клик не сработал — принудительно скрывает
+       через JS любые видимые .modal/#serverMessages. Без этого
+       bootstrap-модал «Server error» от fedstat перехватывает клик на
+       «Паспорт показателя» с ElementClickInterceptedException.
+    """
     try:
         close_btn = driver.find_element(
             By.XPATH,
@@ -141,8 +178,32 @@ def close_popup(driver):
         close_btn.click()
         time.sleep(1)
         print("  ℹ️  Закрыл всплывающее окно")
-    except Exception:
-        pass  # Окна нет — всё нормально
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    # Fallback: скрываем все .modal через JS + убираем .modal-backdrop
+    try:
+        hidden = driver.execute_script(
+            """
+            let n = 0;
+            document.querySelectorAll('.modal, #serverMessages').forEach(el => {
+                if (el.offsetParent !== null || el.style.display !== 'none') {
+                    el.style.display = 'none';
+                    el.classList.remove('in', 'show');
+                    el.setAttribute('aria-hidden', 'true');
+                    n++;
+                }
+            });
+            document.querySelectorAll('.modal-backdrop').forEach(el => { el.remove(); n++; });
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            return n;
+            """
+        )
+        if hidden:
+            print(f"  ℹ️  Скрыл {hidden} модалей через JS")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_last_update_date(driver, indicator_id):
@@ -273,6 +334,28 @@ def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
 
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
     PAYLOADS = {
+        # Введено в действие общей площади жилых домов (оперативные данные).
+        # Параметры — из data/raw/realty/vvod/34118_filter.txt (экспорт ЕМИСС).
+        # Индикатор (0) и категория (58389) вынесены в строки (lineObjectIds) →
+        # выгрузка получается «регион × категория» по годам, как в
+        # emiss_34118_base.xls. filterObjectIds в фильтре отсутствует —
+        # все измерения распределены по строкам/столбцам.
+        "34118": {
+            "title": "Введено в действие общей площади жилых домов (оперативные данные)",
+            "id": "34118",
+            "lineObjectIds": ["0", "30611", "57831", "58389"],
+            "columnObjectIds": ["3", "33560"],
+            "selectedFilterIds": [
+                "0_34118", "3_2024", "3_2025", "3_2026", "30611_950292", "33560_1540222",
+                "33560_1540224", "33560_1540226", "33560_1540227", "33560_1540228", "33560_1540229", "33560_1540230",
+                "33560_1540233", "33560_1540234", "33560_1540235", "33560_1540236", "33560_1540272", "33560_1540273",
+                "33560_1540276", "33560_1540282", "33560_1540283", "33560_1540284", "33560_1540285", "33560_1540286",
+                "33560_1540287", "33560_1540288", "33560_1540289", "33560_1540290", "33560_1540291", "33560_1540292",
+                "33560_1540293", "33560_1540294", "57831_1688487", "57831_1688506", "57831_1849012", "58389_1754554",
+                "58389_1754555", "58389_1754556", "58389_1754557", "58389_1754558", "58389_1754559", "58389_1754560",
+                "58389_1754561", "58389_1754562", "58389_1754563", "58389_1754564", "58389_1754565", "58389_1754566",
+                "58389_1754567", "58389_1754568", "58389_1754569", "58389_1836598", "58389_1836599"],
+        },
         "33648": {
             "title": "Индекс предпринимательской уверенности в строительстве (процент)",
             "id": "33648",

@@ -6,6 +6,10 @@ Chrome и логику ожидания файла из download_dir. Образ
 """
 from __future__ import annotations
 
+import atexit
+import os
+import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -28,10 +32,32 @@ def create_chrome(
     """Возвращает Chrome-драйвер с настроенной папкой скачивания.
 
     `headless=False` — для отладки селекторов на локальной машине.
+    Режим headless управляется env `HEADLESS_MODE` (=new по умолчанию,
+    =old если в `=new` сайт ломается).
+
+    Каждый инстанс получает СВОЙ user-data-dir. Иначе при параллельном
+    запуске (update_realty: 4 Chrome'а одновременно — rasprod, kvart,
+    erz-top, fedstat) все лезут в дефолтный профиль, упираются в
+    Singleton lock, и Chrome 149 в headless=new рендерит битый DOM
+    → fedstat падает с `appendChild on null`.
     """
     opts = Options()
+
+    # Изолированный профиль (per-инстанс tempdir с auto-cleanup).
+    profile_dir = tempfile.mkdtemp(prefix="chrome-profile-")
+    atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
+    opts.add_argument(f"--user-data-dir={profile_dir}")
+
     if headless:
-        opts.add_argument("--headless=new")
+        mode = os.environ.get("HEADLESS_MODE", "new").lower()
+        if mode == "old":
+            opts.add_argument("--headless")
+        else:
+            opts.add_argument("--headless=new")
+        opts.add_argument("--mute-audio")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1920,1080")
@@ -53,7 +79,19 @@ def create_chrome(
             },
         )
     opts.page_load_strategy = page_load_strategy
-    return webdriver.Chrome(options=opts)
+
+    driver = webdriver.Chrome(options=opts)
+
+    # Удаляем профиль и при штатном quit, не только при atexit.
+    _orig_quit = driver.quit
+    def _quit_and_cleanup():
+        try:
+            _orig_quit()
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+    driver.quit = _quit_and_cleanup  # type: ignore[method-assign]
+
+    return driver
 
 
 def wait_for_download(

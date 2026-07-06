@@ -138,43 +138,23 @@ if not mon_devs:
     )
     st.stop()
 
-# Порядок в селекторе: сначала топ ERZRF по объёму ввода в Москве
-# (так Самолет/ПИК/ДОГМА идут первыми вместо «ФОНД СВЯТОСЛАВА ФЕДОРОВА»
-# который алфавитно был наверху из-за кавычек). Если девелопера нет в топе —
-# идёт ниже алфавитно.
+# Порядок в селекторе: убывание по «Общая площадь» в листе «Реестр РВ»
+# из monitoring_2_0 (сумма по группе компаний = «всего м² введено с 2017»,
+# поскольку Лист4 = 2017-2021 уже объединён с основным РВ-листом).
+# Кто только в ОКС (не в РВ) — в конец алфавитно.
 def _build_ordered_devs(mon_names: list[str]) -> list[str]:
-    """Сортировка для селектора: сначала топ по накопленному вводу с 2016.
-
-    Накопленный ввод считается из cards (sum Сдано_YYYY за все годы).
-    Кто не в cards (не топ-100) — добавляется ниже алфавитно.
-    """
-    mon_by_key = {norm(n): n for n in mon_names}
-    ordered: list[str] = []
-    used_keys: set[str] = set()
-
-    # 1) По сумме Сдано из cards (накопленный ввод)
-    if not erzrf_cards.empty:
-        sdano_cols = [c for c in erzrf_cards.columns
-                      if str(c).startswith("Сдано_") and str(c).endswith("_м²_num")]
-        if sdano_cols:
-            tmp = erzrf_cards.copy()
-            tmp["_total"] = tmp[sdano_cols].sum(axis=1)
-            tmp = tmp.sort_values("_total", ascending=False)
-            name_col = "name_card" if "name_card" in tmp.columns else (
-                "name_table" if "name_table" in tmp.columns else None)
-            if name_col:
-                for raw in tmp[name_col].dropna():
-                    k = norm(str(raw))
-                    if k in used_keys:
-                        continue
-                    if k in mon_by_key:
-                        ordered.append(mon_by_key[k])
-                        used_keys.add(k)
-
-    # 2) Остальные monitoring — алфавитно
-    rest = [n for k, n in mon_by_key.items() if k not in used_keys]
-    ordered.extend(sorted(rest))
-    return ordered
+    """Сортировка для селектора: убывание по «Общая площадь» в Реестр РВ."""
+    rv = mon.get("rv", pd.DataFrame())
+    in_top: list[str] = []
+    if (not rv.empty and "Группа компаний" in rv.columns
+            and "Общая площадь" in rv.columns):
+        agg = (rv.groupby("Группа компаний")["Общая площадь"]
+                 .sum().sort_values(ascending=False))
+        names = set(mon_names)
+        in_top = [n for n in agg.index if n in names]
+    used = set(in_top)
+    rest = sorted(n for n in mon_names if n not in used)
+    return in_top + rest
 
 
 ordered_devs = _build_ordered_devs(mon_devs)
@@ -236,8 +216,11 @@ with cols_top[1]:
     # 4 рейтинга: по строительству и по вводу × по РФ и по Москве
     str_rf = get_rating("obyem_stroitelstva", "rf")
     str_msk = get_rating("obyem_stroitelstva", "msk")
-    vv_rf = get_rating("obyem_vvoda", "rf")
-    vv_msk = get_rating("obyem_vvoda", "msk")
+    # «По вводу жилья с 2016 г.» — НАКОПИТЕЛЬНЫЙ ввод с 2016 (top_nakopl_vvod),
+    # не «obyem_vvoda» (тот за последний год). ДОНСТРОЙ есть в nakopl
+    # (РФ=5, МСК=2), но за 2026 в obyem_vvoda не было — давало прочерк.
+    vv_rf = get_rating("nakopl_vvod", "rf")
+    vv_msk = get_rating("nakopl_vvod", "msk")
     erz_rating = (str_rf.get("Рейтинг ЕРЗ") or vv_rf.get("Рейтинг ЕРЗ")
                   or str_msk.get("Рейтинг ЕРЗ") or vv_msk.get("Рейтинг ЕРЗ"))
 
@@ -261,12 +244,12 @@ with cols_top[1]:
           <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>Москва</th>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По вводу</td>
+          <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_rf)}</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_msk)}</td>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По строительству</td>
+          <td style='padding:2px 12px 2px 0;'>По объёму текущего строительства</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_rf)}</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_msk)}</td>
         </tr>
@@ -281,13 +264,21 @@ with cols_top[1]:
 rv_dev = find_dev_rows(mon.get("rv", pd.DataFrame()), "Группа компаний", sel_key)
 oks_dev = find_dev_rows(mon.get("oks", pd.DataFrame()), "Группа компаний", sel_key)
 # ВАЖНО: Реестр ОКС содержит ВСЕ объекты с разрешением на строительство,
-# включая уже ВВЕДЁННЫЕ (status=«Введенный») и планируемые. Для blocка
-# «В строительстве» оставляем только реально строящиеся — это совпадает
-# с тем что показывает наш.дом.рф/квартирография (например ПИК Москва:
-# 1 910 тыс. м² жилой площади vs сайт 1 914 тыс. м²).
-oks_dev_all = oks_dev  # сохраняем для expander/списка
-if not oks_dev.empty and "Статус объекта" in oks_dev.columns:
-    oks_dev = oks_dev[oks_dev["Статус объекта"] == "Строящийся"]
+# включая уже ВВЕДЁННЫЕ и планируемые. Для блока «В строительстве»
+# оставляем только те, где действует РС и ещё не было ввода в эксплуатацию
+# (Статус РС=Действует И Ввод в эксплуатацию=В строительстве).
+oks_dev_all = oks_dev  # сохраняем для expander/списка (без фильтра)
+if not oks_dev.empty:
+    has_rs = "Статус РС" in oks_dev.columns
+    has_vv = "Ввод в эксплуатацию" in oks_dev.columns
+    if has_rs and has_vv:
+        oks_dev = oks_dev[
+            (oks_dev["Статус РС"] == "Действует")
+            & (oks_dev["Ввод в эксплуатацию"] == "В строительстве")
+        ]
+    elif "Статус объекта" in oks_dev.columns:
+        # fallback на старый критерий, если новых колонок нет
+        oks_dev = oks_dev[oks_dev["Статус объекта"] == "Строящийся"]
 cat_cols = [f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]
 
 last_year_int = mon.get("max_year")  # 2026
@@ -480,7 +471,21 @@ else:
     with chart_col:
         # Сам график — только с 2022 года (более ранние годы видны
         # в легенде слева и в общем итоге за 2017-2026 гг.).
-        by_year_chart = by_year[by_year["Год ввода по Мосстату"].astype(int) >= 2022]
+        # ВАЖНО: дополняем диапазон отсутствующими годами (2022..max),
+        # чтобы столбы были одинаковой ширины и у маленького девелопера
+        # с 1-2 годами данных, и у крупного. Без этого Plotly растягивает
+        # столбы на всю ширину и они «прыгают» по размеру.
+        present_years = set(by_year["Год ввода по Мосстату"].astype(int))
+        max_year_chart = max(present_years) if present_years else last_year_int or 2026
+        all_years = [str(y) for y in range(2022, max_year_chart + 1)]
+        by_year_chart = (
+            by_year[by_year["Год ввода по Мосстату"].astype(int) >= 2022]
+            .set_index("Год ввода по Мосстату")
+            .reindex(all_years)
+            .fillna(0)
+            .reset_index()
+            .rename(columns={"index": "Год ввода по Мосстату"})
+        )
         fig = go.Figure()
         for lbl, key, color in zip(CAT_LABELS, CAT_KEYS, CAT_COLORS):
             vals = by_year_chart[f"{CAT_COL_PREFIX}{key}"] / 1000.0
@@ -495,17 +500,30 @@ else:
         totals = by_year_chart[[f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].sum(axis=1) / 1000.0
         fig.add_trace(go.Scatter(
             x=by_year_chart["Год ввода по Мосстату"], y=totals,
-            mode="text", text=[ru_num(v) for v in totals],
+            mode="text", text=[ru_num(v) if v > 0 else "" for v in totals],
             textposition="top center",
             textfont=dict(size=12, color="#333"),
             showlegend=False, hoverinfo="skip",
         ))
-        y_top = totals.max() * 1.15 if not totals.empty else 1
+        y_top = totals.max() * 1.15 if not totals.empty and totals.max() > 0 else 1
         fig.update_layout(
             barmode="stack", height=400,
             margin=dict(l=0, r=0, t=20, b=0),
             xaxis_title="Год ввода", yaxis_title="тыс. м²",
+            # type='category' фиксирует столбцы как дискретные категории
+            # одинаковой ширины. tickangle=0 + tickmode='array' гарантируют
+            # горизонтальные подписи лет без поворотов и пропусков.
+            xaxis=dict(
+                type="category",
+                categoryorder="array",
+                categoryarray=all_years,
+                tickmode="array",
+                tickvals=all_years,
+                ticktext=all_years,
+                tickangle=0,
+            ),
             yaxis=dict(range=[0, y_top]),
+            bargap=0.25,
             legend=dict(orientation="h", y=-0.15),
         )
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
@@ -516,16 +534,16 @@ st.markdown("### В строительстве")
 left, right = st.columns([2, 1])
 
 with left:
-    # Для donut «В строительстве» используем 3 категории (а не 4 как
-    # в других местах): МОП объединяется с «Нежилье в жилье» в одну.
+    # Для donut «В строительстве» — 3 категории по Назначение:
+    # Жилое / МОП (Общая − Жилая у жилых) / Нежилое.
     raw_cats = categorize_sum(oks_dev)
     cats_3 = {
         "Жилое": raw_cats.get("Жилое", 0),
-        "Нежилье в жилье и МОП":
-            raw_cats.get("МОП", 0) + raw_cats.get("Нежилье в жилье", 0),
-        "Нежилое отдельное": raw_cats.get("Нежилое отдельное", 0),
+        "МОП": raw_cats.get("МОП", 0),
+        # после изменения categorize_oks всё нежилое собрано здесь
+        "Нежилое": raw_cats.get("Нежилое отдельное", 0),
     }
-    # Цвета: зелёный / тёплый жёлто-оранжевый / серый
+    # Цвета: зелёный (жилое) / жёлто-оранжевый (МОП) / серый (нежилое)
     colors_3 = ["#8BC540", "#F4A261", "#7A8386"]
     render_donut(
         cats_3,
@@ -820,12 +838,21 @@ if not rv_dev.empty:
     msk_2225 = rv_dev[rv_dev.get("Год ввода по Мосстату").isin([2022, 2023, 2024, 2025])]
     msk_2225_zhilye = float(msk_2225["category_жилое"].sum())
 
-# ТОЧНЫЕ числа из per-year ERZ top_obyem_vvoda_msk_YYYY_*.xlsx
+# ТОЧНЫЕ числа из per-year ERZ top_obyem_vvoda_msk/rf_YYYY_*.xlsx
 # (если парсер их собрал — после обновления erzrf_checker)
+# Для регионов важно использовать ПАРНЫЕ годы (где есть и rf, и msk),
+# иначе rf-сумма за 3 года меньше msk-суммы за 4 года → отрицательная
+# разность → «—» в карточке регионов.
 perenos_msk_2225_exact = 0.0
 sdano_msk_2225_exact = 0.0
 exact_years_found = []
+# Парные суммы по годам где есть и RF, и МСК — для региональной карточки
+perenos_rf_paired = 0.0
+sdano_rf_paired = 0.0
+perenos_msk_paired = 0.0
+sdano_msk_paired = 0.0
 by_year_msk = erzrf_top.get("obyem_vvoda_by_year", {}).get("msk", {})
+by_year_rf = erzrf_top.get("obyem_vvoda_by_year", {}).get("rf", {})
 for y in (2022, 2023, 2024, 2025):
     df_y = by_year_msk.get(y)
     if df_y is None or df_y.empty:
@@ -841,11 +868,32 @@ for y in (2022, 2023, 2024, 2025):
                   if "С переносом срока" in c and "м²" in c), None)
     v_col = next((c for c in df_y.columns
                   if "Введено" in c and "м²" in c), None)
-    if p_col:
-        perenos_msk_2225_exact += float(pd.to_numeric(r_y[p_col], errors="coerce") or 0)
-    if v_col:
-        sdano_msk_2225_exact += float(pd.to_numeric(r_y[v_col], errors="coerce") or 0)
+    msk_p = float(pd.to_numeric(r_y[p_col], errors="coerce") or 0) if p_col else 0
+    msk_v = float(pd.to_numeric(r_y[v_col], errors="coerce") or 0) if v_col else 0
+    perenos_msk_2225_exact += msk_p
+    sdano_msk_2225_exact += msk_v
     exact_years_found.append(y)
+
+    # Парный год: ищем RF за тот же год
+    df_rf_y = by_year_rf.get(y)
+    if df_rf_y is None or df_rf_y.empty:
+        continue
+    name_col_rf = next((c for c in df_rf_y.columns if "Наименование" in str(c)), None)
+    if not name_col_rf:
+        continue
+    rows_rf = df_rf_y[df_rf_y[name_col_rf].apply(lambda x: norm(str(x)) == sel_key)]
+    if rows_rf.empty:
+        continue
+    r_rf = rows_rf.iloc[0]
+    p_col_rf = next((c for c in df_rf_y.columns
+                     if "С переносом срока" in c and "м²" in c), None)
+    v_col_rf = next((c for c in df_rf_y.columns
+                     if "Введено" in c and "м²" in c), None)
+    if p_col_rf and v_col_rf:
+        perenos_rf_paired += float(pd.to_numeric(r_rf[p_col_rf], errors="coerce") or 0)
+        sdano_rf_paired += float(pd.to_numeric(r_rf[v_col_rf], errors="coerce") or 0)
+        perenos_msk_paired += msk_p
+        sdano_msk_paired += msk_v
 
 perenos_msk_2225_est = None  # для оценки если точных нет
 if not exact_years_found and sdano_2225_rf > 0 and perenos_2225_rf > 0:
@@ -884,58 +932,75 @@ if not rv_dev.empty:
     mon_vvod_msk_2225 = float(rv_2225["Общая площадь"].sum())
 
 
-# === Ряд 1: текущее строительство (РФ + МСК) ===
+# === 3 ряда × 2 колонки: слева Москва, справа Регионы РФ (= РФ - Москва) ===
+# Левые (Москва) — знаменатели из monitoring 2.0 (полный реестр Москвы).
+# Правые (Регионы РФ) — разница ERZRF-РФ и ERZRF-МСК. ВАЖНО: вычитать
+# нужно ERZRF-МСК (тот же источник что и числитель), а не monitoring —
+# у monitoring другая размерность (Общая площадь со всем нежилым), и для
+# крупных застройщиков monitoring-МСК > ERZRF-РФ, разность становится
+# отрицательной и кламп в 0 даёт «от 0 тыс. м² в регионах».
+regiony_stroy_value = max((perenos_stroy_rf or 0) - (perenos_stroy_msk or 0), 0.0)
+regiony_stroy_base = max((stroitelstvo_rf or 0) - (stroitelstvo_msk or 0), 0.0)
+
+regiony_2225_value = max(perenos_rf_paired - perenos_msk_paired, 0.0)
+regiony_2225_base = max(sdano_rf_paired - sdano_msk_paired, 0.0)
+
+regiony_2026_value = max((perenos_vvod_rf_2026 or 0) - (perenos_vvod_msk_2026 or 0), 0.0)
+regiony_2026_base = max((vvod_rf_2026 or 0) - (vvod_msk_2026 or 0), 0.0)
+
+# === Ряд 1: текущее строительство ===
 r1c1, r1c2 = st.columns(2)
 with r1c1:
-    subs = [
-        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке по РФ",
-         pct_str(perenos_stroy_rf, stroitelstvo_rf)),
-    ]
-    render_delay_card("Перенос в текущем строительстве РФ", perenos_stroy_rf, subs)
-with r1c2:
-    # Москва: знаменатель из monitoring 2.0 (Реестр ОКС, статус «Строящийся»)
     subs = [
         (f"от {ru_num(mon_stroy_msk/1000)} тыс. м² в стройке Москвы",
          pct_str(perenos_stroy_msk, mon_stroy_msk)),
     ]
-    render_delay_card("Перенос в текущем строительстве МСК", perenos_stroy_msk, subs)
+    render_delay_card("Перенос в текущем строительстве в Москве",
+                      perenos_stroy_msk, subs)
+with r1c2:
+    subs = [
+        (f"от {ru_num(regiony_stroy_base/1000)} тыс. м² в стройке регионов РФ",
+         pct_str(regiony_stroy_value, regiony_stroy_base)),
+    ]
+    render_delay_card("Перенос в текущем строительстве в регионах РФ",
+                      regiony_stroy_value, subs)
 
-# === Ряд 2: переносы ввода ===
+# === Ряд 2: переносы ввода 2022-2025 ===
 r2c1, r2c2 = st.columns(2)
 with r2c1:
-    # Москва: знаменатель из monitoring 2.0 (РВ за 2022..2025)
     if exact_years_found:
-        title = f"Перенос в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
-        value = perenos_msk_2225
+        title_msk = f"Перенос ввода в Москве за {min(exact_years_found)}-{max(exact_years_found)}"
     else:
-        title = "Перенос в Москве за 2022-2025 (оценка)"
-        value = perenos_msk_2225_est
+        title_msk = "Перенос ввода в Москве за 2022-2025 (оценка)"
     subs = [
         (f"от {ru_num(mon_vvod_msk_2225/1000)} тыс. м² введённых в Москве 22-25",
-         pct_str(value, mon_vvod_msk_2225)),
+         pct_str(perenos_msk_2225, mon_vvod_msk_2225)),
     ]
-    render_delay_card(title, value, subs)
+    render_delay_card(title_msk, perenos_msk_2225, subs)
 with r2c2:
-    # РФ-карточка: знаменатель оставляем ERZ (как договорились)
     subs = [
-        (f"от {ru_num((stroitelstvo_rf or 0)/1000)} тыс. м² в стройке РФ",
-         pct_str(perenos_vvod_rf_2026, stroitelstvo_rf)),
-        # Москва-строка: знаменатель из monitoring 2.0 (РВ за 2026)
-        (f"в Москве: {fmt_thousand_m2(perenos_vvod_msk_2026)} "
-         f"({pct_str(perenos_vvod_msk_2026, mon_vvod_msk_2026)} от ввода МСК)", ""),
+        (f"от {ru_num(regiony_2225_base/1000)} тыс. м² введённых в регионах РФ 22-25",
+         pct_str(regiony_2225_value, regiony_2225_base)),
     ]
-    render_delay_card("Перенос ввода за 2026 (РФ)", perenos_vvod_rf_2026, subs)
+    render_delay_card("Перенос ввода в регионах РФ за 2022-2025",
+                      regiony_2225_value, subs)
 
-# === Ряд 3: в других регионах ===
-r3c1, _ = st.columns(2)
+# === Ряд 3: переносы ввода 2026 ===
+r3c1, r3c2 = st.columns(2)
 with r3c1:
     subs = [
-        (f"от {ru_num((vvod_rf_2026 or 0)/1000)} тыс. м² ввода в РФ за 2026",
-         pct_str(other_perenos_2026, vvod_rf_2026)),
-        (f"от всех переносов РФ ({fmt_thousand_m2(perenos_vvod_rf_2026)})",
-         pct_str(other_perenos_2026, perenos_vvod_rf_2026)),
+        (f"от {ru_num(mon_vvod_msk_2026/1000)} тыс. м² ввода в Москве за 2026",
+         pct_str(perenos_vvod_msk_2026, mon_vvod_msk_2026)),
     ]
-    render_delay_card("В других регионах за 2026", other_perenos_2026, subs)
+    render_delay_card("Перенос ввода в Москве за 2026",
+                      perenos_vvod_msk_2026, subs)
+with r3c2:
+    subs = [
+        (f"от {ru_num(regiony_2026_base/1000)} тыс. м² ввода в регионах РФ за 2026",
+         pct_str(regiony_2026_value, regiony_2026_base)),
+    ]
+    render_delay_card("Перенос ввода в регионах РФ за 2026",
+                      regiony_2026_value, subs)
 
 # === Кредитные лимиты и наполнение Эскроу ===
 st.markdown("### Кредитные лимиты и наполнение Эскроу")
@@ -1012,8 +1077,7 @@ with st.expander("📋 Список введённых объектов (Рее�
             hide_index=True, use_container_width=True, height=300,
         )
 
-with st.expander(f"📋 Все объекты с разрешением на строительство — Реестр ОКС "
-                 f"({len(oks_dev_all)} всего, {len(oks_dev)} строящихся)"):
+with st.expander("Все объекты с разрешением на строительство — Реестр ОКС"):
     if oks_dev_all.empty:
         st.info("Нет данных")
     else:

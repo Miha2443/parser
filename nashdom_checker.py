@@ -32,6 +32,8 @@ from urllib.parse import quote
 
 import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
+
+from pipeline.dev_name_utils import normalize_developer_name
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -62,7 +64,7 @@ KVARTIROGRAFIA_PATH = "аналитика/квартирография"
 DOWNLOAD_DIR = Path("data/raw/realty/nashdom")
 STATE_FILE = Path("state/nashdom_state.json")
 PAGE_TIMEOUT = 60
-HEADLESS = False  # TODO: переключить в True после первой удачной отладки.
+HEADLESS = os.environ.get("HEADLESS", "1") != "0"  # default headless
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
 
@@ -221,6 +223,92 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
         time.sleep(pause)
     driver.execute_script("window.scrollTo(0, 0);")
     time.sleep(0.5)
+
+
+# Маркеры в первой ячейке таблицы «Девелоперы» (раздел на сайте «Распроданность»).
+# Таблица детерминируется по тому что в первой строке стоит крупный девелопер.
+_RASPROD_DEV_MARKERS = ("Самолет", "ПИК", "ГК Самолет", "ГК ПИК")
+
+
+def _scroll_developers_table(driver, *, step_px: int = 600, pause: float = 0.3,
+                             no_progress_max: int = 4, max_steps: int = 400) -> int:
+    """Прокручивает виртуальную таблицу «Девелоперы» на странице
+    «Распроданность» до конца — чтобы все строки попали в DOM.
+
+    Возвращает финальное число <tr> в этой таблице.
+
+    Алгоритм: JS на каждом шаге находит нужный tbody по маркеру в первой
+    ячейке, ищет scrollable parent (или скроллит window), шагает на
+    step_px и возвращает текущее число строк. Цикл крутим в Python и
+    останавливаемся когда `no_progress_max` шагов подряд без прироста.
+    """
+    js_step = """
+    const markers = arguments[0];
+    const stepPx = arguments[1];
+
+    let tbody = null;
+    for (const tb of document.querySelectorAll('tbody')) {
+        const firstCell = tb.querySelector('tr td');
+        if (!firstCell) continue;
+        const txt = (firstCell.innerText || '').trim();
+        if (markers.some(m => txt.startsWith(m))) { tbody = tb; break; }
+    }
+    if (!tbody) return {found: false, rows: 0};
+
+    let cont = null;
+    let cur = tbody;
+    while (cur && cur !== document.body) {
+        try {
+            const s = getComputedStyle(cur);
+            if ((s.overflowY === 'auto' || s.overflowY === 'scroll')
+                && cur.scrollHeight > cur.clientHeight + 1) {
+                cont = cur; break;
+            }
+        } catch (e) {}
+        cur = cur.parentElement;
+    }
+
+    if (cont) {
+        cont.scrollTop += stepPx;
+        cont.dispatchEvent(new Event('scroll', {bubbles: true}));
+    } else {
+        // fallback: пробуем скроллить таблицу через scrollIntoView последнего ряда
+        const rows = tbody.querySelectorAll('tr');
+        if (rows.length) {
+            rows[rows.length - 1].scrollIntoView({block: 'end'});
+        } else {
+            window.scrollBy(0, stepPx);
+        }
+    }
+    return {
+        found: true,
+        rows: tbody.querySelectorAll('tr').length,
+        scrollable: !!cont,
+    };
+    """
+    prev = 0
+    no_progress = 0
+    last = {"found": False, "rows": 0}
+    for _ in range(max_steps):
+        try:
+            result = driver.execute_script(
+                js_step, list(_RASPROD_DEV_MARKERS), step_px)
+        except Exception as exc:  # noqa: BLE001
+            print(f"       ⚠️  скролл «Девелоперы» упал: {exc}")
+            return last.get("rows") or 0
+        if not isinstance(result, dict) or not result.get("found"):
+            return 0
+        last = result
+        time.sleep(pause)
+        rows = int(result.get("rows") or 0)
+        if rows == prev:
+            no_progress += 1
+            if no_progress >= no_progress_max:
+                break
+        else:
+            no_progress = 0
+            prev = rows
+    return int(last.get("rows") or 0)
 
 
 KVART_REGIONS = [
@@ -532,6 +620,33 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
         for region in KVART_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
+                # Если Chrome был положен в per-dev обходе предыдущего региона
+                # (HTTPConnectionPool timeout / chrome not reachable) —
+                # все дальнейшие selenium-вызовы на этом драйвере фейлят сразу.
+                # Перед переключением региона пробуем простой пинг
+                # current_url; если падает — пересоздаём driver.
+                try:
+                    _ = driver.current_url
+                except Exception as ping_exc:  # noqa: BLE001
+                    print(f"       ⚠️  driver мёртв ({ping_exc.__class__.__name__}), "
+                          f"пересоздаю Chrome перед регионом {region['key']}")
+                    try:
+                        driver.quit()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                    driver.set_page_load_timeout(PAGE_TIMEOUT)
+                    driver.get(url)
+                    time.sleep(6)
+                    try:
+                        WebDriverWait(driver, 45).until(
+                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+                        )
+                    except TimeoutException:
+                        print(f"       ⚠️  после reset: контент не появился, пропускаю {region['key']}")
+                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_after_reset_no_content")
+                        continue
+                    time.sleep(3)
                 if region["search"]:
                     ok = _switch_region_filter(
                         driver,
@@ -565,80 +680,158 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 flush()
 
                 # === Per-developer обход ===
-                # Управляется KVART_PER_DEV (default=0).
-                # Каждый результат верифицируется против developers-агрегата —
-                # если расхождение >10% → повтор (до 2 раз), иначе пропуск.
+                # Управляется KVART_PER_DEV (default=1).
+                # Источник имён — лист developers (реальный список с сайта
+                # для текущего региона), а НЕ monitoring_2_0.xlsx. Это
+                # ~200-300 застройщиков вместо 745. Для каждого имени
+                # подбираем monitoring_name через _build_dev_mapping —
+                # чтобы в дашборде матчить с другими источниками.
                 if _per_dev_enabled():
-                    dev_names = _read_monitoring_developers()
-                    limit = _per_dev_limit()
-                    if limit:
-                        dev_names = dev_names[:limit]
-                    if not dev_names:
-                        print("       ⚠️  monitoring_2_0 не найден — per-dev пропускаем")
+                    site_devs_full = [
+                        d.get("наименование", "")
+                        for d in data.get("developers", [])
+                        if d.get("наименование", "")
+                    ]
+                    if not site_devs_full:
+                        print("       ⚠️  лист developers пуст — per-dev пропускаем")
                     else:
-                        # Сборка lookup: «нормализованное имя» → ожидаемые числа
-                        # из developers (агрегат уже собран и точно правильный)
+                        # Сборка lookup: site_key → ожидаемые числа из developers.
+                        # ВАЖНО: разные сайтовые имена могут нормализоваться
+                        # в один ключ (ССК ↔ СЗ ССК, Эталон ↔ СЗ ЭТАЛОН,
+                        # ЮгСтройИнвест ↔ СЗ ЮГСТРОЙИНВЕСТ). Раньше второй
+                        # затирал первый и verification ожидала 1000 кв-р
+                        # вместо 36500 → нормальные числа отбраковывались
+                        # как «ratio=36». Теперь при коллизии оставляем
+                        # запись с большим all_count (агрегат группы > мелкий СЗ).
                         expected: dict[str, dict] = {}
                         for d_row in data.get("developers", []):
-                            nm = _normalize_dev_name_for_lookup(d_row.get("наименование", ""))
+                            nm = normalize_developer_name(d_row.get("наименование", ""))
                             if not nm:
                                 continue
-                            expected[nm] = {
+                            cand = {
                                 "all_count": _parse_num_apartments(d_row.get("квартиры_тыс_шт", "")),
                                 "all_area": _parse_num_apartments(d_row.get("площадь_тыс_м²", "")),
                             }
+                            prev = expected.get(nm)
+                            if prev is None or cand["all_count"] > prev["all_count"]:
+                                expected[nm] = cand
+
+                        # Mapping: site_name → monitoring_name (с overrides).
+                        # Строится для ВСЕГО site_devs_full (полный аудит для
+                        # пользователя) до применения лимитов на обход.
+                        # Сохраняем СРАЗУ в data, до per-dev обхода —
+                        # пользователь может посмотреть mapping даже если
+                        # обход прервётся.
+                        monitoring_devs = _load_monitoring_devs()
+                        overrides = _load_dev_overrides()
+                        mapping = _build_dev_mapping(
+                            site_devs_full, monitoring_devs, overrides)
+                        data["dev_name_mapping"] = mapping
+                        mapping_by_site = {m["site_name"]: m for m in mapping}
+                        n_matched = sum(1 for m in mapping if m["monitoring_name"])
+                        n_conflict = sum(
+                            1 for m in mapping if m["match_type"] == "conflict_first")
+                        n_none = sum(
+                            1 for m in mapping if m["match_type"] == "none")
+                        print(f"       ── mapping: {len(mapping)} сайтовых, "
+                              f"{n_matched} matched, {n_conflict} conflicts, "
+                              f"{n_none} unmatched")
+                        flush()
+
+                        # Per-region лимит per-dev обхода. Для РФ список
+                        # ~1678, без лимита это ~3 часа. Москва обычно
+                        # 200-300 — обходится за 20-30 мин.
+                        site_devs = list(site_devs_full)
+                        region_limit = _per_dev_limit_for_region(region["key"])
+                        if region_limit:
+                            site_devs = site_devs[:region_limit]
+                        glob_limit = _per_dev_limit()
+                        if glob_limit:
+                            site_devs = site_devs[:glob_limit]
 
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
                         per_dev: list[dict] = []
                         # attempts — диагностический лог КАЖДОЙ попытки
-                        # с указанием статуса (ok/switch_fail/empty/rejected).
-                        # Сохраняется в data["per_dev_attempts"] для разбора
-                        # причин если в итоге ok_count маленький.
                         attempts: list[dict] = []
-                        print(f"       ── per-dev обход: {len(dev_names)} девелоперов "
-                              f"(KVART_PER_DEV=0 чтобы выключить)")
+                        print(f"       ── per-dev обход: {len(site_devs)}/{len(site_devs_full)} "
+                              f"девелоперов (KVART_PER_DEV=0 чтобы выключить)")
                         ok_count = fail_count = rejected = 0
-                        for i, dev in enumerate(dev_names, 1):
-                            attempt = {"i": i, "monitoring_name": dev, "status": ""}
-                            # debug-вывод для первых 3 девелоперов чтобы было
-                            # видно как работает сброс фильтра (или KVART_PER_DEV_DEBUG=1)
+                        consecutive_fail = 0
+                        CONSECUTIVE_FAIL_LIMIT = 5
+                        for i, site_name in enumerate(site_devs, 1):
+                            m = mapping_by_site.get(site_name, {})
+                            attempt = {
+                                "i": i,
+                                "site_name": site_name,
+                                "monitoring_name": m.get("monitoring_name"),
+                                "match_type": m.get("match_type", "none"),
+                                "status": "",
+                            }
                             dbg = debug_first and i <= 3
                             try:
                                 ok = _switch_developer_filter(
-                                    driver, dev, wait_change=True,
+                                    driver, site_name, wait_change=True,
                                     timeout=15, debug=dbg)
                             except Exception as e:  # noqa: BLE001
-                                print(f"          ⚠️  {i}/{len(dev_names)} «{dev}» — {e}")
+                                print(f"          ⚠️  {i}/{len(site_devs)} «{site_name}» — {e}")
                                 attempt.update(status="switch_exception", error=str(e)[:200])
                                 ok = False
                             if not ok:
                                 fail_count += 1
+                                consecutive_fail += 1
                                 if not attempt["status"]:
                                     attempt["status"] = "switch_fail"
                                 attempts.append(attempt)
+                                # Если N подряд фейлов — Chrome / сайт залип.
+                                # Пересоздаём driver и восстанавливаем регион,
+                                # чтобы оставшиеся девелоперы не превратились
+                                # в каскад ошибок (как на МСК 11/83).
+                                if consecutive_fail >= CONSECUTIVE_FAIL_LIMIT:
+                                    print(f"          ♻️  {consecutive_fail} подряд switch_fail "
+                                          f"— пересоздаю Chrome и продолжаю с {i+1}/{len(site_devs)}")
+                                    try:
+                                        driver.quit()
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                                    driver.set_page_load_timeout(PAGE_TIMEOUT)
+                                    try:
+                                        driver.get(url)
+                                        time.sleep(6)
+                                        WebDriverWait(driver, 45).until(
+                                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
+                                        )
+                                        time.sleep(3)
+                                        if region["search"]:
+                                            _switch_region_filter(
+                                                driver,
+                                                target_label=region["click_label"],
+                                                search_query=region["search"],
+                                            )
+                                            time.sleep(5)
+                                    except Exception as reset_exc:  # noqa: BLE001
+                                        print(f"          ⚠️  reset не удался ({reset_exc}), останавливаю per-dev")
+                                        break
+                                    consecutive_fail = 0
                                 continue
+                            consecutive_fail = 0
 
-                            # Парсим (с debug для первого девелопера в каждом регионе
-                            # чтобы видеть какой селектор был выбран)
                             apt = _parse_apartments_live(
                                 driver, debug=(debug_first and i == 1))
 
-                            # ВЕРИФИКАЦИЯ: сравним с агрегатом из developers.
-                            # Если расхождение >10% — это баг (взяли не тот блок),
-                            # повторяем парсинг после паузы.
-                            filter_label = _get_developer_filter_label(driver) or dev
+                            # Verification: ratio с агрегатом developers по site_key.
+                            filter_label = _get_developer_filter_label(driver) or site_name
                             attempt["filter_label"] = filter_label
-                            verify_key = _normalize_dev_name_for_lookup(filter_label)
-                            exp = expected.get(verify_key) or expected.get(
-                                _normalize_dev_name_for_lookup(dev))
+                            site_key = normalize_developer_name(site_name)
+                            exp = expected.get(site_key) or expected.get(
+                                normalize_developer_name(filter_label))
                             if exp and apt and apt.get("all"):
                                 got = _parse_num_apartments(apt["all"].get("count", ""))
-                                want = exp["all_count"] * 1000  # developers даёт тыс. шт
+                                want = exp["all_count"] * 1000
                                 if want > 0:
                                     ratio = got / want
                                     if ratio < 0.9 or ratio > 1.1:
-                                        # Повтор: ещё подождать и перечитать
                                         time.sleep(2.0)
                                         apt = _parse_apartments_live(driver)
                                         got2 = _parse_num_apartments(
@@ -655,7 +848,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                             )
                                             attempts.append(attempt)
                                             if rejected <= 3:
-                                                print(f"          🚫 {i}/{len(dev_names)} «{dev[:30]}»: "
+                                                print(f"          🚫 {i}/{len(site_devs)} «{site_name[:30]}»: "
                                                       f"парсер дал {got2 or got:.0f} шт, "
                                                       f"ожидалось ~{want:.0f} (ratio={ratio:.2f}) — пропускаю")
                                             continue
@@ -663,7 +856,9 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             if apt and apt.get("all"):
                                 per_dev.append({
                                     "наименование": filter_label,
-                                    "monitoring_name": dev,
+                                    "site_name": site_name,
+                                    "monitoring_name": m.get("monitoring_name"),
+                                    "match_type": m.get("match_type", "none"),
                                     "apartments": apt,
                                 })
                                 attempt["status"] = "ok"
@@ -674,7 +869,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                             attempts.append(attempt)
 
                             if i % 10 == 0:
-                                print(f"          · {i}/{len(dev_names)}: "
+                                print(f"          · {i}/{len(site_devs)}: "
                                       f"ok={ok_count}, miss={fail_count}, rejected={rejected}")
                                 data["apartments_per_dev"] = per_dev
                                 data["per_dev_attempts"] = attempts
@@ -686,7 +881,6 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         print(f"       ✅ per-dev: {ok_count} собрано, "
                               f"{fail_count} ошибок селектора, "
                               f"{rejected} отвергнуто (не совпадает с агрегатом)")
-                        # Если всё провалилось — выводим первые причины из attempts
                         if ok_count == 0 and attempts:
                             from collections import Counter
                             status_counts = Counter(a["status"] for a in attempts)
@@ -717,9 +911,16 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
             pass
 
     if all_data:
+        got_regions = {d.get("region_key") for d in all_data}
+        expected_regions = {r["key"] for r in KVART_REGIONS}
+        missing_regions = sorted(expected_regions - got_regions)
+        if missing_regions:
+            print(f"  ⚠️  kvartirografia: НЕ собраны регионы: "
+                  f"{missing_regions}. Собрано только: {sorted(got_regions)}")
         state["kvartirografia"] = {
             "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            "regions": [r["key"] for r in KVART_REGIONS],
+            "regions": sorted(got_regions),
+            "missing_regions": missing_regions,
             "file": target_xlsx.name,
         }
     return new_files
@@ -1437,11 +1638,12 @@ def _normalize_dev_name_for_lookup(name: str) -> str:
     return " ".join(s.split())
 
 
-def _read_monitoring_developers() -> list[str]:
+def _load_monitoring_devs() -> list[str]:
     """Свежий список ГК из monitoring_2_0_*.xlsx (объединение Реестр РВ + ОКС).
 
-    Возвращает пустой список если xlsx не найден. Используется
-    для per-dev обхода kvartirografia.
+    Используется как справочник для mapping (site_name → monitoring_name)
+    в per-dev обходе kvartirografia. По обходу мы НЕ итерируем — нам
+    нужно только подобрать matching для каждого имени с сайта.
     """
     files = sorted(DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"))
     if not files:
@@ -1467,7 +1669,6 @@ def _read_monitoring_developers() -> list[str]:
                 if not isinstance(v, str):
                     continue
                 s = v.strip().strip('"').strip("'")
-                # Фильтруем формулы Excel и заведомо невалидные имена
                 if not s or s.startswith("#") or s.startswith("="):
                     continue
                 if s.isdigit() or len(s) < 2:
@@ -1478,6 +1679,105 @@ def _read_monitoring_developers() -> list[str]:
         print(f"     ⚠️  не удалось прочитать monitoring devs: {exc}")
         return []
     return sorted(devs)
+
+
+def _load_dev_overrides() -> dict[str, str]:
+    """Читает ручные overrides для mapping site_name → monitoring_name.
+
+    Формат файла data/raw/realty/nashdom/dev_name_overrides.json:
+        {
+          "<site_key>": "<точное имя из monitoring>",
+          ...
+        }
+    site_key — это normalize_developer_name(site_name).
+
+    Используется чтобы вручную перебить ошибки автоматического матчинга
+    (например конфликты или неправильные совпадения по нормализованному
+    ключу). Если файла нет — пустой dict.
+    """
+    path = DOWNLOAD_DIR / "dev_name_overrides.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        return {str(k): str(v) for k, v in data.items() if v}
+    except Exception as exc:  # noqa: BLE001
+        print(f"     ⚠️  не удалось прочитать dev_name_overrides.json: {exc}")
+        return {}
+
+
+def _build_dev_mapping(site_devs: list[str],
+                       monitoring_devs: list[str],
+                       overrides: dict[str, str]) -> list[dict]:
+    """Сопоставляет имена с сайта (developers) с именами из monitoring.
+
+    Возвращает список dict-записей по одному на каждое site_name.
+    Каждая запись:
+      {
+        "site_name":       <строка с сайта>,
+        "site_key":        <normalize_developer_name(site_name)>,
+        "monitoring_name": <строка из monitoring> | None,
+        "monitoring_key":  <normalize_developer_name(monitoring_name)> | None,
+        "match_type":      "override" | "exact" | "conflict_first" | "none",
+        "candidates":      [<все monitoring-имена с тем же ключом>],
+      }
+    """
+    by_key: dict[str, list[str]] = {}
+    for m in monitoring_devs:
+        k = normalize_developer_name(m)
+        if not k:
+            continue
+        by_key.setdefault(k, []).append(m)
+    for k in by_key:
+        by_key[k].sort()
+
+    mapping: list[dict] = []
+    for site_name in site_devs:
+        site_key = normalize_developer_name(site_name)
+        if site_key in overrides:
+            mon = overrides[site_key]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": normalize_developer_name(mon),
+                "match_type": "override",
+                "candidates": by_key.get(site_key, []),
+            })
+            continue
+        candidates = by_key.get(site_key, [])
+        if len(candidates) == 1:
+            mon = candidates[0]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": site_key,
+                "match_type": "exact",
+                "candidates": candidates,
+            })
+        elif len(candidates) > 1:
+            mon = candidates[0]
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": mon,
+                "monitoring_key": site_key,
+                "match_type": "conflict_first",
+                "candidates": candidates,
+            })
+        else:
+            mapping.append({
+                "site_name": site_name,
+                "site_key": site_key,
+                "monitoring_name": None,
+                "monitoring_key": None,
+                "match_type": "none",
+                "candidates": [],
+            })
+    return mapping
 
 
 # Per-dev обход ВКЛЮЧЁН по умолчанию.
@@ -1503,6 +1803,26 @@ def _per_dev_limit() -> int | None:
         return n if n > 0 else None
     except ValueError:
         return None
+
+
+def _per_dev_limit_for_region(region_key: str) -> int | None:
+    """Per-region лимит per-dev обхода.
+
+    - Москва (msk): без лимита (список ~200-300, проходится за 20-30 мин).
+    - РФ (rf): топ-200 по умолчанию (список 1678, без лимита — ~3 часа).
+      Список отсортирован сайтом по убыванию объёма строительства,
+      то есть «первые 200» = топ-200 крупнейших застройщиков РФ.
+
+    Override через env: KVART_PER_DEV_LIMIT_RF=N (0 чтобы выключить).
+    """
+    if region_key == "rf":
+        raw = os.environ.get("KVART_PER_DEV_LIMIT_RF", "200").strip()
+        try:
+            n = int(raw)
+            return n if n > 0 else None
+        except ValueError:
+            return 200
+    return None
 
 
 def _parse_kvartirografia(html: str, url: str) -> dict:
@@ -2362,6 +2682,10 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                 # Перечислим все доступные периоды (year, month_idx)
                 periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
                 print(f"       · доступных периодов: {len(periods)}")
+                # Самый свежий период — для него отдельно листаем таблицу
+                # «Девелоперы» виртуальным скроллом, чтобы собрать всех (а не
+                # только видимый топ).
+                latest_period = max(periods) if periods else None
 
                 for period_i, (year, m_idx) in enumerate(periods, 1):
                     month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
@@ -2372,6 +2696,13 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         continue
                     _scroll_through_page(driver)
                     time.sleep(1.5)
+
+                    if latest_period and (year, m_idx) == latest_period:
+                        n_rows = _scroll_developers_table(driver)
+                        if n_rows:
+                            print(f"          📥 свежий период: проскроллил «Девелоперы», {n_rows} строк")
+                        else:
+                            print(f"          ⚠️  не удалось проскроллить «Девелоперы»")
 
                     data = _parse_rasprodannost(driver.page_source, driver.current_url)
                     data["region_key"] = region["key"]
@@ -2385,10 +2716,24 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
                     )
                     all_data.append(data)
-                    flush()  # incremental save после каждого периода
+                    # flush раз в 5 периодов: каждый flush пересобирает
+                    # весь xlsx с нуля из all_data (77+ периодов × 6 sections
+                    # × 2500 строк) — это пик памяти, на МСК-40 кончалась
+                    # RAM (MemoryError). После каждого flush явно зовём
+                    # gc.collect() чтобы pandas/openpyxl-промежуточные
+                    # объекты освободились немедленно.
+                    if len(all_data) % 5 == 0:
+                        flush()
+                        import gc
+                        gc.collect()
             except Exception as exc:  # noqa: BLE001
-                print(f"     ❌ ошибка {region['key']}: {exc}")
+                print(f"     ❌ ошибка {region['key']}: {type(exc).__name__}: {exc}")
                 flush()
+            # Финальный flush в конце региона — гарантированно сохраняем
+            # все периоды, даже если их < 5 после последнего инкремента.
+            flush()
+            import gc
+            gc.collect()
 
         state["rasprodannost"] = {
             "report_period": (all_data[0] if all_data else {}).get("report_period", ""),

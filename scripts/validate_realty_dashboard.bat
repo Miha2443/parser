@@ -47,6 +47,7 @@ echo [2/6] streamlit page runtime smoke
 echo [3/6] update_realty planning checks
 "%PY%" scripts\check_update_realty_plan.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_status_summary.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_tdm_file_listing.py || exit /b %ERRORLEVEL%
 
 echo [4/6] realty update status check
 "%PY%" scripts\check_realty_update_status.py --quiet-warnings || exit /b %ERRORLEVEL%

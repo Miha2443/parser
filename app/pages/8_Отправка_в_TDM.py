@@ -14,12 +14,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
+from app.tdm_files import list_tdm_realty_files  # noqa: E402
 from pipeline.tdm_notify import (  # noqa: E402
     notify, notify_file, get_all_groups,
     _get_token, _get_workspace_id, _get_group_id, _is_disabled,
@@ -101,31 +101,20 @@ upload_buffer = None
 
 if source == "Из data/raw/realty/":
     realty_root = ROOT / "data" / "raw" / "realty"
-    files: list[Path] = []
-    for ext in ("*.xlsx", "*.json", "*.csv", "*.pdf", "*.png"):
-        files.extend(realty_root.rglob(ext))
-    files = [f for f in files if "_archive" not in f.parts]
-    if not files:
+    file_options = list_tdm_realty_files(realty_root)
+    if not file_options:
         st.info("В data/raw/realty/ нет файлов")
     else:
-        # Сортируем по mtime (новые сверху)
-        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        labels = {}
-        for f in files:
-            rel = f.relative_to(realty_root)
-            mtime = datetime.fromtimestamp(f.stat().st_mtime).strftime("%d.%m.%Y %H:%M")
-            size_kb = f.stat().st_size / 1024
-            size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
-            labels[str(rel)] = f"{rel}  ({mtime}, {size_str})"
+        options_by_rel = {option.rel: option for option in file_options}
         choice = st.selectbox(
             "Файл",
-            list(labels.keys()),
-            format_func=lambda k: labels[k],
+            list(options_by_rel),
+            format_func=lambda k: options_by_rel[k].label,
         )
         if choice:
-            selected_path = realty_root / choice
+            selected_path = options_by_rel[choice].path
             selected_name = selected_path.name
-            selected_size = selected_path.stat().st_size
+            selected_size = options_by_rel[choice].size_bytes
 
 else:  # Загрузить с компьютера
     upload_buffer = st.file_uploader(

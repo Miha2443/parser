@@ -40,6 +40,16 @@ def main() -> int:
         _require(bytes_target.read_bytes() == b"new-content", "write_bytes_atomic did not write target")
         _require(not (root / "bytes.xlsx.tmp").exists(), "write_bytes_atomic left temp file")
 
+        bytes_target.write_bytes(b"old-content")
+        try:
+            write_bytes_atomic(bytes_target, b"")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("empty bytes write should fail")
+        _require(bytes_target.read_bytes() == b"old-content", "empty bytes write replaced old target")
+        _require(not (root / "bytes.xlsx.tmp").exists(), "empty bytes write left temp file")
+
         stream_target = root / "stream.xlsx"
         stream_target.write_bytes(b"old-content")
         written = stream_response_atomic(Response([b"new", b"", b"-content"]), stream_target)
@@ -56,6 +66,15 @@ def main() -> int:
             raise AssertionError("failed stream should raise")
         _require(stream_target.read_bytes() == b"old-content", "failed stream replaced old target")
         _require(not (root / "stream.xlsx.tmp").exists(), "failed stream left temp file")
+
+        try:
+            stream_response_atomic(Response([b""]), stream_target)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("empty stream should fail")
+        _require(stream_target.read_bytes() == b"old-content", "empty stream replaced old target")
+        _require(not (root / "stream.xlsx.tmp").exists(), "empty stream left temp file")
 
     print("atomic file write checks: ok")
     return 0

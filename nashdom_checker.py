@@ -280,7 +280,11 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
         print(f"  ⏭ {target.name}: без изменений")
         return [], True
 
-    write_bytes_atomic(target, r.content)
+    try:
+        write_bytes_atomic(target, r.content)
+    except (OSError, ValueError) as exc:
+        print(f"  ERROR: failed to save {target.name}: {exc}")
+        return [], False
     size_kb = len(r.content) / 1024
     print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
 

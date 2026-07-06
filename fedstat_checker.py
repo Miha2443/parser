@@ -1165,7 +1165,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
         print(f"  ✅ Сохранён: {save_path}")
         return save_path
 
-    except requests.RequestException as e:
+    except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
         return None
 

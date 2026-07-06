@@ -9,8 +9,10 @@ def _tmp_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.tmp")
 
 
-def write_bytes_atomic(path: Path, content: bytes) -> int:
+def write_bytes_atomic(path: Path, content: bytes, *, allow_empty: bool = False) -> int:
     """Write bytes through a temporary file and atomic replace."""
+    if not content and not allow_empty:
+        raise ValueError(f"refusing to write empty file: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path(path)
     try:
@@ -25,7 +27,13 @@ def write_bytes_atomic(path: Path, content: bytes) -> int:
             pass
 
 
-def stream_response_atomic(response: Any, path: Path, *, chunk_size: int = 8192) -> int:
+def stream_response_atomic(
+    response: Any,
+    path: Path,
+    *,
+    chunk_size: int = 8192,
+    allow_empty: bool = False,
+) -> int:
     """Stream a requests-like response to path without exposing partial files."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path(path)
@@ -37,6 +45,8 @@ def stream_response_atomic(response: Any, path: Path, *, chunk_size: int = 8192)
                     continue
                 f.write(chunk)
                 written += len(chunk)
+        if written == 0 and not allow_empty:
+            raise ValueError(f"refusing to write empty file: {path}")
         tmp.replace(path)
         return written
     finally:

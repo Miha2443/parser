@@ -313,7 +313,7 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
         size_kb = save_path.stat().st_size // 1024
         print(f"  ✅ Сохранён: {save_path.name} ({size_kb} КБ)")
         return True
-    except requests.RequestException as exc:
+    except (requests.RequestException, OSError, ValueError) as exc:
         print(f"  ❌ Ошибка скачивания: {exc}")
         return False
 

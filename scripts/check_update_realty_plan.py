@@ -5,6 +5,7 @@ regressions in source group expansion and source -> mart selection.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import update_realty as ur
@@ -82,6 +83,33 @@ def main() -> int:
             _assert_equal(selected, {"escrow_manual"}, "repair marts are selected")
     finally:
         ur.select_repair_realty_marts = original_repair
+
+    captured = {}
+    original_write_status = ur.write_realty_status
+    try:
+        ur.write_realty_status = lambda payload: captured.update(payload)
+        started = time.time()
+        ur.write_realty_run_status(
+            "running",
+            started=started,
+            sources=["monitoring"],
+            log_path=None,
+        )
+        _assert_equal(captured["status"], "running", "running status is written")
+        _assert_equal(captured["finished_at"], None, "running status has no finish time")
+        _assert_equal(captured["sources_requested"], ["monitoring"], "status sources")
+
+        ur.write_realty_run_status(
+            "failed",
+            started=started,
+            sources=["monitoring"],
+            log_path=None,
+            failures=["monitoring"],
+        )
+        _assert_equal(captured["status"], "failed", "failed status is written")
+        _assert_equal(captured["failures"], ["monitoring"], "status failures")
+    finally:
+        ur.write_realty_status = original_write_status
 
     _assert_equal(
         ur.source_alias_for_changed_path("downloads:Введено в действие общей площади жилых домов.xlsx"),

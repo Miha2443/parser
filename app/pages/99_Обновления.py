@@ -53,15 +53,31 @@ def main() -> None:
         successes = realty_status.get("successes") or []
         failures = realty_status.get("failures") or []
         requested = realty_status.get("sources_requested") or []
+        run_status = str(realty_status.get("status") or "").lower()
+        if not run_status:
+            run_status = "failed" if failures or realty_status.get("marts_ok") is False else "success"
         marts_selected = realty_status.get("marts_selected")
         marts_changed_aliases = realty_status.get("marts_changed_aliases") or []
         marts_repair_selected = realty_status.get("marts_repair_selected") or []
         diff = realty_status.get("diff") or {}
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
-        c2.metric("Источники", f"{len(successes)}/{len(requested)}")
-        c3.metric("Ошибок", len(failures))
-        c4.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
+        status_label = {
+            "running": "в работе",
+            "success": "успех",
+            "failed": "ошибка",
+            "interrupted": "прерван",
+        }.get(run_status, run_status or "—")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Статус", status_label)
+        c2.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
+        c3.metric("Источники", f"{len(successes)}/{len(requested)}")
+        c4.metric("Ошибок", len(failures))
+        c5.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
+        if run_status == "running":
+            st.info("Realty-прогон сейчас выполняется или был прерван до финальной записи статуса.")
+        elif run_status == "interrupted":
+            st.warning("Последний realty-прогон был прерван.")
+        elif run_status == "failed":
+            st.error("Последний realty-прогон завершился с ошибкой.")
         try:
             duration_min = round(float(duration_sec) / 60, 1) if duration_sec is not None else None
         except (TypeError, ValueError):

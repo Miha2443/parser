@@ -189,6 +189,30 @@ def write_realty_status(payload: dict) -> None:
         _print(f"⚠️  Не удалось записать {REALTY_STATUS_FILE}: {exc}")
 
 
+def write_realty_run_status(
+    status: str,
+    *,
+    started: float,
+    sources: list[str],
+    log_path: Path | None,
+    **fields,
+) -> None:
+    """Write a normalized update status payload for the dashboard."""
+    payload = {
+        "status": status,
+        "started_at": datetime.fromtimestamp(started).isoformat(timespec="seconds"),
+        "finished_at": None if status == "running" else datetime.now().isoformat(timespec="seconds"),
+        "duration_sec": round(time.time() - started, 2),
+        "sources_requested": sources,
+        "successes": fields.pop("successes", []),
+        "failures": fields.pop("failures", []),
+    }
+    if log_path is not None:
+        payload["log_file"] = str(log_path.relative_to(ROOT)).replace("\\", "/")
+    payload.update(fields)
+    write_realty_status(payload)
+
+
 def _kill_process_tree(pid: int) -> None:
     """Принудительно убивает процесс и всех его потомков (включая Chrome)."""
     if sys.platform == "win32":
@@ -846,6 +870,7 @@ def main():
         print_update_plan(sources, env, no_marts=args.no_marts)
         return 0
 
+    started = time.time()
     log_path = _setup_logging()
 
     _print(f"\n{'='*60}")
@@ -856,11 +881,21 @@ def main():
     _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
+    write_realty_run_status(
+        "running",
+        started=started,
+        sources=sources,
+        log_path=log_path,
+        archive=not args.no_archive,
+        keep=args.keep,
+        force=args.force,
+        full_rasprod_history=bool(args.full_rasprod_history or args.force),
+        selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+    )
 
     # SNAPSHOT ДО прогона
     before = snapshot_files()
 
-    started = time.time()
     successes, failures = [], []
     do_archive = not args.no_archive
 
@@ -913,6 +948,19 @@ def main():
                 _run_wave(wave_retry, f"   Retry #{retry_round} волна {i}")
     except KeyboardInterrupt:
         _print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
+        write_realty_run_status(
+            "interrupted",
+            started=started,
+            sources=sources,
+            log_path=log_path,
+            successes=successes,
+            failures=failures,
+            archive=not args.no_archive,
+            keep=args.keep,
+            force=args.force,
+            full_rasprod_history=bool(args.full_rasprod_history or args.force),
+            selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+        )
         _close_logging()
         sys.exit(130)
 
@@ -969,28 +1017,27 @@ def main():
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
 
-    write_realty_status({
-        "started_at": datetime.fromtimestamp(started).isoformat(timespec="seconds"),
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-        "duration_sec": round(time.time() - started, 2),
-        "sources_requested": sources,
-        "successes": successes,
-        "failures": failures,
-        "marts_ok": marts_ok,
-        "marts_selected": None if marts_selected is None else sorted(marts_selected),
-        "marts_changed_aliases": marts_changed_aliases,
-        "marts_changed_paths": changed_for_marts,
-        "marts_repair_selected": marts_repair_selected,
-        "archive": not args.no_archive,
-        "keep": args.keep,
-        "force": args.force,
-        "full_rasprod_history": bool(args.full_rasprod_history or args.force),
-        "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
-        "deduped_count": deduped_count,
-        "real_new_count": real_new_count,
-        "diff": diff,
-        "log_file": str(log_path.relative_to(ROOT)).replace("\\", "/"),
-    })
+    write_realty_run_status(
+        "success" if not failures and marts_ok else "failed",
+        started=started,
+        sources=sources,
+        log_path=log_path,
+        successes=successes,
+        failures=failures,
+        marts_ok=marts_ok,
+        marts_selected=None if marts_selected is None else sorted(marts_selected),
+        marts_changed_aliases=marts_changed_aliases,
+        marts_changed_paths=changed_for_marts,
+        marts_repair_selected=marts_repair_selected,
+        archive=not args.no_archive,
+        keep=args.keep,
+        force=args.force,
+        full_rasprod_history=bool(args.full_rasprod_history or args.force),
+        selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+        deduped_count=deduped_count,
+        real_new_count=real_new_count,
+        diff=diff,
+    )
 
     # === Уведомление в TDM ===
     if not args.no_notify:

@@ -25,6 +25,7 @@ State хранится в `state/nashdom_state.json`. Запуск:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -128,6 +129,54 @@ def save_state(state: dict) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _monitoring_same_day_unchanged(
+    *,
+    state_entry: dict,
+    target: Path,
+    content_sha256: str,
+    size_bytes: int,
+) -> bool:
+    if not target.exists():
+        return False
+    if state_entry.get("filename") != target.name:
+        return False
+    if state_entry.get("sha256") != content_sha256:
+        return False
+    try:
+        previous_size = int(state_entry.get("size_bytes") or -1)
+    except (TypeError, ValueError):
+        return False
+    return previous_size == size_bytes
+
+
+def _record_monitoring_state(
+    state: dict,
+    *,
+    target: Path,
+    size_bytes: int,
+    content_sha256: str,
+    source_url: str,
+    changed: bool,
+) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    previous = state.get("monitoring_2_0")
+    downloaded_at = now
+    if not changed and isinstance(previous, dict):
+        downloaded_at = previous.get("downloaded_at") or now
+    state["monitoring_2_0"] = {
+        "downloaded_at": downloaded_at,
+        "last_checked_at": now,
+        "filename": target.name,
+        "size_bytes": size_bytes,
+        "sha256": content_sha256,
+        "source_url": source_url,
+    }
+
+
 def _save_debug_snapshot(driver, tag: str) -> None:
     debug_dir = DOWNLOAD_DIR.parent / "_debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +219,7 @@ def _read_report_date(driver) -> str | None:
 # ─────────────────────────────────────────────
 
 
-def fetch_monitoring_2_0(state: dict) -> list[Path]:
+def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
     """Скачивает Google Sheet целиком через export?format=xlsx."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = GSHEETS_EXPORT_URL
@@ -183,7 +232,7 @@ def fetch_monitoring_2_0(state: dict) -> list[Path]:
         r = requests.get(url, timeout=120, allow_redirects=True)
     except requests.RequestException as exc:
         print(f"  ❌ Не удалось скачать: {exc}")
-        return []
+        return [], False
 
     final_url = r.url
     ctype = (r.headers.get("content-type") or "").lower()
@@ -193,24 +242,45 @@ def fetch_monitoring_2_0(state: dict) -> list[Path]:
         print(f"     content-type = {ctype}")
         print(f"     Открой ссылку в браузере и в настройках доступа выбери")
         print(f"     «Доступ всем у кого есть ссылка → Читатель».")
-        return []
+        return [], False
     if r.status_code != 200:
         print(f"  ⚠️  HTTP {r.status_code}")
-        return []
+        return [], False
 
     date_str = datetime.now().strftime("%Y%m%d")
     target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}.xlsx"
+    content_sha256 = _sha256_bytes(r.content)
+    state_entry = state.get("monitoring_2_0") or {}
+    if isinstance(state_entry, dict) and _monitoring_same_day_unchanged(
+        state_entry=state_entry,
+        target=target,
+        content_sha256=content_sha256,
+        size_bytes=len(r.content),
+    ):
+        _record_monitoring_state(
+            state,
+            target=target,
+            size_bytes=len(r.content),
+            content_sha256=content_sha256,
+            source_url=url,
+            changed=False,
+        )
+        print(f"  ⏭ {target.name}: без изменений")
+        return [], True
+
     target.write_bytes(r.content)
     size_kb = len(r.content) / 1024
     print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
 
-    state["monitoring_2_0"] = {
-        "downloaded_at": datetime.now().isoformat(timespec="seconds"),
-        "filename": target.name,
-        "size_bytes": len(r.content),
-        "source_url": url,
-    }
-    return [target]
+    _record_monitoring_state(
+        state,
+        target=target,
+        size_bytes=len(r.content),
+        content_sha256=content_sha256,
+        source_url=url,
+        changed=True,
+    )
+    return [target], True
 
 
 # ─────────────────────────────────────────────
@@ -2948,10 +3018,14 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
             failed = True
             continue
         try:
-            new_files = func(state)
+            result = func(state)
+            if isinstance(result, tuple) and len(result) == 2:
+                new_files, ok = result
+            else:
+                new_files, ok = result, bool(result)
             all_new.extend(new_files)
             save_state(state)
-            if not new_files:
+            if not ok:
                 failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ {key}: {exc}")

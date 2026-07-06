@@ -46,7 +46,11 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     nc.STATE_FILE = STATE_DIR / "nashdom_state.json"
 
     wanted = set(indicator.source_ids)
-    new_files = nc.run(only=wanted)
+    new_files, ok = nc.run(only=wanted)
+    if not ok:
+        raise RuntimeError(
+            "nashdom source failed: " + ", ".join(sorted(wanted))
+        )
 
     state = nc.load_state()
     prev_date = ""

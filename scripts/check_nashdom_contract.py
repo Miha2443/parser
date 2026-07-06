@@ -1,0 +1,159 @@
+"""Fast checks for nashdom downloader/run contracts without network or Selenium."""
+from __future__ import annotations
+
+import contextlib
+import io
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import nashdom_checker as nc  # noqa: E402
+from pipeline.downloaders import nashdom as nashdom_downloader  # noqa: E402
+from pipeline.registry import Indicator  # noqa: E402
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def test_monitoring_same_day_helpers() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "monitoring_2_0_20260706.xlsx"
+        content = b"same content"
+        digest = nc._sha256_bytes(content)
+
+        target.write_bytes(content)
+        entry = {
+            "filename": target.name,
+            "size_bytes": len(content),
+            "sha256": digest,
+        }
+        _require(
+            nc._monitoring_same_day_unchanged(
+                state_entry=entry,
+                target=target,
+                content_sha256=digest,
+                size_bytes=len(content),
+            ),
+            "same-day monitoring file should be unchanged",
+        )
+        _require(
+            not nc._monitoring_same_day_unchanged(
+                state_entry={**entry, "sha256": "bad"},
+                target=target,
+                content_sha256=digest,
+                size_bytes=len(content),
+            ),
+            "hash mismatch should be treated as changed",
+        )
+        _require(
+            not nc._monitoring_same_day_unchanged(
+                state_entry={**entry, "size_bytes": "bad"},
+                target=target,
+                content_sha256=digest,
+                size_bytes=len(content),
+            ),
+            "bad stored size should be treated as changed",
+        )
+
+
+def test_run_contract_allows_successful_skip() -> None:
+    original_funcs = nc.SOURCE_FUNCS
+    original_download_dir = nc.DOWNLOAD_DIR
+    original_state_file = nc.STATE_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        changed_file = tmp_root / "changed.xlsx"
+        changed_file.write_bytes(b"x")
+
+        def changed(state: dict):
+            state["changed"] = True
+            return [changed_file]
+
+        def skipped(state: dict):
+            state["skipped"] = True
+            return [], True
+
+        def failed(state: dict):
+            state["failed"] = True
+            return [], False
+
+        try:
+            nc.DOWNLOAD_DIR = tmp_root / "raw"
+            nc.STATE_FILE = tmp_root / "state.json"
+            nc.SOURCE_FUNCS = {
+                "changed": changed,
+                "skipped": skipped,
+                "failed": failed,
+            }
+            with contextlib.redirect_stdout(io.StringIO()):
+                files, ok = nc.run(only=["changed", "skipped"])
+            _require(ok, "changed + successful skip should be ok")
+            _require(files == [changed_file], "run should return only real new files")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                _, ok = nc.run(only=["failed"])
+            _require(not ok, "explicit failed source should fail run")
+        finally:
+            nc.SOURCE_FUNCS = original_funcs
+            nc.DOWNLOAD_DIR = original_download_dir
+            nc.STATE_FILE = original_state_file
+
+
+def test_pipeline_wrapper_unpacks_run_result() -> None:
+    original_run = nc.run
+    original_load_state = nc.load_state
+    indicator = Indicator(
+        id="test",
+        section="test",
+        title="test",
+        unit="",
+        source="nashdom",
+        source_ids=["monitoring_2_0"],
+        parser="",
+        file_patterns=[],
+    )
+
+    try:
+        expected = [Path("data/raw/realty/nashdom/test.xlsx")]
+
+        def ok_run(only=None):
+            return expected, True
+
+        def failed_run(only=None):
+            return [], False
+
+        nc.load_state = lambda: {"monitoring_2_0": {"report_date": "06.07.2026"}}
+        nc.run = ok_run
+        result = nashdom_downloader.fetch(indicator)
+        _require(result["new_files"] == expected, "wrapper should unpack nc.run files")
+        _require(result["skipped"] is False, "wrapper should mark non-empty files as not skipped")
+
+        nc.run = failed_run
+        try:
+            nashdom_downloader.fetch(indicator)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("wrapper should raise on failed nc.run")
+    finally:
+        nc.run = original_run
+        nc.load_state = original_load_state
+
+
+def main() -> int:
+    test_monitoring_same_day_helpers()
+    test_run_contract_allows_successful_skip()
+    test_pipeline_wrapper_unpacks_run_result()
+    print("nashdom contract checks: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -40,6 +40,14 @@ def main() -> int:
     _assert_equal(legacy["status"], "success", "legacy inferred status")
     _assert_equal(legacy["warnings"], ["legacy"], "legacy warning")
 
+    legacy_no_heartbeat = realty_update_status_summary({
+        "failures": [],
+        "marts_ok": True,
+    })
+    _assert_equal(legacy_no_heartbeat["status"], "unknown", "legacy without heartbeat status")
+    _assert_equal(legacy_no_heartbeat["label"], "нет статуса", "legacy without heartbeat label")
+    _assert_equal(legacy_no_heartbeat["warnings"], ["legacy", "no heartbeat"], "legacy without heartbeat warnings")
+
     stale_time = (datetime.now() - timedelta(minutes=REALTY_RUNNING_STALE_MIN + 5)).isoformat(timespec="seconds")
     stale = realty_update_status_summary({
         "status": "running",

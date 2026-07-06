@@ -97,11 +97,13 @@ def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
         return {}
     warnings: list[str] = []
     run_status = str(status.get("status") or "").lower()
-    if not run_status:
-        run_status = "failed" if status.get("failures") or status.get("marts_ok") is False else "success"
-        warnings.append("legacy")
-
     updated_at = pd.to_datetime(status.get("updated_at"), errors="coerce")
+    if not run_status:
+        warnings.append("legacy")
+        if pd.isna(updated_at):
+            run_status = "unknown"
+        else:
+            run_status = "failed" if status.get("failures") or status.get("marts_ok") is False else "success"
     if pd.isna(updated_at):
         warnings.append("no heartbeat")
 
@@ -123,6 +125,7 @@ def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
         "success": "успех",
         "failed": "ошибка",
         "interrupted": "прерван",
+        "unknown": "нет статуса",
     }.get(run_status, run_status or "—")
     if stale_running:
         label = "возможно завис"

@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import update_realty as ur
@@ -67,6 +69,35 @@ def main() -> int:
             )
     finally:
         ur.REALTY_ROOT = original_realty_root
+
+    original_run = ur.subprocess.run
+    try:
+        calls = []
+
+        class Result:
+            def __init__(self, returncode: int):
+                self.returncode = returncode
+
+        def fake_run_ok(cmd, cwd, check):
+            calls.append((cmd, cwd, check))
+            return Result(0)
+
+        ur.subprocess.run = fake_run_ok
+        with redirect_stdout(StringIO()):
+            _assert_equal(ur.archive_old_for_source("monitoring", keep=2), True, "source archive success")
+            _assert_equal(calls[-1][0][-2:], ["--prefixes", "monitoring_2_0_"], "source archive prefixes")
+            _assert_equal(ur.archive_old_for_source("fedstat", keep=1), True, "source without archive scope succeeds")
+            _assert_equal(ur.archive_old(keep=3), True, "final archive success")
+
+        def fake_run_fail(cmd, cwd, check):
+            return Result(7)
+
+        ur.subprocess.run = fake_run_fail
+        with redirect_stdout(StringIO()):
+            _assert_equal(ur.archive_old_for_source("monitoring", keep=1), False, "source archive failure")
+            _assert_equal(ur.archive_old(keep=1), False, "final archive failure")
+    finally:
+        ur.subprocess.run = original_run
 
     original_manifest = ur.REALTY_MARTS_MANIFEST
     try:

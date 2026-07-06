@@ -664,22 +664,27 @@ def run_source(alias: str, env: dict, force: bool = False,
                 )
             except Exception as exc:  # noqa: BLE001
                 _print(f"⚠️  {alias}: дедупликация упала — {exc}")
-            archive_old_for_source(alias, keep=keep)
+            if not archive_old_for_source(alias, keep=keep):
+                return False
         return True
     _print(f"❌ {alias}: код выхода {rc} (за {elapsed/60:.1f} мин)")
     return False
 
 
-def archive_old(keep: int = 1) -> None:
+def archive_old(keep: int = 1) -> bool:
     """Перемещает устаревшие выгрузки в _archive/<date>/ (полная зачистка)."""
     cmd = [sys.executable, "-m", "pipeline.archive_old", "--keep", str(keep)]
     _print(f"\n{'─'*60}")
     _print(f"📦 Финальная архивация (safety-net, keep={keep})")
     _print(f"{'─'*60}")
-    subprocess.run(cmd, cwd=ROOT, check=False)
+    result = subprocess.run(cmd, cwd=ROOT, check=False)
+    if result.returncode != 0:
+        _print(f"⚠️  Финальная архивация завершилась с кодом {result.returncode}")
+        return False
+    return True
 
 
-def archive_old_for_source(alias: str, keep: int = 1) -> None:
+def archive_old_for_source(alias: str, keep: int = 1) -> bool:
     """Архивирует устаревшие файлы только этого источника.
 
     Принцип: для каждого пути из SOURCE_ARCHIVE_PATHS[alias] зовём
@@ -690,7 +695,7 @@ def archive_old_for_source(alias: str, keep: int = 1) -> None:
     paths = SOURCE_ARCHIVE_PATHS.get(alias)
     prefixes = SOURCE_PREFIXES.get(alias)
     if not paths or not prefixes:
-        return
+        return True
     paths_arg = [f"realty/{p}" for p in paths]
     cmd = [
         sys.executable, "-m", "pipeline.archive_old",
@@ -698,7 +703,11 @@ def archive_old_for_source(alias: str, keep: int = 1) -> None:
         "--paths", *paths_arg,
         "--prefixes", *prefixes,
     ]
-    subprocess.run(cmd, cwd=ROOT, check=False)
+    result = subprocess.run(cmd, cwd=ROOT, check=False)
+    if result.returncode != 0:
+        _print(f"⚠️  {alias}: архивация завершилась с кодом {result.returncode}")
+        return False
+    return True
 
 
 def check_escrow():
@@ -1201,8 +1210,9 @@ def main():
     diff = diff_snapshots(before, after)
 
     # Архивирование
+    final_archive_ok = True
     if not args.no_archive:
-        archive_old(keep=args.keep)
+        final_archive_ok = archive_old(keep=args.keep)
 
     # Эскроу-подсказка
     check_escrow()
@@ -1246,7 +1256,7 @@ def main():
     _print(f"📁 Полный лог сохранён: {log_path}")
 
     write_realty_run_status(
-        "success" if not failures and marts_ok else "failed",
+        "success" if not failures and marts_ok and final_archive_ok else "failed",
         started=started,
         sources=sources,
         log_path=log_path,
@@ -1257,6 +1267,8 @@ def main():
         marts_changed_aliases=marts_changed_aliases,
         marts_changed_paths=changed_for_marts,
         marts_repair_selected=marts_repair_selected,
+        final_archive_ok=final_archive_ok,
+        error="" if final_archive_ok else "final archive failed",
         **run_meta,
         deduped_count=deduped_count,
         real_new_count=real_new_count,

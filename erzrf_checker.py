@@ -48,6 +48,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from pipeline.file_utils import validate_excel_file
 from pipeline.selenium_utils import create_chrome, selenium_sleep, wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
 
@@ -150,6 +151,19 @@ def _write_excel_atomic(path: Path, write_func) -> None:
                 tmp.unlink()
         except OSError:
             pass
+
+
+def _validate_downloaded_excel(path: Path) -> bool:
+    try:
+        validate_excel_file(path)
+        return True
+    except (OSError, ValueError) as exc:
+        print(f"       ERROR: invalid downloaded Excel {path.name}: {exc}")
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return False
 
 
 def _load_credentials() -> dict | None:
@@ -679,6 +693,9 @@ def fetch_top(state: dict) -> list[Path]:
             if new_file is None:
                 print(f"       ⚠️  xlsx не появился в папке за 180 сек")
                 _save_debug_snapshot(driver, f"{filename_base}_after_click")
+                return None
+            if not _validate_downloaded_excel(new_file):
+                _save_debug_snapshot(driver, f"{filename_base}_invalid_download")
                 return None
             target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
             if target.exists():

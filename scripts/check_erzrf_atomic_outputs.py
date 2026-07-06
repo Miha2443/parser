@@ -63,6 +63,18 @@ def main() -> int:
         frame = pd.read_excel(xlsx_target, sheet_name="cards")
         _require(int(frame.loc[0, "version"]) == 1, "initial XLSX write failed")
 
+        browser_download = base / "browser.xlsx"
+        browser_download.write_bytes(b"PK\x03\x04xlsx-bytes")
+        _require(ec._validate_downloaded_excel(browser_download), "valid browser download should pass")
+        _require(browser_download.exists(), "valid browser download should be kept")
+
+        invalid_download = base / "login.xlsx"
+        invalid_download.write_bytes(b"<html>login</html>")
+        with redirect_stdout(StringIO()):
+            ok = ec._validate_downloaded_excel(invalid_download)
+        _require(not ok, "invalid browser download should fail")
+        _require(not invalid_download.exists(), "invalid browser download should be removed")
+
         def write_bad_workbook(path: Path) -> None:
             path.write_bytes(b"not an xlsx")
 

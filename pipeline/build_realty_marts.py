@@ -109,6 +109,14 @@ def _source_summary(files: list[Path]) -> list[dict[str, Any]]:
     return out
 
 
+def _pickle_load_error(path: Path) -> str | None:
+    try:
+        pd.read_pickle(path)
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 def _tmp_files() -> list[Path]:
     raw = ROOT / "data" / "raw" / "realty"
     if not raw.exists():
@@ -173,6 +181,11 @@ def check_manifest(*, strict: bool = False) -> int:
         mart_file = ROOT / str(info.get("file", ""))
         if not mart_file.is_file():
             print(f"  ERROR {name}: missing {mart_file.relative_to(ROOT)}")
+            failures += 1
+            continue
+        pickle_error = _pickle_load_error(mart_file)
+        if pickle_error:
+            print(f"  ERROR {name}: unreadable {mart_file.relative_to(ROOT)} ({pickle_error})")
             failures += 1
             continue
 

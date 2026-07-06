@@ -42,6 +42,9 @@ REM Выбираем Python: venv приоритетнее системного 
 set PY_EXE=py
 if exist ".venv\Scripts\python.exe" set PY_EXE=.venv\Scripts\python.exe
 
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
+
 REM Запуск с per-dev обходом ТОЛЬКО ПО ПОНЕДЕЛЬНИКАМ
 %PY_EXE% scripts\update_realty.py --weekly-kvart-per-dev >> "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%

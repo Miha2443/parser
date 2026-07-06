@@ -11,6 +11,16 @@ REM
 REM Архивирование старых файлов происходит автоматически после прогона.
 
 setlocal
-cd /d %~dp0\..
-py scripts\update_realty.py %*
+cd /d "%~dp0\.."
+
+if exist ".venv\Scripts\python.exe" (
+  set "PY=.venv\Scripts\python.exe"
+) else (
+  set "PY=python"
+)
+
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
+
+"%PY%" scripts\update_realty.py %*
 endlocal

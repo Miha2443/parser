@@ -20,9 +20,11 @@ nashdom_checker.py
 State хранится в `state/nashdom_state.json`. Запуск:
     py nashdom_checker.py                # все 3 источника
     py nashdom_checker.py monitoring_2_0 # один ключ
+    py nashdom_checker.py --force rasprodannost
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -2853,7 +2855,7 @@ SOURCE_FUNCS = {
 }
 
 
-def run(only: Iterable[str] | None = None) -> list[Path]:
+def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     keys = list(only) if only else list(SOURCE_FUNCS.keys())
@@ -2864,26 +2866,48 @@ def run(only: Iterable[str] | None = None) -> list[Path]:
     print(f"{'='*60}\n")
 
     all_new: list[Path] = []
+    failed = False
     for key in keys:
         func = SOURCE_FUNCS.get(key)
         if func is None:
             print(f"  ⚠️  Неизвестный ключ: {key}")
+            failed = True
             continue
         try:
             new_files = func(state)
             all_new.extend(new_files)
             save_state(state)
+            if not new_files:
+                failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ {key}: {exc}")
+            failed = True
 
     print(f"\n{'='*60}")
     print(f"Итог: новых/обновлённых файлов — {len(all_new)}")
+    if failed:
+        print("⚠️  Один или несколько источников ничего не скачали")
     for f in all_new:
         print(f"  • {f}")
     print(f"{'='*60}\n")
-    return all_new
+    return all_new, not failed
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    run(only=args if args else None)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "sources",
+        nargs="*",
+        choices=sorted(SOURCE_FUNCS),
+        help="Источники для запуска",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Полный режим для источников, где есть incremental-логика",
+    )
+    args = parser.parse_args()
+    if args.force:
+        os.environ["RASPROD_FULL_HISTORY"] = "1"
+    _files, ok = run(only=args.sources if args.sources else None)
+    sys.exit(0 if ok else 2)

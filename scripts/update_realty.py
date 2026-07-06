@@ -355,7 +355,7 @@ def run_source(alias: str, env: dict, force: bool = False,
         return False
     script, args = SOURCE_MAP[alias]
     extra = []
-    if force and alias in ("fedstat", "rosstat"):
+    if force and alias in ("fedstat", "rosstat", "monitoring", "rasprod", "kvart"):
         extra.append("--force")
     cmd = [sys.executable, "-u", str(ROOT / script), *args, *extra]
     timeout_min = SOURCE_TIMEOUT_MIN.get(alias, DEFAULT_TIMEOUT_MIN)

@@ -9,6 +9,7 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
 
 echo [1/5] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%

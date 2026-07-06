@@ -400,6 +400,7 @@ SNAPSHOT_DIRS = [
     (REALTY_ROOT, "realty", ""),
     (ROOT / "downloads", "downloads", ""),
 ]
+SNAPSHOT_TEMP_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
 _SNAPSHOT_DIGEST_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
 
 
@@ -436,6 +437,8 @@ def snapshot_files(
             continue
         for f in base.rglob("*"):
             if not f.is_file() or "_archive" in f.parts:
+                continue
+            if f.suffix.lower() in SNAPSHOT_TEMP_SUFFIXES:
                 continue
             if file_prefixes and not any(f.name.startswith(prefix) for prefix in file_prefixes):
                 continue

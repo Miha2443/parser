@@ -48,7 +48,9 @@ def main() -> int:
             nashdom = realty_root / "nashdom"
             nashdom.mkdir(parents=True)
             (nashdom / "monitoring_2_0_20260702.xlsx").write_bytes(b"monitoring")
+            (nashdom / "monitoring_2_0_20260702.xlsx.tmp").write_bytes(b"partial")
             (nashdom / "rasprodannost_20260702.xlsx").write_bytes(b"rasprod")
+            (nashdom / "rasprodannost_20260702.xlsx.crdownload").write_bytes(b"partial")
             (nashdom / "kvartirografia_20260702.json").write_text("{}", encoding="utf-8")
 
             ur.REALTY_ROOT = realty_root
@@ -57,7 +59,7 @@ def main() -> int:
             _assert_equal(
                 sorted(snapshot),
                 ["realty:nashdom/monitoring_2_0_20260702.xlsx"],
-                "monitoring scoped snapshot",
+                "monitoring scoped snapshot ignores temp files",
             )
 
             roots, prefixes = ur.snapshot_scope_for_source("rasprod")
@@ -65,7 +67,7 @@ def main() -> int:
             _assert_equal(
                 sorted(snapshot),
                 ["realty:nashdom/rasprodannost_20260702.xlsx"],
-                "rasprod scoped snapshot",
+                "rasprod scoped snapshot ignores temp files",
             )
 
             target = nashdom / "monitoring_2_0_20260702.xlsx"

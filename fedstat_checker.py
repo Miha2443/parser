@@ -13,7 +13,6 @@ fedstat_checker.py
 """
 
 import atexit
-import json
 import os
 import re
 import shutil
@@ -29,7 +28,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from pipeline.state_utils import load_json_state
+from pipeline.state_utils import load_json_state, write_json_atomic
 
 
 # ─────────────────────────────────────────────
@@ -108,8 +107,7 @@ def load_state():
 
 
 def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    write_json_atomic(STATE_FILE, state)
 
 
 def create_driver():

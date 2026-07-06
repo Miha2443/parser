@@ -34,3 +34,22 @@ def load_json_state(path: Path, *, label: str = "state") -> dict[str, Any]:
         except OSError:
             print(f"  WARNING: corrupt {label} state {path} ({exc}); continuing with empty state")
         return {}
+
+
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """Write JSON through a validated temporary file and atomic replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass

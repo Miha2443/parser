@@ -32,6 +32,26 @@ def _check_checker_state(module, filename: str, payload: dict) -> None:
             module.save_state(payload)
             _require(module.load_state() == payload, f"{filename} should round-trip")
 
+            original_write_text = Path.write_text
+            try:
+                def write_bad_json(path_self, *args, **kwargs):
+                    if str(path_self).endswith(".tmp"):
+                        return original_write_text(path_self, "{bad-json", encoding="utf-8")
+                    return original_write_text(path_self, *args, **kwargs)
+
+                Path.write_text = write_bad_json
+                try:
+                    module.save_state({"broken": True})
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"{filename} bad temporary write should fail")
+            finally:
+                Path.write_text = original_write_text
+
+            _require(module.load_state() == payload, f"{filename} failed write should keep old state")
+            _require(not (state_file.parent / f"{filename}.tmp").exists(), f"{filename}.tmp should be removed")
+
             state_file.write_text("{bad-json", encoding="utf-8")
             with redirect_stdout(StringIO()):
                 recovered = module.load_state()

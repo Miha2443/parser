@@ -24,7 +24,6 @@ State хранится в `state/rosstat_state.json` (отдельно от feds
 """
 from __future__ import annotations
 
-import json
 import re
 import time
 from datetime import datetime
@@ -35,7 +34,7 @@ import requests
 import urllib3
 from bs4 import BeautifulSoup
 
-from pipeline.state_utils import load_json_state
+from pipeline.state_utils import load_json_state, write_json_atomic
 
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
 # стандартном trust store Python. Поскольку мы GET-им только публичные
@@ -80,9 +79,7 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    write_json_atomic(STATE_FILE, state)
 
 
 def _new_session() -> requests.Session:

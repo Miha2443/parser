@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_PROCESSED = Path(__file__).resolve().parent.parent / "data" / "processed"
 DATA_DERIVED = Path(__file__).resolve().parent.parent / "data" / "derived"
 DATA_MARTS_REALTY = PROJECT_ROOT / "data" / "marts" / "realty"
+_REALTY_MART_MANIFEST_CACHE: dict[str, tuple[tuple[int, int], dict]] = {}
 
 MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -55,6 +56,15 @@ def _realty_mart_manifest(required: bool = False) -> dict | None:
             raise FileNotFoundError(f"missing realty mart manifest: {manifest_path}")
         return None
     try:
+        st = manifest_path.stat()
+        cache_key = str(manifest_path.resolve())
+        stat_key = (
+            int(st.st_size),
+            int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))),
+        )
+        cached = _REALTY_MART_MANIFEST_CACHE.get(cache_key)
+        if cached and cached[0] == stat_key:
+            return cached[1]
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         if required:
@@ -65,6 +75,7 @@ def _realty_mart_manifest(required: bool = False) -> dict | None:
         if required:
             raise RuntimeError("invalid realty mart manifest: missing marts object")
         return None
+    _REALTY_MART_MANIFEST_CACHE[cache_key] = (stat_key, manifest)
     return manifest
 
 

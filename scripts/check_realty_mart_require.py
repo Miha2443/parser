@@ -44,6 +44,7 @@ def _write_manifest(mart_dir: Path, marts: dict) -> None:
 
 def main() -> int:
     original_marts = da.DATA_MARTS_REALTY
+    original_manifest_cache = dict(da._REALTY_MART_MANIFEST_CACHE)
     previous_require = os.environ.get("PARSER_REQUIRE_REALTY_MARTS")
     previous_use = os.environ.get("PARSER_USE_REALTY_MARTS")
     with tempfile.TemporaryDirectory() as tmp:
@@ -56,6 +57,7 @@ def main() -> int:
 
         try:
             da.DATA_MARTS_REALTY = mart_dir
+            da._REALTY_MART_MANIFEST_CACHE.clear()
             os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
             os.environ["PARSER_USE_REALTY_MARTS"] = "1"
 
@@ -118,6 +120,20 @@ def main() -> int:
             _require(
                 da.latest_realty_mart_source_date("good") == "03.07.2026",
                 "latest mart source date should come from manifest",
+            )
+            _require(da._REALTY_MART_MANIFEST_CACHE, "realty mart manifest should be cached")
+            _write_manifest(mart_dir, {
+                "good": {
+                    "file": str(good),
+                    "sources": [
+                        {"path": "updated.xlsx", "mtime": "2026-07-04T10:00:00"},
+                    ],
+                },
+            })
+            os.utime(mart_dir / "manifest.json", (200, 200))
+            _require(
+                da.latest_realty_mart_source_date("good") == "04.07.2026",
+                "realty mart manifest cache should invalidate when manifest changes",
             )
             raw_file = raw_dir / "monitoring_2_0_20260704.xlsx"
             raw_file.write_bytes(b"raw")
@@ -184,6 +200,8 @@ def main() -> int:
             )
         finally:
             da.DATA_MARTS_REALTY = original_marts
+            da._REALTY_MART_MANIFEST_CACHE.clear()
+            da._REALTY_MART_MANIFEST_CACHE.update(original_manifest_cache)
             if previous_require is None:
                 os.environ.pop("PARSER_REQUIRE_REALTY_MARTS", None)
             else:

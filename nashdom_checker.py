@@ -39,6 +39,7 @@ import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from pipeline.dev_name_utils import normalize_developer_name
+from pipeline.file_utils import write_bytes_atomic
 from pipeline.state_utils import load_json_state, write_json_atomic
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -279,7 +280,7 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
         print(f"  ⏭ {target.name}: без изменений")
         return [], True
 
-    target.write_bytes(r.content)
+    write_bytes_atomic(target, r.content)
     size_kb = len(r.content) / 1024
     print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
 

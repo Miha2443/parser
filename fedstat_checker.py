@@ -28,6 +28,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from pipeline.file_utils import stream_response_atomic
 from pipeline.state_utils import load_json_state, write_json_atomic
 
 
@@ -1159,9 +1160,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
         filename = f"{date_in_name}_{safe_title}.xls"
         save_path = save_dir / filename
 
-        with open(save_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        stream_response_atomic(response, save_path)
 
         print(f"  ✅ Сохранён: {save_path}")
         return save_path

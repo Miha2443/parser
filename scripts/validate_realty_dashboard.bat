@@ -19,6 +19,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_orchestrator_dedup_keys.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_realty_offline.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_archive_old_collision.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_atomic_file_writes.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_selenium_download_wait.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_kvart_resume.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_contract.py || exit /b %ERRORLEVEL%

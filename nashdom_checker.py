@@ -542,6 +542,58 @@ def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
                 writer, sheet_name="apartments_per_dev", index=False)
 
 
+def _load_kvart_resume(path: Path) -> list[dict]:
+    """Load a same-day kvartirografia JSON checkpoint if it exists."""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"     ⚠️  не удалось прочитать checkpoint {path.name}: {exc}")
+        return []
+    if not isinstance(data, list):
+        print(f"     ⚠️  checkpoint {path.name} имеет неожиданный формат")
+        return []
+    return [row for row in data if isinstance(row, dict)]
+
+
+def _upsert_region_snapshot(all_data: list[dict], snapshot: dict) -> None:
+    """Replace a region snapshot in-place so resume never duplicates regions."""
+    region_key = snapshot.get("region_key")
+    if not region_key:
+        all_data.append(snapshot)
+        return
+    all_data[:] = [
+        row for row in all_data
+        if row.get("region_key") != region_key
+    ]
+    all_data.append(snapshot)
+
+
+def _kvart_resume_per_dev(existing_region: dict | None) -> tuple[list[dict], list[dict], set[str]]:
+    """Return reusable per-dev data, attempts and site names safe to skip."""
+    if not existing_region:
+        return [], [], set()
+    per_dev = [
+        row for row in existing_region.get("apartments_per_dev", [])
+        if isinstance(row, dict)
+    ]
+    attempts = [
+        row for row in existing_region.get("per_dev_attempts", [])
+        if isinstance(row, dict)
+    ]
+    reusable_attempts = [
+        row for row in attempts
+        if row.get("site_name") and row.get("status") in {"ok", "rejected"}
+    ]
+    done_sites = {str(row["site_name"]) for row in reusable_attempts}
+    reusable_per_dev = [
+        row for row in per_dev
+        if row.get("site_name") in done_sites
+    ]
+    return reusable_per_dev, reusable_attempts, done_sites
+
+
 def fetch_kvartirografia(state: dict) -> list[Path]:
     """Квартирография по 2 регионам (РФ + Москва) с inner-scroll.
 
@@ -569,8 +621,19 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
     target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
 
+    all_data: list[dict] = _load_kvart_resume(target_json)
+    existing_by_region: dict[str, dict] = {
+        str(row.get("region_key")): row
+        for row in all_data
+        if row.get("region_key")
+    }
+    if all_data:
+        print(
+            f"     · resume: {target_json.name}, "
+            f"регионов={len(existing_by_region)}"
+        )
+
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    all_data: list[dict] = []
     new_files: list[Path] = []
 
     def flush():
@@ -666,6 +729,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
 
                 data = _parse_kvartirografia(driver.page_source, driver.current_url)
                 data["region_key"] = region["key"]
+                existing_region = existing_by_region.get(region["key"])
 
                 print(f"       devs (виртуальный список 0):")
                 data["developers"] = _scroll_collect_list(driver, list_index=0)
@@ -679,7 +743,8 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 )
 
                 _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
-                all_data.append(data)
+                _upsert_region_snapshot(all_data, data)
+                existing_by_region[region["key"]] = data
                 # КРИТИЧНО: сохраняем xlsx ПОСЛЕ каждого региона
                 flush()
 
@@ -755,12 +820,22 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
 
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
-                        per_dev: list[dict] = []
+                        per_dev, attempts, done_sites = _kvart_resume_per_dev(existing_region)
+                        if done_sites:
+                            print(
+                                f"       · resume per-dev: пропускаю уже обработанных "
+                                f"{len(done_sites)}"
+                            )
+                            site_devs = [
+                                site_name for site_name in site_devs
+                                if site_name not in done_sites
+                            ]
                         # attempts — диагностический лог КАЖДОЙ попытки
-                        attempts: list[dict] = []
                         print(f"       ── per-dev обход: {len(site_devs)}/{len(site_devs_full)} "
                               f"девелоперов (KVART_PER_DEV=0 чтобы выключить)")
-                        ok_count = fail_count = rejected = 0
+                        ok_count = len(per_dev)
+                        fail_count = 0
+                        rejected = sum(1 for row in attempts if row.get("status") == "rejected")
                         consecutive_fail = 0
                         CONSECUTIVE_FAIL_LIMIT = 5
                         for i, site_name in enumerate(site_devs, 1):

@@ -23,6 +23,20 @@ USER_AGENT = (
 )
 
 
+def selenium_sleep(seconds: float) -> None:
+    """Пауза для Selenium-скрейперов с env-коэффициентом.
+
+    `SELENIUM_SLEEP_SCALE=0.8` сокращает только фиксированные settle-паузы.
+    Явные WebDriverWait-таймауты не меняются, поэтому ожидание селекторов
+    остается устойчивым на медленном сайте.
+    """
+    try:
+        scale = float(os.environ.get("SELENIUM_SLEEP_SCALE", "1"))
+    except ValueError:
+        scale = 1.0
+    time.sleep(max(0.0, seconds * scale))
+
+
 def create_chrome(
     download_dir: Path | None = None,
     *,

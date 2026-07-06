@@ -691,6 +691,7 @@ def main():
                   "KVART_PER_DEV=0 (per-dev пропустится, агрегаты остаются)")
     if args.full_rasprod_history or args.force:
         env["RASPROD_FULL_HISTORY"] = "1"
+    env.setdefault("SELENIUM_SLEEP_SCALE", "0.8")
 
     log_path = _setup_logging()
 
@@ -699,6 +700,7 @@ def main():
     _print(f"Источники: {', '.join(sources)}")
     _print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
     _print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
+    _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
 

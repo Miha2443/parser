@@ -41,7 +41,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from pipeline.selenium_utils import create_chrome
+from pipeline.selenium_utils import create_chrome, selenium_sleep
 
 
 # ─────────────────────────────────────────────
@@ -223,9 +223,9 @@ def _scroll_through_page(driver, *, steps: int = 6, pause: float = 1.5) -> None:
         driver.execute_script(
             f"window.scrollTo(0, document.body.scrollHeight * {(i + 1) / steps});"
         )
-        time.sleep(pause)
+        selenium_sleep(pause)
     driver.execute_script("window.scrollTo(0, 0);")
-    time.sleep(0.5)
+    selenium_sleep(0.5)
 
 
 # Маркеры в первой ячейке таблицы «Девелоперы» (раздел на сайте «Распроданность»).
@@ -609,7 +609,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
         driver.get(url)
-        time.sleep(6)
+        selenium_sleep(6)
         try:
             WebDriverWait(driver, 45).until(
                 lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
@@ -2245,7 +2245,7 @@ def _switch_region_rasprodannost(
         print(f"       ⚠️  search-input попапа не появился")
         _save_debug_snapshot(driver, "rasprod_region_no_popup")
         return False
-    time.sleep(0.5)
+    selenium_sleep(0.5)
 
     # 3) Ввести запрос через native setter + dispatchEvent (для React state)
     if search_query:
@@ -2263,7 +2263,7 @@ def _switch_region_rasprodannost(
             search_query,
         )
         print(f"       · ввёл в поиск: '{search_query}' (ok={ok})")
-        time.sleep(2)
+        selenium_sleep(2)
 
     # 4) Дождаться появления target_label и кликнуть по div-родителю span
     # (там висит React-handler чекбокса)
@@ -2303,7 +2303,7 @@ def _switch_region_rasprodannost(
         return False
 
     # 5) Закрыть попап
-    time.sleep(1)
+    selenium_sleep(1)
     try:
         driver.execute_script("document.body.click();")
     except WebDriverException:
@@ -2319,7 +2319,7 @@ def _switch_region_rasprodannost(
         )
         new_val = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
         print(f"       ✅ данные сменились: {baseline} → {new_val}")
-        time.sleep(2)
+        selenium_sleep(2)
         return True
     except TimeoutException:
         actual = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
@@ -2426,7 +2426,7 @@ def _navigate_to_latest_year(driver, max_clicks: int = 15) -> int:
             return 0
         if not _click_next_year(driver):
             return current
-        time.sleep(0.4)
+        selenium_sleep(0.4)
         new_year = _get_calendar_year(driver)
         if new_year == current:
             return current
@@ -2447,7 +2447,7 @@ def _navigate_calendar_to_year(driver, target_year: int, max_clicks: int = 15) -
         else:  # current > target_year
             if not _click_prev_year(driver):
                 return False
-        time.sleep(0.4)
+        selenium_sleep(0.4)
     return _get_calendar_year(driver) == target_year
 
 
@@ -2493,7 +2493,7 @@ def _switch_period(driver, year: int, month_idx: int) -> bool:
     if not _open_date_picker(driver):
         print(f"       ⚠️  не открыл календарь")
         return False
-    time.sleep(0.5)
+    selenium_sleep(0.5)
 
     if not _navigate_calendar_to_year(driver, year):
         print(f"       ⚠️  не довёл год до {year}")
@@ -2513,7 +2513,7 @@ def _switch_period(driver, year: int, month_idx: int) -> bool:
         WebDriverWait(driver, 20).until(
             lambda d: _get_rasprod_current_period(d) == expected_period
         )
-        time.sleep(2)  # данные дорендериться
+        selenium_sleep(2)  # данные дорендериться
         return True
     except TimeoutException:
         actual = _get_rasprod_current_period(driver)
@@ -2529,7 +2529,7 @@ def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, i
     if not _open_date_picker(driver):
         print(f"     ⚠️  не открыл календарь для перечисления периодов")
         return []
-    time.sleep(0.5)
+    selenium_sleep(0.5)
 
     # КРИТИЧНО: сначала идём в самый свежий доступный год (►), так как
     # календарь может быть «застрял» на старом году после прошлой
@@ -2551,7 +2551,7 @@ def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, i
             break
         if not _click_prev_year(driver):
             break
-        time.sleep(0.4)
+        selenium_sleep(0.4)
         new_year = _get_calendar_year(driver)
         if new_year == cur_year:
             break
@@ -2562,7 +2562,7 @@ def _list_all_periods(driver, year_from: int, year_to: int) -> list[tuple[int, i
         driver.execute_script("document.body.click();")
     except WebDriverException:
         pass
-    time.sleep(0.5)
+    selenium_sleep(0.5)
     return periods
 
 
@@ -2710,7 +2710,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
         driver.get(url)
-        time.sleep(6)
+        selenium_sleep(6)
         try:
             WebDriverWait(driver, 45).until(
                 lambda d: "данным на" in d.page_source or "<table" in d.page_source
@@ -2720,7 +2720,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             _save_debug_snapshot(driver, "rasprodannost_no_content")
             return []
         _scroll_through_page(driver)
-        time.sleep(3)
+        selenium_sleep(3)
 
         debug_dir = DOWNLOAD_DIR.parent / "_debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -2740,7 +2740,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         print(f"       ⚠️  не удалось переключить, пропускаю")
                         continue
                     _scroll_through_page(driver)
-                    time.sleep(2)
+                    selenium_sleep(2)
 
                 # Перечислим все доступные периоды (year, month_idx)
                 periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
@@ -2777,7 +2777,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                     if not ok:
                         continue
                     _scroll_through_page(driver)
-                    time.sleep(1.5)
+                    selenium_sleep(1.5)
 
                     if latest_period and (year, m_idx) == latest_period:
                         n_rows = _scroll_developers_table(driver)

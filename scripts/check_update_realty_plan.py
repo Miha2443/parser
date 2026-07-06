@@ -108,7 +108,25 @@ def main() -> int:
         )
         _assert_equal(captured["status"], "failed", "failed status is written")
         _assert_equal(captured["failures"], ["monitoring"], "status failures")
+
+        ur.set_active_realty_run(
+            started=started,
+            sources=["monitoring"],
+            log_path=None,
+            successes=[],
+            failures=[],
+            archive=True,
+            keep=1,
+            force=False,
+            full_rasprod_history=False,
+            selenium_sleep_scale="0.8",
+        )
+        ur.mark_active_realty_run_failed(RuntimeError("synthetic"))
+        _assert_equal(captured["status"], "failed", "active failed status is written")
+        _assert_equal(captured["error"], "RuntimeError: synthetic", "active failed error")
+        ur.clear_active_realty_run()
     finally:
+        ur.clear_active_realty_run()
         ur.write_realty_status = original_write_status
 
     _assert_equal(

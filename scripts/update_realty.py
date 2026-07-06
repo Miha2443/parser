@@ -52,6 +52,7 @@ REALTY_MARTS_MANIFEST = ROOT / "data" / "marts" / "realty" / "manifest.json"
 # Глобальный файл лога текущего прогона. Инициализируется в main().
 _LOG_FILE: Path | None = None
 _LOG_FH = None
+_ACTIVE_REALTY_RUN = None
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -211,6 +212,41 @@ def write_realty_run_status(
         payload["log_file"] = str(log_path.relative_to(ROOT)).replace("\\", "/")
     payload.update(fields)
     write_realty_status(payload)
+
+
+def set_active_realty_run(**context) -> None:
+    """Remember current run context so unexpected crashes do not leave running status."""
+    global _ACTIVE_REALTY_RUN
+    _ACTIVE_REALTY_RUN = context
+
+
+def clear_active_realty_run() -> None:
+    global _ACTIVE_REALTY_RUN
+    _ACTIVE_REALTY_RUN = None
+
+
+def mark_active_realty_run_failed(exc: BaseException) -> None:
+    """Best-effort failed status for unhandled exceptions after a run has started."""
+    if not _ACTIVE_REALTY_RUN:
+        return
+    ctx = dict(_ACTIVE_REALTY_RUN)
+    try:
+        write_realty_run_status(
+            "failed",
+            started=ctx["started"],
+            sources=ctx["sources"],
+            log_path=ctx.get("log_path"),
+            successes=list(ctx.get("successes") or []),
+            failures=list(ctx.get("failures") or []),
+            error=f"{type(exc).__name__}: {exc}",
+            archive=ctx.get("archive"),
+            keep=ctx.get("keep"),
+            force=ctx.get("force"),
+            full_rasprod_history=ctx.get("full_rasprod_history"),
+            selenium_sleep_scale=ctx.get("selenium_sleep_scale"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -881,23 +917,33 @@ def main():
     _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
+    successes, failures = [], []
+    do_archive = not args.no_archive
+    run_meta = {
+        "archive": not args.no_archive,
+        "keep": args.keep,
+        "force": args.force,
+        "full_rasprod_history": bool(args.full_rasprod_history or args.force),
+        "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
+    }
     write_realty_run_status(
         "running",
         started=started,
         sources=sources,
         log_path=log_path,
-        archive=not args.no_archive,
-        keep=args.keep,
-        force=args.force,
-        full_rasprod_history=bool(args.full_rasprod_history or args.force),
-        selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+        **run_meta,
+    )
+    set_active_realty_run(
+        started=started,
+        sources=sources,
+        log_path=log_path,
+        successes=successes,
+        failures=failures,
+        **run_meta,
     )
 
     # SNAPSHOT ДО прогона
     before = snapshot_files()
-
-    successes, failures = [], []
-    do_archive = not args.no_archive
 
     def _run_wave(wave: list[str], label: str) -> None:
         """Запускает источники волны параллельно, до PARALLEL_LIMIT одновременно."""
@@ -940,7 +986,7 @@ def main():
                   f"{len(stuck)} источников: {', '.join(sorted(stuck))}")
             _print(f"{'─'*60}")
             time.sleep(wait_s)
-            failures = []
+            failures.clear()
             for i, wave in enumerate(WAVES_DEFAULT, 1):
                 wave_retry = [a for a in wave if a in stuck]
                 if not wave_retry:
@@ -955,12 +1001,9 @@ def main():
             log_path=log_path,
             successes=successes,
             failures=failures,
-            archive=not args.no_archive,
-            keep=args.keep,
-            force=args.force,
-            full_rasprod_history=bool(args.full_rasprod_history or args.force),
-            selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+            **run_meta,
         )
+        clear_active_realty_run()
         _close_logging()
         sys.exit(130)
 
@@ -1029,11 +1072,7 @@ def main():
         marts_changed_aliases=marts_changed_aliases,
         marts_changed_paths=changed_for_marts,
         marts_repair_selected=marts_repair_selected,
-        archive=not args.no_archive,
-        keep=args.keep,
-        force=args.force,
-        full_rasprod_history=bool(args.full_rasprod_history or args.force),
-        selenium_sleep_scale=env.get("SELENIUM_SLEEP_SCALE", "1"),
+        **run_meta,
         deduped_count=deduped_count,
         real_new_count=real_new_count,
         diff=diff,
@@ -1051,9 +1090,17 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
+    clear_active_realty_run()
     _close_logging()
     return 0 if not failures and marts_ok else 2
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:  # noqa: BLE001
+        _print(f"❌ update_realty.py: unexpected failure — {type(exc).__name__}: {exc}")
+        mark_active_realty_run_failed(exc)
+        clear_active_realty_run()
+        _close_logging()
+        sys.exit(2)

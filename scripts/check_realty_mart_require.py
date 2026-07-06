@@ -67,6 +67,24 @@ def main() -> int:
 
             good = mart_dir / "good.pkl"
             pd.to_pickle({"ok": pd.DataFrame({"x": [1]})}, good)
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "0"
+            _require(
+                da._load_realty_mart("good", []) is None,
+                "missing manifest should force fallback in normal mode",
+            )
+            (mart_dir / "manifest.json").write_text("{bad-json", encoding="utf-8")
+            _require(
+                da._load_realty_mart("good", []) is None,
+                "bad manifest should force fallback in normal mode",
+            )
+            _write_manifest(mart_dir, {})
+            _require(
+                da._load_realty_mart("good", []) is None,
+                "missing manifest entry should force fallback in normal mode",
+            )
+
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
+            (mart_dir / "manifest.json").unlink()
             _must_raise(
                 lambda: da._load_realty_mart("good", []),
                 RuntimeError,

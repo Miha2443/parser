@@ -95,6 +95,8 @@ def _load_realty_mart(name: str, raw_files: list[Path]):
         return None
     try:
         manifest_entry = _realty_mart_manifest_entry(name, required=required)
+        if manifest_entry is None:
+            return None
         if manifest_entry and manifest_entry.get("error"):
             if required:
                 raise RuntimeError(f"manifest marks realty mart as error: {name}")

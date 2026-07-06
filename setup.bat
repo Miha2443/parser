@@ -181,10 +181,20 @@ if !DO_SCHEDULER!==1 (
         echo        Registering per-user task. It only fires while you are logged in.
         echo.
         call scripts\register_scheduler_user.bat
+        if errorlevel 1 (
+            echo [ERROR] Per-user Task Scheduler registration failed
+            pause
+            exit /b 1
+        )
         echo.
         echo For robust task run as admin:  scripts\register_scheduler.bat
     ) else (
         call scripts\register_scheduler.bat
+        if errorlevel 1 (
+            echo [ERROR] Task Scheduler registration failed
+            pause
+            exit /b 1
+        )
     )
 ) else (
     echo [7/8] Task Scheduler skipped --no-scheduler

@@ -19,6 +19,7 @@ logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.E
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
 REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
+REALTY_RUNNING_STALE_MIN = 360
 
 
 def load_runs() -> pd.DataFrame:
@@ -87,6 +88,51 @@ def load_realty_update_status() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
+    """Normalized dashboard-facing summary for data/processed/realty_update_status.json."""
+    if not status:
+        return {}
+    warnings: list[str] = []
+    run_status = str(status.get("status") or "").lower()
+    if not run_status:
+        run_status = "failed" if status.get("failures") or status.get("marts_ok") is False else "success"
+        warnings.append("legacy")
+
+    updated_at = pd.to_datetime(status.get("updated_at"), errors="coerce")
+    if pd.isna(updated_at):
+        warnings.append("no heartbeat")
+
+    log_file = status.get("log_file")
+    if isinstance(log_file, str) and log_file and not (PROJECT_ROOT / log_file).is_file():
+        warnings.append("log missing")
+    elif log_file is not None and not isinstance(log_file, str):
+        warnings.append("bad log_file")
+
+    heartbeat_age_min = None
+    if not pd.isna(updated_at):
+        heartbeat_age = pd.Timestamp.now(tz=updated_at.tz) - updated_at
+        heartbeat_age_min = heartbeat_age.total_seconds() / 60
+    stale_running = run_status == "running" and (
+        heartbeat_age_min is None or heartbeat_age_min > REALTY_RUNNING_STALE_MIN
+    )
+    label = {
+        "running": "в работе",
+        "success": "успех",
+        "failed": "ошибка",
+        "interrupted": "прерван",
+    }.get(run_status, run_status or "—")
+    if stale_running:
+        label = "возможно завис"
+    return {
+        "status": run_status,
+        "label": label,
+        "warnings": warnings,
+        "stale_running": stale_running,
+        "heartbeat_age_min": heartbeat_age_min,
+        "error": status.get("error") or "",
+    }
 
 
 def _current_realty_sources(mart: str) -> list[Path]:

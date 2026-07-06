@@ -7,12 +7,12 @@ import pandas as pd
 import streamlit as st
 
 from app.audit import (
-    PROJECT_ROOT,
     last_run_summary,
     last_success_per_indicator,
     load_realty_update_status,
     load_runs,
     realty_marts_status,
+    realty_update_status_summary,
 )
 from pipeline.notifier import format_summary
 from pipeline.registry import INDICATORS
@@ -58,37 +58,26 @@ def main() -> None:
         completed_sources = realty_status.get("completed_sources") or []
         pending_sources = realty_status.get("pending_sources") or []
         current_stage = realty_status.get("current_stage") or ""
-        status_warnings = []
-        if "status" not in realty_status:
-            status_warnings.append("legacy status: нет поля `status`")
-        if "updated_at" not in realty_status:
-            status_warnings.append("нет heartbeat `updated_at`")
-        log_file = realty_status.get("log_file")
-        if isinstance(log_file, str) and log_file and not (PROJECT_ROOT / log_file).is_file():
-            status_warnings.append(f"лог не найден: {log_file}")
-        elif log_file is not None and not isinstance(log_file, str):
-            status_warnings.append("поле `log_file` не строка")
-        status_error = realty_status.get("error") or ""
-        run_status = str(realty_status.get("status") or "").lower()
-        if not run_status:
-            run_status = "failed" if failures or realty_status.get("marts_ok") is False else "success"
+        status_summary = realty_update_status_summary(realty_status)
+        run_status = status_summary.get("status") or "—"
+        status_error = status_summary.get("error") or ""
+        warning_labels = {
+            "legacy": "legacy status: нет поля `status`",
+            "no heartbeat": "нет heartbeat `updated_at`",
+            "log missing": f"лог не найден: {realty_status.get('log_file')}",
+            "bad log_file": "поле `log_file` не строка",
+        }
+        status_warnings = [
+            warning_labels.get(str(w), str(w))
+            for w in (status_summary.get("warnings") or [])
+        ]
         marts_selected = realty_status.get("marts_selected")
         marts_changed_aliases = realty_status.get("marts_changed_aliases") or []
         marts_repair_selected = realty_status.get("marts_repair_selected") or []
         diff = realty_status.get("diff") or {}
-        status_label = {
-            "running": "в работе",
-            "success": "успех",
-            "failed": "ошибка",
-            "interrupted": "прерван",
-        }.get(run_status, run_status or "—")
-        heartbeat_age_min = None
-        if not pd.isna(updated_at):
-            heartbeat_age = pd.Timestamp.now(tz=updated_at.tz) - updated_at
-            heartbeat_age_min = heartbeat_age.total_seconds() / 60
-        stale_running = run_status == "running" and (
-            heartbeat_age_min is None or heartbeat_age_min > 360
-        )
+        status_label = status_summary.get("label") or "—"
+        heartbeat_age_min = status_summary.get("heartbeat_age_min")
+        stale_running = bool(status_summary.get("stale_running"))
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Статус", "возможно завис" if stale_running else status_label)
         c2.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")

@@ -39,6 +39,13 @@ def _find_local(patterns: list[str]) -> list[Path]:
 _RAN_KEYS: set[str] = set()
 
 
+def _run_erzrf(ec, key: str) -> list[Path]:
+    files, ok = ec.run(only=[key])
+    if not ok:
+        raise RuntimeError(f"erzrf source failed: {key}")
+    return list(files)
+
+
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     if not download:
         return {
@@ -60,11 +67,11 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
 
     # top_rf и top_msk оба запускают fetch_top (он обходит обе REGIONS внутри).
     if (wanted & {"top_rf", "top_msk"}) and "top" not in _RAN_KEYS:
-        new_files.extend(ec.run(only=["top"]))
+        new_files.extend(_run_erzrf(ec, "top"))
         _RAN_KEYS.add("top")
 
     if "cards" in wanted and "cards" not in _RAN_KEYS:
-        new_files.extend(ec.run(only=["cards"]))
+        new_files.extend(_run_erzrf(ec, "cards"))
         _RAN_KEYS.add("cards")
 
     state = ec.load_state()

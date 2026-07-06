@@ -125,7 +125,7 @@ notepad config\erzrf.json
 | `scripts\build_realty_marts.bat --check` | Проверить manifest/свежесть realty-витрин без пересборки |
 | `python scripts\check_update_realty_plan.py` | Быстрый self-check планирования `update_realty.py` без сети |
 | `python scripts\check_realty_marts_smoke.py` | Быстрый smoke-check загрузчиков realty-дашборда |
-| `scripts\validate_realty_dashboard.bat` | Все быстрые проверки realty-ветки одним запуском |
+| `scripts\validate_realty_dashboard.bat` | Компиляция Python, plan-check, manifest-check и smoke-check realty-ветки одним запуском |
 | `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
 
 ### Группы источников для `update.bat`

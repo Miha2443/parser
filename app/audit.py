@@ -97,10 +97,12 @@ def realty_marts_status() -> pd.DataFrame:
 
         row_count = None
         col_count = None
+        if isinstance(summary.get("rows"), int):
+            row_count = summary.get("rows")
         if summary.get("type") == "dataframe":
             row_count = summary.get("rows")
             col_count = summary.get("cols")
-        elif isinstance(summary.get("frames"), dict):
+        elif row_count is None and isinstance(summary.get("frames"), dict):
             frame_rows = [
                 v.get("rows") for v in summary["frames"].values()
                 if isinstance(v, dict) and isinstance(v.get("rows"), int)

@@ -48,9 +48,13 @@ def _prepare_imports():
     return data_access
 
 
-def _df_rows(value: Any) -> int | None:
+def _row_count(value: Any) -> int | None:
     if isinstance(value, pd.DataFrame):
         return len(value)
+    if isinstance(value, dict):
+        counts = [_row_count(v) for v in value.values()]
+        counts = [c for c in counts if c is not None]
+        return sum(counts) if counts else None
     return None
 
 
@@ -58,7 +62,13 @@ def _shape_summary(value: Any) -> Any:
     if isinstance(value, pd.DataFrame):
         return {"type": "dataframe", "rows": len(value), "cols": len(value.columns)}
     if isinstance(value, dict):
-        out: dict[str, Any] = {"type": "dict", "keys": sorted(map(str, value.keys()))}
+        out: dict[str, Any] = {
+            "type": "dict",
+            "keys": sorted(map(str, value.keys())),
+        }
+        rows = _row_count(value)
+        if rows is not None:
+            out["rows"] = rows
         frames = {
             str(k): {"rows": len(v), "cols": len(v.columns)}
             for k, v in value.items()
@@ -66,6 +76,20 @@ def _shape_summary(value: Any) -> Any:
         }
         if frames:
             out["frames"] = frames
+        nested_rows = {
+            str(k): rows
+            for k, v in value.items()
+            if isinstance(v, dict) and (rows := _row_count(v)) is not None
+        }
+        if nested_rows:
+            out["nested_rows"] = nested_rows
+        lists = {
+            str(k): {"items": len(v)}
+            for k, v in value.items()
+            if isinstance(v, list)
+        }
+        if lists:
+            out["lists"] = lists
         return out
     return {"type": type(value).__name__}
 
@@ -155,9 +179,18 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
         if strict:
             return 2
 
+    existing_marts: dict[str, Any] = {}
+    if only and MANIFEST.exists():
+        try:
+            existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            if isinstance(existing.get("marts"), dict):
+                existing_marts = existing["marts"]
+        except (OSError, json.JSONDecodeError):
+            existing_marts = {}
+
     manifest: dict[str, Any] = {
         "built_at": datetime.now().isoformat(timespec="seconds"),
-        "marts": {},
+        "marts": dict(existing_marts),
         "warnings": {
             "tmp_files": [str(p.relative_to(ROOT)).replace("\\", "/") for p in tmp],
         },
@@ -182,7 +215,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
                 "summary": _shape_summary(value),
                 "sources": _source_summary(raw_files),
             }
-            rows = _df_rows(value)
+            rows = _row_count(value)
             suffix = f" rows={rows}" if rows is not None else ""
             print(f"  ok -> {target.relative_to(ROOT)}{suffix}")
         except Exception as exc:  # noqa: BLE001

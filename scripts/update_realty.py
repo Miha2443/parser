@@ -392,22 +392,28 @@ def _kill_process_tree(pid: int) -> None:
 
 
 SNAPSHOT_DIRS = [
-    (REALTY_ROOT, "realty"),
-    (ROOT / "downloads", "downloads"),
+    (REALTY_ROOT, "realty", ""),
+    (ROOT / "downloads", "downloads", ""),
 ]
 
 
-def snapshot_files() -> dict[str, tuple[int, str]]:
+def snapshot_files(
+    *,
+    roots: list[tuple[Path, str, str]] | None = None,
+    file_prefixes: list[str] | None = None,
+) -> dict[str, tuple[int, str]]:
     """Snapshot файлов realty/ + downloads/: {prefix:rel_path → (size, sha256_head)}.
 
     Хеш по первым 256 КБ — быстро и достаточно для детекта изменений.
     """
     out: dict[str, tuple[int, str]] = {}
-    for base, prefix in SNAPSHOT_DIRS:
+    for base, namespace, rel_prefix in roots or SNAPSHOT_DIRS:
         if not base.exists():
             continue
         for f in base.rglob("*"):
             if not f.is_file() or "_archive" in f.parts:
+                continue
+            if file_prefixes and not any(f.name.startswith(prefix) for prefix in file_prefixes):
                 continue
             try:
                 size = f.stat().st_size
@@ -415,10 +421,23 @@ def snapshot_files() -> dict[str, tuple[int, str]]:
                 with f.open("rb") as fh:
                     h.update(fh.read(256 * 1024))
                 rel = str(f.relative_to(base)).replace("\\", "/")
-                out[f"{prefix}:{rel}"] = (size, h.hexdigest()[:16])
+                out[f"{namespace}:{rel_prefix}{rel}"] = (size, h.hexdigest()[:16])
             except OSError:
                 pass
     return out
+
+
+def snapshot_scope_for_source(alias: str) -> tuple[list[tuple[Path, str, str]] | None, list[str] | None]:
+    """Return a narrow snapshot scope for per-source deduplication."""
+    paths = SOURCE_ARCHIVE_PATHS.get(alias)
+    prefixes = SOURCE_PREFIXES.get(alias)
+    if not paths:
+        return None, None
+    roots = []
+    for rel in paths:
+        rel_key = rel.replace("\\", "/")
+        roots.append((REALTY_ROOT / rel, "realty", f"{rel_key}/"))
+    return roots, prefixes
 
 
 # Классификатор: путь файла → бизнес-название источника.
@@ -483,7 +502,12 @@ def summarize_by_topic(paths: list[str]) -> list[str]:
     return out
 
 
-def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
+def deduplicate_new_files(
+    before_snapshot: dict,
+    *,
+    roots: list[tuple[Path, str, str]] | None = None,
+    file_prefixes: list[str] | None = None,
+) -> tuple[int, int]:
     """После прогонов парсеров находит появившиеся файлы и проверяет
     каждый на дубль (по контенту) с тем что уже есть в архиве.
 
@@ -497,7 +521,7 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
     sys.path.insert(0, str(ROOT))
     from pipeline.deduplicate import deduplicate as _dedupe
 
-    after = snapshot_files()
+    after = snapshot_files(roots=roots, file_prefixes=file_prefixes)
     added_paths = sorted(set(after) - set(before_snapshot))
     if not added_paths:
         return 0, 0
@@ -506,7 +530,7 @@ def deduplicate_new_files(before_snapshot: dict) -> tuple[int, int]:
     _print(f"{'─'*60}")
     deduped = 0
     real_new = 0
-    prefix_to_base = {p: b for b, p in SNAPSHOT_DIRS}
+    prefix_to_base = {namespace: base for base, namespace, _ in SNAPSHOT_DIRS}
     for rel in added_paths:
         if ":" in rel:
             prefix, sub = rel.split(":", 1)
@@ -564,7 +588,12 @@ def run_source(alias: str, env: dict, force: bool = False,
     _print(f"{'─'*60}")
 
     # Snapshot до источника — для дедупликации только его файлов.
-    before_src = snapshot_files() if do_archive else {}
+    snapshot_roots, snapshot_prefixes = snapshot_scope_for_source(alias)
+    before_src = (
+        snapshot_files(roots=snapshot_roots, file_prefixes=snapshot_prefixes)
+        if do_archive
+        else {}
+    )
 
     # Принудительно utf-8 в child: с stdout=PIPE Python берёт кодировку
     # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
@@ -628,7 +657,11 @@ def run_source(alias: str, env: dict, force: bool = False,
         _print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
         if do_archive:
             try:
-                deduplicate_new_files(before_src)
+                deduplicate_new_files(
+                    before_src,
+                    roots=snapshot_roots,
+                    file_prefixes=snapshot_prefixes,
+                )
             except Exception as exc:  # noqa: BLE001
                 _print(f"⚠️  {alias}: дедупликация упала — {exc}")
             archive_old_for_source(alias, keep=keep)

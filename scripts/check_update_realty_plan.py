@@ -39,6 +39,35 @@ def main() -> int:
         "all expansion",
     )
 
+    original_realty_root = ur.REALTY_ROOT
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            realty_root = Path(tmp) / "realty"
+            nashdom = realty_root / "nashdom"
+            nashdom.mkdir(parents=True)
+            (nashdom / "monitoring_2_0_20260702.xlsx").write_bytes(b"monitoring")
+            (nashdom / "rasprodannost_20260702.xlsx").write_bytes(b"rasprod")
+            (nashdom / "kvartirografia_20260702.json").write_text("{}", encoding="utf-8")
+
+            ur.REALTY_ROOT = realty_root
+            roots, prefixes = ur.snapshot_scope_for_source("monitoring")
+            snapshot = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            _assert_equal(
+                sorted(snapshot),
+                ["realty:nashdom/monitoring_2_0_20260702.xlsx"],
+                "monitoring scoped snapshot",
+            )
+
+            roots, prefixes = ur.snapshot_scope_for_source("rasprod")
+            snapshot = ur.snapshot_files(roots=roots, file_prefixes=prefixes)
+            _assert_equal(
+                sorted(snapshot),
+                ["realty:nashdom/rasprodannost_20260702.xlsx"],
+                "rasprod scoped snapshot",
+            )
+    finally:
+        ur.REALTY_ROOT = original_realty_root
+
     original_manifest = ur.REALTY_MARTS_MANIFEST
     try:
         ur.REALTY_MARTS_MANIFEST = Path("__definitely_missing_manifest__.json")

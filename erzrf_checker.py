@@ -129,8 +129,42 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    _write_json_atomic(STATE_FILE, state)
+
+
+def _write_json_atomic(path: Path, payload) -> None:
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _write_excel_atomic(path: Path, write_func) -> None:
+    tmp = path.with_name(f"{path.stem}.tmp{path.suffix}")
+    try:
+        write_func(tmp)
+        import pandas as pd
+
+        with pd.ExcelFile(tmp, engine="openpyxl") as workbook:
+            if not workbook.sheet_names:
+                raise RuntimeError("temporary workbook has no sheets")
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def _load_credentials() -> dict | None:
@@ -717,17 +751,13 @@ def fetch_top(state: dict) -> list[Path]:
             )
             if developers:
                 dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
-                dev_file.write_text(
-                    json.dumps(
-                        {
-                            "region": region["key"],
-                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                            "developers": developers,
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
+                _write_json_atomic(
+                    dev_file,
+                    {
+                        "region": region["key"],
+                        "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                        "developers": developers,
+                    },
                 )
                 print(f"     ✅ {dev_file.name} ({len(developers)} застройщиков)")
                 new_files.append(dev_file)
@@ -976,12 +1006,15 @@ def fetch_cards(state: dict) -> list[Path]:
             row["scraped_at"] = r.get("scraped_at", "")
             wide_rows.append(row)
 
+        def _write_cards_workbook(path: Path) -> None:
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                if wide_rows:
+                    pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
+                if failed:
+                    pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
+
         target = CARDS_DIR / f"cards_{date_str}.xlsx"
-        with pd.ExcelWriter(target, engine="openpyxl") as writer:
-            if wide_rows:
-                pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
-            if failed:
-                pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
+        _write_excel_atomic(target, _write_cards_workbook)
         print(
             f"     ✅ {target.name} "
             f"(карточек: {len(wide_rows)}, лет: {len(all_years)} {all_years}, "

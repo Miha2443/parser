@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -47,6 +48,21 @@ def _raw_files(paths: list[Path], patterns: list[str], *, recursive: bool = Fals
     return files
 
 
+def _realty_mart_manifest_entry(name: str) -> dict | None:
+    manifest_path = DATA_MARTS_REALTY / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    marts = manifest.get("marts") if isinstance(manifest, dict) else None
+    if not isinstance(marts, dict):
+        return None
+    entry = marts.get(name)
+    return entry if isinstance(entry, dict) else None
+
+
 def _load_realty_mart(name: str, raw_files: list[Path]):
     """Read a prebuilt realty mart when it is present and not older than raw."""
     required = _realty_marts_required()
@@ -60,6 +76,11 @@ def _load_realty_mart(name: str, raw_files: list[Path]):
             raise FileNotFoundError(f"missing realty mart: {path}")
         return None
     try:
+        manifest_entry = _realty_mart_manifest_entry(name)
+        if manifest_entry and manifest_entry.get("error"):
+            if required:
+                raise RuntimeError(f"manifest marks realty mart as error: {name}")
+            return None
         mart_mtime = path.stat().st_mtime
         if raw_files and any(p.exists() and p.stat().st_mtime > mart_mtime for p in raw_files):
             if required:

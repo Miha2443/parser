@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import logging
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -78,6 +79,31 @@ def main() -> int:
                 RuntimeError,
                 "bad strict mart",
             )
+
+            error_marked = mart_dir / "error_marked.pkl"
+            pd.to_pickle({"old": pd.DataFrame({"x": [1]})}, error_marked)
+            (mart_dir / "manifest.json").write_text(
+                json.dumps({
+                    "marts": {
+                        "error_marked": {
+                            "file": str(error_marked),
+                            "error": "synthetic",
+                        }
+                    }
+                }),
+                encoding="utf-8",
+            )
+            _must_raise(
+                lambda: da._load_realty_mart("error_marked", []),
+                RuntimeError,
+                "manifest error strict mart",
+            )
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "0"
+            _require(
+                da._load_realty_mart("error_marked", []) is None,
+                "manifest error should force fallback in normal mode",
+            )
+            os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
 
             os.environ["PARSER_USE_REALTY_MARTS"] = "0"
             _must_raise(

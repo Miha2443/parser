@@ -34,6 +34,8 @@ def main() -> int:
             "sources_requested": ["monitoring"],
             "successes": ["monitoring"],
             "failures": [],
+            "completed_sources": ["monitoring"],
+            "pending_sources": [],
             "marts_ok": True,
         })
         if _check(ok_status, strict=True) != 0:
@@ -65,6 +67,21 @@ def main() -> int:
         })
         if _check(bad_status, strict=False) == 0:
             raise AssertionError("unknown source should fail")
+
+        bad_progress = root / "bad_progress.json"
+        _write(bad_progress, {
+            "status": "running",
+            "started_at": now,
+            "updated_at": now,
+            "finished_at": None,
+            "sources_requested": ["monitoring", "rasprod"],
+            "successes": ["monitoring"],
+            "failures": [],
+            "completed_sources": [],
+            "pending_sources": ["monitoring", "rasprod"],
+        })
+        if _check(bad_progress, strict=False) == 0:
+            raise AssertionError("inconsistent progress fields should fail")
 
     print("realty update status selftest: ok")
     return 0

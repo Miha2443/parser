@@ -42,6 +42,12 @@ def _list_field(data: dict[str, Any], field: str, failures: list[str]) -> list[s
     return [str(item) for item in value]
 
 
+def _optional_list_field(data: dict[str, Any], field: str, failures: list[str]) -> list[str] | None:
+    if field not in data:
+        return None
+    return _list_field(data, field, failures)
+
+
 def _display_path(path: Path) -> str:
     try:
         return str(path.relative_to(ROOT))
@@ -83,6 +89,31 @@ def check_status_file(status_file: Path, *, strict: bool = False) -> int:
     outside_requested = sorted((set(successes) | set(failures_sources)) - set(requested))
     if outside_requested:
         failures.append(f"completed source(s) not requested: {', '.join(outside_requested)}")
+
+    completed_sources = _optional_list_field(data, "completed_sources", failures)
+    pending_sources = _optional_list_field(data, "pending_sources", failures)
+    expected_completed = list(dict.fromkeys(successes + failures_sources))
+    if completed_sources is not None:
+        unknown_completed = sorted(set(completed_sources) - set(requested))
+        if unknown_completed:
+            failures.append(f"completed_sources outside requested: {', '.join(unknown_completed)}")
+        if completed_sources != expected_completed:
+            failures.append(
+                "completed_sources does not match successes+failures "
+                f"(expected: {', '.join(expected_completed) or '-'})"
+            )
+    if pending_sources is not None:
+        unknown_pending = sorted(set(pending_sources) - set(requested))
+        if unknown_pending:
+            failures.append(f"pending_sources outside requested: {', '.join(unknown_pending)}")
+        overlap = sorted(set(pending_sources) & set(expected_completed))
+        if overlap:
+            failures.append(f"pending_sources overlaps completed source(s): {', '.join(overlap)}")
+        if completed_sources is not None:
+            covered = set(completed_sources) | set(pending_sources)
+            missing_progress = sorted(set(requested) - covered)
+            if missing_progress:
+                failures.append(f"progress fields miss requested source(s): {', '.join(missing_progress)}")
 
     started_at = _parse_dt(data.get("started_at"), "started_at", failures)
     updated_at = _parse_dt(data.get("updated_at"), "updated_at", failures)

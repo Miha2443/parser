@@ -96,6 +96,8 @@ def main() -> int:
             log_path=None,
         )
         _assert_equal(captured["status"], "running", "running status is written")
+        if not captured.get("updated_at"):
+            raise AssertionError("running status has no updated_at")
         _assert_equal(captured["finished_at"], None, "running status has no finish time")
         _assert_equal(captured["sources_requested"], ["monitoring"], "status sources")
 
@@ -107,6 +109,8 @@ def main() -> int:
             failures=["monitoring"],
         )
         _assert_equal(captured["status"], "failed", "failed status is written")
+        if not captured.get("updated_at"):
+            raise AssertionError("failed status has no updated_at")
         _assert_equal(captured["failures"], ["monitoring"], "status failures")
 
         ur.set_active_realty_run(

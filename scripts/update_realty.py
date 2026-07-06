@@ -199,10 +199,12 @@ def write_realty_run_status(
     **fields,
 ) -> None:
     """Write a normalized update status payload for the dashboard."""
+    now = datetime.now()
     payload = {
         "status": status,
         "started_at": datetime.fromtimestamp(started).isoformat(timespec="seconds"),
-        "finished_at": None if status == "running" else datetime.now().isoformat(timespec="seconds"),
+        "updated_at": now.isoformat(timespec="seconds"),
+        "finished_at": None if status == "running" else now.isoformat(timespec="seconds"),
         "duration_sec": round(time.time() - started, 2),
         "sources_requested": sources,
         "successes": fields.pop("successes", []),

@@ -49,6 +49,7 @@ def main() -> None:
         st.info("Нет `data/processed/realty_update_status.json`. Запустите `scripts\\update_realty.py`.")
     else:
         finished_at = pd.to_datetime(realty_status.get("finished_at"), errors="coerce")
+        updated_at = pd.to_datetime(realty_status.get("updated_at"), errors="coerce")
         duration_sec = realty_status.get("duration_sec")
         successes = realty_status.get("successes") or []
         failures = realty_status.get("failures") or []
@@ -69,20 +70,32 @@ def main() -> None:
             "failed": "ошибка",
             "interrupted": "прерван",
         }.get(run_status, run_status or "—")
+        heartbeat_age_min = None
+        if not pd.isna(updated_at):
+            heartbeat_age = pd.Timestamp.now(tz=updated_at.tz) - updated_at
+            heartbeat_age_min = heartbeat_age.total_seconds() / 60
+        stale_running = run_status == "running" and (
+            heartbeat_age_min is None or heartbeat_age_min > 360
+        )
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Статус", status_label)
+        c1.metric("Статус", "возможно завис" if stale_running else status_label)
         c2.metric("Завершён", finished_at.strftime("%d.%m.%Y %H:%M") if not pd.isna(finished_at) else "—")
         c3.metric("Источники", f"{len(successes)}/{len(requested)}")
         c4.metric("Ошибок", len(failures))
         c5.metric("Новых/изм.", len(diff.get("added", [])) + len(diff.get("changed", [])))
         if run_status == "running":
-            st.info("Realty-прогон сейчас выполняется или был прерван до финальной записи статуса.")
+            if stale_running:
+                st.warning("Realty-прогон давно не обновлял heartbeat. Проверьте лог и процессы Python/Chrome.")
+            else:
+                st.info("Realty-прогон сейчас выполняется или был прерван до финальной записи статуса.")
             if completed_sources or pending_sources:
                 parts = [f"готово: {len(completed_sources)}/{len(requested)}"]
                 if current_stage:
                     parts.append(f"этап: {current_stage}")
                 if pending_sources:
                     parts.append("ожидает: " + ", ".join(map(str, pending_sources)))
+                if heartbeat_age_min is not None:
+                    parts.append(f"heartbeat: {heartbeat_age_min:.0f} мин назад")
                 st.caption(" · ".join(parts))
         elif run_status == "interrupted":
             st.warning("Последний realty-прогон был прерван.")

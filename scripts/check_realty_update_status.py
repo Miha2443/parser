@@ -42,25 +42,24 @@ def _list_field(data: dict[str, Any], field: str, failures: list[str]) -> list[s
     return [str(item) for item in value]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="fail on legacy status shape, missing log, or stale running heartbeat",
-    )
-    args = parser.parse_args()
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
-    if not STATUS_FILE.exists():
+
+def check_status_file(status_file: Path, *, strict: bool = False) -> int:
+    if not status_file.exists():
         print("realty update status: missing (ok before first run)")
         return 0
 
     failures: list[str] = []
     warnings: list[str] = []
     try:
-        data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(status_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"ERROR: cannot read {STATUS_FILE.relative_to(ROOT)}: {exc}")
+        print(f"ERROR: cannot read {_display_path(status_file)}: {exc}")
         return 1
     if not isinstance(data, dict):
         print("ERROR: realty update status is not an object")
@@ -121,11 +120,28 @@ def main() -> int:
         for item in warnings:
             print(f"WARNING: {item}")
 
-    if failures or (args.strict and warnings):
+    if failures or (strict and warnings):
         print(f"realty update status check failed: {len(failures)} error(s), {len(warnings)} warning(s)")
         return 1
     print(f"realty update status: ok ({status}, {len(warnings)} warning(s))")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail on legacy status shape, missing log, or stale running heartbeat",
+    )
+    parser.add_argument(
+        "--file",
+        type=Path,
+        default=STATUS_FILE,
+        help="status JSON to validate (default: data/processed/realty_update_status.json)",
+    )
+    args = parser.parse_args()
+    return check_status_file(args.file, strict=args.strict)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import contextlib
+import io
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +12,9 @@ from typing import Any
 import pandas as pd
 
 from pipeline.audit import read_audit
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
@@ -83,6 +89,33 @@ def load_realty_update_status() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _current_realty_sources(mart: str) -> list[Path]:
+    """Current raw files for a mart. Used only for freshness diagnostics."""
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            from app import data_access as da  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        mapping = {
+            "kvartirografia": lambda: da._raw_files(da.KVART_PATHS, ["kvartirografia_*.json"]),
+            "monitoring_2_0": lambda: da._raw_files(da.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"]),
+            "erzrf_top": lambda: da._raw_files(da.ERZRF_PATHS, ["top_*.xlsx", "top_developers_*.json"]),
+            "erzrf_cards": lambda: da._raw_files(da.ERZRF_PATHS, ["cards_*.xlsx"], recursive=True),
+            "escrow_manual": lambda: da._raw_files(da.ESCROW_PATHS, ["*.xlsx"]),
+            "rasprodannost": lambda: da._raw_files(da.RASPROD_PATHS, ["rasprodannost_*.xlsx"]),
+            "vvod_static": lambda: da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["*.xls*", "*.txt"]),
+            "emiss_34118": lambda: (
+                da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["emiss_34118_base.xls"])
+                + da._raw_files([PROJECT_ROOT / "downloads"], ["*Введено в действие общей площади жилых домов*.xls*"])
+            ),
+        }
+        getter = mapping.get(mart)
+        return getter() if getter else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def realty_marts_status() -> pd.DataFrame:
     """One row per realty mart from data/marts/realty/manifest.json."""
     manifest = load_realty_marts_manifest()
@@ -101,11 +134,21 @@ def realty_marts_status() -> pd.DataFrame:
         summary = info.get("summary") if isinstance(info.get("summary"), dict) else {}
         sources = info.get("sources") if isinstance(info.get("sources"), list) else []
         latest_source = None
-        for source in sources:
-            if isinstance(source, dict):
-                ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+        current_sources = _current_realty_sources(str(mart))
+        if current_sources:
+            for path in current_sources:
+                try:
+                    ts = pd.to_datetime(datetime.fromtimestamp(path.stat().st_mtime), errors="coerce")
+                except OSError:
+                    continue
                 if not pd.isna(ts) and (latest_source is None or ts > latest_source):
                     latest_source = ts
+        else:
+            for source in sources:
+                if isinstance(source, dict):
+                    ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+                    if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                        latest_source = ts
 
         row_count = None
         col_count = None

@@ -121,6 +121,8 @@ def _tmp_files() -> list[Path]:
 
 def check_manifest(*, strict: bool = False) -> int:
     """Validate mart manifest/files without rebuilding anything."""
+    da = _prepare_imports()
+    specs = {spec.name: spec for spec in _specs(da)}
     failures = 0
     warnings = 0
     tmp = _tmp_files()
@@ -169,16 +171,30 @@ def check_manifest(*, strict: bool = False) -> int:
 
         latest_source = None
         missing_sources = 0
-        for source in info.get("sources") or []:
-            if not isinstance(source, dict) or not source.get("path"):
-                continue
-            path = ROOT / str(source["path"])
-            if not path.exists():
-                missing_sources += 1
-                continue
-            ts = pd.to_datetime(source.get("mtime"), errors="coerce")
-            if not pd.isna(ts) and (latest_source is None or ts > latest_source):
-                latest_source = ts
+        spec = specs.get(str(name))
+        if spec is not None:
+            current_sources = spec.raw_files(da)
+            for path in current_sources:
+                try:
+                    ts = pd.to_datetime(
+                        datetime.fromtimestamp(path.stat().st_mtime),
+                        errors="coerce",
+                    )
+                except OSError:
+                    continue
+                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                    latest_source = ts
+        else:
+            for source in info.get("sources") or []:
+                if not isinstance(source, dict) or not source.get("path"):
+                    continue
+                path = ROOT / str(source["path"])
+                if not path.exists():
+                    missing_sources += 1
+                    continue
+                ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                    latest_source = ts
         if missing_sources:
             print(f"  WARN  {name}: missing sources listed in manifest: {missing_sources}")
             warnings += 1

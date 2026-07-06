@@ -29,7 +29,6 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -304,7 +303,7 @@ def _scroll_developers_table(driver, *, step_px: int = 600, pause: float = 0.3,
         if not isinstance(result, dict) or not result.get("found"):
             return 0
         last = result
-        time.sleep(pause)
+        selenium_sleep(pause)
         rows = int(result.get("rows") or 0)
         if rows == prev:
             no_progress += 1
@@ -387,7 +386,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
             list_index,
             pos,
         )
-        time.sleep(pause)
+        selenium_sleep(pause)
         rows = driver.execute_script(
             """
             const idx = arguments[0];
@@ -453,7 +452,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
         f"const ls=document.querySelectorAll('div.list');"
         f"if(ls[{list_index}]) ls[{list_index}].scrollTop = ls[{list_index}].scrollHeight;"
     )
-    time.sleep(pause * 2)
+    selenium_sleep(pause * 2)
     final_rows = driver.execute_script(
         """
         const idx = arguments[0];
@@ -620,7 +619,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
             print(f"  ⚠️  контент не появился за 45 сек")
             _save_debug_snapshot(driver, "kvartirografia_no_content")
             return []
-        time.sleep(3)
+        selenium_sleep(3)
 
         for region in KVART_REGIONS:
             try:
@@ -642,7 +641,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
                     driver.set_page_load_timeout(PAGE_TIMEOUT)
                     driver.get(url)
-                    time.sleep(6)
+                    selenium_sleep(6)
                     try:
                         WebDriverWait(driver, 45).until(
                             lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
@@ -651,7 +650,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         print(f"       ⚠️  после reset: контент не появился, пропускаю {region['key']}")
                         _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_after_reset_no_content")
                         continue
-                    time.sleep(3)
+                    selenium_sleep(3)
                 if region["search"]:
                     ok = _switch_region_filter(
                         driver,
@@ -663,7 +662,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                         _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
                         continue
                     # Подождём чтобы данные перезагрузились
-                    time.sleep(5)
+                    selenium_sleep(5)
 
                 data = _parse_kvartirografia(driver.page_source, driver.current_url)
                 data["region_key"] = region["key"]
@@ -803,18 +802,18 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                     driver.set_page_load_timeout(PAGE_TIMEOUT)
                                     try:
                                         driver.get(url)
-                                        time.sleep(6)
+                                        selenium_sleep(6)
                                         WebDriverWait(driver, 45).until(
                                             lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
                                         )
-                                        time.sleep(3)
+                                        selenium_sleep(3)
                                         if region["search"]:
                                             _switch_region_filter(
                                                 driver,
                                                 target_label=region["click_label"],
                                                 search_query=region["search"],
                                             )
-                                            time.sleep(5)
+                                            selenium_sleep(5)
                                     except Exception as reset_exc:  # noqa: BLE001
                                         print(f"          ⚠️  reset не удался ({reset_exc}), останавливаю per-dev")
                                         break
@@ -837,7 +836,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                 if want > 0:
                                     ratio = got / want
                                     if ratio < 0.9 or ratio > 1.1:
-                                        time.sleep(2.0)
+                                        selenium_sleep(2.0)
                                         apt = _parse_apartments_live(driver)
                                         got2 = _parse_num_apartments(
                                             (apt.get("all") or {}).get("count", "")) if apt else 0
@@ -1010,7 +1009,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
             print(f"       ⚠️  не нашёл триггер dropdown'а")
             return False
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
-        time.sleep(0.5)
+        selenium_sleep(0.5)
         driver.execute_script("arguments[0].click();", trigger)
         print(f"       · клик на trigger")
     except WebDriverException as exc:
@@ -1029,7 +1028,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  search-input попапа не появился")
         _save_debug_snapshot(driver, "region_switch_no_popup")
         return False
-    time.sleep(0.5)
+    selenium_sleep(0.5)
 
     # 3) Ввести запрос в search-input через JS (надёжно для React)
     if search_query:
@@ -1047,7 +1046,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
             search_query,
         )
         print(f"       · ввёл в поиск: '{search_query}' (ok={ok})")
-        time.sleep(2)
+        selenium_sleep(2)
 
     # 4) Дождаться появления target_label и кликнуть по ВСЕЙ строке
     # (div-родитель span'а — там висит обработчик клика чекбокса).
@@ -1088,7 +1087,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         return False
 
     # 5) Закрыть попап (клик по body) чтобы данные применились
-    time.sleep(1)
+    selenium_sleep(1)
     try:
         driver.execute_script("document.body.click();")
     except WebDriverException:
@@ -1104,7 +1103,7 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         )
         new_count = _get_all_apartments_count(driver)
         print(f"       ✅ данные сменились: {baseline} → {new_count}")
-        time.sleep(2)
+        selenium_sleep(2)
         return True
     except TimeoutException:
         actual = _get_all_apartments_count(driver)
@@ -1198,7 +1197,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
                     "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
                 )
             )
-            time.sleep(0.3)
+            selenium_sleep(0.3)
             # Очищаем поле поиска чтобы «Все девелоперы» был виден
             driver.execute_script(
                 """
@@ -1211,7 +1210,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
                 inp.dispatchEvent(new Event('change', {bubbles: true}));
                 """
             )
-            time.sleep(0.5)
+            selenium_sleep(0.5)
             # Скроллим список наверх (там «Все девелоперы» обычно первым)
             driver.execute_script(
                 """
@@ -1221,7 +1220,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
                 }
                 """
             )
-            time.sleep(0.3)
+            selenium_sleep(0.3)
             # Клик «Все девелоперы»
             result_a = driver.execute_script(
                 """
@@ -1238,13 +1237,13 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             )
             if debug:
                 print(f"          🔍 clear: клик «Все девелоперы» → {result_a}")
-            time.sleep(0.4)
+            selenium_sleep(0.4)
             # Закрываем попап
             try:
                 driver.execute_script("document.body.click();")
             except WebDriverException:
                 pass
-            time.sleep(0.8)
+            selenium_sleep(0.8)
             new_label = _get_developer_filter_label(driver) or ""
             if debug:
                 print(f"          🔍 clear: после A фильтр = «{new_label}»")
@@ -1308,7 +1307,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             print(f"          🔍 clear B попытка {attempt+1}: {clicked_info}")
         if not clicked_info or not clicked_info.get("ok"):
             break
-        time.sleep(0.7)
+        selenium_sleep(0.7)
         new_label = _get_developer_filter_label(driver) or ""
         if debug:
             print(f"          🔍 clear: после B[{attempt+1}] фильтр = «{new_label}»")
@@ -1336,9 +1335,9 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
                 print("          🔍 clear C: ActionChains физический клик")
             driver.execute_script(
                 "arguments[0].scrollIntoView({block:'center'});", crosshair)
-            time.sleep(0.3)
+            selenium_sleep(0.3)
             ActionChains(driver).move_to_element(crosshair).pause(0.2).click().perform()
-            time.sleep(0.8)
+            selenium_sleep(0.8)
             new_label = _get_developer_filter_label(driver) or ""
             if debug:
                 print(f"          🔍 clear: после C фильтр = «{new_label}»")
@@ -1389,7 +1388,7 @@ def _switch_developer_filter(driver, target_label: str, *,
         return False
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
-        time.sleep(0.2)
+        selenium_sleep(0.2)
         driver.execute_script("arguments[0].click();", trigger)
     except WebDriverException:
         return False
@@ -1403,7 +1402,7 @@ def _switch_developer_filter(driver, target_label: str, *,
         )
     except TimeoutException:
         return False
-    time.sleep(0.3)
+    selenium_sleep(0.3)
 
     # 3) Вводим запрос (для уже длинного списка — без запроса попап тормозит)
     driver.execute_script(
@@ -1419,7 +1418,7 @@ def _switch_developer_filter(driver, target_label: str, *,
         """,
         target_label,
     )
-    time.sleep(0.8)
+    selenium_sleep(0.8)
 
     # 4) Кликаем по совпадению (сначала точное, потом подстрока — case-insensitive)
     clicked = driver.execute_script(
@@ -1452,7 +1451,7 @@ def _switch_developer_filter(driver, target_label: str, *,
         return False
 
     # 5) Закрыть попап
-    time.sleep(0.4)
+    selenium_sleep(0.4)
     try:
         driver.execute_script("document.body.click();")
     except WebDriverException:
@@ -1487,7 +1486,7 @@ def _switch_developer_filter(driver, target_label: str, *,
         pass
     # ВАЖНО: даже после смены DOM React может ещё мигнуть/перерисовать.
     # Дополнительная пауза позволяет данным «успокоиться».
-    time.sleep(1.2)
+    selenium_sleep(1.2)
     return True
 
 
@@ -2099,7 +2098,7 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
     try:
         driver.set_page_load_timeout(PAGE_TIMEOUT)
         driver.get(url)
-        time.sleep(5)
+        selenium_sleep(5)
 
         # Ждём контент: текст «данным на» или «состоянию на» или
         # появление data-rooms/data-id кнопок. <table> на этих страницах
@@ -2120,7 +2119,7 @@ def _scrape_table_source(source_key: str, url: str, state: dict) -> list[Path]:
 
         # Скроллим — для подгрузки ленивых таблиц (девелоперы, регионы)
         _scroll_through_page(driver)
-        time.sleep(2)
+        selenium_sleep(2)
 
         report_date = _read_report_date(driver) or ""
         if report_date:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -75,20 +76,57 @@ def _sorted_by_mtime_desc(paths: list[Path]) -> list[Path]:
     return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
-def build_version_index() -> VersionIndex:
+def _matches_prefix(path: Path, file_prefixes: Sequence[str] | None) -> bool:
+    return not file_prefixes or any(path.name.startswith(prefix) for prefix in file_prefixes)
+
+
+def _archive_roots_for_active(active_roots: Sequence[Path]) -> list[Path]:
+    if not ARCHIVE_ROOT.exists():
+        return []
+    if not active_roots:
+        return [ARCHIVE_ROOT]
+
+    realty_root = REALTY_ROOT.resolve()
+    archive_roots: list[Path] = []
+    for active_root in active_roots:
+        try:
+            rel = active_root.resolve().relative_to(realty_root)
+        except ValueError:
+            continue
+        for date_dir in ARCHIVE_ROOT.iterdir():
+            if not date_dir.is_dir():
+                continue
+            archive_root = date_dir / rel
+            if archive_root.exists():
+                archive_roots.append(archive_root)
+    return archive_roots
+
+
+def build_version_index(
+    *,
+    active_roots: Sequence[Path] | None = None,
+    file_prefixes: Sequence[str] | None = None,
+) -> VersionIndex:
     """Scan realty raw files once for batch deduplication."""
     active: dict[str, list[Path]] = {}
     archive: dict[str, list[Path]] = {}
+    active_scan_roots = list(active_roots) if active_roots is not None else [REALTY_ROOT]
 
-    if REALTY_ROOT.exists():
-        for f in REALTY_ROOT.rglob("*"):
+    for root in active_scan_roots:
+        if not root.exists():
+            continue
+        for f in root.rglob("*"):
             if not f.is_file() or "_archive" in f.parts:
+                continue
+            if not _matches_prefix(f, file_prefixes):
                 continue
             active.setdefault(_family_key(f), []).append(f)
 
-    if ARCHIVE_ROOT.exists():
-        for f in ARCHIVE_ROOT.rglob("*"):
+    for root in _archive_roots_for_active(active_scan_roots):
+        for f in root.rglob("*"):
             if not f.is_file():
+                continue
+            if not _matches_prefix(f, file_prefixes):
                 continue
             archive.setdefault(_family_key(f), []).append(f)
 

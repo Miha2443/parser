@@ -563,7 +563,14 @@ def deduplicate_new_files(
     _print(f"{'─'*60}")
     deduped = 0
     real_new = 0
-    version_index = build_version_index()
+    index_roots = [
+        base for base, namespace, _rel_prefix in roots
+        if namespace == "realty"
+    ] if roots else None
+    version_index = build_version_index(
+        active_roots=index_roots or None,
+        file_prefixes=file_prefixes,
+    )
     prefix_to_base = {namespace: base for base, namespace, _ in SNAPSHOT_DIRS}
     for rel in added_paths:
         if ":" in rel:

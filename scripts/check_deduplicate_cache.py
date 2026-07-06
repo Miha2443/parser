@@ -52,6 +52,30 @@ def main() -> int:
             dd.REALTY_ROOT = root
             dd.ARCHIVE_ROOT = root / "_archive"
 
+            other_source = root / "erzrf" / "monitoring_2_0_20260704.xlsx"
+            other_archive = dd.ARCHIVE_ROOT / "2026-07-01" / "erzrf" / "monitoring_2_0_20260701.xlsx"
+            other_family = root / "nashdom" / "rasprodannost_20260702.xlsx"
+            other_source.parent.mkdir(parents=True)
+            other_archive.parent.mkdir(parents=True)
+            other_source.write_bytes(b"other-source")
+            other_archive.write_bytes(b"other-source")
+            other_family.write_bytes(b"other-family")
+
+            scoped_index = dd.build_version_index(
+                active_roots=[root / "nashdom"],
+                file_prefixes=["monitoring_2_0_"],
+            )
+            scoped_paths = {
+                path
+                for group in list(scoped_index.active.values()) + list(scoped_index.archive.values())
+                for path in group
+            }
+            _require(active in scoped_paths, "scoped index should include matching active source files")
+            _require(archive in scoped_paths, "scoped index should include matching source archive files")
+            _require(other_source not in scoped_paths, "scoped index should skip other source active files")
+            _require(other_archive not in scoped_paths, "scoped index should skip other source archive files")
+            _require(other_family not in scoped_paths, "scoped index should honor file prefixes")
+
             first_hash = dd._file_sha256(active)
             second_hash = dd._file_sha256(active)
             _require(second_hash == first_hash, "unchanged hash should be stable")

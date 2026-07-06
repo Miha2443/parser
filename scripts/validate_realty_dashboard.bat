@@ -13,6 +13,7 @@ set "PYTHONUTF8=1"
 
 echo [1/5] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_windows_wrappers.py || exit /b %ERRORLEVEL%
 
 echo [2/5] update_realty planning checks
 "%PY%" scripts\check_update_realty_plan.py || exit /b %ERRORLEVEL%

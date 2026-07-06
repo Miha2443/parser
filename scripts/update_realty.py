@@ -47,6 +47,7 @@ REALTY_ROOT = ROOT / "data" / "raw" / "realty"
 LOG_DIR = ROOT / "logs"
 PROCESSED_DIR = ROOT / "data" / "processed"
 REALTY_STATUS_FILE = PROCESSED_DIR / "realty_update_status.json"
+REALTY_MARTS_MANIFEST = ROOT / "data" / "marts" / "realty" / "manifest.json"
 
 # Глобальный файл лога текущего прогона. Инициализируется в main().
 _LOG_FILE: Path | None = None
@@ -100,6 +101,15 @@ SOURCE_PREFIXES = {
     "erz-top":     ["top_obyem_", "top_developers_", "top_nakopl_",
                     "top_skorost_", "top_potreb_"],
     "erz-cards":   ["cards_", "card_"],
+}
+
+SOURCE_MARTS = {
+    "monitoring": {"monitoring_2_0"},
+    "rasprod": {"rasprodannost"},
+    "kvart": {"kvartirografia"},
+    "erz-top": {"erzrf_top"},
+    "erz-cards": {"erzrf_cards"},
+    "rosstat": {"vvod_static", "emiss_34118"},
 }
 
 # Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
@@ -501,12 +511,36 @@ def check_escrow():
         _print(f"✓ Файл есть: {latest.name} (от {date})")
 
 
-def build_realty_marts() -> bool:
+def select_realty_marts_for_sources(successes: list[str]) -> set[str] | None:
+    """Какие realty-витрины нужно пересобрать после успешных источников.
+
+    None означает полный bootstrap-build, например когда manifest ещё нет.
+    Пустое множество означает что realty-витрины этим прогоном не затронуты.
+    """
+    if not REALTY_MARTS_MANIFEST.exists():
+        return None
+    marts: set[str] = set()
+    for alias in successes:
+        marts.update(SOURCE_MARTS.get(alias, set()))
+    if marts:
+        # Ручной escrow не имеет парсера, но он быстрый и часто обновляется
+        # рядом с realty-прогоном. Держим его mart свежим без полной сборки.
+        marts.add("escrow_manual")
+    return marts
+
+
+def build_realty_marts(only: set[str] | None = None) -> bool:
     """Пересобирает быстрые витрины для Streamlit из raw realty-файлов."""
     _print(f"\n{'─'*60}")
-    _print("⚙️  Сборка realty-витрин для дашборда")
+    if only:
+        _print("⚙️  Частичная сборка realty-витрин для дашборда")
+        _print(f"   only: {', '.join(sorted(only))}")
+    else:
+        _print("⚙️  Сборка realty-витрин для дашборда")
     _print(f"{'─'*60}")
     cmd = [sys.executable, "-m", "pipeline.build_realty_marts"]
+    if only:
+        cmd.extend(["--only", *sorted(only)])
     proc = subprocess.run(
         cmd,
         cwd=ROOT,
@@ -794,8 +828,15 @@ def main():
     check_escrow()
 
     marts_ok = True
+    marts_selected: set[str] | None = set()
     if not args.no_marts:
-        marts_ok = build_realty_marts()
+        marts_selected = select_realty_marts_for_sources(successes)
+        if marts_selected == set():
+            _print(f"\n{'─'*60}")
+            _print("⚙️  Realty-витрины: нет затронутых источников, сборка пропущена")
+            _print(f"{'─'*60}")
+        else:
+            marts_ok = build_realty_marts(only=marts_selected)
 
     total_min = (time.time() - started) / 60
     _print(f"\n{'='*60}")
@@ -822,6 +863,7 @@ def main():
         "successes": successes,
         "failures": failures,
         "marts_ok": marts_ok,
+        "marts_selected": None if marts_selected is None else sorted(marts_selected),
         "archive": not args.no_archive,
         "keep": args.keep,
         "force": args.force,

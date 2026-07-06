@@ -1,0 +1,67 @@
+"""Fast self-checks for scripts/update_realty.py planning logic.
+
+No network, Selenium, or Excel parsing is used here. The goal is to catch
+regressions in source group expansion and source -> mart selection.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import update_realty as ur
+
+
+def _assert_equal(actual, expected, label: str) -> None:
+    if actual != expected:
+        raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
+
+
+def main() -> int:
+    sources, unknown = ur.expand_requested_sources(["nashdom"])
+    _assert_equal(sources, ["monitoring", "rasprod", "kvart"], "nashdom expansion")
+    _assert_equal(unknown, [], "nashdom unknown")
+
+    sources, unknown = ur.expand_requested_sources(["erzrf", "monitoring", "bad"])
+    _assert_equal(
+        sources,
+        ["erz-top", "erz-cards", "monitoring"],
+        "mixed group expansion",
+    )
+    _assert_equal(unknown, ["bad"], "unknown collection")
+
+    sources, unknown = ur.expand_requested_sources(["all"])
+    _assert_equal(unknown, [], "all unknown")
+    _assert_equal(
+        sources,
+        ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards", "fedstat", "rosstat"],
+        "all expansion",
+    )
+
+    original_manifest = ur.REALTY_MARTS_MANIFEST
+    try:
+        ur.REALTY_MARTS_MANIFEST = Path("__definitely_missing_manifest__.json")
+        _assert_equal(
+            ur.select_realty_marts_for_sources(["monitoring"]),
+            None,
+            "missing manifest forces full build",
+        )
+    finally:
+        ur.REALTY_MARTS_MANIFEST = original_manifest
+
+    selected = ur.select_realty_marts_for_sources(["rasprod", "erz-top"])
+    if selected is not None:
+        _assert_equal(
+            sorted(selected),
+            ["erzrf_top", "escrow_manual", "rasprodannost"],
+            "affected marts for rasprod+erz-top",
+        )
+
+    selected = ur.select_realty_marts_for_sources(["fedstat"])
+    if selected is not None:
+        _assert_equal(selected, set(), "fedstat does not touch realty marts")
+
+    print("update_realty plan checks: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

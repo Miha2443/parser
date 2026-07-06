@@ -123,6 +123,7 @@ notepad config\erzrf.json
 | `update.bat --retries 3` | Больше повторов для упавших источников |
 | `scripts\build_realty_marts.bat` | Полностью пересобрать быстрые витрины сайта из `data\raw\realty` |
 | `scripts\build_realty_marts.bat --check` | Проверить manifest/свежесть realty-витрин без пересборки |
+| `python scripts\check_update_realty_plan.py` | Быстрый self-check планирования `update_realty.py` без сети |
 | `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
 
 ### Группы источников для `update.bat`

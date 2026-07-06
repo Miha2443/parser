@@ -74,6 +74,7 @@ PAGE_TIMEOUT = 60
 HEADLESS = os.environ.get("HEADLESS", "1") != "0"  # default headless
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
+MONITORING_FILE_RE = re.compile(r"^monitoring_2_0_(\d{8})\.xlsx$")
 
 # Русские месяцы → номер (для строк типа «3 июня 2026 года»)
 RUS_MONTHS = {
@@ -1807,6 +1808,19 @@ def _normalize_dev_name_for_lookup(name: str) -> str:
     return " ".join(s.split())
 
 
+def _monitoring_file_date_key(path: Path) -> str:
+    match = MONITORING_FILE_RE.match(path.name)
+    return match.group(1) if match else ""
+
+
+def _monitoring_files_newest_first() -> list[Path]:
+    return sorted(
+        DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"),
+        key=lambda path: (_monitoring_file_date_key(path), path.stat().st_mtime),
+        reverse=True,
+    )
+
+
 def _load_monitoring_devs() -> list[str]:
     """Свежий список ГК из monitoring_2_0_*.xlsx (объединение Реестр РВ + ОКС).
 
@@ -1814,40 +1828,42 @@ def _load_monitoring_devs() -> list[str]:
     в per-dev обходе kvartirografia. По обходу мы НЕ итерируем — нам
     нужно только подобрать matching для каждого имени с сайта.
     """
-    files = sorted(DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"))
-    if not files:
-        return []
-    latest = max(files, key=lambda p: p.stat().st_mtime)
-    devs: set[str] = set()
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(latest, read_only=True, data_only=True)
-        for sheet_name in ["Реестр РВ", "Реестр ОКС"]:
-            if sheet_name not in wb.sheetnames:
-                continue
-            ws = wb[sheet_name]
-            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
-            if not header_row:
-                continue
-            try:
-                col_idx = list(header_row).index("Группа компаний")
-            except ValueError:
-                continue
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                v = row[col_idx] if col_idx < len(row) else None
-                if not isinstance(v, str):
+    for latest in _monitoring_files_newest_first():
+        devs: set[str] = set()
+        wb = None
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(latest, read_only=True, data_only=True)
+            for sheet_name in ["Реестр РВ", "Реестр ОКС"]:
+                if sheet_name not in wb.sheetnames:
                     continue
-                s = v.strip().strip('"').strip("'")
-                if not s or s.startswith("#") or s.startswith("="):
+                ws = wb[sheet_name]
+                header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+                if not header_row:
                     continue
-                if s.isdigit() or len(s) < 2:
+                try:
+                    col_idx = list(header_row).index("Группа компаний")
+                except ValueError:
                     continue
-                devs.add(s)
-        wb.close()
-    except Exception as exc:  # noqa: BLE001
-        print(f"     ⚠️  не удалось прочитать monitoring devs: {exc}")
-        return []
-    return sorted(devs)
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    v = row[col_idx] if col_idx < len(row) else None
+                    if not isinstance(v, str):
+                        continue
+                    s = v.strip().strip('"').strip("'")
+                    if not s or s.startswith("#") or s.startswith("="):
+                        continue
+                    if s.isdigit() or len(s) < 2:
+                        continue
+                    devs.add(s)
+            if devs:
+                return sorted(devs)
+            print(f"     ⚠️  monitoring devs пустой в {latest.name}, пробую предыдущий файл")
+        except Exception as exc:  # noqa: BLE001
+            print(f"     ⚠️  не удалось прочитать monitoring devs из {latest.name}: {exc}")
+        finally:
+            if wb is not None:
+                wb.close()
+    return []
 
 
 def _load_dev_overrides() -> dict[str, str]:

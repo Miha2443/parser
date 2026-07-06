@@ -915,6 +915,27 @@ def _scrape_card(driver) -> dict:
         return {"name": "", "regions_count": "", "regions_as_of": "", "deliveries": {}}
 
 
+def _card_html_has_content(html: str) -> bool:
+    return any(
+        token in html
+        for token in (
+            "app-org-table",
+            "app-org-regions-of-presence",
+            "app-org-table-deadline",
+            "Регионы присутствия",
+            "Сдано",
+        )
+    )
+
+
+def _wait_for_card_content(driver, timeout: int = 8) -> bool:
+    try:
+        WebDriverWait(driver, timeout).until(lambda d: _card_html_has_content(d.page_source))
+        return True
+    except TimeoutException:
+        return False
+
+
 def _parse_construction_table_df(df) -> dict:
     """Устаревший fallback, оставлен на случай нестандартной разметки."""
     return {}
@@ -924,9 +945,8 @@ def fetch_cards(state: dict) -> list[Path]:
     """Обходит карточки ТОП-застройщиков и собирает один xlsx.
 
     Селекторы и формат вывода верифицированы локально на 20 реальных HTML
-    (см. parse_card_html). Перед обращением к карточке делает sleep 10с —
-    Angular SPA нужно время на отрисовку (без WebDriverWait, который раньше
-    давал ложные таймауты).
+    (см. parse_card_html). После перехода ждём признаков Angular-разметки в
+    page_source; если сайт не успел отрисоваться, добираем короткой паузой.
     """
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     developers = _load_top_developers()
@@ -955,9 +975,8 @@ def fetch_cards(state: dict) -> list[Path]:
             print(f"     · {place_str:>20}  {name_str[:40]}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
-                # 10 сек на отрисовку Angular SPA. WebDriverWait здесь
-                # давал ложные таймауты при том что данные были в page_source.
-                selenium_sleep(10)
+                if not _wait_for_card_content(driver):
+                    selenium_sleep(2)
 
                 # Сохраняем HTML первой карточки для аудита
                 if not debug_saved:

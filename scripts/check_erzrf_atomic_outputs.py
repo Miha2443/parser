@@ -28,7 +28,14 @@ def _write_valid_workbook(path: Path, version: int) -> None:
         pd.DataFrame([{"version": version}]).to_excel(writer, sheet_name="cards", index=False)
 
 
+def test_card_content_probe() -> None:
+    _require(ec._card_html_has_content("<app-org-table><h3>Dev</h3></app-org-table>"), "card probe should detect org table")
+    _require(ec._card_html_has_content("<div>Регионы присутствия</div>"), "card probe should detect text markers")
+    _require(not ec._card_html_has_content("<html><body>loading</body></html>"), "card probe should reject loading page")
+
+
 def main() -> int:
+    test_card_content_probe()
     original_state = ec.STATE_FILE
     original_download_dir = ec.DOWNLOAD_DIR
     with tempfile.TemporaryDirectory() as tmp:

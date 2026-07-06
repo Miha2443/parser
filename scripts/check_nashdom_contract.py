@@ -23,6 +23,45 @@ def _require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _write_monitoring_workbook(path: Path, names: list[str]) -> None:
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Реестр РВ"
+    sheet.append(["Группа компаний"])
+    for name in names:
+        sheet.append([name])
+    oks = workbook.create_sheet("Реестр ОКС")
+    oks.append(["Группа компаний"])
+    workbook.save(path)
+
+
+def test_monitoring_devs_prefers_filename_date_with_fallback() -> None:
+    original_download_dir = nc.DOWNLOAD_DIR
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            nc.DOWNLOAD_DIR = Path(tmp)
+            old_file = nc.DOWNLOAD_DIR / "monitoring_2_0_20260701.xlsx"
+            latest_valid = nc.DOWNLOAD_DIR / "monitoring_2_0_20260702.xlsx"
+            _write_monitoring_workbook(old_file, ["Old Dev"])
+            _write_monitoring_workbook(latest_valid, ["Latest Dev"])
+
+            os.utime(old_file, (2_000_000_000, 2_000_000_000))
+            os.utime(latest_valid, (1_000_000_000, 1_000_000_000))
+            with contextlib.redirect_stdout(io.StringIO()):
+                names = nc._load_monitoring_devs()
+            _require(names == ["Latest Dev"], "monitoring devs should prefer filename date over mtime")
+
+            corrupt_latest = nc.DOWNLOAD_DIR / "monitoring_2_0_20260703.xlsx"
+            corrupt_latest.write_text("not xlsx", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                names = nc._load_monitoring_devs()
+            _require(names == ["Latest Dev"], "monitoring devs should fall back to previous valid workbook")
+        finally:
+            nc.DOWNLOAD_DIR = original_download_dir
+
+
 def test_monitoring_same_day_helpers() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "monitoring_2_0_20260706.xlsx"
@@ -190,6 +229,7 @@ def test_pipeline_wrapper_unpacks_run_result() -> None:
 
 
 def main() -> int:
+    test_monitoring_devs_prefers_filename_date_with_fallback()
     test_monitoring_same_day_helpers()
     test_monitoring_fetch_force_overrides_same_day_skip()
     test_run_contract_allows_successful_skip()

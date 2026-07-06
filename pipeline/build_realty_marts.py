@@ -148,6 +148,17 @@ def check_manifest(*, strict: bool = False) -> int:
         print("ERROR: manifest has no marts")
         return 1
 
+    expected_names = set(specs)
+    actual_names = set(map(str, marts))
+    missing = sorted(expected_names - actual_names)
+    unknown = sorted(actual_names - expected_names)
+    if missing:
+        print(f"ERROR: manifest missing mart(s): {', '.join(missing)}")
+        failures += len(missing)
+    if unknown:
+        print(f"WARNING: manifest has unknown mart(s): {', '.join(unknown)}")
+        warnings += len(unknown)
+
     print(f"checking {len(marts)} realty marts ...")
     manifest_built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
     for name, info in sorted(marts.items()):

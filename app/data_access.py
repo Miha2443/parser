@@ -30,6 +30,12 @@ def _realty_marts_enabled() -> bool:
     }
 
 
+def _realty_marts_required() -> bool:
+    return os.environ.get("PARSER_REQUIRE_REALTY_MARTS", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _raw_files(paths: list[Path], patterns: list[str], *, recursive: bool = False) -> list[Path]:
     files: list[Path] = []
     for base in paths:
@@ -43,17 +49,26 @@ def _raw_files(paths: list[Path], patterns: list[str], *, recursive: bool = Fals
 
 def _load_realty_mart(name: str, raw_files: list[Path]):
     """Read a prebuilt realty mart when it is present and not older than raw."""
+    required = _realty_marts_required()
     if not _realty_marts_enabled():
+        if required:
+            raise RuntimeError("realty marts are required but disabled")
         return None
     path = DATA_MARTS_REALTY / f"{name}.pkl"
     if not path.exists():
+        if required:
+            raise FileNotFoundError(f"missing realty mart: {path}")
         return None
     try:
         mart_mtime = path.stat().st_mtime
         if raw_files and any(p.exists() and p.stat().st_mtime > mart_mtime for p in raw_files):
+            if required:
+                raise RuntimeError(f"stale realty mart: {name}")
             return None
         return pd.read_pickle(path)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if required:
+            raise RuntimeError(f"cannot load realty mart {name}: {exc}") from exc
         return None
 
 

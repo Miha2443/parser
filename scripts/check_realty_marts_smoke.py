@@ -7,6 +7,7 @@ start Streamlit, Selenium, or download anything.
 from __future__ import annotations
 
 import logging
+import os
 import contextlib
 import io
 import sys
@@ -15,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
 
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)

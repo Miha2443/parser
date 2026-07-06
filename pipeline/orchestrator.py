@@ -43,6 +43,60 @@ from pipeline.paths import (
 from pipeline.registry import INDICATORS, Indicator
 
 
+DEDUP_BASE_COLUMNS = [
+    "indicator_id",
+    "view",
+    "region",
+    "year",
+    "month",
+    "quarter",
+    "period_type",
+    "unit",
+]
+
+DEDUP_IDENTITY_COLUMNS = [
+    "metric",
+    "metric_column",
+    "source_file",
+    "source_sheet",
+    "registry",
+    "region_key",
+    "sorting",
+    "snapshot_date",
+    "report_date",
+    "report_period",
+    "delivery_year",
+    "delivery_year_label",
+    "entity_type",
+    "entity_name",
+    "developer_name",
+    "developer_group",
+    "developer_inn",
+    "object_id",
+    "uin",
+    "project_name",
+    "slug",
+    "place",
+    "url",
+    "address",
+    "district",
+    "okrug",
+    "object_name",
+    "commercial_name",
+    "object_type",
+    "object_subtype",
+    "grouping",
+    "funding_source",
+    "planned_delivery_date",
+    "credit_bank",
+    "uses_escrow",
+    "sales_open",
+    "regions_count",
+    "regions_as_of",
+    "name_table",
+]
+
+
 def _try_create_lock_file() -> bool:
     try:
         fd = os.open(str(ETL_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -111,6 +165,20 @@ def _write_pickle_atomic(value, target: Path) -> None:
             pass
 
 
+def _deduplicate_processed(df: pd.DataFrame) -> pd.DataFrame:
+    has_identity_columns = any(c in df.columns for c in DEDUP_IDENTITY_COLUMNS)
+    if has_identity_columns:
+        dedup_keys = [c for c in df.columns if c not in {"loaded_at", "value"}]
+    else:
+        dedup_keys = [
+            c for c in [*DEDUP_BASE_COLUMNS, "metric"]
+            if c in df.columns
+        ]
+    if not dedup_keys:
+        return df.reset_index(drop=True)
+    return df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
+
+
 def _process_one(
     indicator: Indicator, audit: AuditRun, *, download: bool
 ) -> None:
@@ -156,11 +224,7 @@ def _process_one(
         if df.empty:
             audit.skip(indicator.id, reason="парсер вернул пустой DataFrame")
             return
-        dedup_keys = [
-            c for c in ["indicator_id", "view", "region", "year", "month", "period_type", "metric"]
-            if c in df.columns
-        ]
-        df = df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
+        df = _deduplicate_processed(df)
         _write_pickle_atomic(df, target)
         audit.success(
             indicator.id,

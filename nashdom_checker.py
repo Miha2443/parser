@@ -39,7 +39,7 @@ import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from pipeline.dev_name_utils import normalize_developer_name
-from pipeline.state_utils import load_json_state
+from pipeline.state_utils import load_json_state, write_json_atomic
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -127,20 +127,7 @@ def save_state(state: dict) -> None:
 
 
 def _write_json_atomic(path: Path, payload) -> None:
-    tmp = path.with_name(f"{path.name}.tmp")
-    try:
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        json.loads(tmp.read_text(encoding="utf-8"))
-        tmp.replace(path)
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
+    write_json_atomic(path, payload)
 
 
 def _nashdom_force_enabled() -> bool:

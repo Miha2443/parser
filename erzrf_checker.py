@@ -49,7 +49,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from pipeline.selenium_utils import create_chrome, selenium_sleep, wait_for_download
-from pipeline.state_utils import load_json_state
+from pipeline.state_utils import load_json_state, write_json_atomic
 
 
 # ─────────────────────────────────────────────
@@ -131,20 +131,7 @@ def save_state(state: dict) -> None:
 
 
 def _write_json_atomic(path: Path, payload) -> None:
-    tmp = path.with_name(f"{path.name}.tmp")
-    try:
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        json.loads(tmp.read_text(encoding="utf-8"))
-        tmp.replace(path)
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
+    write_json_atomic(path, payload)
 
 
 def _write_excel_atomic(path: Path, write_func) -> None:

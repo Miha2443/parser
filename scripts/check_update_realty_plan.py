@@ -59,6 +59,27 @@ def main() -> int:
     if selected is not None:
         _assert_equal(selected, set(), "fedstat does not touch realty marts")
 
+    selected = ur.select_realty_marts_for_changes([
+        "realty:nashdom/rasprodannost_20260702.xlsx",
+        "realty:erzrf/top_developers_rf_20260702.json",
+    ])
+    if selected is not None:
+        _assert_equal(
+            sorted(selected),
+            ["erzrf_top", "escrow_manual", "rasprodannost"],
+            "affected marts from changed paths",
+        )
+
+    selected = ur.select_realty_marts_for_changes([])
+    if selected is not None:
+        _assert_equal(selected, set(), "no changed paths skips marts")
+
+    _assert_equal(
+        ur.source_alias_for_changed_path("downloads:Введено в действие общей площади жилых домов.xlsx"),
+        "rosstat",
+        "downloads rosstat mapping",
+    )
+
     print("update_realty plan checks: ok")
     return 0
 

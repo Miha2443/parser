@@ -529,6 +529,41 @@ def select_realty_marts_for_sources(successes: list[str]) -> set[str] | None:
     return marts
 
 
+def source_alias_for_changed_path(rel_with_prefix: str) -> str | None:
+    """Maps a snapshot path (`realty:...` / `downloads:...`) to update alias."""
+    p = rel_with_prefix.lower().replace("\\", "/")
+    if "monitoring_2_0" in p:
+        return "monitoring"
+    if "rasprodannost" in p:
+        return "rasprod"
+    if "kvartirografia" in p:
+        return "kvart"
+    if "realty:erzrf/cards/" in p or "/cards_" in p or "/card_" in p:
+        return "erz-cards"
+    if any(prefix in p for prefix in (
+        "top_obyem_",
+        "top_developers_",
+        "top_nakopl_",
+        "top_skorost_",
+        "top_potreb_",
+    )):
+        return "erz-top"
+    if "emiss_34118" in p or "введено в действие общей площади жилых домов" in p:
+        return "rosstat"
+    return None
+
+
+def select_realty_marts_for_changes(changed_paths: list[str]) -> set[str] | None:
+    """Select marts affected by actual changed/added files after dedupe."""
+    if not REALTY_MARTS_MANIFEST.exists():
+        return None
+    aliases = sorted({
+        alias for path in changed_paths
+        if (alias := source_alias_for_changed_path(path)) is not None
+    })
+    return select_realty_marts_for_sources(aliases)
+
+
 def build_realty_marts(only: set[str] | None = None) -> bool:
     """Пересобирает быстрые витрины для Streamlit из raw realty-файлов."""
     _print(f"\n{'─'*60}")
@@ -874,7 +909,7 @@ def main():
     marts_ok = True
     marts_selected: set[str] | None = set()
     if not args.no_marts:
-        marts_selected = select_realty_marts_for_sources(successes)
+        marts_selected = select_realty_marts_for_changes(diff["added"] + diff["changed"])
         if marts_selected == set():
             _print(f"\n{'─'*60}")
             _print("⚙️  Realty-витрины: нет затронутых источников, сборка пропущена")

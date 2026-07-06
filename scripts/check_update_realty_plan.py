@@ -5,6 +5,8 @@ regressions in source group expansion and source -> mart selection.
 """
 from __future__ import annotations
 
+import json
+import tempfile
 import time
 from pathlib import Path
 
@@ -45,6 +47,30 @@ def main() -> int:
             None,
             "missing manifest forces full build",
         )
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            ur.REALTY_MARTS_MANIFEST = manifest
+
+            manifest.write_text("{bad-json", encoding="utf-8")
+            _assert_equal(
+                ur.select_realty_marts_for_sources(["monitoring"]),
+                None,
+                "bad manifest forces full build",
+            )
+
+            manifest.write_text(json.dumps({"marts": {}}), encoding="utf-8")
+            _assert_equal(
+                ur.select_realty_marts_for_changes(["realty:nashdom/monitoring_2_0.xlsx"]),
+                None,
+                "empty manifest forces full build",
+            )
+
+            manifest.write_text(json.dumps({"marts": {"monitoring_2_0": {"file": "x.pkl"}}}), encoding="utf-8")
+            _assert_equal(
+                ur.has_valid_realty_marts_manifest(),
+                True,
+                "valid manifest is accepted",
+            )
     finally:
         ur.REALTY_MARTS_MANIFEST = original_manifest
 

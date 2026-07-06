@@ -625,7 +625,7 @@ def select_realty_marts_for_sources(successes: list[str]) -> set[str] | None:
     None означает полный bootstrap-build, например когда manifest ещё нет.
     Пустое множество означает что realty-витрины этим прогоном не затронуты.
     """
-    if not REALTY_MARTS_MANIFEST.exists():
+    if not has_valid_realty_marts_manifest():
         return None
     marts: set[str] = set()
     for alias in successes:
@@ -678,7 +678,7 @@ def source_alias_for_changed_path(rel_with_prefix: str) -> str | None:
 
 def select_realty_marts_for_changes(changed_paths: list[str]) -> set[str] | None:
     """Select marts affected by actual changed/added files after dedupe."""
-    if not REALTY_MARTS_MANIFEST.exists():
+    if not has_valid_realty_marts_manifest():
         return None
     aliases = sorted({
         alias for path in changed_paths
@@ -689,6 +689,17 @@ def select_realty_marts_for_changes(changed_paths: list[str]) -> set[str] | None
         return None
     selected.update(select_repair_realty_marts())
     return selected
+
+
+def has_valid_realty_marts_manifest() -> bool:
+    if not REALTY_MARTS_MANIFEST.exists():
+        return False
+    try:
+        manifest = json.loads(REALTY_MARTS_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    marts = manifest.get("marts") if isinstance(manifest, dict) else None
+    return isinstance(marts, dict) and bool(marts)
 
 
 def select_repair_realty_marts() -> set[str]:

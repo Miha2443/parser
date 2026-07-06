@@ -14,6 +14,7 @@ set "PYTHONUTF8=1"
 echo [1/6] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_windows_wrappers.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_selenium_download_wait.py || exit /b %ERRORLEVEL%
 
 echo [2/6] streamlit page runtime smoke
 "%PY%" scripts\check_streamlit_pages_smoke.py || exit /b %ERRORLEVEL%

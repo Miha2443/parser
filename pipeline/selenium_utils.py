@@ -113,7 +113,8 @@ def wait_for_download(
     *,
     before_snapshot: set[Path],
     timeout: int = 120,
-    poll_interval: float = 1.0,
+    poll_interval: float = 0.5,
+    stable_for: float = 0.5,
 ) -> Path | None:
     """Ждёт появления нового завершённого файла в download_dir.
 
@@ -121,14 +122,44 @@ def wait_for_download(
     Возвращает Path нового файла или None, если за `timeout` сек ничего не появилось.
     """
     deadline = time.time() + timeout
+    before = {p.resolve() for p in before_snapshot}
+    temp_suffixes = {".crdownload", ".download", ".part", ".tmp"}
+    seen_stable: dict[Path, tuple[int, int, float]] = {}
+
     while time.time() < deadline:
         time.sleep(poll_interval)
-        files_after = set(download_dir.glob("*"))
-        new_files = files_after - before_snapshot
-        crdownload = {f for f in new_files if f.suffix == ".crdownload"}
-        completed = [f for f in new_files if f.suffix != ".crdownload"]
-        if completed and not crdownload:
-            return completed[0]
+        now = time.time()
+        new_files = [
+            p
+            for p in download_dir.glob("*")
+            if p.is_file() and p.resolve() not in before
+        ]
+        active_temp = [p for p in new_files if p.suffix.lower() in temp_suffixes]
+        completed = [p for p in new_files if p.suffix.lower() not in temp_suffixes]
+        if active_temp or not completed:
+            continue
+
+        stable_completed: list[Path] = []
+        for path in completed:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            size_mtime = (stat.st_size, stat.st_mtime_ns)
+            previous = seen_stable.get(path)
+            if previous and previous[:2] == size_mtime:
+                first_seen = previous[2]
+            else:
+                first_seen = now
+                seen_stable[path] = (*size_mtime, first_seen)
+            if now - first_seen >= stable_for:
+                stable_completed.append(path)
+
+        if stable_completed:
+            return max(
+                stable_completed,
+                key=lambda p: (p.stat().st_mtime_ns, p.name),
+            )
     return None
 
 

@@ -43,15 +43,31 @@ from pipeline.paths import (
 from pipeline.registry import INDICATORS, Indicator
 
 
+def _try_create_lock_file() -> bool:
+    try:
+        fd = os.open(str(ETL_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"{os.getpid()} {datetime.now().isoformat()}\n")
+    return True
+
+
 def _acquire_lock() -> bool:
+    stale_lock = False
     if ETL_LOCK.exists():
         # Стейл-лок: если файл старше 6 часов — считаем зависшим и берём.
         age = time.time() - ETL_LOCK.stat().st_mtime
         if age < 6 * 3600:
             return False
+        stale_lock = True
+    if stale_lock:
+        try:
+            ETL_LOCK.unlink()
+        except OSError:
+            return False
     ETL_LOCK.parent.mkdir(parents=True, exist_ok=True)
-    ETL_LOCK.write_text(f"{os.getpid()} {datetime.now().isoformat()}\n", encoding="utf-8")
-    return True
+    return _try_create_lock_file()
 
 
 def _release_lock() -> None:

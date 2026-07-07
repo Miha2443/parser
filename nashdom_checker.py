@@ -570,6 +570,36 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     return list(seen.values())
 
 
+_KVART_REGION_NAME_MARKERS = (
+    " область",
+    " край",
+    " республика",
+    " автоном",
+    " округ",
+    "город ",
+    "г.",
+    "санкт-петербург",
+    "москва",
+)
+
+
+def _kvart_row_name(row: dict) -> str:
+    return str(row.get("наименование") or row.get("Наименование") or "").strip()
+
+
+def _kvart_rows_look_like_regions(rows: list[dict]) -> bool:
+    names = [_kvart_row_name(row) for row in (rows or [])[:12]]
+    names = [name for name in names if name]
+    if len(names) < 3:
+        return False
+    hits = 0
+    for name in names:
+        s = f" {name.casefold()}"
+        if any(marker in s for marker in _KVART_REGION_NAME_MARKERS):
+            hits += 1
+    return hits >= max(3, len(names) // 2)
+
+
 def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
     """Собирает все накопленные данные в xlsx с 4 листами."""
     try:
@@ -826,6 +856,18 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 data["developers"] = _scroll_collect_list(driver, list_index=0)
                 print(f"       regions (виртуальный список 1):")
                 data["regions"] = _scroll_collect_list(driver, list_index=1)
+
+                if _kvart_rows_look_like_regions(data.get("developers", [])):
+                    print(
+                        f"       ⚠️  список developers для {region['key']} похож на регионы; "
+                        "не сохраняю ошибочный снимок"
+                    )
+                    if existing_region and not _kvart_rows_look_like_regions(existing_region.get("developers", [])):
+                        print(f"       · использую предыдущий валидный снимок {region['key']}")
+                        data = existing_region
+                    else:
+                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_developers_are_regions")
+                        continue
 
                 print(
                     f"       · apartments={len(data['apartments'])}, "

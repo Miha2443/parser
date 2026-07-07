@@ -306,61 +306,145 @@ def _parse_kvart_number(value) -> float | None:
         return None
 
 
-@st.cache_data(show_spinner=False, ttl=300)
-def load_kvartirografia() -> dict:
-    """Загружает свежий kvartirografia_<date>.json.
+KVART_REGION_NAME_MARKERS = (
+    " область",
+    " край",
+    " республика",
+    " автоном",
+    " округ",
+    "город ",
+    "г.",
+    "санкт-петербург",
+    "москва",
+)
 
-    Возвращает dict с ключами:
-      'apartments' / 'distribution' / 'developers' / 'regions' — DataFrames
-      'report_date': str (DD.MM.YYYY)
-      'regions_available': list[str] — ['rf', 'msk'] обычно
 
-    Каждый DataFrame имеет колонку `region_key`. Числовые значения
-    преобразованы из строк («2 439 665» → 2439665.0) в колонки с суффиксом `_num`.
-    Оригинальные строковые колонки сохраняются для отображения «как на сайте».
-    """
+def _kvart_empty() -> dict:
+    return {
+        "apartments": pd.DataFrame(),
+        "distribution": pd.DataFrame(),
+        "developers": pd.DataFrame(),
+        "regions": pd.DataFrame(),
+        "apartments_per_dev": pd.DataFrame(),
+        "report_date": "",
+        "regions_available": [],
+    }
+
+
+def _kvart_df(rows: list[dict], num_cols: list[str]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    for c in num_cols:
+        if c in df.columns:
+            df[f"{c}_num"] = df[c].apply(_parse_kvart_number)
+    return df
+
+
+def _kvart_normalize_frames(payload: dict) -> dict:
+    devs_regs_cols = [
+        "квартиры_тыс_шт", "площадь_тыс_м²",
+        "доля_1комн_%", "доля_2комн_%", "доля_3комн_%", "доля_4+комн_%",
+    ]
+    per_dev_num_cols = [
+        "Все_количество_шт", "Все_площадь_тыс_м²",
+        "1комн_количество_шт", "1комн_площадь_тыс_м²",
+        "2комн_количество_шт", "2комн_площадь_тыс_м²",
+        "3комн_количество_шт", "3комн_площадь_тыс_м²",
+        "4+комн_количество_шт", "4+комн_площадь_тыс_м²",
+    ]
+    out = {
+        "apartments": _kvart_df(list(payload.get("apartments", [])), ["количество_шт", "площадь_тыс_м²"]),
+        "distribution": _kvart_df(list(payload.get("distribution", [])), ["доля"]),
+        "developers": _kvart_df(list(payload.get("developers", [])), devs_regs_cols),
+        "regions": _kvart_df(list(payload.get("regions", [])), devs_regs_cols),
+        "apartments_per_dev": _kvart_df(list(payload.get("apartments_per_dev", [])), per_dev_num_cols),
+        "report_date": str(payload.get("report_date") or ""),
+        "regions_available": list(payload.get("regions_available") or []),
+    }
+    if not out["regions_available"]:
+        region_keys: list[str] = []
+        for key in ("apartments", "distribution", "developers", "regions", "apartments_per_dev"):
+            frame = out[key]
+            if isinstance(frame, pd.DataFrame) and "region_key" in frame.columns:
+                for rk in frame["region_key"].dropna().astype(str):
+                    if rk and rk not in region_keys:
+                        region_keys.append(rk)
+        out["regions_available"] = region_keys
+    if not out["report_date"]:
+        for key in ("apartments", "distribution", "developers", "regions", "apartments_per_dev"):
+            frame = out[key]
+            if isinstance(frame, pd.DataFrame) and "report_date" in frame.columns and not frame.empty:
+                out["report_date"] = str(frame["report_date"].dropna().astype(str).iloc[0])
+                break
+    return out
+
+
+def _kvart_name_looks_like_region(name: object) -> bool:
+    s = str(name or "").strip().casefold()
+    return bool(s) and any(marker in f" {s}" for marker in KVART_REGION_NAME_MARKERS)
+
+
+def _kvart_developers_look_like_regions(frame: pd.DataFrame) -> bool:
+    if frame is None or frame.empty or "наименование" not in frame.columns:
+        return False
+    names = frame["наименование"].dropna().astype(str).head(12).tolist()
+    if len(names) < 3:
+        return False
+    hits = sum(1 for name in names if _kvart_name_looks_like_region(name))
+    return hits >= max(3, len(names) // 2)
+
+
+def _kvart_payload_is_valid(payload: dict) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    devs = payload.get("developers")
+    regions_available = set(map(str, payload.get("regions_available") or []))
+    if not isinstance(devs, pd.DataFrame) or devs.empty:
+        return False
+    if {"rf", "msk"} - regions_available:
+        return False
+    if "region_key" not in devs.columns:
+        return False
+    msk_devs = devs[devs["region_key"].astype(str) == "msk"]
+    if msk_devs.empty or _kvart_developers_look_like_regions(msk_devs):
+        return False
+    return True
+
+
+def _load_kvartirografia_json(path: Path) -> dict:
     import json
-    raw_files = lambda: _raw_files(KVART_PATHS, ["kvartirografia_*.json"])
-    mart = _load_realty_mart("kvartirografia", raw_files)
-    if mart is not None:
-        return mart
-    files = raw_files()
-    if not files:
-        return {
-            "apartments": pd.DataFrame(),
-            "distribution": pd.DataFrame(),
-            "developers": pd.DataFrame(),
-            "regions": pd.DataFrame(),
-            "report_date": "",
-            "regions_available": [],
-        }
-    # Самый свежий по mtime
-    latest = max(files, key=lambda p: p.stat().st_mtime)
-    data = json.loads(latest.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return _kvart_empty()
+    if not isinstance(data, list):
+        return _kvart_empty()
 
-    apartments_rows, distribution_rows = [], []
-    developers_rows, regions_rows = [], []
-    per_dev_rows = []  # apartments_per_dev — точные числа на каждого
-    report_date = ""
-    region_keys: list[str] = []
-    for d in data:
-        rk = d.get("region_key", "")
-        if rk and rk not in region_keys:
-            region_keys.append(rk)
-        if not report_date:
-            report_date = d.get("report_date", "")
-        for a in d.get("apartments", []):
-            apartments_rows.append({"region_key": rk, **a})
-        for x in d.get("distribution", []):
-            distribution_rows.append({"region_key": rk, **x})
-        for x in d.get("developers", []):
-            developers_rows.append({"region_key": rk, **x})
-        for x in d.get("regions", []):
-            regions_rows.append({"region_key": rk, **x})
-        # Per-dev (НОВОЕ): расплющиваем структуру apartments_per_dev
-        for pd_item in d.get("apartments_per_dev", []):
+    payload = {
+        "apartments": [],
+        "distribution": [],
+        "developers": [],
+        "regions": [],
+        "apartments_per_dev": [],
+        "report_date": "",
+        "regions_available": [],
+    }
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        rk = str(item.get("region_key") or "")
+        if rk and rk not in payload["regions_available"]:
+            payload["regions_available"].append(rk)
+        if not payload["report_date"]:
+            payload["report_date"] = item.get("report_date", "")
+        for key in ("apartments", "distribution", "developers", "regions"):
+            for row in item.get(key, []) or []:
+                if isinstance(row, dict):
+                    payload[key].append({"region_key": rk, **row})
+        for pd_item in item.get("apartments_per_dev", []) or []:
+            if not isinstance(pd_item, dict):
+                continue
             apt = pd_item.get("apartments", {}) or {}
-            per_dev_rows.append({
+            payload["apartments_per_dev"].append({
                 "region_key": rk,
                 "наименование": pd_item.get("наименование", ""),
                 "monitoring_name": pd_item.get("monitoring_name", ""),
@@ -375,41 +459,72 @@ def load_kvartirografia() -> dict:
                 "4+комн_количество_шт": (apt.get("FOUR") or {}).get("count", ""),
                 "4+комн_площадь_тыс_м²": (apt.get("FOUR") or {}).get("area", ""),
             })
+    return _kvart_normalize_frames(payload)
 
-    def _df(rows, num_cols):
-        df = pd.DataFrame(rows)
-        for c in num_cols:
-            if c in df.columns:
-                df[f"{c}_num"] = df[c].apply(_parse_kvart_number)
-        return df
 
-    apartments = _df(apartments_rows, ["количество_шт", "площадь_тыс_м²"])
-    distribution = _df(distribution_rows, ["доля"])
-    devs_regs_cols = [
-        "квартиры_тыс_шт", "площадь_тыс_м²",
-        "доля_1комн_%", "доля_2комн_%", "доля_3комн_%", "доля_4+комн_%",
-    ]
-    developers = _df(developers_rows, devs_regs_cols)
-    regions = _df(regions_rows, devs_regs_cols)
-    # apartments_per_dev — числовые версии всех 5 пар (Все + 1/2/3/4+ × count/area)
-    per_dev_num_cols = [
-        "Все_количество_шт", "Все_площадь_тыс_м²",
-        "1комн_количество_шт", "1комн_площадь_тыс_м²",
-        "2комн_количество_шт", "2комн_площадь_тыс_м²",
-        "3комн_количество_шт", "3комн_площадь_тыс_м²",
-        "4+комн_количество_шт", "4+комн_площадь_тыс_м²",
-    ]
-    apartments_per_dev = _df(per_dev_rows, per_dev_num_cols)
-
-    return {
-        "apartments": apartments,
-        "distribution": distribution,
-        "developers": developers,
-        "regions": regions,
-        "apartments_per_dev": apartments_per_dev,
-        "report_date": report_date,
-        "regions_available": region_keys,
+def _load_kvartirografia_xlsx(path: Path) -> dict:
+    payload = {
+        "apartments": [],
+        "distribution": [],
+        "developers": [],
+        "regions": [],
+        "apartments_per_dev": [],
+        "report_date": "",
+        "regions_available": [],
     }
+    try:
+        xl = pd.ExcelFile(path)
+    except Exception:  # noqa: BLE001
+        return _kvart_empty()
+    for sheet in ("apartments", "distribution", "developers", "regions", "apartments_per_dev"):
+        if sheet not in xl.sheet_names:
+            continue
+        try:
+            df = pd.read_excel(path, sheet_name=sheet)
+        except Exception:  # noqa: BLE001
+            continue
+        if sheet == "apartments_per_dev" and "источник_имя_monitoring" in df.columns:
+            df = df.rename(columns={"источник_имя_monitoring": "monitoring_name"})
+        rows = df.where(pd.notna(df), "").to_dict("records")
+        payload[sheet] = rows
+        if "region_key" in df.columns:
+            for rk in df["region_key"].dropna().astype(str):
+                if rk and rk not in payload["regions_available"]:
+                    payload["regions_available"].append(rk)
+        if not payload["report_date"] and "report_date" in df.columns and not df.empty:
+            payload["report_date"] = str(df["report_date"].dropna().astype(str).iloc[0])
+    return _kvart_normalize_frames(payload)
+
+
+def _load_kvartirografia_file(path: Path) -> dict:
+    if path.suffix.lower() == ".xlsx":
+        return _load_kvartirografia_xlsx(path)
+    return _load_kvartirografia_json(path)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_kvartirografia() -> dict:
+    """Загружает свежий kvartirografia_<date>.json.
+
+    Возвращает dict с ключами:
+      'apartments' / 'distribution' / 'developers' / 'regions' — DataFrames
+      'report_date': str (DD.MM.YYYY)
+      'regions_available': list[str] — ['rf', 'msk'] обычно
+
+    Каждый DataFrame имеет колонку `region_key`. Числовые значения
+    преобразованы из строк («2 439 665» → 2439665.0) в колонки с суффиксом `_num`.
+    Оригинальные строковые колонки сохраняются для отображения «как на сайте».
+    """
+    raw_files = lambda: _raw_files(KVART_PATHS, ["kvartirografia_*.json", "kvartirografia_*.xlsx"])
+    mart = _load_realty_mart("kvartirografia", raw_files)
+    if mart is not None and _kvart_payload_is_valid(mart):
+        return mart
+    files = sorted(raw_files(), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        payload = _load_kvartirografia_file(path)
+        if _kvart_payload_is_valid(payload):
+            return payload
+    return _kvart_empty()
 
 
 # ─────────────────────────────────────────────
@@ -619,6 +734,72 @@ def _normalize_developer_name(name: str) -> str:
     return normalize_developer_name(name)
 
 
+def _erz_name_col(df: pd.DataFrame) -> str | None:
+    return next((c for c in df.columns if "Наименование" in str(c)), None)
+
+
+def _erz_has_commissioned_col(df: pd.DataFrame) -> bool:
+    return any("Введено" in str(c) for c in df.columns)
+
+
+def _erz_nakopl_valid(df: pd.DataFrame | None) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and _erz_has_commissioned_col(df) and _erz_name_col(df) is not None
+
+
+def _load_erz_nakopl_fallback_frame() -> pd.DataFrame:
+    files = _raw_files(ERZRF_PATHS, ["TOP_EXCEL*.xlsx"], recursive=True)
+    if not files:
+        return pd.DataFrame()
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    try:
+        df = pd.read_excel(latest)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+    return df if _erz_nakopl_valid(df) else pd.DataFrame()
+
+
+def _refresh_erz_all_developers(result: dict) -> None:
+    names = set(map(str, result.get("all_developers", []) or []))
+    for value in result.values():
+        if not isinstance(value, dict):
+            continue
+        for frame in value.values():
+            if not isinstance(frame, pd.DataFrame) or frame.empty:
+                continue
+            name_col = _erz_name_col(frame)
+            if not name_col:
+                continue
+            for raw in frame[name_col].dropna().unique():
+                name = str(raw).strip()
+                if name:
+                    names.add(name)
+    result["all_developers"] = sorted(names)
+
+
+def _apply_erz_nakopl_fallback(result: dict) -> dict:
+    nakopl = result.setdefault("nakopl_vvod", {})
+    if _erz_nakopl_valid(nakopl.get("rf")) and _erz_nakopl_valid(nakopl.get("msk")):
+        return result
+    fallback = _load_erz_nakopl_fallback_frame()
+    if fallback.empty:
+        return result
+
+    if not _erz_nakopl_valid(nakopl.get("rf")):
+        nakopl["rf"] = fallback.copy()
+
+    if not _erz_nakopl_valid(nakopl.get("msk")):
+        name_col = _erz_name_col(fallback)
+        if name_col:
+            mask = fallback[name_col].astype(str).str.contains("Москва", case=False, na=False)
+            msk = fallback[mask].copy()
+            nakopl["msk"] = msk if not msk.empty else fallback.copy()
+        else:
+            nakopl["msk"] = fallback.copy()
+
+    _refresh_erz_all_developers(result)
+    return result
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def load_erzrf_top() -> dict:
     """Читает ERZRF TOP-файлы (5 сортировок × 2 региона).
@@ -647,10 +828,10 @@ def load_erzrf_top() -> dict:
     result["obyem_vvoda_by_year"] = {"rf": {}, "msk": {}}
     mart = _load_realty_mart(
         "erzrf_top",
-        lambda: _raw_files(ERZRF_PATHS, ["top_*.xlsx", "top_developers_*.json"]),
+        lambda: _raw_files(ERZRF_PATHS, ["top_*.xlsx", "TOP_EXCEL*.xlsx", "top_developers_*.json"], recursive=True),
     )
     if mart is not None:
-        return mart
+        return _apply_erz_nakopl_fallback(mart)
 
     import re as _re
     year_pat = _re.compile(r"_(\d{4})_\d{8}\.xlsx$")
@@ -700,7 +881,7 @@ def load_erzrf_top() -> dict:
                         pass
 
     result["all_developers"] = sorted(all_names)
-    return result
+    return _apply_erz_nakopl_fallback(result)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -1215,10 +1396,11 @@ def monitoring_by_year(
     gruppirovka: str | None = None,
     istochnik: list[str] | None = None,
     gk: str | None = None,
+    value_col: str = "Общая площадь",
     year_from: int = 2011,
     year_to: int = 2026,
 ) -> pd.DataFrame:
-    """Σ «Общая площадь» (млн м²) Реестра РВ по «Год ввода по Мосстату».
+    """Σ выбранной площади (млн м²) Реестра РВ по «Год ввода по Мосстату».
 
     Фильтры: gruppirovka (Жилье/Нежилье), istochnik (список «Источник
     финансирования»), gk (точное «Группа компаний»). Возвращает
@@ -1235,8 +1417,10 @@ def monitoring_by_year(
         df = df[df["Группа компаний"].astype(str).str.strip() == gk]
     if df.empty or "Год ввода по Мосстату" not in df.columns:
         return pd.DataFrame(columns=["year", "value"])
+    if value_col not in df.columns:
+        return pd.DataFrame(columns=["year", "value"])
     y = pd.to_numeric(df["Год ввода по Мосстату"], errors="coerce")
-    area = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0.0)
+    area = pd.to_numeric(df[value_col], errors="coerce").fillna(0.0)
     g = (
         pd.DataFrame({"year": y, "area": area})
         .dropna(subset=["year"])

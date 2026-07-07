@@ -298,7 +298,7 @@ def _specs(da) -> list[MartSpec]:
         MartSpec(
             "kvartirografia",
             "load_kvartirografia",
-            lambda da: da._raw_files(da.KVART_PATHS, ["kvartirografia_*.json"]),
+            lambda da: da._raw_files(da.KVART_PATHS, ["kvartirografia_*.json", "kvartirografia_*.xlsx"]),
         ),
         MartSpec(
             "monitoring_2_0",
@@ -308,7 +308,11 @@ def _specs(da) -> list[MartSpec]:
         MartSpec(
             "erzrf_top",
             "load_erzrf_top",
-            lambda da: da._raw_files(da.ERZRF_PATHS, ["top_*.xlsx", "top_developers_*.json"]),
+            lambda da: da._raw_files(
+                da.ERZRF_PATHS,
+                ["top_*.xlsx", "TOP_EXCEL*.xlsx", "top_developers_*.json"],
+                recursive=True,
+            ),
         ),
         MartSpec(
             "erzrf_cards",

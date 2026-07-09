@@ -238,11 +238,34 @@ def apply_geocode_cache(objects: pd.DataFrame, cache: pd.DataFrame | None = None
     return by_id
 
 
+def _filter_map_monitoring_sources(rv: pd.DataFrame, oks: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rv = rv.copy()
+    oks = oks.copy()
+
+    if "source_sheet" in rv.columns:
+        rv = rv[rv["source_sheet"].fillna("").astype(str).eq("Реестр РВ")].copy()
+
+    if not oks.empty:
+        if "Срок выдачи РС" in oks.columns:
+            issue_year = pd.to_datetime(oks["Срок выдачи РС"], errors="coerce").dt.year
+        elif "Год выдачи" in oks.columns:
+            issue_year = pd.to_numeric(oks["Год выдачи"], errors="coerce")
+        else:
+            issue_year = pd.Series(index=oks.index, dtype="float64")
+        oks = oks[issue_year.ge(2011)].copy()
+
+    return rv, oks
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def load_monitoring_map_objects() -> pd.DataFrame:
     mon = load_monitoring_2_0()
-    rv = _aggregate_registry(mon.get("rv", pd.DataFrame()), "rv")
-    oks = _aggregate_registry(mon.get("oks", pd.DataFrame()), "oks")
+    rv_source, oks_source = _filter_map_monitoring_sources(
+        mon.get("rv", pd.DataFrame()),
+        mon.get("oks", pd.DataFrame()),
+    )
+    rv = _aggregate_registry(rv_source, "rv")
+    oks = _aggregate_registry(oks_source, "oks")
     objects = pd.concat([rv, oks], ignore_index=True)
     objects = apply_local_geometry(objects)
     objects = apply_geocode_cache(objects)

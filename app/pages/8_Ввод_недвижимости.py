@@ -111,6 +111,84 @@ def _sum_range(df: pd.DataFrame, col: str, y0: int, y1: int) -> float:
     return float(pd.to_numeric(df.loc[m, col], errors="coerce").fillna(0).sum())
 
 
+RENOVATION_VALUES = {
+    2017: 0.3,
+    2018: 0.2,
+    2019: 0.2,
+    2020: 0.4,
+    2021: 1.2,
+    2022: 0.8,
+    2023: 1.2,
+    2024: 1.3,
+    2025: 2.3,
+}
+
+
+def _upsert_year(df: pd.DataFrame, row: dict) -> pd.DataFrame:
+    row_df = pd.DataFrame([row])
+    if df is None or df.empty:
+        return row_df
+    return pd.concat([df, row_df], ignore_index=True).drop_duplicates(subset=["year"], keep="last")
+
+
+def _monitoring_nonres_row(rv: pd.DataFrame, year: int) -> dict | None:
+    required = {
+        "Год ввода по Мосстату",
+        "category_нежилое_отдельное",
+        "category_нежилое_в_жилом",
+    }
+    if rv is None or rv.empty or not required.issubset(set(rv.columns)):
+        return None
+    part = rv[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce") == year]
+    if part.empty:
+        return None
+    standalone = float(pd.to_numeric(part["category_нежилое_отдельное"], errors="coerce").fillna(0).sum()) / 1e6
+    in_housing = float(pd.to_numeric(part["category_нежилое_в_жилом"], errors="coerce").fillna(0).sum()) / 1e6
+    if standalone == 0 and in_housing == 0:
+        return None
+    return {
+        "year": year,
+        "нежильё": standalone,
+        "нежилые_в_жилье": in_housing,
+        "общая": standalone + in_housing,
+    }
+
+
+def _monitoring_nonres_branch_row(rv: pd.DataFrame, year: int) -> dict | None:
+    nonres = _monitoring_nonres_row(rv, year)
+    if not nonres or rv is None or rv.empty or "Отрасли" not in rv.columns:
+        return None
+    part = rv[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce") == year].copy()
+    if "category_нежилое_отдельное" not in part.columns:
+        return None
+    area = pd.to_numeric(part["category_нежилое_отдельное"], errors="coerce").fillna(0)
+    industries = part["Отрасли"].fillna("").astype(str).str.casefold()
+
+    def sum_if(mask) -> float:
+        return float(area[mask].sum()) / 1e6
+
+    offices = sum_if(industries.str.contains("административно-деловые", regex=False))
+    social = sum_if(
+        industries.str.contains("доу", regex=False)
+        | industries.str.contains("образователь", regex=False)
+        | industries.str.contains("лечебно", regex=False)
+        | industries.str.contains("спортивно", regex=False)
+        | industries.str.contains("культовые", regex=False)
+    )
+    industry = sum_if(
+        industries.str.contains("производ", regex=False)
+        | industries.str.contains("пром", regex=False)
+    )
+    hotels = sum_if(industries.str.contains("гостини", regex=False))
+    return {
+        "year": year,
+        "офисы": offices,
+        "соц": social,
+        "пром": industry,
+        "гостиницы": hotels,
+    }
+
+
 # ── Данные ──
 vvod = load_vvod_static()
 emiss = load_emiss_34118()
@@ -237,12 +315,9 @@ with c2:
 
 # ③ Реновация (ФОНД РЕНОВАЦИИ, всегда Москва), 2017-
 st.markdown("**③ Ввод по реновации (Москва)**")
-b2_3 = monitoring_by_year(
-    rv,
-    gk="ФОНД РЕНОВАЦИИ",
-    gruppirovka="Жилье",
-    value_col="Жилая площадь",
-).rename(columns={"value": "Реновация"})
+b2_3 = pd.DataFrame(
+    [{"year": year, "Реновация": value} for year, value in RENOVATION_VALUES.items()]
+)
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
@@ -261,6 +336,9 @@ st.caption("Все подграфики ниже — по Москве.")
 # ① нежильё + нежилые в жилье (vvod)
 st.markdown("**① Нежильё и нежилые в жилье**")
 b3_1 = vvod["msk_nonres"].copy()
+nonres26 = _monitoring_nonres_row(rv, 2026)
+if nonres26:
+    b3_1 = _upsert_year(b3_1, nonres26)
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b3_1, [("нежильё", "Нежильё", C_NZH),
@@ -295,9 +373,12 @@ with c2:
 # ③ Разбивка по отраслям + прочее (vvod)
 st.markdown("**③ Разбивка по отраслям**")
 br = vvod["msk_nonres_branches"].copy()
+branch26 = _monitoring_nonres_branch_row(rv, 2026)
+if branch26:
+    br = _upsert_year(br, branch26)
 if not br.empty:
     # прочее = общая нежилое (3①) − (офисы+соц+пром+гостиницы)
-    tot = vvod["msk_nonres"][["year", "общая"]] if not vvod["msk_nonres"].empty else pd.DataFrame()
+    tot = b3_1[["year", "общая"]] if not b3_1.empty else pd.DataFrame()
     br = br.merge(tot, on="year", how="left")
     branch_cols = ["офисы", "соц", "пром", "гостиницы"]
     br["прочее"] = (br.get("общая", 0).fillna(0)
@@ -307,6 +388,6 @@ if not br.empty:
                ("пром", "Промышленные", BRANCH_COLORS[2]),
                ("гостиницы", "Гостиницы", BRANCH_COLORS[3]),
                ("прочее", "Прочее", BRANCH_COLORS[4])]
-    render_stacked(br, series3, year_from=YF, year_to=2025, key="b3_3", height=310)
+    render_stacked(br, series3, year_from=YF, year_to=YT, key="b3_3", height=300)
 else:
     st.info("Нет данных по отраслям нежилой недвижимости.")

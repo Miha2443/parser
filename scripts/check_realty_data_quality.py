@@ -96,9 +96,29 @@ def check_monitoring() -> None:
     _require(len(data["developers"]) >= 100, "monitoring developers unexpectedly small")
     _require_columns(rv, {"Группа компаний", "Общая площадь", "Жилая площадь"}, "monitoring rv")
     _require_columns(oks, {"Группа компаний", "Общая площадь"}, "monitoring oks")
+    _require(
+        not rv["Группа компаний"].astype(str).str.strip().str.lower().eq("false").any(),
+        "monitoring rv contains blank List4 rows",
+    )
     _require((data["max_year"] or 0) >= 2024, "monitoring max_year is too old")
     zh26 = monitoring_by_year(rv, gruppirovka="Жилье", value_col="Жилая площадь", year_from=2026, year_to=2026)
     _require(not zh26.empty and float(zh26["value"].sum()) > 0, "monitoring residential living area for 2026 is empty")
+    year = pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce")
+    _require(year.dropna().between(2017, 2026).all(), "monitoring rv has invalid Mosstat years")
+    for y in (2018, 2019):
+        rows = rv[year == y]
+        area = pd.to_numeric(rows["Общая площадь"], errors="coerce").fillna(0).sum()
+        _require(len(rows) > 0 and float(area) > 0, f"monitoring List4 year {y} was not recovered")
+    nonres26 = rv[year == 2026]
+    _require_columns(
+        rv,
+        {"category_нежилое_отдельное", "category_нежилое_в_жилом"},
+        "monitoring rv categories",
+    )
+    nonres_alone = pd.to_numeric(nonres26["category_нежилое_отдельное"], errors="coerce").fillna(0).sum()
+    nonres_in_housing = pd.to_numeric(nonres26["category_нежилое_в_жилом"], errors="coerce").fillna(0).sum()
+    _require(float(nonres_alone) > 0, "monitoring standalone nonresidential area for 2026 is empty")
+    _require(float(nonres_in_housing) > 0, "monitoring nonresidential-in-housing area for 2026 is empty")
 
 
 def check_kvartirografia() -> None:

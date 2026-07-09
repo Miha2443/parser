@@ -588,6 +588,12 @@ def load_monitoring_2_0() -> dict:
         required = {"Год ввода по Мосстату", "Общая площадь", "Группа компаний"}
         if not required.issubset(set(old.columns)):
             continue
+        core_cols = [
+            c for c in ("УИН", "№ РВ", "Дата ввода по Мосстату", "Год ввода по Мосстату", "Общая площадь")
+            if c in old.columns
+        ]
+        if core_cols:
+            old = old[old[core_cols].notna().any(axis=1)].copy()
 
         # ФИКС сдвига колонок (часть строк 2018-2019): «Год» содержит
         # название месяца («сентябрь»), а сам год уехал в «Дата ввода
@@ -596,7 +602,11 @@ def load_monitoring_2_0() -> dict:
         #      (serial number) → год = (дата − 1899-12-30).days
         #   б) настоящая дата ввода: 2018-01-11 → год = .dt.year
         year_num = pd.to_numeric(old["Год ввода по Мосстату"], errors="coerce")
-        shifted = year_num.isna() & old["Год ввода по Мосстату"].notna()
+        year_raw = old["Год ввода по Мосстату"]
+        shifted = (
+            (year_num.isna() | ~year_num.between(2000, 2030))
+            & year_raw.notna()
+        )
         if shifted.any() and "Дата ввода по Мосстату" in old.columns:
             excel_epoch = pd.Timestamp("1899-12-30")
             dates = pd.to_datetime(old.loc[shifted, "Дата ввода по Мосстату"], errors="coerce")
@@ -609,13 +619,19 @@ def load_monitoring_2_0() -> dict:
             year_num.loc[shifted] = recovered
             # Месяц у сдвинутых строк лежит в колонке «Год»
             if "Месяц ввода по Мосстату" in old.columns:
-                old.loc[shifted, "Месяц ввода по Мосстату"] = old.loc[shifted, "Год ввода по Мосстату"]
+                month_values = year_raw.loc[shifted].where(pd.to_numeric(year_raw.loc[shifted], errors="coerce").isna())
+                old.loc[shifted, "Месяц ввода по Мосстату"] = month_values.combine_first(
+                    old.loc[shifted, "Месяц ввода по Мосстату"]
+                )
         old["Год ввода по Мосстату"] = year_num
         old["source_sheet"] = sheet
         rv = pd.concat([rv, old], ignore_index=True)
 
     rv["Год ввода по Мосстату"] = pd.to_numeric(
         rv["Год ввода по Мосстату"], errors="coerce")
+    rv = rv[rv["Год ввода по Мосстату"].notna()].copy()
+    if "Группа компаний" in rv.columns:
+        rv = rv[~rv["Группа компаний"].astype(str).str.strip().str.lower().eq("false")].copy()
 
     # Категории площадей:
     # РВ (Отрасли + Группировка) — 4 категории, без изменений:

@@ -120,12 +120,12 @@ def main() -> int:
         )
         _assert_equal(
             source_lines[0],
-            "🟢 Мониторинг 2.0: 03.07.2026 (1д.)",
+            "Мониторинг 2.0: 03.07.2026 (1д., актуально)",
             "source freshness from manifest status",
         )
         _assert_equal(
             source_lines[1],
-            "❌ Квартирография: нет файла",
+            "Квартирография: нет файла",
             "missing source freshness",
         )
     finally:

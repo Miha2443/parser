@@ -318,6 +318,16 @@ st.markdown("**③ Ввод по реновации (Москва)**")
 b2_3 = pd.DataFrame(
     [{"year": year, "Реновация": value} for year, value in RENOVATION_VALUES.items()]
 )
+ren26 = monitoring_by_year(
+    rv,
+    gk="ФОНД РЕНОВАЦИИ",
+    gruppirovka="Жилье",
+    value_col="Жилая площадь",
+    year_from=2026,
+    year_to=2026,
+)
+if not ren26.empty:
+    b2_3 = _upsert_year(b2_3, {"year": 2026, "Реновация": float(ren26["value"].iloc[0])})
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
@@ -388,6 +398,19 @@ if not br.empty:
                ("пром", "Промышленные", BRANCH_COLORS[2]),
                ("гостиницы", "Гостиницы", BRANCH_COLORS[3]),
                ("прочее", "Прочее", BRANCH_COLORS[4])]
-    render_stacked(br, series3, year_from=YF, year_to=YT, key="b3_3", height=300)
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        render_stacked(br, series3, year_from=YF, year_to=YT, key="b3_3", height=300)
+    with c2:
+        for (y0, y1) in [(2011, 2025), (2011, 2026)]:
+            st.markdown(
+                f"**Σ {y0}-{y1}**\n\n"
+                f"- Офисы: {ru_num(_sum_range(br, 'офисы', y0, y1))} млн м²\n"
+                f"- Соц.: {ru_num(_sum_range(br, 'соц', y0, y1))} млн м²\n"
+                f"- Пром.: {ru_num(_sum_range(br, 'пром', y0, y1))} млн м²\n"
+                f"- Гостиницы: {ru_num(_sum_range(br, 'гостиницы', y0, y1))} млн м²\n"
+                f"- Прочее: {ru_num(_sum_range(br, 'прочее', y0, y1))} млн м²"
+            )
+            st.markdown("")
 else:
     st.info("Нет данных по отраслям нежилой недвижимости.")

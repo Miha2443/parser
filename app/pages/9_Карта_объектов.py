@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.design import COLORS, apply_theme, style_plotly
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.realty_map import GEOCODE_CACHE, load_monitoring_map_objects
 
 MISSING_REPORT = GEOCODE_CACHE.parent / "monitoring_geocodes_missing.csv"
@@ -47,23 +47,20 @@ missing_label = f"{missing_count:,}".replace(",", " ")
 st.markdown(
     """
     <style>
-    [data-testid="stSidebar"] {
-      display: none !important;
-    }
     [data-testid="stAppViewContainer"] > .main .block-container {
-      max-width: none;
-      padding: .45rem .35rem .7rem;
+      max-width: 1500px;
+      padding-top: 1rem;
     }
     [data-testid="stMainBlockContainer"],
     .stMainBlockContainer.block-container {
-      max-width: none !important;
-      padding: .35rem .35rem .7rem !important;
+      max-width: 1500px !important;
+      padding-top: 1rem !important;
     }
     div[data-testid="stVerticalBlock"] {
-      gap: .45rem;
+      gap: .65rem;
     }
     div[data-testid="stHorizontalBlock"] {
-      gap: .55rem;
+      gap: .75rem;
     }
     div[data-testid="stSelectbox"],
     div[data-testid="stMultiSelect"],
@@ -75,9 +72,6 @@ st.markdown(
       font-size: .76rem !important;
       line-height: 1.1 !important;
       margin-bottom: .15rem !important;
-    }
-    [data-testid="collapsedControl"] {
-      display: none !important;
     }
     div[data-testid="stPlotlyChart"] {
       padding: 0 !important;
@@ -128,89 +122,16 @@ st.markdown(
       pointer-events: auto !important;
       fill: #FFFFFF !important;
     }
-    .ma-map-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      background: #071723;
-      border-radius: 8px;
-      padding: 8px 12px;
-      margin-bottom: 4px;
-      color: #fff;
-      box-shadow: 0 8px 20px rgba(7, 23, 35, .16);
-      min-height: 58px;
-    }
-    .ma-map-header h1 {
-      color: #fff !important;
-      margin: 0 !important;
-      font-size: 1.18rem !important;
-      line-height: 1.05 !important;
-    }
-    .ma-map-kicker {
-      color: #9ED3EA;
-      font-size: .63rem;
-      font-weight: 800;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      margin-bottom: 1px;
-    }
-    .ma-map-stats {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(92px, auto));
-      gap: 6px;
-      min-width: 306px;
-    }
-    .ma-map-stat {
-      border: 1px solid rgba(255,255,255,.12);
-      background: rgba(255,255,255,.05);
-      border-radius: 7px;
-      padding: 5px 8px;
-    }
-    .ma-map-stat span {
-      display: block;
-      color: #A9BBC8;
-      font-size: .6rem;
-      font-weight: 750;
-      letter-spacing: .04em;
-      text-transform: uppercase;
-      line-height: 1.1;
-    }
-    .ma-map-stat strong {
-      display: block;
-      color: #fff !important;
-      font-size: .98rem;
-      line-height: 1.05;
-      margin-top: 2px;
-    }
-    @media (max-width: 900px) {
-      .ma-map-header {
-        align-items: stretch;
-        flex-direction: column;
-      }
-      .ma-map-stats {
-        grid-template-columns: repeat(3, 1fr);
-        min-width: 0;
-      }
-    }
     </style>
-    <div class="ma-map-header">
-      <div>
-        <div class="ma-map-kicker">Аналитика Москвы / недвижимость</div>
-        <h1>Карта объектов</h1>
-      </div>
-      <div class="ma-map-stats">
-        <div class="ma-map-stat"><span>На карте</span><strong>__WITH_COORDS__</strong></div>
-        <div class="ma-map-stat"><span>Всего</span><strong>__OBJECTS__</strong></div>
-        <div class="ma-map-stat"><span>Без координат</span><strong>__MISSING__</strong></div>
-      </div>
-    </div>
-    """
-    .replace("__WITH_COORDS__", with_coords_label)
-    .replace("__OBJECTS__", objects_label)
-    .replace("__MISSING__", missing_label),
+    """,
     unsafe_allow_html=True,
 )
+
+page_header("Карта объектов", "Объекты мониторинга 2.0 с координатами, статусами и фильтрами.")
+metric_cols = st.columns(3)
+metric_cols[0].metric("На карте", with_coords_label)
+metric_cols[1].metric("Всего", objects_label)
+metric_cols[2].metric("Без координат", missing_label)
 
 filter_cols = st.columns([2.25, 1.25, 1.2, 1.35, 1.0])
 developers = sorted([x for x in objects["developer"].dropna().unique() if str(x).strip()])

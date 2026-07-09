@@ -26,6 +26,10 @@ state/
 # Личные секреты — примеры лежат в config/*.example.json
 config/telegram.json
 config/erzrf.json
+config/geocoder.local.json
+config/gdebenz.json
+config/google-service-account.json
+data/gdebenz/
 
 # env-файлы с секретами (TDM_BOT_TOKEN, …) — НЕ коммитить
 .env

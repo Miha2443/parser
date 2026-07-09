@@ -14,19 +14,26 @@ from app.audit import (
     realty_marts_status,
     realty_update_status_summary,
 )
+from app.components.design import apply_theme, page_header
 from pipeline.notifier import format_summary
 from pipeline.registry import INDICATORS
 
-st.set_page_config(page_title="Обновления — Аналитика Москвы", page_icon="🔄", layout="wide")
+st.set_page_config(page_title="Обновления — Аналитика Москвы", page_icon="↻", layout="wide")
+apply_theme()
 
-STATUS_ICON = {"success": "✅", "skip": "⏭", "error": "❌", "info": "ℹ️"}
+STATUS_LABEL = {
+    "success": "успех",
+    "skip": "без изменений",
+    "error": "ошибка",
+    "info": "инфо",
+}
 
 INDICATOR_TITLES = {ind.id: ind.title for ind in INDICATORS}
 INDICATOR_SOURCES = {ind.id: ind.source for ind in INDICATORS}
 
 
 def main() -> None:
-    st.title("🔄 Журнал обновлений ETL")
+    page_header("Журнал обновлений ETL", "Контроль загрузок, realty-витрин и статуса последних прогонов.")
     df = load_runs()
     if df.empty:
         st.info("Лог `data/processed/etl_audit.jsonl` пуст. Запустите `py pipeline/orchestrator.py`.")
@@ -35,9 +42,9 @@ def main() -> None:
         last = last_run_summary(df)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Последний запуск", last["ts"].strftime("%d.%m.%Y %H:%M") if last.get("ts") is not None else "—")
-        c2.metric("✅ Успехов", last.get("success", 0))
-        c3.metric("⏭ Без изменений", last.get("skip", 0))
-        c4.metric("❌ Ошибок", last.get("error", 0))
+        c2.metric("Успехов", last.get("success", 0))
+        c3.metric("Без изменений", last.get("skip", 0))
+        c4.metric("Ошибок", last.get("error", 0))
         if last.get("duration_sec") is not None:
             st.caption(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
 
@@ -145,9 +152,9 @@ def main() -> None:
         c3.metric("Проблем", int((marts["status"].isin(["error", "stale"])).sum()))
         c4.metric("Строк", int(marts["rows"].dropna().sum()) if "rows" in marts else 0)
         status_label = {
-            "ok": "✅ ok",
-            "stale": "🟡 stale",
-            "error": "❌ error",
+            "ok": "ok",
+            "stale": "stale",
+            "error": "error",
         }
         view = pd.DataFrame({
             "Витрина": marts["mart"],
@@ -177,7 +184,7 @@ def main() -> None:
         view = pd.DataFrame({
             "Показатель": per_ind["indicator"].map(lambda i: INDICATOR_TITLES.get(i, i)),
             "Источник": per_ind["indicator"].map(lambda i: INDICATOR_SOURCES.get(i, "—")),
-            "Статус посл. запуска": per_ind["status"].map(lambda s: f"{STATUS_ICON.get(s, '·')} {s}"),
+            "Статус посл. запуска": per_ind["status"].map(lambda s: STATUS_LABEL.get(s, s)),
             "Посл. проверка": per_ind["ts"].dt.strftime("%d.%m.%Y %H:%M"),
             "Посл. успех": per_ind["last_success_ts"].dt.strftime("%d.%m.%Y %H:%M"),
             "Дата данных": per_ind.get("last_success_date", pd.Series([""] * len(per_ind))).fillna(""),
@@ -205,7 +212,7 @@ def main() -> None:
             show = pd.DataFrame({
                 "Время": filt["ts"].dt.strftime("%d.%m.%Y %H:%M:%S"),
                 "Показатель": filt["indicator"].map(lambda i: INDICATOR_TITLES.get(i, i)),
-                "Статус": filt["status"].map(lambda s: f"{STATUS_ICON.get(s, '·')} {s}"),
+                "Статус": filt["status"].map(lambda s: STATUS_LABEL.get(s, s)),
                 "Сообщение": filt.apply(
                     lambda r: r.get("reason") or r.get("error") or r.get("message") or "", axis=1
                 ),

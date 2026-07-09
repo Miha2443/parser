@@ -18,15 +18,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.data_access import load_rasprodannost, MONTH_NAMES_RU, MONTH_SHORT_RU
 
 st.set_page_config(page_title="Распроданность — Аналитика Москвы", layout="wide")
+apply_theme()
 
-# Цветовая палитра наш.дом.рф
-COLOR_VOLUME = "#1f4e79"
-COLOR_SOLD = "#c8102e"
-COLOR_READY = "#8BC540"
-COLOR_RATIO = "#4EC3E0"
+COLOR_VOLUME = COLORS["blue"]
+COLOR_SOLD = COLORS["red"]
+COLOR_READY = COLORS["green"]
+COLOR_RATIO = COLORS["teal"]
 
 KPI_COLORS = {
     "Объем жилищного строительства": COLOR_VOLUME,
@@ -63,7 +64,7 @@ if data["kpi"].empty:
     )
     st.stop()
 
-st.title("Распроданность и стройготовность жилья")
+page_header("Распроданность и стройготовность жилья")
 
 # === Шапка: фильтры ===
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
@@ -96,7 +97,7 @@ with cols_top[1]:
         sel_year, sel_month = None, None
 with cols_top[2]:
     st.markdown(
-        f"<div style='padding-top:30px;color:#7A8386;'>"
+        f"<div style='padding-top:30px;color:{COLORS['muted']};'>"
         f"Всего периодов: <b>{len(periods)}</b></div>",
         unsafe_allow_html=True,
     )
@@ -165,6 +166,7 @@ if not forecast_rows.empty:
         xaxis_title="Год",
         legend=dict(orientation="h", y=-0.15),
     )
+    style_plotly(fig, height=310)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -199,6 +201,7 @@ if not time_series.empty:
             hovermode="x unified",
             showlegend=False,
         )
+        style_plotly(fig_vol, height=280)
         st.plotly_chart(fig_vol, use_container_width=True)
 
     # График 2: 3 процентных KPI на одной оси
@@ -228,6 +231,7 @@ if not time_series.empty:
         hovermode="x unified",
         legend=dict(orientation="h", y=-0.15),
     )
+    style_plotly(fig_pct, height=320)
     st.plotly_chart(fig_pct, use_container_width=True)
 
 

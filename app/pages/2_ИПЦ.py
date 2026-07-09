@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
@@ -16,8 +17,9 @@ from app.data_access import (
 )
 
 st.set_page_config(page_title="ИПЦ — Аналитика Москвы", layout="wide")
+apply_theme()
 
-REGION_COLORS = {"Москва": "#c8102e", "Российская Федерация": "#1f4e79"}
+REGION_COLORS = {"Москва": COLORS["red"], "Российская Федерация": COLORS["blue"]}
 
 PERIOD_TYPE_BY_LABEL = {
     "К предыдущему месяцу": "month_to_month",
@@ -51,8 +53,9 @@ def render_year_view(df: pd.DataFrame, regions: list[str]) -> None:
         yaxis_title="%",
         legend_title="",
         margin=dict(t=60, b=40),
-        height=480,
+        height=390,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(fig, name="ipc_year", key="ipc_year_png")
 
@@ -102,7 +105,7 @@ def _timeseries_chart(
         yaxis_title="%",
         legend_title="",
         margin=dict(t=60, b=80),
-        height=520,
+        height=390,
     )
     return fig
 
@@ -138,6 +141,7 @@ def render_quarter_view(df: pd.DataFrame, regions: list[str], period_type: str) 
         title=f"ИПЦ по кварталам — {LABEL_BY_PERIOD_TYPE[period_type]}",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(fig, name=f"ipc_quarter_{period_type}", key="ipc_q_png")
 
@@ -180,6 +184,7 @@ def render_month_view(df: pd.DataFrame, regions: list[str], period_type: str) ->
         title=f"ИПЦ по месяцам — {LABEL_BY_PERIOD_TYPE[period_type]}",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(fig, name=f"ipc_month_{period_type}", key="ipc_m_png")
 
@@ -196,7 +201,6 @@ def render_month_view(df: pd.DataFrame, regions: list[str], period_type: str) ->
 
 
 def main() -> None:
-    st.title("Индексы потребительских цен")
     df = load_ipc()
     if df.empty:
         st.warning(
@@ -205,8 +209,9 @@ def main() -> None:
         )
         return
 
-    st.caption(
-        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)"
+    page_header(
+        "Индексы потребительских цен",
+        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)",
     )
 
     c1, c2 = st.columns([1.2, 2.0])

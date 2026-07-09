@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.data_access import (
     load_vvod_static,
     load_emiss_34118,
@@ -24,15 +25,16 @@ from app.data_access import (
 )
 
 st.set_page_config(page_title="Ввод недвижимости — Аналитика Москвы", layout="wide")
+apply_theme()
 
 # Палитра
-C_ZH = "#8BC540"      # жильё / МКД
-C_NZH = "#7A8386"     # нежильё
-C_IZHS = "#A8DC74"    # ИЖС
-C_NEBUDG = "#4EC3E0"  # небюджет
-C_BUDG = "#1f4e79"    # бюджет
-C_NZH_IN = "#4EC3E0"  # нежилые в жилье
-BRANCH_COLORS = ["#1f4e79", "#4EC3E0", "#8BC540", "#F4A261", "#C8C8C8"]
+C_ZH = COLORS["green"]       # жильё / МКД
+C_NZH = "#7B8794"            # нежильё
+C_IZHS = COLORS["amber"]     # ИЖС
+C_NEBUDG = COLORS["cyan"]    # небюджет
+C_BUDG = COLORS["blue"]      # бюджет
+C_NZH_IN = COLORS["teal"]    # нежилые в жилье
+BRANCH_COLORS = [COLORS["blue"], COLORS["cyan"], COLORS["green"], COLORS["amber"], "#A8B5C2"]
 
 
 def ru_num(value, digits=1):
@@ -82,7 +84,7 @@ def render_stacked(df: pd.DataFrame, series: list[tuple[str, str, str]],
         fig.add_trace(go.Scatter(
             x=xs, y=tot, mode="text",
             text=[ru_num(v) if v > 0 else "" for v in tot],
-            textposition="top center", textfont=dict(size=11, color="#333"),
+            textposition="top center", textfont=dict(size=11, color=COLORS["ink"]),
             showlegend=False, hoverinfo="skip",
         ))
         y_top = float(tot.max()) * 1.15 if tot.max() > 0 else 1
@@ -98,6 +100,7 @@ def render_stacked(df: pd.DataFrame, series: list[tuple[str, str, str]],
         bargap=0.25,
         legend=dict(orientation="h", y=-0.18),
     )
+    style_plotly(fig, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
@@ -114,7 +117,7 @@ emiss = load_emiss_34118()
 mon = load_monitoring_2_0()
 rv = mon.get("rv", pd.DataFrame())
 
-st.title("Ввод недвижимости")
+page_header("Ввод недвижимости")
 
 if all(v.empty for v in vvod.values()) and emiss.empty:
     st.warning("Нет данных. Положи vvod.xlsx / Stroi_111_2025.xls в "
@@ -160,7 +163,7 @@ c_chart, c_txt = st.columns([3, 1])
 with c_chart:
     render_stacked(
         b1, [("жильё", "Жильё", C_ZH), ("нежильё", "Нежильё", C_NZH)],
-        year_from=YF, year_to=YT, key="b1", height=380)
+        year_from=YF, year_to=YT, key="b1", height=320)
 with c_txt:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         zh = _sum_range(b1, "жильё", y0, y1)
@@ -199,7 +202,7 @@ if is_msk:
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
-                   year_from=YF, year_to=YT, key="b2_1", height=340)
+                   year_from=YF, year_to=YT, key="b2_1", height=300)
 with c2:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         st.markdown(
@@ -223,7 +226,7 @@ b2_2 = pd.merge(nb, bd, on="year", how="outer")
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b2_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],
-                   year_from=YF, year_to=YT, key="b2_2", height=340)
+                   year_from=YF, year_to=YT, key="b2_2", height=300)
 with c2:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         st.markdown(
@@ -243,7 +246,7 @@ b2_3 = monitoring_by_year(
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
-                   year_from=2017, year_to=YT, key="b2_3", height=320, totals=False)
+                   year_from=2017, year_to=YT, key="b2_3", height=280, totals=False)
 with c2:
     for (y0, y1) in [(2017, 2025), (2017, 2026)]:
         st.markdown(f"**Σ {y0}-{y1}**: {ru_num(_sum_range(b2_3, 'Реновация', y0, y1))} млн м²")
@@ -262,7 +265,7 @@ c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b3_1, [("нежильё", "Нежильё", C_NZH),
                           ("нежилые_в_жилье", "Нежилые в жилье", C_NZH_IN)],
-                   year_from=YF, year_to=YT, key="b3_1", height=340)
+                   year_from=YF, year_to=YT, key="b3_1", height=300)
 with c2:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         st.markdown(
@@ -280,7 +283,7 @@ b3_2 = pd.merge(nb3, bd3, on="year", how="outer")
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b3_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],
-                   year_from=YF, year_to=YT, key="b3_2", height=340)
+                   year_from=YF, year_to=YT, key="b3_2", height=300)
 with c2:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         st.markdown(
@@ -304,6 +307,6 @@ if not br.empty:
                ("пром", "Промышленные", BRANCH_COLORS[2]),
                ("гостиницы", "Гостиницы", BRANCH_COLORS[3]),
                ("прочее", "Прочее", BRANCH_COLORS[4])]
-    render_stacked(br, series3, year_from=YF, year_to=2025, key="b3_3", height=360)
+    render_stacked(br, series3, year_from=YF, year_to=2025, key="b3_3", height=310)
 else:
     st.info("Нет данных по отраслям нежилой недвижимости.")

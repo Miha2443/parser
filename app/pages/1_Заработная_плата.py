@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
@@ -17,8 +18,9 @@ from app.data_access import (
 )
 
 st.set_page_config(page_title="Заработная плата — Аналитика Москвы", layout="wide")
+apply_theme()
 
-INDUSTRY_COLORS = {"Строительство": "#c8102e", "Всего": "#1f4e79"}
+INDUSTRY_COLORS = {"Строительство": COLORS["red"], "Всего": COLORS["blue"]}
 
 
 def aggregate_year(df: pd.DataFrame) -> pd.DataFrame:
@@ -82,8 +84,9 @@ def render_year_view(df: pd.DataFrame, region: str, views: list[str]) -> None:
         yaxis_title="руб.",
         legend_title="",
         margin=dict(t=60, b=40),
-        height=480,
+        height=390,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(fig, name=f"zp_year_{region}", key="zp_year_png")
 
@@ -143,7 +146,7 @@ def _timeseries_chart(
         yaxis_title=yaxis_title,
         legend_title="",
         margin=dict(t=60, b=80),
-        height=520,
+        height=390,
     )
     return fig
 
@@ -180,6 +183,7 @@ def render_quarter_view(df: pd.DataFrame, region: str, views: list[str], ytd: bo
         yaxis_title="руб.",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(
         fig, name=f"zp_quarter_{region}_{'ytd' if ytd else 'mean'}", key="zp_q_png"
@@ -232,6 +236,7 @@ def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool
         yaxis_title="руб.",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
     chart_download_button(
         fig, name=f"zp_month_{region}_{'ytd' if ytd else 'm'}", key="zp_m_png"
@@ -252,7 +257,6 @@ def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool
 
 
 def main() -> None:
-    st.title("Среднемесячная заработная плата")
     df = load_salary()
     if df.empty:
         st.warning(
@@ -261,7 +265,10 @@ def main() -> None:
         )
         return
 
-    st.caption(f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 57824")
+    page_header(
+        "Среднемесячная заработная плата",
+        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 57824",
+    )
 
     top = st.container()
     with top:

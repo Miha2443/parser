@@ -14,15 +14,17 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.data_access import load_kvartirografia
 
 st.set_page_config(page_title="Квартирография — Аналитика Москвы", layout="wide")
+apply_theme()
 
-# Цветовая палитра наш.дом.рф
-COLOR_1K = "#8BC540"   # green — 1 комн
-COLOR_2K = "#4EC3E0"   # blue — 2 комн
-COLOR_3K = "#E4E7E8"   # light gray — 3 комн
-COLOR_4K = "#072833"   # dark navy — 4+ комн
+# Единая деловая палитра для комнатности.
+COLOR_1K = COLORS["green"]
+COLOR_2K = COLORS["cyan"]
+COLOR_3K = "#D5DEE7"
+COLOR_4K = COLORS["navy"]
 
 
 def ru_num(value, digits=0):
@@ -43,7 +45,7 @@ if data["apartments"].empty:
     )
     st.stop()
 
-st.title("Квартирография жилищного строительства")
+page_header("Квартирография жилищного строительства")
 
 cols_top = st.columns([3, 2])
 with cols_top[0]:
@@ -60,7 +62,7 @@ with cols_top[0]:
         key="kvart_region",
     )
 with cols_top[1]:
-    st.markdown(f"<div style='padding-top:30px;color:#7A8386;'>"
+    st.markdown(f"<div style='padding-top:30px;color:{COLORS['muted']};'>"
                 f"Отчёт по данным на <b>{data['report_date']}</b></div>",
                 unsafe_allow_html=True)
 
@@ -98,6 +100,7 @@ with b1_right:
             margin=dict(l=0, r=0, t=10, b=0), height=350,
             yaxis_title="", xaxis_title="", showlegend=False,
         )
+        style_plotly(fig, height=350)
         fig.update_yaxes(visible=False)
         st.plotly_chart(fig, use_container_width=True)
 

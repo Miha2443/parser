@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.data_access import (
     load_monitoring_2_0,
     load_erzrf_top,
@@ -30,15 +31,16 @@ from app.data_access import (
 )
 
 st.set_page_config(page_title="Профиль застройщика — Аналитика Москвы", layout="wide")
+apply_theme()
 
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
 CAT_LABELS = ["Жилое", "МОП", "Нежилье в жилье", "Нежилое отдельное"]
-CAT_COLORS = ["#8BC540", "#A8DC74", "#4EC3E0", "#7A8386"]
+CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["cyan"], "#7B8794"]
 CAT_COL_PREFIX = "category_"
 
-ERZRF_COLOR = "#1f4e79"
-DELAY_COLOR = "#c8102e"
+ERZRF_COLOR = COLORS["blue"]
+DELAY_COLOR = COLORS["red"]
 
 
 def ru_num(value, digits=0):
@@ -84,7 +86,7 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
     ))
     fig.update_layout(
         title=dict(text=title, x=0.5, font=dict(size=13)),
-        height=290,
+        height=240,
         margin=dict(l=10, r=10, t=40, b=10),
         annotations=[
             dict(text=f"<b>{ru_num(total/1000, 0)}</b><br>тыс. м²",
@@ -92,6 +94,7 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
         ],
         showlegend=False,
     )
+    style_plotly(fig, height=240)
     st.plotly_chart(fig, use_container_width=True, key=f"donut_{title}")
     if subtitle:
         st.caption(subtitle)
@@ -151,7 +154,7 @@ def _build_ordered_devs(mon_names: list[str]) -> list[str]:
 
 ordered_devs = _build_ordered_devs(mon_devs)
 
-st.title("Профиль застройщика")
+page_header("Профиль застройщика")
 # Подпись с датами всех источников
 src_dates = []
 if date_monitoring: src_dates.append(f"Мониторинг 2.0 — **{date_monitoring}**")
@@ -237,16 +240,16 @@ with cols_top[1]:
         </tr>
         <tr>
           <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_rf)}</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_msk)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_msk)}</td>
         </tr>
         <tr>
           <td style='padding:2px 12px 2px 0;'>По объёму текущего строительства</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_rf)}</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_msk)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_msk)}</td>
         </tr>
       </table>
-      {f"<div style='margin-top:6px;color:#666;'>Оценка ЕРЗ: <b style='color:#1f4e79;'>{erz_rating}</b></div>" if erz_rating else ""}
+      {f"<div style='margin-top:6px;color:#666;'>Оценка ЕРЗ: <b style='color:{ERZRF_COLOR};'>{erz_rating}</b></div>" if erz_rating else ""}
     </div>
     """
     st.markdown(rating_html, unsafe_allow_html=True)
@@ -450,7 +453,7 @@ else:
             <div style='padding-top:20px;'>
               <div style='font-size:22px;font-weight:700;line-height:1.2;'>
                 Ввод недвижимости</div>
-              <div style='color:#666;font-size:14px;margin:6px 0 16px 0;'>
+              <div style='color:{COLORS["muted"]};font-size:14px;margin:6px 0 16px 0;'>
                 за {y_min}–{y_max} гг.:</div>
               {lines}
               <div style='font-size:18px;font-weight:800;margin-top:14px;'>
@@ -494,7 +497,7 @@ else:
             x=by_year_chart["Год ввода по Мосстату"], y=totals,
             mode="text", text=[ru_num(v) if v > 0 else "" for v in totals],
             textposition="top center",
-            textfont=dict(size=12, color="#333"),
+            textfont=dict(size=12, color=COLORS["ink"]),
             showlegend=False, hoverinfo="skip",
         ))
         y_top = totals.max() * 1.15 if not totals.empty and totals.max() > 0 else 1
@@ -518,6 +521,7 @@ else:
             bargap=0.25,
             legend=dict(orientation="h", y=-0.15),
         )
+        style_plotly(fig, height=330)
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
 
 
@@ -536,7 +540,7 @@ with left:
         "Нежилое": raw_cats.get("Нежилое отдельное", 0),
     }
     # Цвета: зелёный (жилое) / жёлто-оранжевый (МОП) / серый (нежилое)
-    colors_3 = ["#8BC540", "#F4A261", "#7A8386"]
+    colors_3 = [COLORS["green"], COLORS["amber"], "#7B8794"]
     render_donut(
         cats_3,
         "В строительстве (Москва)",
@@ -780,20 +784,20 @@ def render_delay_card(title: str, value: float | None,
     for label, v in sub_lines:
         if v:
             parts.append(
-                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"<div style='color:{COLORS['muted']};font-size:13px;margin-bottom:6px;'>"
                 f"<span style='font-weight:600;color:{DELAY_COLOR};'>{v}</span> "
                 f"{label}</div>"
             )
         else:
             parts.append(
-                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"<div style='color:{COLORS['muted']};font-size:13px;margin-bottom:6px;'>"
                 f"{label}</div>"
             )
     subs_html = "".join(parts)
     st.markdown(
-        "<div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;"
-        "background:#fafafa;height:100%;'>"
-        "<div style='color:#888;font-size:11px;text-transform:uppercase;"
+        f"<div style='padding:18px;border:1px solid {COLORS['line']};border-radius:8px;"
+        "background:#fff;height:100%;box-shadow:0 1px 2px rgba(16,24,40,.04);'>"
+        f"<div style='color:{COLORS['muted']};font-size:11px;text-transform:uppercase;"
         f"letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>"
         f"<div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};"
         f"line-height:1;margin-bottom:14px;'>{val_str}</div>"
@@ -1052,7 +1056,7 @@ else:
 
 
 # === Список объектов ===
-with st.expander("📋 Список введённых объектов (Реестр РВ)"):
+with st.expander("Список введённых объектов (Реестр РВ)"):
     if rv_dev.empty:
         st.info("Нет данных")
     else:

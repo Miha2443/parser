@@ -13,14 +13,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
 from app.data_access import load_kvartirografia
 
 st.set_page_config(page_title="Квартирография — Девелопер — Аналитика", layout="wide")
+apply_theme()
 
-COLOR_1K = "#8BC540"
-COLOR_2K = "#4EC3E0"
-COLOR_3K = "#E4E7E8"
-COLOR_4K = "#072833"
+COLOR_1K = COLORS["green"]
+COLOR_2K = COLORS["cyan"]
+COLOR_3K = "#D5DEE7"
+COLOR_4K = COLORS["navy"]
 ROOM_COLORS = [COLOR_1K, COLOR_2K, COLOR_3K, COLOR_4K]
 
 
@@ -42,7 +44,7 @@ if data["developers"].empty:
     )
     st.stop()
 
-st.title("Квартирография — по девелоперу")
+page_header("Квартирография — по девелоперу")
 
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
 available = [r for r in data["regions_available"] if r in region_map]
@@ -78,7 +80,7 @@ with cols_filt[1]:
     )
 with cols_filt[2]:
     st.markdown(
-        f"<div style='padding-top:30px;color:#7A8386;'>"
+        f"<div style='padding-top:30px;color:{COLORS['muted']};'>"
         f"Отчёт на <b>{data['report_date']}</b></div>",
         unsafe_allow_html=True,
     )
@@ -129,6 +131,7 @@ with chart_l:
         fig.update_layout(
             margin=dict(l=0, r=0, t=0, b=0), height=300, showlegend=False,
         )
+        style_plotly(fig, height=300)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Нет данных по комнатности")
@@ -166,7 +169,7 @@ compare_df = pd.DataFrame({
 
 # Подсветка выбранной строки
 def highlight_selected(row):
-    return ["background-color: #FFF4D6" if row["Девелопер"] == sel_dev else "" for _ in row]
+    return ["background-color: #EAF2F8" if row["Девелопер"] == sel_dev else "" for _ in row]
 
 st.dataframe(
     compare_df,

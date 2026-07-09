@@ -284,17 +284,17 @@ def realty_source_freshness_lines(
     for mart, label in REALTY_SOURCE_LABELS:
         row = by_mart.get(mart)
         if row is None:
-            lines.append(f"❌ {label}: нет файла")
+            lines.append(f"{label}: нет файла")
             continue
         mtime = pd.to_datetime(row.get("latest_source_mtime"), errors="coerce")
         if pd.isna(mtime):
-            lines.append(f"❌ {label}: нет файла")
+            lines.append(f"{label}: нет файла")
             continue
         if getattr(mtime, "tzinfo", None) is not None:
             mtime = mtime.tz_convert(None)
         days = max(0, (now - mtime.to_pydatetime()).days)
-        icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
-        lines.append(f"{icon} {label}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
+        status = "актуально" if days <= 1 else "проверить" if days <= 7 else "устаревает" if days <= 30 else "устарело"
+        lines.append(f"{label}: {mtime.strftime('%d.%m.%Y')} ({days}д., {status})")
     return lines
 
 

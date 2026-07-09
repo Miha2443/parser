@@ -19,6 +19,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
+from app.components.design import apply_theme, page_header  # noqa: E402
 from app.tdm_files import list_tdm_realty_files  # noqa: E402
 from pipeline.tdm_notify import (  # noqa: E402
     notify, notify_file, get_all_groups,
@@ -26,7 +27,8 @@ from pipeline.tdm_notify import (  # noqa: E402
 )
 
 st.set_page_config(page_title="Отправка в TDM — Аналитика Москвы", layout="wide")
-st.title("📤 Отправка файлов в TDM")
+apply_theme()
+page_header("Отправка файлов в TDM", "Выбор свежей выгрузки, подпись и отправка файла или текста в TDM.")
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -36,21 +38,21 @@ def _cached_tdm_realty_files(root: str):
 
 # === Статус подключения ===
 all_ok = bool(_get_token() and _get_workspace_id() and _get_group_id())
-with st.expander("🔌 Статус подключения", expanded=not all_ok):
+with st.expander("Статус подключения", expanded=not all_ok):
     cols = st.columns(4)
     token_ok = bool(_get_token())
     ws_ok = bool(_get_workspace_id())
     grp_ok = bool(_get_group_id())
-    cols[0].metric("Токен бота", "✅" if token_ok else "❌",
+    cols[0].metric("Токен бота", "готов" if token_ok else "нет",
                    help="TDM_BOT_TOKEN — authToken бота")
-    cols[1].metric("Workspace ID", "✅" if ws_ok else "❌",
+    cols[1].metric("Workspace ID", "готов" if ws_ok else "нет",
                    help="TDM_WORKSPACE_ID — ID пространства")
-    cols[2].metric("Group ID", "✅" if grp_ok else "❌",
+    cols[2].metric("Group ID", "готов" if grp_ok else "нет",
                    help="TDM_GROUP_ID — ID чата/группы")
     cols[3].metric("Состояние",
-                   "🚫 disabled" if _is_disabled()
-                   else "✅ готов" if all_ok
-                   else "⚠️ настрой")
+                   "disabled" if _is_disabled()
+                   else "готов" if all_ok
+                   else "настройка")
 
     if not all_ok:
         st.warning(
@@ -59,7 +61,7 @@ with st.expander("🔌 Статус подключения", expanded=not all_ok
             "Создай `.env` (шаблон в `.env.example`) или установи переменные."
         )
 
-    if token_ok and st.button("📋 Получить список групп бота",
+    if token_ok and st.button("Получить список групп бота",
                               help="POST /botapi/v1/groups/getAllUserGroupStates"):
         with st.spinner("Запрашиваю список групп…"):
             try:
@@ -155,7 +157,7 @@ st.markdown("### 3. Отправить")
 if selected_name and selected_size is not None:
     size_kb = selected_size / 1024
     size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB"
-    st.info(f"📎 **{selected_name}** ({size_str}) → "
+    st.info(f"Файл: **{selected_name}** ({size_str}) → "
             f"группа `{override_group or _get_group_id() or '—'}`")
 
 ready = (
@@ -165,7 +167,7 @@ ready = (
     and not _is_disabled()
 )
 btn = st.button(
-    "🚀 Отправить в TDM",
+    "Отправить в TDM",
     type="primary",
     disabled=not ready,
     use_container_width=True,
@@ -190,15 +192,15 @@ if btn:
                 except Exception:  # noqa: BLE001
                     pass
     if ok:
-        st.success("✅ Отправлено")
+        st.success("Отправлено")
         st.balloons()
     else:
-        st.error("❌ Не удалось отправить. Проверь токен/workspace/group в .env "
+        st.error("Не удалось отправить. Проверь токен/workspace/group в .env "
                  "и логи в терминале где запущен Streamlit.")
 
 # === Быстрая отправка текста ===
 st.markdown("---")
-st.markdown("### 💬 Или просто отправить текст")
+st.markdown("### Или просто отправить текст")
 text_only = st.text_area("Текст сообщения", key="text_only", height=80)
 if st.button("Отправить текст",
              disabled=not (text_only and _get_token()
@@ -207,6 +209,6 @@ if st.button("Отправить текст",
         ok = notify(text_only,
                     group_id=(override_group or None) if override_group else None)
     if ok:
-        st.success("✅ Отправлено")
+        st.success("Отправлено")
     else:
-        st.error("❌ Не удалось отправить")
+        st.error("Не удалось отправить")

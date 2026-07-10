@@ -37,6 +37,26 @@ def address_key(value: object) -> str:
     return text
 
 
+def address_match_key(value: object) -> str:
+    text = address_key(value)
+    if not text:
+        return ""
+    text = re.sub(r"\b(г|город)\s+москва\b", " ", text)
+    text = re.sub(r"\bвнутригородская территория\b", " ", text)
+    text = re.sub(r"\bмуниципальный округ\b", " ", text)
+    text = re.sub(r"\b(поселение|пос)\s+", " ", text)
+    text = re.sub(r"\b(деревня|дер|д)\s+(?=[а-я])", " ", text)
+    text = re.sub(r"\b(село|с)\s+(?=[а-я])", " ", text)
+    text = re.sub(r"\bземельный участок\b", " уч ", text)
+    text = re.sub(r"\b(участок|уч|у|зу|владение|вл)\s*(?=\d)", " уч ", text)
+    text = re.sub(r"\b(улица|ул)\s+", "ул ", text)
+    text = re.sub(r"\b(корпус|корп|к)\s*(?=\d)", " корп ", text)
+    text = re.sub(r"\b(строение|стр|с)\s*(?=\d)", " стр ", text)
+    text = re.sub(r"\bдом\s*(?=\d)", "д ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def permit_key(value: object) -> str:
     text = clean_text(value).upper().replace(" ", "")
     return re.sub(r"[^\wА-ЯЁ/-]+", "", text)
@@ -132,6 +152,7 @@ def _aggregate_registry(df: pd.DataFrame, registry: str) -> pd.DataFrame:
             "object_name": _first_existing(first, "Коммерческое название", "Коммерческое наименование", "Наименование объекта"),
             "address": address,
             "address_key": address_key(address),
+            "address_match_key": address_match_key(address),
             "okrug": _first_existing(first, "Округ"),
             "district": _first_existing(first, "Район"),
             "year": int(year) if year and not pd.isna(year) else None,
@@ -146,16 +167,19 @@ def _aggregate_registry(df: pd.DataFrame, registry: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def apply_local_geometry(objects: pd.DataFrame) -> pd.DataFrame:
+def apply_local_geometry(objects: pd.DataFrame, geometry_source: pd.DataFrame | None = None) -> pd.DataFrame:
     """Reuse OKS geometry for RV objects by permit number or exact address."""
     if objects.empty or "registry" not in objects.columns:
         return objects
     out = objects.copy()
-    has_coords = out["lat"].notna() & out["lon"].notna()
-    oks_geo = out[
-        out["registry"].eq("oks")
+    source = out if geometry_source is None else geometry_source
+    if source.empty or "registry" not in source.columns:
+        return out
+    has_coords = source["lat"].notna() & source["lon"].notna()
+    oks_geo = source[
+        source["registry"].eq("oks")
         & has_coords
-        & out["coord_source"].eq("geometry")
+        & source["coord_source"].eq("geometry")
     ].copy()
     if oks_geo.empty:
         return out
@@ -187,6 +211,7 @@ def apply_local_geometry(objects: pd.DataFrame) -> pd.DataFrame:
 
     fill_from_lookup("permit_key", "geometry_permit")
     fill_from_lookup("address_key", "geometry_address")
+    fill_from_lookup("address_match_key", "geometry_address_match")
     return out
 
 
@@ -198,6 +223,12 @@ def load_geocode_cache(path: Path = GEOCODE_CACHE) -> pd.DataFrame:
         df["address_key"] = df["address"].map(address_key)
     elif "address_key" in df.columns:
         df["address_key"] = df["address_key"].map(address_key)
+    if "address" in df.columns:
+        df["address_match_key"] = df["address"].map(address_match_key)
+    elif "address_match_key" in df.columns:
+        df["address_match_key"] = df["address_match_key"].map(address_match_key)
+    elif "address_key" in df.columns:
+        df["address_match_key"] = df["address_key"].map(address_match_key)
     for col in ("lat", "lon"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -240,6 +271,28 @@ def apply_geocode_cache(objects: pd.DataFrame, cache: pd.DataFrame | None = None
         for col in ("lat", "lon", "coord_source", "precision"):
             if col in addr_join.columns:
                 by_id.loc[idx, col] = addr_join[col].to_numpy()
+
+    still_missing = by_id["lat"].isna() | by_id["lon"].isna()
+    if still_missing.any() and "address_match_key" in cache.columns and "address_match_key" in by_id.columns:
+        match_cols = [c for c in ["address_match_key", "lat", "lon", "coord_source", "precision"] if c in cache.columns]
+        cache_match = (
+            cache[cache["address_match_key"].fillna("").astype(str).str.strip().ne("")]
+            [match_cols]
+            .dropna(subset=["lat", "lon"])
+            .drop_duplicates("address_match_key", keep="last")
+        )
+        match_join = by_id.loc[still_missing, ["address_match_key"]].merge(
+            cache_match,
+            on="address_match_key",
+            how="left",
+            suffixes=("", "_cache"),
+        )
+        idx = by_id.index[still_missing]
+        for col in ("lat", "lon", "coord_source", "precision"):
+            if col in match_join.columns:
+                by_id.loc[idx, col] = match_join[col].to_numpy()
+        filled = by_id.index.isin(idx) & by_id["lat"].notna() & by_id["lon"].notna()
+        by_id.loc[filled & by_id["coord_source"].fillna("").astype(str).eq(""), "coord_source"] = "address_match"
     return by_id
 
 
@@ -247,11 +300,12 @@ def apply_geocode_cache(objects: pd.DataFrame, cache: pd.DataFrame | None = None
 def load_monitoring_map_objects() -> pd.DataFrame:
     mon = load_monitoring_2_0()
     rv = _aggregate_registry(mon.get("rv", pd.DataFrame()), "rv")
-    oks = _aggregate_registry(mon.get("oks", pd.DataFrame()), "oks")
-    if not oks.empty and "status" in oks.columns:
-        oks = oks[oks["status"].eq("Строится")].copy()
+    oks_all = _aggregate_registry(mon.get("oks", pd.DataFrame()), "oks")
+    oks = oks_all
+    if not oks_all.empty and "status" in oks_all.columns:
+        oks = oks_all[oks_all["status"].eq("Строится")].copy()
     objects = pd.concat([rv, oks], ignore_index=True)
-    objects = apply_local_geometry(objects)
+    objects = apply_local_geometry(objects, oks_all)
     objects = apply_geocode_cache(objects)
     objects["has_coords"] = objects["lat"].notna() & objects["lon"].notna()
     return objects

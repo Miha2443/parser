@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -44,29 +45,74 @@ from app.realty_map import (  # noqa: E402
 
 
 UNIQUE_ADDRESSES = ROOT / "data" / "derived" / "monitoring_map_unique_addresses.csv"
+_LAST_NOMINATIM_REQUEST_AT = 0.0
+
+
+def _nominatim_query_candidates(address: str) -> list[tuple[str, str]]:
+    original = clean_text(address)
+    if not original:
+        return []
+
+    candidates: list[tuple[str, str]] = [(f"Москва, {original}", "")]
+    simplified = original.lower().replace("ё", "е")
+    simplified = re.sub(r"[\"'`«»]", "", simplified)
+    simplified = re.sub(r"\b(г|город)\.?\s*москва\b", " ", simplified)
+    simplified = re.sub(r"\bвнутригородская территория\b", " ", simplified)
+    simplified = re.sub(r"\bтерритория инновационного центра\b", "инновационный центр", simplified)
+    simplified = re.sub(r"\b(промышленная зона|территория|вблизи|в районе)\b", " ", simplified)
+    simplified = re.sub(r"\b(поселение|пос\.?|деревня|дер\.?|д\.)\s+(?=[а-я])", " ", simplified)
+    simplified = re.sub(
+        r"[, ]+\b(земельный участок|з/у|зу|уч\.?|у\.?|владение|вл\.?|дом|д\.|корп\.?|к\.|строение|стр\.?)\s*[\w./-]+.*$",
+        " ",
+        simplified,
+    )
+    simplified = re.sub(r"\s+", " ", simplified).strip(" ,;")
+    if simplified and simplified != original.lower():
+        candidates.append((f"Москва, {simplified}", "fallback"))
+        candidates.append((f"{simplified} Москва", "fallback"))
+
+    unique: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for query, label in candidates:
+        query_key = query.lower()
+        if query_key not in seen:
+            unique.append((query, label))
+            seen.add(query_key)
+    return unique
 
 
 def _query_nominatim(address: str, timeout: int = 20) -> tuple[float | None, float | None, str]:
-    query = f"Москва, {address}"
-    resp = requests.get(
-        "https://nominatim.openstreetmap.org/search",
-        params={
-            "q": query,
-            "format": "json",
-            "limit": 1,
-            "countrycodes": "ru",
-            "viewbox": "36.7,56.05,38.3,55.15",
-            "bounded": 1,
-        },
-        headers={"User-Agent": "moscow-analytics-dashboard/1.0"},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    payload = resp.json()
-    if not payload:
-        return None, None, "not_found"
-    hit = payload[0]
-    return float(hit["lat"]), float(hit["lon"]), str(hit.get("type") or hit.get("class") or "nominatim")
+    global _LAST_NOMINATIM_REQUEST_AT
+    for query, label in _nominatim_query_candidates(address):
+        elapsed = time.monotonic() - _LAST_NOMINATIM_REQUEST_AT
+        if elapsed < 1.1:
+            time.sleep(1.1 - elapsed)
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": query,
+                "format": "json",
+                "limit": 1,
+                "countrycodes": "ru",
+                "viewbox": "36.7,56.05,38.3,55.15",
+                "bounded": 1,
+            },
+            headers={"User-Agent": "moscow-analytics-dashboard/1.0"},
+            timeout=timeout,
+        )
+        _LAST_NOMINATIM_REQUEST_AT = time.monotonic()
+        if resp.status_code == 429:
+            raise SystemExit("Nominatim rate limit reached. Stop and retry later with a smaller limit.")
+        resp.raise_for_status()
+        payload = resp.json()
+        if not payload:
+            continue
+        hit = payload[0]
+        precision = str(hit.get("type") or hit.get("class") or "nominatim")
+        if label:
+            precision = f"{precision}:{label}"
+        return float(hit["lat"]), float(hit["lon"]), precision
+    return None, None, "not_found"
 
 
 def _query_yandex(address: str, api_key: str, timeout: int = 20) -> tuple[float | None, float | None, str]:
@@ -123,7 +169,13 @@ def _missing_rows(objects: pd.DataFrame, cache: pd.DataFrame) -> pd.DataFrame:
         cached_keys = set(cache.dropna(subset=["lat", "lon"]).get("address_key", pd.Series(dtype=str)).astype(str))
         missing = missing[~missing["address_key"].astype(str).isin(cached_keys)]
     missing = missing[missing["address"].fillna("").astype(str).str.strip() != ""]
-    return missing.drop_duplicates("address_key")
+    address_counts = missing["address_key"].map(missing["address_key"].value_counts())
+    missing = missing.assign(__address_count=address_counts)
+    return (
+        missing.sort_values(["__address_count", "registry", "address"], ascending=[False, True, True])
+        .drop_duplicates("address_key")
+        .drop(columns=["__address_count"])
+    )
 
 
 def _first_col(df: pd.DataFrame, names: list[str]) -> str | None:

@@ -296,6 +296,91 @@ def apply_geocode_cache(objects: pd.DataFrame, cache: pd.DataFrame | None = None
     return by_id
 
 
+def apply_area_centroids(objects: pd.DataFrame) -> pd.DataFrame:
+    """Fill remaining coordinates with transparent district/okrug centroids."""
+    if objects.empty:
+        return objects
+    out = objects.copy()
+    exact = out[
+        out["lat"].notna()
+        & out["lon"].notna()
+        & ~out["coord_source"].fillna("").astype(str).str.contains("centroid", na=False)
+    ].copy()
+    if exact.empty:
+        return out
+
+    def area_key(value: object) -> str:
+        return clean_text(value).lower().replace("ё", "е")
+
+    def fill_by_area(area_col: str, source_label: str) -> None:
+        nonlocal out
+        if area_col not in out.columns or area_col not in exact.columns:
+            return
+        centroids = (
+            exact[exact[area_col].fillna("").astype(str).str.strip().ne("")]
+            .groupby(area_col, as_index=False)
+            .agg(lat=("lat", "median"), lon=("lon", "median"))
+        )
+        if centroids.empty:
+            return
+        centroids = centroids.assign(__area_key=centroids[area_col].map(area_key))
+        centroid_lookup = (
+            centroids[centroids["__area_key"].ne("")]
+            .drop_duplicates("__area_key", keep="first")
+            .set_index("__area_key")[["lat", "lon"]]
+        )
+        missing = out["lat"].isna() | out["lon"].isna()
+        missing &= out[area_col].fillna("").astype(str).str.strip().ne("")
+        if not missing.any():
+            return
+        joined = out.loc[missing, [area_col]].merge(centroids, on=area_col, how="left")
+        idx = out.index[missing]
+        found = joined["lat"].notna() & joined["lon"].notna()
+        if not found.any():
+            return
+        found_idx = idx[found.to_numpy()]
+        out.loc[found_idx, "lat"] = joined.loc[found, "lat"].to_numpy()
+        out.loc[found_idx, "lon"] = joined.loc[found, "lon"].to_numpy()
+        out.loc[found_idx, "coord_source"] = source_label
+        out.loc[found_idx, "precision"] = "approximate"
+
+        still_missing = out["lat"].isna() | out["lon"].isna()
+        still_missing &= out[area_col].fillna("").astype(str).str.strip().ne("")
+        for idx, value in out.loc[still_missing, area_col].items():
+            parts = [area_key(part) for part in re.split(r"[,;/]", str(value))]
+            hits = [centroid_lookup.loc[part] for part in parts if part in centroid_lookup.index]
+            if not hits:
+                continue
+            coords = pd.DataFrame(hits)
+            out.loc[idx, "lat"] = float(coords["lat"].median())
+            out.loc[idx, "lon"] = float(coords["lon"].median())
+            out.loc[idx, "coord_source"] = f"{source_label}_multi"
+            out.loc[idx, "precision"] = "approximate"
+
+        if area_col == "district" and "address" in out.columns:
+            still_missing = out["lat"].isna() | out["lon"].isna()
+            for idx, address in out.loc[still_missing, "address"].items():
+                address_text = area_key(address)
+                if not address_text:
+                    continue
+                matches = [
+                    centroid_lookup.loc[key]
+                    for key in centroid_lookup.index
+                    if len(key) >= 5 and re.search(rf"\b{re.escape(key)}\b", address_text)
+                ]
+                if not matches:
+                    continue
+                coords = pd.DataFrame(matches)
+                out.loc[idx, "lat"] = float(coords["lat"].median())
+                out.loc[idx, "lon"] = float(coords["lon"].median())
+                out.loc[idx, "coord_source"] = "district_centroid_address"
+                out.loc[idx, "precision"] = "approximate"
+
+    fill_by_area("district", "district_centroid")
+    fill_by_area("okrug", "okrug_centroid")
+    return out
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def load_monitoring_map_objects() -> pd.DataFrame:
     mon = load_monitoring_2_0()
@@ -307,5 +392,6 @@ def load_monitoring_map_objects() -> pd.DataFrame:
     objects = pd.concat([rv, oks], ignore_index=True)
     objects = apply_local_geometry(objects, oks_all)
     objects = apply_geocode_cache(objects)
+    objects = apply_area_centroids(objects)
     objects["has_coords"] = objects["lat"].notna() & objects["lon"].notna()
     return objects

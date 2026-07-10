@@ -34,16 +34,32 @@ def _marker_size(area: pd.Series) -> pd.Series:
     return 7 + (values.pow(0.5) / values.max() ** 0.5) * 18
 
 
+def _coord_quality(source: object, has_coords: object) -> str:
+    if not bool(has_coords):
+        return "Нет координат"
+    text = "" if pd.isna(source) else str(source)
+    return "Приблизительные" if "centroid" in text else "Точные"
+
+
 objects = load_monitoring_map_objects()
 if objects.empty:
     st.warning("Нет данных monitoring 2.0.")
     st.stop()
 
+objects = objects.copy()
+objects["coord_quality"] = [
+    _coord_quality(source, has_coords)
+    for source, has_coords in zip(objects["coord_source"], objects["has_coords"])
+]
 with_coords = objects[objects["has_coords"]].copy()
 missing_count = int((~objects["has_coords"]).sum())
+exact_count = int(objects["coord_quality"].eq("Точные").sum())
+approx_count = int(objects["coord_quality"].eq("Приблизительные").sum())
 with_coords_label = f"{len(with_coords):,}".replace(",", " ")
 objects_label = f"{len(objects):,}".replace(",", " ")
 missing_label = f"{missing_count:,}".replace(",", " ")
+exact_label = f"{exact_count:,}".replace(",", " ")
+approx_label = f"{approx_count:,}".replace(",", " ")
 
 st.markdown(
     """
@@ -129,12 +145,14 @@ st.markdown(
 )
 
 page_header("Карта объектов", "Объекты мониторинга 2.0 с координатами, статусами и фильтрами.")
-metric_cols = st.columns(3)
-metric_cols[0].metric("На карте", with_coords_label)
-metric_cols[1].metric("Всего", objects_label)
-metric_cols[2].metric("Без координат", missing_label)
+metric_cols = st.columns(5)
+metric_cols[0].metric("Всего", objects_label)
+metric_cols[1].metric("На карте", with_coords_label)
+metric_cols[2].metric("Точные", exact_label)
+metric_cols[3].metric("Приблизительные", approx_label)
+metric_cols[4].metric("Без координат", missing_label)
 
-filter_cols = st.columns([2.25, 1.25, 1.2, 1.35, 1.0])
+filter_cols = st.columns([2.15, 1.15, 1.1, 1.25, 1.2, .95])
 developers = sorted([x for x in objects["developer"].dropna().unique() if str(x).strip()])
 with filter_cols[0]:
     developer = st.selectbox("Застройщик", ["Все"] + developers, index=0)
@@ -149,6 +167,8 @@ with filter_cols[3]:
     else:
         year_range = None
 with filter_cols[4]:
+    coord_quality = st.selectbox("Координаты", ["Все", "Точные", "Приблизительные"], index=0)
+with filter_cols[5]:
     only_with_coords = st.checkbox("Только на карте", value=True)
 
 data = objects.copy()
@@ -160,6 +180,8 @@ if okrugs:
     data = data[data["okrug"].isin(okrugs)]
 if year_range is not None:
     data = data[(data["year"].isna()) | ((data["year"] >= year_range[0]) & (data["year"] <= year_range[1]))]
+if coord_quality != "Все":
+    data = data[data["coord_quality"] == coord_quality]
 if only_with_coords:
     data = data[data["has_coords"]]
 
@@ -173,7 +195,7 @@ else:
         "Строится": COLORS["blue"],
     }
     fig = go.Figure()
-    for status, group in map_data.groupby("status"):
+    for (status, quality), group in map_data.groupby(["status", "coord_quality"]):
         custom = pd.DataFrame({
             "object_name": group["object_name"].fillna(""),
             "address": group["address"].fillna(""),
@@ -182,16 +204,17 @@ else:
             "year": group["year"].fillna("").astype(str).str.replace(".0", "", regex=False),
             "area": group["area_total"].map(lambda v: ru_num(v, 0)),
             "apartments": group["apartments"].map(lambda v: ru_num(v, 0)),
+            "coord_source": group["coord_source"].fillna(""),
         })
         fig.add_trace(go.Scattermapbox(
             lat=group["lat"],
             lon=group["lon"],
             mode="markers",
-            name=status,
+            name=status if quality == "Точные" else f"{status} · приблизительно",
             marker=dict(
                 size=_marker_size(group["area_total"]),
                 color=color_map.get(status, COLORS["amber"]),
-                opacity=0.82,
+                opacity=0.44 if quality == "Приблизительные" else 0.82,
             ),
             customdata=custom,
             hovertemplate=(
@@ -201,7 +224,8 @@ else:
                 "Район: %{customdata[3]}<br>"
                 "Год: %{customdata[4]}<br>"
                 "Площадь: %{customdata[5]} м²<br>"
-                "Квартиры: %{customdata[6]}<extra></extra>"
+                "Квартиры: %{customdata[6]}<br>"
+                "Координаты: %{customdata[7]}<extra></extra>"
             ),
         ))
 
@@ -236,12 +260,13 @@ with st.expander("Статус координат", expanded=False):
             & objects["address"].fillna("").astype(str).str.strip().ne("")
         ]["address_key"].nunique()
     )
-    coord_cols = st.columns(5)
+    coord_cols = st.columns(6)
     coord_cols[0].metric("Всего объектов", f"{len(objects):,}".replace(",", " "))
     coord_cols[1].metric("С координатами", f"{int(objects['has_coords'].sum()):,}".replace(",", " "))
-    coord_cols[2].metric("Без координат", f"{missing_count:,}".replace(",", " "))
-    coord_cols[3].metric("Уникальных адресов", f"{unique_missing_addresses:,}".replace(",", " "))
-    coord_cols[4].metric("Кеш", f"{GEOCODE_CACHE.stat().st_size // 1024} КБ" if GEOCODE_CACHE.exists() else "нет")
+    coord_cols[2].metric("Точные", f"{exact_count:,}".replace(",", " "))
+    coord_cols[3].metric("Приблизительные", f"{approx_count:,}".replace(",", " "))
+    coord_cols[4].metric("Без координат", f"{missing_count:,}".replace(",", " "))
+    coord_cols[5].metric("Уникальных адресов", f"{unique_missing_addresses:,}".replace(",", " "))
 
     report_cols = st.columns(5)
     report_files = [

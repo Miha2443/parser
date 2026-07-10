@@ -34,12 +34,16 @@ sys.path.insert(0, str(ROOT))
 
 from app.realty_map import (  # noqa: E402
     GEOCODE_CACHE,
+    MAP_ADDRESSES,
     address_key,
     clean_text,
     apply_geocode_cache,
     load_geocode_cache,
     load_monitoring_map_objects,
 )
+
+
+UNIQUE_ADDRESSES = ROOT / "data" / "derived" / "monitoring_map_unique_addresses.csv"
 
 
 def _query_nominatim(address: str, timeout: int = 20) -> tuple[float | None, float | None, str]:
@@ -185,6 +189,74 @@ def _write_cache(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     return normalized
 
 
+def _join_unique(values: pd.Series, limit: int = 5) -> str:
+    items = [clean_text(v) for v in values if clean_text(v)]
+    unique = list(dict.fromkeys(items))
+    if len(unique) <= limit:
+        return "; ".join(unique)
+    return "; ".join(unique[:limit]) + f"; +{len(unique) - limit}"
+
+
+def _first_present(values: pd.Series) -> object:
+    nonempty = values.dropna()
+    if nonempty.empty:
+        return ""
+    return nonempty.iloc[0]
+
+
+def _write_address_exports(
+    objects: pd.DataFrame,
+    cache: pd.DataFrame,
+    addresses_out: Path,
+    unique_out: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    enriched = apply_geocode_cache(objects, cache).copy()
+    enriched["has_coords"] = enriched["lat"].notna() & enriched["lon"].notna()
+
+    object_cols = [
+        "registry", "object_id", "source_sheet", "status", "developer", "builder",
+        "object_name", "address", "address_key", "okrug", "district", "year",
+        "area_total", "area_living", "apartments", "lat", "lon", "coord_source",
+        "precision", "has_coords",
+    ]
+    object_cols = [c for c in object_cols if c in enriched.columns]
+    addresses_out.parent.mkdir(parents=True, exist_ok=True)
+    enriched[object_cols].to_csv(addresses_out, index=False, encoding="utf-8-sig")
+
+    address_rows = enriched[
+        enriched["address_key"].fillna("").astype(str).str.strip().ne("")
+        & enriched["address"].fillna("").astype(str).str.strip().ne("")
+    ].copy()
+    if address_rows.empty:
+        unique = pd.DataFrame(columns=[
+            "address_key", "address", "object_count", "registries", "statuses",
+            "developers", "okrug", "district", "lat", "lon", "coord_source",
+            "precision", "has_coords",
+        ])
+    else:
+        unique = (
+            address_rows.sort_values(["has_coords", "registry", "object_id"], ascending=[False, True, True])
+            .groupby("address_key", as_index=False)
+            .agg(
+                address=("address", "first"),
+                object_count=("object_id", "size"),
+                registries=("registry", _join_unique),
+                statuses=("status", _join_unique),
+                developers=("developer", _join_unique),
+                okrug=("okrug", _first_present),
+                district=("district", _first_present),
+                lat=("lat", _first_present),
+                lon=("lon", _first_present),
+                coord_source=("coord_source", _first_present),
+                precision=("precision", _first_present),
+                has_coords=("has_coords", "max"),
+            )
+        )
+    unique_out.parent.mkdir(parents=True, exist_ok=True)
+    unique.to_csv(unique_out, index=False, encoding="utf-8-sig")
+    return enriched, unique
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--provider", choices=["none", "nominatim", "yandex"], default="none")
@@ -197,6 +269,9 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=GEOCODE_CACHE)
     parser.add_argument("--import-csv", type=Path, help="CSV with address/address_key and lat/lon columns to merge into cache.")
     parser.add_argument("--missing-out", type=Path, help="Write unique missing addresses to CSV and exit after cache update.")
+    parser.add_argument("--addresses-out", type=Path, default=MAP_ADDRESSES, help="Write all map objects with addresses and coordinates to CSV.")
+    parser.add_argument("--unique-addresses-out", type=Path, default=UNIQUE_ADDRESSES, help="Write unique map addresses to CSV.")
+    parser.add_argument("--no-address-export", action="store_true", help="Do not write address export files.")
     parser.add_argument("--flush-every", type=int, default=25, help="Save cache every N external geocoder results. 0 saves only at the end.")
     args = parser.parse_args()
     if str(args.limit).lower() == "all":
@@ -284,6 +359,16 @@ def main() -> int:
         print(f"missing addresses written: {len(missing_export)} -> {args.missing_out}")
 
     combined = _write_cache(combined, args.out)
+
+    if not args.no_address_export:
+        exported_objects, exported_unique = _write_address_exports(
+            objects,
+            combined,
+            args.addresses_out,
+            args.unique_addresses_out,
+        )
+        print(f"address objects written: {len(exported_objects)} -> {args.addresses_out}")
+        print(f"unique addresses written: {len(exported_unique)} -> {args.unique_addresses_out}")
 
     with_coords = combined[["lat", "lon"]].notna().all(axis=1).sum() if not combined.empty else 0
     updated_objects = apply_geocode_cache(objects, combined)

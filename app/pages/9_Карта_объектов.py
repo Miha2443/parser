@@ -6,11 +6,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
-from app.realty_map import GEOCODE_CACHE, load_monitoring_map_objects
+from app.realty_map import GEOCODE_CACHE, MAP_ADDRESSES, load_monitoring_map_objects
 
 MISSING_REPORT = GEOCODE_CACHE.parent / "monitoring_geocodes_missing.csv"
 SUSPICIOUS_REPORT = GEOCODE_CACHE.parent / "monitoring_geocodes_suspicious.csv"
 MISSING_ADDRESSES = GEOCODE_CACHE.parent / "missing_geocode_addresses.csv"
+UNIQUE_ADDRESSES = GEOCODE_CACHE.parent / "monitoring_map_unique_addresses.csv"
 
 st.set_page_config(page_title="Карта объектов — Аналитика Москвы", layout="wide")
 apply_theme()
@@ -242,8 +243,10 @@ with st.expander("Статус координат", expanded=False):
     coord_cols[3].metric("Уникальных адресов", f"{unique_missing_addresses:,}".replace(",", " "))
     coord_cols[4].metric("Кеш", f"{GEOCODE_CACHE.stat().st_size // 1024} КБ" if GEOCODE_CACHE.exists() else "нет")
 
-    report_cols = st.columns(3)
+    report_cols = st.columns(5)
     report_files = [
+        (MAP_ADDRESSES, "Скачать все объекты", "monitoring_map_addresses.csv"),
+        (UNIQUE_ADDRESSES, "Скачать все адреса", "monitoring_map_unique_addresses.csv"),
         (MISSING_ADDRESSES, "Скачать адреса для геокодинга", "missing_geocode_addresses.csv"),
         (MISSING_REPORT, "Скачать объекты без координат", "monitoring_geocodes_missing.csv"),
         (SUSPICIOUS_REPORT, "Скачать подозрительные координаты", "monitoring_geocodes_suspicious.csv"),
@@ -261,8 +264,8 @@ with st.expander("Статус координат", expanded=False):
             col.button(label, disabled=True, use_container_width=True)
 
     st.code(
-        ".\\scripts\\run_monitoring_geocoding_yandex.ps1 -DryRun\n"
-        ".\\scripts\\run_monitoring_geocoding_yandex.ps1 -RestartServer",
+        "python scripts\\build_monitoring_geocodes.py --limit 0 --missing-out data\\derived\\missing_geocode_addresses.csv\n"
+        "python scripts\\build_monitoring_geocodes.py --provider nominatim --limit 50 --missing-out data\\derived\\missing_geocode_addresses.csv",
         language="powershell",
     )
 

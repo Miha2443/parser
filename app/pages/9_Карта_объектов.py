@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.design import COLORS, apply_theme, page_header
 from app.realty_map import GEOCODE_CACHE, MAP_ADDRESSES, load_monitoring_map_objects
 
 MISSING_REPORT = GEOCODE_CACHE.parent / "monitoring_geocodes_missing.csv"
@@ -96,6 +96,22 @@ st.markdown(
     }
     div[data-testid="stPlotlyChart"] > div {
       border-radius: 8px;
+    }
+    div[data-testid="stPlotlyChart"] .js-plotly-plot,
+    div[data-testid="stPlotlyChart"] .plot-container,
+    div[data-testid="stPlotlyChart"] .svg-container,
+    div[data-testid="stPlotlyChart"] .mapboxgl-map {
+      width: 100% !important;
+      min-width: 100% !important;
+    }
+    div[data-testid="stPlotlyChart"] .mapboxgl-map {
+      left: 0 !important;
+      right: 0 !important;
+    }
+    div[data-testid="stPlotlyChart"] .mapboxgl-canvas-container,
+    div[data-testid="stPlotlyChart"] .mapboxgl-canvas {
+      width: 100% !important;
+      min-width: 100% !important;
     }
     div[data-testid="stPlotlyChart"] .modebar-container,
     div[data-testid="stPlotlyChart"] .modebar {
@@ -232,16 +248,21 @@ else:
     center_lat = float(map_data["lat"].mean()) if not map_data.empty else 55.7558
     center_lon = float(map_data["lon"].mean()) if not map_data.empty else 37.6176
     fig.update_layout(
+        autosize=True,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, Segoe UI, Arial, sans-serif", color=COLORS["ink"]),
+        hovermode="closest",
         mapbox=dict(
-            style="carto-positron",
+            style="open-street-map",
             center=dict(lat=center_lat, lon=center_lon),
             zoom=10.2 if developer == "Все" else 11.2,
+            domain=dict(x=[0, 1], y=[0, 1]),
         ),
         height=660,
         margin=dict(l=0, r=0, t=0, b=0),
         legend=dict(orientation="h", y=0.01, x=0.02, bgcolor="rgba(255,255,255,.86)"),
     )
-    style_plotly(fig, height=660)
     st.plotly_chart(
         fig,
         use_container_width=True,

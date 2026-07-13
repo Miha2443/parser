@@ -1,0 +1,1121 @@
+
+============================================================
+Прогон realty | старт 13.07.2026 09:04:37
+Источники: monitoring, rasprod, kvart, erz-top, erz-cards, fedstat, rosstat
+KVART_PER_DEV=0
+RASPROD_FULL_HISTORY=0
+SELENIUM_SLEEP_SCALE=0.8
+Лог-файл: C:\codex\logs\update_20260713_090437.log
+============================================================
+
+════════════════════════════════════════════════════════════
+══ Волна 1/4: monitoring, kvart, erz-top, rosstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ monitoring (watchdog: 5мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ kvart (watchdog: 180мин)
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+▶ erz-top (watchdog: 15мин)
+────────────────────────────────────────────────────────────
+▶ rosstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Запуск: 2026-07-13 09:04:38
+[   erz-top] Источники: top
+[   erz-top] ============================================================
+[   erz-top] 
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] rosstat_checker: 2026-07-13 09:04:38
+[   rosstat] ============================================================
+[   rosstat] 
+[   rosstat] 📄 Страница: https://77.rosstat.gov.ru/folder/134924
+[   rosstat]   🌐 GET https://77.rosstat.gov.ru/folder/134924
+[   rosstat]      найдено xlsx-ссылок: 7
+[   rosstat]   🔎 vrp_msk: ищу ['ВРП с 1998']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat]   🔎 vds_msk_s2016: ищу ['ВДС годы ОКВЭД2 (с 2016']
+[   rosstat]      ✔️  без изменений (16.03.2026)
+[   rosstat] 
+[   rosstat] 📄 Страница: https://www.rosstat.gov.ru/statistics/accounts
+[   rosstat]   🌐 GET https://www.rosstat.gov.ru/statistics/accounts
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] наш.дом.рф / GSheets | Запуск: 2026-07-13 09:04:39
+[monitoring] Источники: monitoring_2_0
+[monitoring] ============================================================
+[monitoring] 
+[monitoring]   🌐 monitoring_2_0 (Google Sheets export):
+[monitoring]      https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx
+[     kvart] 
+[     kvart] ============================================================
+[     kvart] наш.дом.рф / GSheets | Запуск: 2026-07-13 09:04:39
+[     kvart] Источники: kvartirografia
+[     kvart] ============================================================
+[     kvart] 
+[     kvart]   🌐 kvartirografia: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D0%BA%D0%B2%D0%B0%D1%80%D1%82%D0%B8%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D1%84%D0%B8%D1%8F
+[     kvart]      · resume: kvartirografia_20260713.json, регионов=2
+[   rosstat]      найдено xlsx-ссылок: 52
+[   rosstat]   🔎 vvp_god: ищу ['VVP_god_s1995', 'ВВП годы (с 1995']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vvp_na_dushu: ищу ['VVP_na_dushu', 'ВВП на душу населения']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vds_rf_s2011: ищу ['VDS_god_OKVED2_s2011', 'ВДС годы ОКВЭД2 (с 2011']
+[   rosstat]      ✔️  без изменений (10.04.2026)
+[   rosstat]   🔎 vrp_okved2007: ищу ['VRP_OKVED2007', 'VRP_god_OKVED2007', 'ВРП ОКВЭД 2007']
+[   rosstat]      ✔️  без изменений (09.03.2022)
+[   rosstat] 
+[   rosstat] ============================================================
+[   rosstat] Итог: скачано — 0
+[   rosstat] ============================================================
+[   rosstat] 
+✅ rosstat: успех (за 0.0 мин)
+[   erz-top]   🔐 Логин как Tsa***
+[monitoring]   ✅ monitoring_2_0_20260713.xlsx (5,116 KB)
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] Итог: новых/обновлённых файлов — 1
+[monitoring]   • data\raw\realty\nashdom\monitoring_2_0_20260713.xlsx
+[monitoring] ============================================================
+[monitoring] 
+✅ monitoring: успех (за 0.2 мин)
+[   erz-top]   ✅ Авторизация прошла
+[   erz-top]   🌐 регион: rf (РФ)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0
+⚠️  monitoring: архивация завершилась с кодом 1
+[     kvart]      ── регион: rf (Российская Федерация)
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=52801px (≈2779 строк)
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]          · шаг 20, pos=11400/52801, собрано 391/2779
+[   erz-top]        ✅ top_obyem_stroitelstva_rf_20260713.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=1&regionKey=0
+[     kvart]          · шаг 40, pos=23400/52801, собрано 779/2779
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]          · шаг 60, pos=35400/52801, собрано 1153/2779
+[   erz-top]        ✅ top_obyem_vvoda_rf_20260713.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[     kvart]          · шаг 80, pos=47400/52801, собрано 1511/2779
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]        финал: 1665 строк за 90 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[     kvart]        финал: 65 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=1665, regs=65
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 38}
+[     kvart]        ── mapping: 1665 сайтовых, 94 matched, 8 conflicts, 1571 unmatched
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 38}
+[     kvart]        · resume per-dev: пропускаю уже обработанных 199
+[     kvart]        ── per-dev обход: 1/1665 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 226}
+[     kvart]        ✅ per-dev: 188 собрано, 1 ошибок селектора, 11 отвергнуто (не совпадает с агрегатом)
+[     kvart]      ── регион: msk (Город Москва)
+[     kvart]        · baseline «Все квартиры»: 2 424 778
+[     kvart]        · текущий регион: «Российская Федерация»
+[     kvart]        · клик на trigger
+[     kvart]        · ввёл в поиск: 'Москва' (ok=True)
+[     kvart]        · клик на «Город Москва» (ok=True)
+[   erz-top]        ✅ top_obyem_vvoda_rf_2022_20260713.xlsx
+[     kvart]        ✅ данные сменились: 2 424 778 → 286 810
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart]        devs (виртуальный список 0):
+[     kvart]        inner scrollHeight=2185px (≈115 строк)
+[     kvart]        финал: 80 строк за 5 шагов
+[     kvart]        regions (виртуальный список 1):
+[     kvart]        inner scrollHeight=1691px (≈89 строк)
+[     kvart]        финал: 64 строк за 4 шагов
+[     kvart]        · apartments=5, distribution=8, devs=80, regs=64
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 188}
+[     kvart]        ── mapping: 80 сайтовых, 43 matched, 2 conflicts, 37 unmatched
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 188}
+[     kvart]        · resume per-dev: пропускаю уже обработанных 80
+[     kvart]        ── per-dev обход: 0/80 девелоперов (KVART_PER_DEV=0 чтобы выключить)
+[     kvart]      💾 kvartirografia_20260713.xlsx: {'apartments': 10, 'distribution': 16, 'developers': 1745, 'regions': 129, 'per_dev': 226}
+[     kvart]        ✅ per-dev: 38 собрано, 0 ошибок селектора, 42 отвергнуто (не совпадает с агрегатом)
+[   erz-top]        ✅ top_obyem_vvoda_rf_2023_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[     kvart] 
+[     kvart] ============================================================
+[     kvart] Итог: новых/обновлённых файлов — 2
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260713.json
+[     kvart]   • data\raw\realty\nashdom\kvartirografia_20260713.xlsx
+[     kvart] ============================================================
+[     kvart] 
+✅ kvart: успех (за 1.3 мин)
+[   erz-top]        ✅ top_obyem_vvoda_rf_2024_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2025_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_rf_2026_20260713.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=2&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_rf_20260713.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=3&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_rf_20260713.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/rf?topType=4&regionKey=0
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_skorost_rf_20260713.xlsx
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=1
+[   erz-top]        + 20 новых (всего 20)
+[   erz-top]      · страница 2/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=2
+[   erz-top]        + 20 новых (всего 40)
+[   erz-top]      · страница 3/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=3
+[   erz-top]        + 20 новых (всего 60)
+[   erz-top]      · страница 4/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=4
+[   erz-top]        + 20 новых (всего 80)
+[   erz-top]      · страница 5/5: https://erzrf.ru/top-zastroyshchikov/rf?topType=0&regionKey=0&page=5
+[   erz-top]        + 20 новых (всего 100)
+[   erz-top]      ✅ top_developers_rf_20260713.json (100 застройщиков)
+[   erz-top]   🌐 регион: msk (г.Москва)
+[   erz-top]      ▸ сортировка: obyem_stroitelstva (topType=0)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_stroitelstva_msk_20260713.xlsx
+[   erz-top]      ▸ сортировка: obyem_vvoda (topType=1)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=1&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_20260713.xlsx
+[   erz-top]        ── обход по годам: [2022, 2023, 2024, 2025, 2026]
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2022_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2023_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2024_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2025_20260713.xlsx
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_obyem_vvoda_msk_2026_20260713.xlsx
+[   erz-top]      ▸ сортировка: nakopl_vvod (topType=2)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=2&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_nakopl_vvod_msk_20260713.xlsx
+[   erz-top]      ▸ сортировка: potreb_kachestva (topType=3)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=3&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_potreb_kachestva_msk_20260713.xlsx
+[   erz-top]      ▸ сортировка: skorost (topType=4)
+[   erz-top]        URL: https://erzrf.ru/top-zastroyshchikov/moskva?topType=4&regionKey=143443001&region=moskva
+[   erz-top]        клик: [title-parent>Весь список] SPAN «Весь список»
+[   erz-top]        ✅ top_skorost_msk_20260713.xlsx
+[   erz-top]      ── Сбор ТОП-100 застройщиков для карточек:
+[   erz-top]      · страница 1/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=1
+[   erz-top]        + 20 новых (всего 20)
+[   erz-top]      · страница 2/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=2
+[   erz-top]        + 20 новых (всего 40)
+[   erz-top]      · страница 3/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=3
+[   erz-top]        + 20 новых (всего 60)
+[   erz-top]      · страница 4/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=4
+[   erz-top]        + 20 новых (всего 80)
+[   erz-top]      · страница 5/5: https://erzrf.ru/top-zastroyshchikov/moskva?topType=0&regionKey=143443001&region=moskva&page=5
+[   erz-top]        + 20 новых (всего 100)
+[   erz-top]      ✅ top_developers_msk_20260713.json (100 застройщиков)
+[   erz-top] 
+[   erz-top] ============================================================
+[   erz-top] erzrf.ru | Итог: новых/обновлённых файлов — 22
+[   erz-top] ============================================================
+[   erz-top] 
+✅ erz-top: успех (за 5.7 мин)
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (2 шт)
+────────────────────────────────────────────────────────────
+  Все 2 файлов уникальны (дублей нет)
+
+════════════════════════════════════════════════════════════
+══ Волна 2/4: erz-cards (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ erz-cards (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[ erz-cards] 
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Запуск: 2026-07-13 09:10:20
+[ erz-cards] Источники: cards
+[ erz-cards] ============================================================
+[ erz-cards] 
+[ erz-cards]   🔐 Логин как Tsa***
+[ erz-cards]   ✅ Авторизация прошла
+[ erz-cards]      · 1 | 0 | ГК Самолет,   ГК Самолет  →  brand/gruppa-kompanij-samolet-2366201001
+[ erz-cards]      · 2 | 0 | ПИК, г.Москв  ПИК  →  brand/pik-429726001
+[ erz-cards]      · 3 | 0 | DOGMA, Красн  DOGMA  →  brand/dogma-5699998001
+[ erz-cards]      · 4 | 0 | ГК ТОЧНО, Кр  ГК ТОЧНО  →  brand/gruppa-kompanij-tochno-2894925001
+[ erz-cards]      · 5 | 0 | ГК ФСК, г.Мо  ГК ФСК  →  brand/gruppa-kompanij-fsk-755344001
+[ erz-cards]      · 6 | 0 | ГК ССК, Крас  ГК ССК  →  brand/gruppa-kompanij-ssk-5360409001
+[ erz-cards]      · 7 | +2 | Холдинг Set  Холдинг Setl Group  →  brand/kholding-setl-group-363697001
+[ erz-cards]      · 8 | -1 | Брусника, С  Брусника  →  brand/brusnika-733498001
+[ erz-cards]      · 9 | -1 | ГК ЮгСтройИ  ГК ЮгСтройИнвест  →  brand/gruppa-kompanij-jugstrojinvest-1705946001
+[ erz-cards]      · 10 | 0 | ГК Страна Д  ГК Страна Девелопмент  →  brand/gruppa-kompanij-strana-development-5339663001
+[ erz-cards]      · 11 | +1 | Группа ЛСР  Группа ЛСР  →  brand/gruppa-lsr-429468001
+[ erz-cards]      · 12 | +1 | MR Group,   MR Group  →  brand/mr-group-430836001
+[ erz-cards]      · 13 | -2 | Группа Эта  Группа Эталон  →  brand/gruppa-etalon-1331499001
+[ erz-cards]      · 14 | 0 | ГК Развитие  ГК Развитие  →  brand/gruppa-kompanij-razvitie-461175001
+[ erz-cards]      · 15 | 0 | Талан, Удму  Талан  →  brand/talan-2493968001
+[ erz-cards]      · 16 | 0 | ГК Гранель,  ГК Гранель  →  brand/gruppa-kompanij-granel-955386001
+[ erz-cards]      · 17 | 0 | ГК Расцвета  ГК Расцветай  →  brand/gruppa-kompanij-rascvetaj-5799295001
+[ erz-cards]      · 18 | +1 | Группа Акв  Группа Аквилон  →  brand/gruppa-akvilon-391375001
+[ erz-cards]      · 19 | -1 | ДОНСТРОЙ,   ДОНСТРОЙ  →  brand/donstroj-430278001
+[ erz-cards]      · 20 | 0 | ГК GloraX,   ГК GloraX  →  brand/gruppa-kompanij-glorax-1931581001
+[ erz-cards]      · 21 | 0 | Level Group  Level Group  →  brand/level-group-6150430001
+[ erz-cards]      · 22 | +2 | ГК А101, г  ГК А101  →  brand/gruppa-kompanij-a101-1075233001
+[ erz-cards]      · 23 | +2 | РАЗУМ, Аст  РАЗУМ  →  brand/razum-4296089001
+[ erz-cards]      · 24 | -2 | ГК ЭНКО, Т  ГК ЭНКО  →  brand/gruppa-kompanij-enko-402466001
+[ erz-cards]      · 25 | -2 | Унистрой,   Унистрой  →  brand/unistroj-1130405001
+[ erz-cards]      · 26 | +3 | ГК КОРТРОС  ГК КОРТРОС  →  brand/gruppa-kompanij-kortros-429541001
+[ erz-cards]      · 27 | -1 | ГК АБСОЛЮТ  ГК АБСОЛЮТ  →  brand/gruppa-kompanij-absoljut-934095001
+[ erz-cards]      · 28 | 0 | ГК Единство  ГК Единство  →  brand/gruppa-kompanij-edinstvo-156056001
+[ erz-cards]      · 29 | +12 | СЗ КАП, К  СЗ КАП  →  brand/specializirovannyj-zastrojshhik-kubanaljansproekt-2819
+[ erz-cards]      · 30 | -3 | СЗ Градстр  СЗ Градстройпроект  →  brand/specializirovannyj-zastrojshchik-gradstrojproekt-21975
+[ erz-cards]      · 31 | +6 | ГК Первый   ГК Первый Трест  →  brand/gruppa-kompanij-pervyj-trest-4053794001
+[ erz-cards]      · 32 | 0 | ГК АльфаСтр  ГК АльфаСтройИнвест  →  brand/gruppa-kompanij-alfastrojinvest-5380617001
+[ erz-cards]      · 33 | 0 | КОМОССТРОЙ®  КОМОССТРОЙ®  →  brand/komosstroj-851697001
+[ erz-cards]      · 34 | -4 | LEGENDA In  LEGENDA Intelligent Development  →  brand/legenda-intelligent-development-1824654001
+[ erz-cards]      · 35 | -1 | ГК Новый Д  ГК Новый ДОН  →  brand/gruppa-kompanij-novyj-don-1164353001
+[ erz-cards]      · 36 | -1 | ГК ОСНОВА,  ГК ОСНОВА  →  brand/gruppa-kompanij-osnova-6201034001
+[ erz-cards]      · 37 | -1 | ГК ОСТ, Ту  ГК ОСТ  →  brand/gruppa-kompanij-ost-10977487001
+[ erz-cards]      · 38 | 0 | СК Семья, К  СК Семья  →  brand/stroitelnaja-kompanija-semja-5696040001
+[ erz-cards]      · 39 | 0 | ИнтерСтрой,  ИнтерСтрой  →  brand/interstroj-2987923001
+[ erz-cards]      · 40 | 0 | Seven Suns   Seven Suns Development  →  brand/seven-suns-development-2488380001
+[ erz-cards]      · 41 | +1 | СК 10, Рос  СК 10  →  brand/stroitelnaja-kompanija-sk-10-5827081001
+[ erz-cards]      · 42 | -11 | Железно,   Железно  →  brand/zhelezno-5896105001
+[ erz-cards]      · 43 | +16 | Юникей, г  Юникей  →  brand/unikey-22031811001
+[ erz-cards]      · 44 | +3 | ПЗСП, Перм  ПЗСП  →  brand/pzsp-2991496001
+[ erz-cards]      · 45 | +4 | ГК КВС, г.  ГК КВС  →  brand/gruppa-kompanij-kvs-1288457001
+[ erz-cards]      · 46 | -2 | ГК Капитал  ГК Капитал  →  brand/gruppa-kompanij-kapital-261190001
+[ erz-cards]      · 47 | +37 | ИСГ МАВИС  ИСГ МАВИС  →  brand/investicionno-stroitelnaja-gruppa-mavis-2110139001
+[ erz-cards]      · 48 | -3 | СЗ Стройдо  СЗ СтройдомКраснодар  →  brand/specializirovannyj-zastrojshhik-strojdomkrasnodar-2775
+[ erz-cards]      · 49 | -1 | ГК Паритет  ГК Паритет Девелопмент  →  brand/gruppa-kompanij-paritet-development-16664888001
+[ erz-cards]      · 50 | -4 | ДСК, Ворон  ДСК  →  brand/domostroitelnyj-kombinat-561250001
+[ erz-cards]      · 51 | -1 | ГК Террито  ГК Территория жизни  →  brand/gruppa-kompanij-territorija-zhizni-7333890001
+[ erz-cards]      · 52 | +16 | СЕВЕРНАЯ   СЕВЕРНАЯ КОМПАНИЯ  →  brand/severnaja-kompanija-4856325001
+[ erz-cards]      · 53 | -2 | TEN Девело  TEN Девелопмент  →  brand/ten-development-931046001
+[ erz-cards]      · 54 | -11 | Лидер Гру  Лидер Групп  →  brand/lider-grupp-430857001
+[ erz-cards]      · 55 | +24 | DARS Deve  DARS Development  →  brand/dars-development-7537722001
+[ erz-cards]      · 56 | -4 | Sminex, г.  Sminex  →  brand/sminex-4354668001
+[ erz-cards]      · 57 | -4 | Фонд ренов  Фонд реновации  →  brand/moskovskij-fond-renovacii-zhiloj-zastrojki-14543898001
+[ erz-cards]      · 58 | -4 | СЗ Стройпа  СЗ Стройпарк  →  brand/specializirovannyj-zastrojshhik-strojpark-28787766001
+[ erz-cards]      · 59 | +8 | ГК ПАО АПР  ГК ПАО АПРИ  →  brand/gruppa-kompanij-pao-apri-5392618001
+[ erz-cards]      · 60 | -4 | ГК ИНСИТИ   ГК ИНСИТИ девелопмент  →  brand/gruppa-kompanij-insiti-5696575001
+[ erz-cards]      · 61 | +17 | ГК СТРОЙГ  ГК СТРОЙГРАД  →  brand/gruppa-kompanij-strojgrad-4752097001
+[ erz-cards]      · 62 | -4 | ГК Атомстр  ГК Атомстройкомплекс  →  brand/atomstrojkompleks-691686001
+[ erz-cards]      · 63 | -2 | ГК СМК, Ар  ГК СМК  →  brand/gruppa-kompanij-smk-1567563001
+[ erz-cards]      · 64 | -2 | ГК Главстр  ГК Главстрой  →  brand/gruppa-kompanij-glavstroj-1961151001
+[ erz-cards]      · 65 | -1 | ГК ПСК, г.  ГК ПСК  →  brand/gruppa-kompanij-psk-2153371001
+[ erz-cards]      · 66 | -1 | Ак Барс До  Ак Барс Дом  →  brand/ak-bars-dom-2923318001
+[ erz-cards]      · 67 | +2 | ГК НОСТА,   ГК НОСТА  →  brand/gruppa-kompanij-nosta-22810761001
+[ erz-cards]      · 68 | -13 | ПРОФИ-ИНВ  ПРОФИ-ИНВЕСТ  →  brand/profi-invest-3732427001
+[ erz-cards]      · 69 | -3 | СИК Девело  СИК Девелопмент-Юг  →  brand/stroitelno-investicionnaja-korporacija-development-jug
+[ erz-cards]      · 70 | 0 | ГК ИКАР, Че  ГК ИКАР  →  brand/gruppa-kompanij-ikar-7080922001
+[ erz-cards]      · 71 | +6 | ГК ТРЕСТ,   ГК ТРЕСТ  →  brand/gruppa-kompanij-trest-1738274001
+[ erz-cards]      · 72 | +3 | ИСК г. Уфы  ИСК г. Уфы  →  brand/investicionno-stroitelnyj-komitet-gorodskogo-okruga-go
+[ erz-cards]      · 73 | 0 | СПК Зелёный  СПК Зелёный сад  →  brand/stroitelno-promyshlennaja-kompanija-zelenyj-sad-559542
+[ erz-cards]      · 74 | -17 | Суварстро  Суварстроит  →  brand/suvarstroit-5372083001
+[ erz-cards]      · 75 | -15 | Атлас Дев  Атлас Девелопмент  →  brand/atlas-development-7814301001
+[ erz-cards]      · 76 | -2 | ГК Эскадра  ГК Эскадра  →  brand/gruppa-kompanij-eskadra-451521001
+[ erz-cards]      · 77 | -6 | ДК Прогрес  ДК Прогресс  →  brand/developerskaja-kompanija-progress-5599108001
+[ erz-cards]      · 78 | -2 | ГК Екатери  ГК ЕкатеринодарИнвест-Строй  →  brand/gruppa-kompanij-ekaterinodarinvest-stroj-10146399001
+[ erz-cards]      · 79 | -7 | ГК Географ  ГК География  →  brand/gruppa-kompanij-geografiya-22466965001
+[ erz-cards]      · 80 | 0 | Группа RBI,  Группа RBI  →  brand/gruppa-rbi-1813315001
+[ erz-cards]      · 81 | 0 | ГК ДОМ, Рес  ГК ДОМ  →  brand/gruppa-kompanij-dom-22417441001
+[ erz-cards]      · 82 | +38 | ГК Главст  ГК Главстрой-Регионы  →  brand/gruppa-kompanij-glavstroj-regiony-24655153001
+[ erz-cards]      · 83 | -1 | СХ ТЕРМОДО  СХ ТЕРМОДОМ  →  brand/stroitelnyj-kholding-termodom-4784610001
+[ erz-cards]      · 84 | -1 | ГК Метрикс  ГК Метрикс Develoрment  →  brand/gruppa-kompanij-metriks-develorment-9337739001
+[ erz-cards]      · 85 | 0 | ГК СКАЙГРУП  ГК СКАЙГРУПП ДЕВЕЛОПМЕНТ  →  brand/gruppa-kompanij-SKAJGRUPP-DEVELOPMENT-21696327001
+[ erz-cards]      · 86 | -23 | Трест Маг  Трест Магнитострой  →  brand/trest-magnitostroj-922602001
+[ erz-cards]      · 87 | 0 | ГК Prime De  ГК Prime Development  →  brand/gruppa-kompanij-prime-development-24447747001
+[ erz-cards]      · 88 | -2 | ГК КамаСтр  ГК КамаСтройИнвест  →  brand/gruppa-kompanij-kamastrojinvest-2436482001
+[ erz-cards]      · 89 | -1 | ГСК Арбан,  ГСК Арбан  →  brand/gruppa-stroitelnykh-kompanij-arban-2224464001
+[ erz-cards]      · 90 | -1 | СГ Рисан,   СГ Рисан  →  brand/stroitelnaja-gruppa-risan-451437001
+[ erz-cards]      · 91 | 0 | ГК СДК, Рес  ГК СДК  →  brand/gruppa-kompanij-simferopolskaya-developerskaya-kompani
+[ erz-cards]      · 92 | 0 | ИСГ Мармакс  ИСГ Мармакс  →  brand/investicionno-stroitelnaja-gruppa-marmaks-559678001
+[ erz-cards]      · 93 | 0 | Мангазея, г  Мангазея  →  brand/mangazeja-3126628001
+[ erz-cards]      · 94 | 0 | МСК, Ростов  МСК  →  brand/moskovskaja-stroitelnaja-kompanija-3772776001
+[ erz-cards]      · 95 | 0 | Группа Роди  Группа Родина  →  brand/gruppa-rodina-21959217001
+[ erz-cards]      · 96 | 0 | ГК Монолит,  ГК Монолит  →  brand/gruppa-kompanij-monolit-3086478001
+[ erz-cards]      · 97 | 0 | СЗ СБЕРСИТИ  СЗ СБЕРСИТИ  →  brand/sbercity-21161735001
+[ erz-cards]      · 98 | 0 | ЕвроИнвест   ЕвроИнвест Девелопмент  →  brand/evroinvest-development-7897128001
+[ erz-cards]      · 99 | 0 | УГАИК, Респ  УГАИК  →  brand/ufimskoe-gorodskoe-agentstvo-ipotechnogo-kreditovanija
+[ erz-cards]      · 100 | 0 | Группа Мет  Группа Мета  →  brand/gruppa-meta-5203863001
+[ erz-cards]      ✅ cards_20260713.xlsx (карточек: 100, лет: 11 ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'], ошибок: 0)
+[ erz-cards] 
+[ erz-cards] ============================================================
+[ erz-cards] erzrf.ru | Итог: новых/обновлённых файлов — 1
+[ erz-cards] ============================================================
+[ erz-cards] 
+✅ erz-cards: успех (за 2.7 мин)
+
+════════════════════════════════════════════════════════════
+══ Волна 3/4: rasprod (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ rasprod (watchdog: 180мин)
+────────────────────────────────────────────────────────────
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] наш.дом.рф / GSheets | Запуск: 2026-07-13 09:13:04
+[   rasprod] Источники: rasprodannost
+[   rasprod] ============================================================
+[   rasprod] 
+[   rasprod]   🌐 rasprodannost: https://xn--80az8a.xn--d1aqf.xn--p1ai/%D0%B0%D0%BD%D0%B0%D0%BB%D0%B8%D1%82%D0%B8%D0%BA%D0%B0/%D1%80%D0%B0%D1%81%D0%BF%D1%80%D0%BE%D0%B4%D0%B0%D0%BD%D0%BD%D0%BE%D1%81%D1%82%D1%8C-%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%B3%D0%BE%D1%82%D0%BE%D0%B2%D0%BD%D0%BE%D1%81%D1%82%D1%8C
+[   rasprod]      · режим: incremental, база rasprodannost_20260713.json (156 записей)
+[   rasprod]      ── регион: rf (Все)
+[   rasprod]      · перешли к самому свежему году: 2026
+[   rasprod]        · доступных периодов: 78
+[   rasprod]        · incremental: пропускаю уже сохранённых периодов: 77
+[   rasprod]        ▸ 1/1: Июнь 2026
+[   rasprod]           📥 свежий период: проскроллил «Девелоперы», 2766 строк
+[   rasprod]           KPI=4, tables=2798 строк
+[   rasprod]      💾 rasprodannost_20260713.xlsx (записей=156)
+[   rasprod]      ── регион: msk (Город Москва)
+[   rasprod]        · baseline объём: 119 739
+[   rasprod]        · клик на trigger #regionSelect
+[   rasprod]        · ввёл в поиск: 'Москва' (ok=True)
+[   rasprod]        · клик на «Город Москва» (ok=True)
+[   rasprod]        ✅ данные сменились: 119 739 → 16 024
+[   rasprod]      · перешли к самому свежему году: 2026
+[   rasprod]        · доступных периодов: 78
+[   rasprod]        · incremental: пропускаю уже сохранённых периодов: 77
+[   rasprod]        ▸ 1/1: Июнь 2026
+[   rasprod]           📥 свежий период: проскроллил «Девелоперы», 114 строк
+[   rasprod]           KPI=4, tables=126 строк
+[   rasprod]      💾 rasprodannost_20260713.xlsx (записей=156)
+[   rasprod] 
+[   rasprod] ============================================================
+[   rasprod] Итог: новых/обновлённых файлов — 2
+[   rasprod]   • data\raw\realty\nashdom\rasprodannost_20260713.xlsx
+[   rasprod]   • data\raw\realty\nashdom\rasprodannost_20260713.json
+[   rasprod] ============================================================
+[   rasprod] 
+✅ rasprod: успех (за 2.9 мин)
+
+════════════════════════════════════════════════════════════
+══ Волна 4/4: fedstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ fedstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Запуск: 2026-07-13 09:15:57
+[   fedstat] Индикаторов: 29
+[   fedstat] ============================================================
+[   fedstat] 
+[   fedstat]   🛠  headless=old (HEADLESS_MODE=old, default)
+[   fedstat] 📊 [33648] Индекс предпринимательской уверенности в строительстве
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33648
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (23.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [61497] Валовой региональный продукт в основных ценах (ОКВЭД 2)
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61497
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59449] Индексы физического объема валового регионального проду
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59449
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [61483] Валовой региональный продукт на душу населения (ОКВЭД 2
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61483
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [45341] Индекс физического объема валового регионального продук
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/45341
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [59450] Структура валового регионального продукта (ОКВЭД 2) (пр
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59450
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [55370] Доля продукции высокотехнологичных и наукоемких отрасле
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55370
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [55373] Индекс производительности труда относительно уровня 201
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55373
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31557] Численность постоянного населения на 1 января (Раздел 1
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31557
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ℹ️  Скрыл 2 модалей через JS
+[   fedstat]   ✔️  Без изменений (17.11.2025)
+[   fedstat] 
+[   fedstat] 📊 [31556] Численность постоянного населения в среднем за год (чел
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31556
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [36730] Среднегодовая численность трудовых ресурсов (значение п
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36730
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [58994] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58994
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43211] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43211
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [57824] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/57824
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43246] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43246
+⏰ fedstat: убит по watchdog'у (>30мин), гашу процессы Chrome
+
+────────────────────────────────────────────────────────────
+🔁 Retry #1: жду 30с и повторяю 2 источников: fedstat, monitoring
+────────────────────────────────────────────────────────────
+
+════════════════════════════════════════════════════════════
+   Retry #1 волна 1: monitoring (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ monitoring (watchdog: 5мин)
+────────────────────────────────────────────────────────────
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] наш.дом.рф / GSheets | Запуск: 2026-07-13 09:46:28
+[monitoring] Источники: monitoring_2_0
+[monitoring] ============================================================
+[monitoring] 
+[monitoring]   🌐 monitoring_2_0 (Google Sheets export):
+[monitoring]      https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx
+[monitoring]   ✅ monitoring_2_0_20260713.xlsx (5,116 KB)
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] Итог: новых/обновлённых файлов — 1
+[monitoring]   • data\raw\realty\nashdom\monitoring_2_0_20260713.xlsx
+[monitoring] ============================================================
+[monitoring] 
+✅ monitoring: успех (за 0.2 мин)
+⚠️  monitoring: архивация завершилась с кодом 1
+
+════════════════════════════════════════════════════════════
+   Retry #1 волна 4: fedstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ fedstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Запуск: 2026-07-13 09:46:41
+[   fedstat] Индикаторов: 29
+[   fedstat] ============================================================
+[   fedstat] 
+[   fedstat]   🛠  headless=old (HEADLESS_MODE=old, default)
+[   fedstat] 📊 [33648] Индекс предпринимательской уверенности в строительстве
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33648
+[   fedstat]   ❌ Ошибка при чтении страницы: Message:
+[   fedstat] Stacktrace:
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b3fa5+14925]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70b4000+14980]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6bf793d]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51aad]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c51dac]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6ca27d7]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c9f39b]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c4401c]
+[   fedstat] 	chromedriver!(No symbol) [0x7ff7c6c44f43]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7697591+5f7f11]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c7691902+5f2282]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c76b7115+617a95]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70d1dce+3274e]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70da82c+3b1ac]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd744+1e0c4]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70bd8d4+1e254]
+[   fedstat] 	chromedriver!GetHandleVerifier [0x7ff7c70a1447+1dc7]
+[   fedstat] 	KERNEL32!BaseThreadInitThunk [0x7ffbd0497344+14]
+[   fedstat] 	ntdll!RtlUserThreadStart [0x7ffbd05fcc91+21]
+[   fedstat] 
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [61497] Валовой региональный продукт в основных ценах (ОКВЭД 2)
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61497
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59449] Индексы физического объема валового регионального проду
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59449
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [61483] Валовой региональный продукт на душу населения (ОКВЭД 2
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61483
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (15.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [45341] Индекс физического объема валового регионального продук
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/45341
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (22.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59450] Структура валового регионального продукта (ОКВЭД 2) (пр
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59450
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [55370] Доля продукции высокотехнологичных и наукоемких отрасле
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55370
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [55373] Индекс производительности труда относительно уровня 201
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55373
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [31557] Численность постоянного населения на 1 января (Раздел 1
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31557
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [31556] Численность постоянного населения в среднем за год (чел
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31556
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2025)
+[   fedstat] 
+[   fedstat] 📊 [36730] Среднегодовая численность трудовых ресурсов (значение п
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36730
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.09.2025)
+[   fedstat] 
+[   fedstat] 📊 [58994] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58994
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.09.2025)
+[   fedstat] 
+[   fedstat] 📊 [43211] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43211
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (11.03.2019)
+[   fedstat] 
+[   fedstat] 📊 [57824] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/57824
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43246] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43246
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.07.2025)
+[   fedstat] 
+[   fedstat] 📊 [34475] Инвестиции в основной капитал по полному кругу организа
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/34475
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (28.02.2026)
+[   fedstat] 
+[   fedstat] 📊 [59047] Инвестиции в основной капитал по полному кругу хозяйств
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59047
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (30.12.2025)
+[   fedstat] 
+[   fedstat] 📊 [36078] Индекс физического объема инвестиций в основной капитал
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36078
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+⏰ fedstat: убит по watchdog'у (>30мин), гашу процессы Chrome
+
+────────────────────────────────────────────────────────────
+🔁 Retry #2: жду 60с и повторяю 2 источников: fedstat, monitoring
+────────────────────────────────────────────────────────────
+
+════════════════════════════════════════════════════════════
+   Retry #2 волна 1: monitoring (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ monitoring (watchdog: 5мин)
+────────────────────────────────────────────────────────────
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] наш.дом.рф / GSheets | Запуск: 2026-07-13 10:17:45
+[monitoring] Источники: monitoring_2_0
+[monitoring] ============================================================
+[monitoring] 
+[monitoring]   🌐 monitoring_2_0 (Google Sheets export):
+[monitoring]      https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx
+[monitoring]   ✅ monitoring_2_0_20260713.xlsx (5,116 KB)
+[monitoring] 
+[monitoring] ============================================================
+[monitoring] Итог: новых/обновлённых файлов — 1
+[monitoring]   • data\raw\realty\nashdom\monitoring_2_0_20260713.xlsx
+[monitoring] ============================================================
+[monitoring] 
+✅ monitoring: успех (за 0.2 мин)
+⚠️  monitoring: архивация завершилась с кодом 1
+
+════════════════════════════════════════════════════════════
+   Retry #2 волна 4: fedstat (max parallel = 4)
+════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────
+▶ fedstat (watchdog: 30мин)
+────────────────────────────────────────────────────────────
+[   fedstat] 
+[   fedstat] ============================================================
+[   fedstat] Запуск: 2026-07-13 10:17:55
+[   fedstat] Индикаторов: 29
+[   fedstat] ============================================================
+[   fedstat] 
+[   fedstat]   🛠  headless=old (HEADLESS_MODE=old, default)
+[   fedstat] 📊 [33648] Индекс предпринимательской уверенности в строительстве
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/33648
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (23.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [61497] Валовой региональный продукт в основных ценах (ОКВЭД 2)
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61497
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59449] Индексы физического объема валового регионального проду
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59449
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [61483] Валовой региональный продукт на душу населения (ОКВЭД 2
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/61483
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (15.06.2026)
+[   fedstat] 
+[   fedstat] 📊 [45341] Индекс физического объема валового регионального продук
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/45341
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (22.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [59450] Структура валового регионального продукта (ОКВЭД 2) (пр
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/59450
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.03.2026)
+[   fedstat] 
+[   fedstat] 📊 [55370] Доля продукции высокотехнологичных и наукоемких отрасле
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55370
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (08.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [55373] Индекс производительности труда относительно уровня 201
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/55373
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (16.04.2026)
+[   fedstat] 
+[   fedstat] 📊 [31557] Численность постоянного населения на 1 января (Раздел 1
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31557
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (17.11.2025)
+[   fedstat] 
+[   fedstat] 📊 [31556] Численность постоянного населения в среднем за год (чел
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/31556
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ℹ️  Скрыл 14 модалей через JS
+[   fedstat]   ✔️  Без изменений (07.04.2025)
+[   fedstat] 
+[   fedstat] 📊 [36730] Среднегодовая численность трудовых ресурсов (значение п
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/36730
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [58994] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/58994
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [43211] Среднегодовая численность занятых в экономике (расчеты
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/43211
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 270с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 300с), повторяю...
+[   fedstat]   ⚠️  Страница не загрузилась за 5 минут, пропускаю
+[   fedstat]   ⚠️  Пропускаю — не удалось получить дату
+[   fedstat] 
+[   fedstat] 📊 [57824] Среднемесячная номинальная начисленная заработная плата
+[   fedstat]   🌐 Открываю: https://www.fedstat.ru/indicator/57824
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 30с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 60с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 90с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 120с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 150с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 180с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 210с), повторяю...
+[   fedstat]   ⏳ Не загрузилось за 30с (всего 240с), повторяю...
+⏰ fedstat: убит по watchdog'у (>30мин), гашу процессы Chrome
+
+────────────────────────────────────────────────────────────
+🔍 Дедупликация новых файлов (8 шт)
+────────────────────────────────────────────────────────────
+  Все 8 файлов уникальны (дублей нет)
+
+────────────────────────────────────────────────────────────
+📦 Финальная архивация (safety-net, keep=1)
+────────────────────────────────────────────────────────────
+⚠️  Финальная архивация завершилась с кодом 1
+
+────────────────────────────────────────────────────────────
+📋 Эскроу (ручная выгрузка)
+────────────────────────────────────────────────────────────
+✓ Файл есть: Наполняемость счетов.xlsx (от 07.07.2026)
+
+────────────────────────────────────────────────────────────
+⚙️  Частичная сборка realty-витрин для дашборда
+   only: erzrf_cards, erzrf_top, escrow_manual, kvartirografia, monitoring_2_0, rasprodannost
+────────────────────────────────────────────────────────────
+[marts] building kvartirografia ...
+[marts]   ok -> data\marts\realty\kvartirografia.pkl rows=2126
+[marts] building monitoring_2_0 ...
+[marts]   ok -> data\marts\realty\monitoring_2_0.pkl rows=12605
+[marts] building erzrf_top ...
+[marts]   ok -> data\marts\realty\erzrf_top.pkl rows=19106
+[marts] building erzrf_cards ...
+[marts]   ok -> data\marts\realty\erzrf_cards.pkl rows=100
+[marts] building escrow_manual ...
+[marts]   ok -> data\marts\realty\escrow_manual.pkl rows=536
+[marts] building rasprodannost ...
+[marts]   ok -> data\marts\realty\rasprodannost.pkl rows=11248
+[marts] manifest -> data\marts\realty\manifest.json
+✅ realty-витрины собраны
+
+============================================================
+ИТОГ за 103.8 мин:
+  ✅ Успешно: 5 — rosstat, kvart, erz-top, erz-cards, rasprod
+  ❌ Ошибки:  2 — monitoring, fedstat
+  📥 Новых файлов:    8
+  ✎  Обновлено:       25
+  ⚠️  Final archive: failed
+============================================================
+
+📁 Полный лог сохранён: C:\codex\logs\update_20260713_090437.log

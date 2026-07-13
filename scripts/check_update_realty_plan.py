@@ -305,32 +305,38 @@ def main() -> int:
     )
 
     _assert_equal(
-        ur.realty_update_exit_code(failures=[], marts_ok=True, final_archive_ok=True),
+        ur.realty_update_exit_code(failures=[], marts_ok=True, processed_ok=True, final_archive_ok=True),
         0,
         "clean run exit code",
     )
     _assert_equal(
-        ur.realty_update_exit_code(failures=["monitoring"], marts_ok=True, final_archive_ok=True),
+        ur.realty_update_exit_code(failures=["monitoring"], marts_ok=True, processed_ok=True, final_archive_ok=True),
         2,
         "source failure exit code",
     )
     _assert_equal(
-        ur.realty_update_exit_code(failures=[], marts_ok=False, final_archive_ok=True),
+        ur.realty_update_exit_code(failures=[], marts_ok=False, processed_ok=True, final_archive_ok=True),
         2,
         "mart failure exit code",
     )
     _assert_equal(
-        ur.realty_update_exit_code(failures=[], marts_ok=True, final_archive_ok=False),
+        ur.realty_update_exit_code(failures=[], marts_ok=True, processed_ok=True, final_archive_ok=False),
         0,
         "final archive warning exit code",
+    )
+    _assert_equal(
+        ur.realty_update_exit_code(failures=[], marts_ok=True, processed_ok=False, final_archive_ok=True),
+        2,
+        "processed failure exit code",
     )
     _assert_equal(
         ur.realty_update_error_message(
             failures=["monitoring"],
             marts_ok=False,
+            processed_ok=False,
             final_archive_ok=False,
         ),
-        "source failures: monitoring; realty marts failed",
+        "source failures: monitoring; realty marts failed; processed dashboard build failed",
         "combined update error message",
     )
     report = ur.build_tdm_report(
@@ -339,11 +345,14 @@ def main() -> int:
         diff={"added": [], "changed": []},
         total_min=1.2,
         marts_ok=False,
+        processed_ok=False,
         final_archive_ok=False,
         archive_warnings=["final archive failed"],
     )
     if "Marts build failed" not in report:
         raise AssertionError("TDM report should mention mart failure")
+    if "Processed dashboard build failed" not in report:
+        raise AssertionError("TDM report should mention processed failure")
     if "Архивация" not in report:
         raise AssertionError("TDM report should mention final archive warning")
 

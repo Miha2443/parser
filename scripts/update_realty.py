@@ -126,6 +126,7 @@ SOURCE_MARTS = {
     "escrow-manual": {"escrow_manual"},
     "rosstat": {"vvod_static", "emiss_34118"},
 }
+PROCESSED_SOURCE_ALIASES = {"fedstat", "rosstat"}
 
 # Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
 PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
@@ -919,6 +920,39 @@ def build_realty_marts(only: set[str] | None = None) -> bool:
     return False
 
 
+def should_build_processed(successes: list[str], diff: dict) -> bool:
+    if any(alias in PROCESSED_SOURCE_ALIASES for alias in successes):
+        return True
+    changed = diff.get("added", []) + diff.get("changed", [])
+    return any(str(path).startswith("downloads:") for path in changed)
+
+
+def build_processed_pickles() -> bool:
+    """Rebuild data/processed dashboard pickles from already downloaded files."""
+    _print(f"\n{'─'*60}")
+    _print("⚙️  Сборка processed-витрин для дашборда из downloads/")
+    _print(f"{'─'*60}")
+    cmd = [sys.executable, "pipeline/orchestrator.py", "--skip-download"]
+    proc = subprocess.run(
+        cmd,
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if proc.stdout:
+        for line in proc.stdout.splitlines():
+            _print(f"[processed] {line}")
+    if proc.returncode == 0:
+        _print("✅ processed-витрины собраны")
+        return True
+    _print(f"❌ processed-витрины: код выхода {proc.returncode}")
+    return False
+
+
 def collect_site_dates() -> dict:
     """Собирает «дата последнего обновления на сайте» из state-файлов.
 
@@ -993,11 +1027,12 @@ def build_tdm_report(successes: list[str], failures: list[str],
                      deduped: int = 0,
                      site_dates: dict | None = None,
                      marts_ok: bool = True,
+                     processed_ok: bool = True,
                      final_archive_ok: bool = True,
                      archive_warnings: list[str] | None = None) -> str:
     """Формирует текст сводки для TDM."""
     archive_warnings = archive_warnings or []
-    icon = "✅" if not failures and marts_ok else "⚠️"
+    icon = "✅" if not failures and marts_ok and processed_ok else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
     lines = [
         f"{icon} **Прогон realty** {today} (за {total_min:.1f} мин)",
@@ -1009,6 +1044,8 @@ def build_tdm_report(successes: list[str], failures: list[str],
         lines.append(f"✗ FAIL: {', '.join(failures)}")
     if not marts_ok:
         lines.append("Marts build failed")
+    if not processed_ok:
+        lines.append("Processed dashboard build failed")
     if archive_warnings or not final_archive_ok:
         warning_text = ", ".join(archive_warnings) if archive_warnings else "archive warning"
         lines.append(f"⚠ Архивация: {warning_text}. Данные не помечены как ошибка.")
@@ -1040,15 +1077,22 @@ def is_monday() -> bool:
     return datetime.now().weekday() == 0
 
 
-def realty_update_exit_code(*, failures: list[str], marts_ok: bool, final_archive_ok: bool) -> int:
+def realty_update_exit_code(
+    *,
+    failures: list[str],
+    marts_ok: bool,
+    processed_ok: bool,
+    final_archive_ok: bool,
+) -> int:
     _ = final_archive_ok
-    return 0 if not failures and marts_ok else 2
+    return 0 if not failures and marts_ok and processed_ok else 2
 
 
 def realty_update_error_message(
     *,
     failures: list[str],
     marts_ok: bool,
+    processed_ok: bool,
     final_archive_ok: bool,
 ) -> str:
     parts: list[str] = []
@@ -1056,6 +1100,8 @@ def realty_update_error_message(
         parts.append(f"source failures: {', '.join(failures)}")
     if not marts_ok:
         parts.append("realty marts failed")
+    if not processed_ok:
+        parts.append("processed dashboard build failed")
     _ = final_archive_ok
     return "; ".join(parts)
 
@@ -1305,6 +1351,10 @@ def main():
     # Эскроу-подсказка
     check_escrow()
 
+    processed_ok = True
+    if should_build_processed(successes, diff):
+        processed_ok = build_processed_pickles()
+
     marts_ok = True
     marts_selected: set[str] | None = set()
     if not args.no_marts:
@@ -1340,6 +1390,8 @@ def main():
         _print(f"  ↩️  Дублей удалено:  {deduped_count}")
     if not marts_ok:
         _print("  ⚠️  Витрины сайта: ошибка сборки")
+    if not processed_ok:
+        _print("  ⚠️  Processed-витрины: ошибка сборки")
     if not final_archive_ok:
         _print("  ⚠️  Final archive: warning")
     if archive_warnings:
@@ -1348,7 +1400,7 @@ def main():
     _print(f"📁 Полный лог сохранён: {log_path}")
 
     write_realty_run_status(
-        "success" if not failures and marts_ok else "failed",
+        "success" if not failures and marts_ok and processed_ok else "failed",
         started=started,
         sources=sources,
         log_path=log_path,
@@ -1359,11 +1411,13 @@ def main():
         marts_changed_aliases=marts_changed_aliases,
         marts_changed_paths=changed_for_marts,
         marts_repair_selected=marts_repair_selected,
+        processed_ok=processed_ok,
         final_archive_ok=final_archive_ok,
         archive_warnings=archive_warnings,
         error=realty_update_error_message(
             failures=failures,
             marts_ok=marts_ok,
+            processed_ok=processed_ok,
             final_archive_ok=final_archive_ok,
         ),
         **run_meta,
@@ -1381,6 +1435,7 @@ def main():
                                     deduped=deduped_count,
                                     site_dates=collect_site_dates(),
                                     marts_ok=marts_ok,
+                                    processed_ok=processed_ok,
                                     final_archive_ok=final_archive_ok,
                                     archive_warnings=archive_warnings)
             notify(text, silent=True)
@@ -1393,6 +1448,7 @@ def main():
     return realty_update_exit_code(
         failures=failures,
         marts_ok=marts_ok,
+        processed_ok=processed_ok,
         final_archive_ok=final_archive_ok,
     )
 

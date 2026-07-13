@@ -45,6 +45,13 @@ from pipeline.paths import (
 from pipeline.registry import INDICATORS, Indicator
 
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
+
+
 DEDUP_BASE_COLUMNS = [
     "indicator_id",
     "view",

@@ -48,6 +48,7 @@ def main() -> int:
             nashdom = realty_root / "nashdom"
             nashdom.mkdir(parents=True)
             (nashdom / "monitoring_2_0_20260702.xlsx").write_bytes(b"monitoring")
+            (nashdom / "~$monitoring_2_0_20260702.xlsx").write_bytes(b"office lock")
             (nashdom / "monitoring_2_0_20260702.xlsx.tmp").write_bytes(b"partial")
             (nashdom / "rasprodannost_20260702.xlsx").write_bytes(b"rasprod")
             (nashdom / "rasprodannost_20260702.xlsx.crdownload").write_bytes(b"partial")
@@ -320,8 +321,8 @@ def main() -> int:
     )
     _assert_equal(
         ur.realty_update_exit_code(failures=[], marts_ok=True, final_archive_ok=False),
-        2,
-        "final archive failure exit code",
+        0,
+        "final archive warning exit code",
     )
     _assert_equal(
         ur.realty_update_error_message(
@@ -329,7 +330,7 @@ def main() -> int:
             marts_ok=False,
             final_archive_ok=False,
         ),
-        "source failures: monitoring; realty marts failed; final archive failed",
+        "source failures: monitoring; realty marts failed",
         "combined update error message",
     )
     report = ur.build_tdm_report(
@@ -339,11 +340,12 @@ def main() -> int:
         total_min=1.2,
         marts_ok=False,
         final_archive_ok=False,
+        archive_warnings=["final archive failed"],
     )
     if "Marts build failed" not in report:
         raise AssertionError("TDM report should mention mart failure")
-    if "Final archive failed" not in report:
-        raise AssertionError("TDM report should mention final archive failure")
+    if "Архивация" not in report:
+        raise AssertionError("TDM report should mention final archive warning")
 
     print("update_realty plan checks: ok")
     return 0

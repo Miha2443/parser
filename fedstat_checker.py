@@ -98,7 +98,9 @@ INDICATORS = {
 
 DOWNLOAD_DIR = Path("downloads")
 STATE_FILE = Path("fedstat_state.json")
-PAGE_TIMEOUT = 30
+PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
+PAGE_LOAD_TOTAL_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_TOTAL_TIMEOUT", "120"))
+PAGE_LOAD_ATTEMPT_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_ATTEMPT_TIMEOUT", "20"))
 
 # ─────────────────────────────────────────────
 
@@ -210,28 +212,25 @@ def get_last_update_date(driver, indicator_id):
     url = f"https://www.fedstat.ru/indicator/{real_id}"
     print(f"  🌐 Открываю: {url}")
 
-    # Повторные попытки загрузки страницы до 5 минут суммарно
-    MAX_TOTAL_WAIT = 300  # 5 минут
-    ATTEMPT_TIMEOUT = 30  # каждая попытка — 30 сек
     start_time = time.time()
     loaded = False
 
-    while time.time() - start_time < MAX_TOTAL_WAIT:
+    while time.time() - start_time < PAGE_LOAD_TOTAL_TIMEOUT:
         try:
-            driver.set_page_load_timeout(ATTEMPT_TIMEOUT)
+            driver.set_page_load_timeout(PAGE_LOAD_ATTEMPT_TIMEOUT)
             driver.get(url)
             loaded = True
             break
         except Exception:
             elapsed = int(time.time() - start_time)
-            print(f"  ⏳ Не загрузилось за {ATTEMPT_TIMEOUT}с (всего {elapsed}с), повторяю...")
+            print(f"  ⏳ Не загрузилось за {PAGE_LOAD_ATTEMPT_TIMEOUT}с (всего {elapsed}с), повторяю...")
             try:
                 driver.execute_script("window.stop();")
             except Exception:
                 pass
 
     if not loaded:
-        print(f"  ⚠️  Страница не загрузилась за 5 минут, пропускаю")
+        print(f"  ⚠️  Страница не загрузилась за {PAGE_LOAD_TOTAL_TIMEOUT}с, пропускаю")
         return None
 
     wait = WebDriverWait(driver, PAGE_TIMEOUT)
@@ -1175,6 +1174,8 @@ def run(force: bool = False):
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     state = load_state() if not force else {}
     downloaded_files = []
+    checked_ok = 0
+    skipped_indicators = []
 
     print(f"\n{'='*60}")
     print(f"Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1190,9 +1191,11 @@ def run(force: bool = False):
             remote_date = get_last_update_date(driver, indicator_id)
 
             if remote_date is None:
+                skipped_indicators.append(indicator_id)
                 print("  ⚠️  Пропускаю — не удалось получить дату\n")
                 continue
 
+            checked_ok += 1
             saved_date = state.get(indicator_id)
 
             if saved_date is None:
@@ -1217,11 +1220,14 @@ def run(force: bool = False):
 
     print(f"\n{'='*60}")
     print(f"Итог: скачано файлов — {len(downloaded_files)}")
+    print(f"Проверено индикаторов — {checked_ok}/{len(INDICATORS)}")
+    if skipped_indicators:
+        print(f"Пропущено без даты — {len(skipped_indicators)}: {', '.join(skipped_indicators)}")
     for f in downloaded_files:
         print(f"  • {f}")
     print(f"{'='*60}\n")
 
-    ok = len(downloaded_files) > 0
+    ok = checked_ok > 0
     return downloaded_files, ok
 
 
@@ -1229,6 +1235,6 @@ if __name__ == "__main__":
     import sys
     force = "--force" in sys.argv
     files, ok = run(force=force)
-    # exit 2 если ничего не скачано — даёт update_realty.py сигнал
-    # «парсер провалился» и поднимает retry с задержкой.
-    sys.exit(0 if (ok and files) else 2)
+    # exit 2 только если fedstat не удалось проверить вообще. Если все даты
+    # прочитаны и новых файлов нет, это штатное "без изменений".
+    sys.exit(0 if ok else 2)

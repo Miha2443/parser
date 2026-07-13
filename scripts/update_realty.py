@@ -62,6 +62,8 @@ REALTY_UPDATE_LOCK_STALE_SEC = 12 * 3600
 _LOG_FILE: Path | None = None
 _LOG_FH = None
 _ACTIVE_REALTY_RUN = None
+_ARCHIVE_WARNINGS: list[str] = []
+_ARCHIVE_WARNINGS_LOCK = threading.Lock()
 _REALTY_UPDATE_LOCK_HELD = False
 _REALTY_UPDATE_LOCK_TOKEN: str | None = None
 
@@ -92,7 +94,7 @@ SOURCE_TIMEOUT_MIN = {
     "kvart":       180,
     "erz-top":     15,
     "erz-cards":   30,
-    "fedstat":     30,
+    "fedstat":     45,
     "rosstat":     30,
 }
 DEFAULT_TIMEOUT_MIN = 60
@@ -157,6 +159,21 @@ def _print(msg: str = "") -> None:
                 _LOG_FH.flush()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def add_archive_warning(message: str) -> None:
+    with _ARCHIVE_WARNINGS_LOCK:
+        _ARCHIVE_WARNINGS.append(message)
+
+
+def get_archive_warnings() -> list[str]:
+    with _ARCHIVE_WARNINGS_LOCK:
+        return list(_ARCHIVE_WARNINGS)
+
+
+def clear_archive_warnings() -> None:
+    with _ARCHIVE_WARNINGS_LOCK:
+        _ARCHIVE_WARNINGS.clear()
 
 
 def _setup_logging() -> Path:
@@ -401,6 +418,7 @@ SNAPSHOT_DIRS = [
     (ROOT / "downloads", "downloads", ""),
 ]
 SNAPSHOT_TEMP_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
+SNAPSHOT_TEMP_NAME_PREFIXES = ("~$",)
 _SNAPSHOT_DIGEST_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
 
 
@@ -443,6 +461,8 @@ def snapshot_files(
             continue
         for f in base.rglob("*"):
             if not f.is_file() or "_archive" in f.parts:
+                continue
+            if f.name.startswith(SNAPSHOT_TEMP_NAME_PREFIXES):
                 continue
             if f.suffix.lower() in SNAPSHOT_TEMP_SUFFIXES:
                 continue
@@ -706,7 +726,7 @@ def run_source(alias: str, env: dict, force: bool = False,
             except Exception as exc:  # noqa: BLE001
                 _print(f"⚠️  {alias}: дедупликация упала — {exc}")
             if not archive_old_for_source(alias, keep=keep):
-                return False
+                add_archive_warning(f"{alias}: source archive failed")
         return True
     _print(f"❌ {alias}: код выхода {rc} (за {elapsed/60:.1f} мин)")
     return False
@@ -721,6 +741,7 @@ def archive_old(keep: int = 1) -> bool:
     result = subprocess.run(cmd, cwd=ROOT, check=False)
     if result.returncode != 0:
         _print(f"⚠️  Финальная архивация завершилась с кодом {result.returncode}")
+        add_archive_warning("final archive failed")
         return False
     return True
 
@@ -972,9 +993,11 @@ def build_tdm_report(successes: list[str], failures: list[str],
                      deduped: int = 0,
                      site_dates: dict | None = None,
                      marts_ok: bool = True,
-                     final_archive_ok: bool = True) -> str:
+                     final_archive_ok: bool = True,
+                     archive_warnings: list[str] | None = None) -> str:
     """Формирует текст сводки для TDM."""
-    icon = "✅" if not failures and marts_ok and final_archive_ok else "⚠️"
+    archive_warnings = archive_warnings or []
+    icon = "✅" if not failures and marts_ok else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
     lines = [
         f"{icon} **Прогон realty** {today} (за {total_min:.1f} мин)",
@@ -986,8 +1009,9 @@ def build_tdm_report(successes: list[str], failures: list[str],
         lines.append(f"✗ FAIL: {', '.join(failures)}")
     if not marts_ok:
         lines.append("Marts build failed")
-    if not final_archive_ok:
-        lines.append("Final archive failed")
+    if archive_warnings or not final_archive_ok:
+        warning_text = ", ".join(archive_warnings) if archive_warnings else "archive warning"
+        lines.append(f"⚠ Архивация: {warning_text}. Данные не помечены как ошибка.")
 
     added = diff.get("added", [])
     changed = diff.get("changed", [])
@@ -1017,7 +1041,8 @@ def is_monday() -> bool:
 
 
 def realty_update_exit_code(*, failures: list[str], marts_ok: bool, final_archive_ok: bool) -> int:
-    return 0 if not failures and marts_ok and final_archive_ok else 2
+    _ = final_archive_ok
+    return 0 if not failures and marts_ok else 2
 
 
 def realty_update_error_message(
@@ -1031,8 +1056,7 @@ def realty_update_error_message(
         parts.append(f"source failures: {', '.join(failures)}")
     if not marts_ok:
         parts.append("realty marts failed")
-    if not final_archive_ok:
-        parts.append("final archive failed")
+    _ = final_archive_ok
     return "; ".join(parts)
 
 
@@ -1165,6 +1189,7 @@ def main():
     _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
+    clear_archive_warnings()
     successes, failures = [], []
     do_archive = not args.no_archive
     run_meta = {
@@ -1275,6 +1300,7 @@ def main():
     final_archive_ok = True
     if not args.no_archive:
         final_archive_ok = archive_old(keep=args.keep)
+    archive_warnings = get_archive_warnings()
 
     # Эскроу-подсказка
     check_escrow()
@@ -1315,12 +1341,14 @@ def main():
     if not marts_ok:
         _print("  ⚠️  Витрины сайта: ошибка сборки")
     if not final_archive_ok:
-        _print("  ⚠️  Final archive: failed")
+        _print("  ⚠️  Final archive: warning")
+    if archive_warnings:
+        _print(f"  ⚠️  Archive warnings: {', '.join(archive_warnings)}")
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
 
     write_realty_run_status(
-        "success" if not failures and marts_ok and final_archive_ok else "failed",
+        "success" if not failures and marts_ok else "failed",
         started=started,
         sources=sources,
         log_path=log_path,
@@ -1332,6 +1360,7 @@ def main():
         marts_changed_paths=changed_for_marts,
         marts_repair_selected=marts_repair_selected,
         final_archive_ok=final_archive_ok,
+        archive_warnings=archive_warnings,
         error=realty_update_error_message(
             failures=failures,
             marts_ok=marts_ok,
@@ -1352,7 +1381,8 @@ def main():
                                     deduped=deduped_count,
                                     site_dates=collect_site_dates(),
                                     marts_ok=marts_ok,
-                                    final_archive_ok=final_archive_ok)
+                                    final_archive_ok=final_archive_ok,
+                                    archive_warnings=archive_warnings)
             notify(text, silent=True)
         except Exception:  # noqa: BLE001
             pass

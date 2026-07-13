@@ -126,7 +126,6 @@ SOURCE_MARTS = {
     "escrow-manual": {"escrow_manual"},
     "rosstat": {"vvod_static", "emiss_34118"},
 }
-PROCESSED_SOURCE_ALIASES = {"fedstat", "rosstat"}
 
 # Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
 PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
@@ -921,10 +920,10 @@ def build_realty_marts(only: set[str] | None = None) -> bool:
 
 
 def should_build_processed(successes: list[str], diff: dict) -> bool:
-    if any(alias in PROCESSED_SOURCE_ALIASES for alias in successes):
+    if successes:
         return True
     changed = diff.get("added", []) + diff.get("changed", [])
-    return any(str(path).startswith("downloads:") for path in changed)
+    return bool(changed)
 
 
 def build_processed_pickles() -> bool:

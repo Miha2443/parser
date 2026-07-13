@@ -213,6 +213,22 @@ def main() -> int:
     finally:
         ur.select_repair_realty_marts = original_repair
 
+    _assert_equal(
+        ur.should_build_processed(successes=["monitoring"], diff={"added": [], "changed": []}),
+        True,
+        "any successful source rebuilds processed pickles",
+    )
+    _assert_equal(
+        ur.should_build_processed(successes=[], diff={"added": ["realty:nashdom/x.xlsx"], "changed": []}),
+        True,
+        "any changed file rebuilds processed pickles",
+    )
+    _assert_equal(
+        ur.should_build_processed(successes=[], diff={"added": [], "changed": []}),
+        False,
+        "no successes or changes skips processed pickles",
+    )
+
     captured = {}
     original_write_status = ur.write_realty_status
     try:

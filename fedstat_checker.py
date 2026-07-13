@@ -13,9 +13,11 @@ fedstat_checker.py
 """
 
 import atexit
+import html
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import requests
@@ -29,7 +31,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from pipeline.file_utils import stream_response_atomic, validate_excel_file
+from pipeline.selenium_utils import wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
+
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
 
 
 # ─────────────────────────────────────────────
@@ -101,6 +111,16 @@ STATE_FILE = Path("fedstat_state.json")
 PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
 PAGE_LOAD_TOTAL_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_TOTAL_TIMEOUT", "120"))
 PAGE_LOAD_ATTEMPT_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_ATTEMPT_TIMEOUT", "20"))
+DIRECT_DOWNLOAD_ON_DATE_FAILURE = (
+    os.environ.get("FEDSTAT_DIRECT_DOWNLOAD_ON_DATE_FAILURE", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
+DIRECT_FALLBACK_IDS = {
+    item.strip()
+    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824").split(",")
+    if item.strip()
+}
+BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
 
 # ─────────────────────────────────────────────
 
@@ -113,7 +133,7 @@ def save_state(state):
     write_json_atomic(STATE_FILE, state)
 
 
-def create_driver():
+def create_driver(download_dir: Path | None = None):
     options = Options()
 
     # Уникальный профиль на инстанс. update_realty.py гоняет fedstat
@@ -149,7 +169,28 @@ def create_driver():
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
+    if download_dir is not None:
+        download_dir = Path(download_dir).resolve()
+        download_dir.mkdir(parents=True, exist_ok=True)
+        options.add_experimental_option(
+            "prefs",
+            {
+                "download.default_directory": str(download_dir),
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True,
+                "profile.default_content_setting_values.automatic_downloads": 1,
+            },
+        )
     driver = webdriver.Chrome(options=options)
+    if download_dir is not None:
+        try:
+            driver.execute_cdp_cmd(
+                "Page.setDownloadBehavior",
+                {"behavior": "allow", "downloadPath": str(download_dir)},
+            )
+        except Exception:
+            pass
     _orig_quit = driver.quit
     def _quit_and_cleanup():
         try:
@@ -329,7 +370,59 @@ def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
-def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
+def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
+                                save_dir: Path, save_path: Path) -> Path | None:
+    """Submit Fedstat Excel POST through Chrome when direct requests are blocked."""
+    if driver is None:
+        return None
+    save_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.resolve() for p in save_dir.glob("*") if p.is_file()}
+    inputs = "\n".join(
+        f'<input type="hidden" name="{html.escape(str(k), quote=True)}" '
+        f'value="{html.escape(str(v), quote=True)}">'
+        for k, v in post_data
+    )
+    form_html = (
+        "<!doctype html><meta charset=\"utf-8\">"
+        f"<form id=\"fedstat\" method=\"post\" action=\"{html.escape(url, quote=True)}\">"
+        f"{inputs}</form>"
+        "<script>document.getElementById('fedstat').submit();</script>"
+    )
+    form_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write(form_html)
+            form_path = Path(fh.name)
+        driver.get(form_path.as_uri())
+        downloaded = wait_for_download(save_dir, before_snapshot=before, timeout=BROWSER_POST_TIMEOUT)
+        if downloaded is None:
+            print(f"  ⚠️  Browser POST не вернул Excel за {BROWSER_POST_TIMEOUT}с")
+            return None
+        validate_excel_file(downloaded)
+        if downloaded.resolve() != save_path.resolve():
+            if save_path.exists():
+                save_path.unlink()
+            shutil.move(str(downloaded), str(save_path))
+        return save_path
+    except Exception as exc:
+        print(f"  ❌ Browser POST fallback не сработал: {exc}")
+        return None
+    finally:
+        if form_path is not None:
+            try:
+                form_path.unlink()
+            except OSError:
+                pass
+
+
+def _should_direct_fallback(indicator_id: str) -> bool:
+    real_id = indicator_id.split("_")[0]
+    return "*" in DIRECT_FALLBACK_IDS or indicator_id in DIRECT_FALLBACK_IDS or real_id in DIRECT_FALLBACK_IDS
+
+
+def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
+                   driver=None):
     PAYLOADS = {
         # Введено в действие общей площади жилых домов (оперативные данные).
         # Параметры — из data/raw/realty/vvod/34118_filter.txt (экспорт ЕМИСС).
@@ -1126,13 +1219,14 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
         print(f"  ⚠️  Нет payload для индикатора {indicator_id}")
         return None
 
-    post_data = []
+    post_data = [("format", "excel")]
     for key, value in payload_template.items():
+        post_key = "indicator_title" if key == "title" else key
         if isinstance(value, list):
             for v in value:
-                post_data.append((key, v))
+                post_data.append((post_key, v))
         else:
-            post_data.append((key, value))
+            post_data.append((post_key, value))
 
     url = "https://www.fedstat.ru/indicator/data.do?format=excel"
     real_id = indicator_id.split("_")[0]
@@ -1144,20 +1238,31 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         ),
     }
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
+    safe_title = safe_title[:80]
+    # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
+    # (а не сегодняшняя). Так файл сразу говорит когда контент
+    # реально обновлён.
+    date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
+    filename = f"{date_in_name}_{safe_title}.xls"
+    save_path = save_dir / filename
 
     try:
         print(f"  ⬇️  Скачиваю Excel...")
-        response = requests.post(url, data=post_data, headers=headers, timeout=120, stream=True)
+        session = requests.Session()
+        if driver is not None:
+            try:
+                for cookie in driver.get_cookies():
+                    session.cookies.set(
+                        cookie.get("name"),
+                        cookie.get("value"),
+                        domain=cookie.get("domain"),
+                        path=cookie.get("path", "/"),
+                    )
+            except Exception:
+                pass
+        response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
         response.raise_for_status()
-
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
-        safe_title = safe_title[:80]
-        # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
-        # (а не сегодняшняя). Так файл сразу говорит когда контент
-        # реально обновлён.
-        date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
-        filename = f"{date_in_name}_{safe_title}.xls"
-        save_path = save_dir / filename
 
         stream_response_atomic(response, save_path, validate=validate_excel_file)
 
@@ -1166,6 +1271,14 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
 
     except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
+        if driver is not None:
+            print("  -> Пробую скачать через browser POST...")
+            browser_path = _download_excel_via_browser(
+                driver, url, post_data, save_dir, save_path
+            )
+            if browser_path is not None:
+                print(f"  ✅ Сохранён через browser POST: {browser_path}")
+                return browser_path
         return None
 
 
@@ -1175,6 +1288,7 @@ def run(force: bool = False):
     state = load_state() if not force else {}
     downloaded_files = []
     checked_ok = 0
+    downloaded_without_date = []
     skipped_indicators = []
 
     print(f"\n{'='*60}")
@@ -1182,7 +1296,7 @@ def run(force: bool = False):
     print(f"Индикаторов: {len(INDICATORS)}")
     print(f"{'='*60}\n")
 
-    driver = create_driver()
+    driver = create_driver(download_dir=DOWNLOAD_DIR)
 
     try:
         for indicator_id, name in INDICATORS.items():
@@ -1191,8 +1305,22 @@ def run(force: bool = False):
             remote_date = get_last_update_date(driver, indicator_id)
 
             if remote_date is None:
+                print("  ⚠️  Не удалось получить дату со страницы")
+                if DIRECT_DOWNLOAD_ON_DATE_FAILURE and _should_direct_fallback(indicator_id):
+                    print("  -> Пробую скачать Excel напрямую без даты паспорта...")
+                    saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
+                                                remote_date=None,
+                                                driver=driver)
+                    if saved_path:
+                        downloaded_files.append(saved_path)
+                        downloaded_without_date.append(indicator_id)
+                        checked_ok += 1
+                        print("  ✅ Скачано напрямую; state по дате не обновляю\n")
+                        continue
+                elif DIRECT_DOWNLOAD_ON_DATE_FAILURE:
+                    print("  ℹ️  Direct fallback выключен для этого индикатора")
                 skipped_indicators.append(indicator_id)
-                print("  ⚠️  Пропускаю — не удалось получить дату\n")
+                print("  ⚠️  Пропускаю — не удалось получить дату и скачать напрямую\n")
                 continue
 
             checked_ok += 1
@@ -1207,7 +1335,8 @@ def run(force: bool = False):
                 continue
 
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
-                                        remote_date=remote_date)
+                                        remote_date=remote_date,
+                                        driver=driver)
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date
@@ -1221,6 +1350,8 @@ def run(force: bool = False):
     print(f"\n{'='*60}")
     print(f"Итог: скачано файлов — {len(downloaded_files)}")
     print(f"Проверено индикаторов — {checked_ok}/{len(INDICATORS)}")
+    if downloaded_without_date:
+        print(f"Скачано напрямую без даты — {len(downloaded_without_date)}: {', '.join(downloaded_without_date)}")
     if skipped_indicators:
         print(f"Пропущено без даты — {len(skipped_indicators)}: {', '.join(skipped_indicators)}")
     for f in downloaded_files:

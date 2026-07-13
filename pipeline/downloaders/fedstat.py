@@ -67,7 +67,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     fc.STATE_FILE = ROOT / "fedstat_state.json"
 
     state = fc.load_state()
-    driver = fc.create_driver()
+    driver = fc.create_driver(download_dir=DOWNLOADS_DIR)
     new_files: list[Path] = []
     prev_date = ""
     new_date = ""
@@ -81,7 +81,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             new_date = remote_date
             if saved_date == remote_date:
                 continue
-            saved_path = fc.download_excel(src_id, DOWNLOADS_DIR)
+            saved_path = fc.download_excel(src_id, DOWNLOADS_DIR, driver=driver)
             if saved_path:
                 new_files.append(Path(saved_path))
                 state[src_id] = remote_date

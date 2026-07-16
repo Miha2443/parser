@@ -16,6 +16,23 @@ GEOCODE_CACHE = DATA_DERIVED / "monitoring_geocodes.csv"
 MAP_ADDRESSES = DATA_DERIVED / "monitoring_map_addresses.csv"
 
 
+def coord_source_priority(source: object) -> int:
+    text = "" if pd.isna(source) else str(source).strip().lower()
+    if text.startswith("manual_exact"):
+        return 100
+    if text.startswith("geometry"):
+        return 80
+    if text.startswith("import"):
+        return 70
+    if text in {"yandex", "nominatim"}:
+        return 60
+    if "centroid" in text:
+        return 10
+    if text:
+        return 50
+    return 0
+
+
 def clean_text(value: object) -> str:
     if isinstance(value, bool):
         return ""
@@ -251,10 +268,17 @@ def apply_geocode_cache(objects: pd.DataFrame, cache: pd.DataFrame | None = None
         suffixes=("", "_cache"),
     )
     missing = by_id["lat"].isna() | by_id["lon"].isna()
+    cache_has_coords = (
+        by_id.get("lat_cache", pd.Series(index=by_id.index)).notna()
+        & by_id.get("lon_cache", pd.Series(index=by_id.index)).notna()
+    )
+    source_priority = by_id.get("coord_source", pd.Series(index=by_id.index, dtype=object)).map(coord_source_priority)
+    cache_priority = by_id.get("coord_source_cache", pd.Series(index=by_id.index, dtype=object)).map(coord_source_priority)
+    use_cache_by_id = cache_has_coords & (missing | (cache_priority > source_priority))
     for col in ("lat", "lon", "coord_source", "precision"):
         cache_col = f"{col}_cache"
         if cache_col in by_id.columns:
-            by_id.loc[missing, col] = by_id.loc[missing, cache_col]
+            by_id.loc[use_cache_by_id, col] = by_id.loc[use_cache_by_id, cache_col]
             by_id = by_id.drop(columns=[cache_col])
 
     still_missing = by_id["lat"].isna() | by_id["lon"].isna()

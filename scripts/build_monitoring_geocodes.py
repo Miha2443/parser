@@ -12,6 +12,7 @@ Examples:
   python scripts/build_monitoring_geocodes.py --provider yandex --limit all --flush-every 25
   python scripts/build_monitoring_geocodes.py --missing-out data/derived/missing_geocode_addresses.csv
   python scripts/build_monitoring_geocodes.py --import-csv data/derived/geocoded_addresses.csv
+  python scripts/build_monitoring_geocodes.py --import-manual-xlsx data/manual/addresses-coordinates.xlsx
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 GEOCODER_CONFIG = ROOT / "config" / "geocoder.local.json"
@@ -38,6 +40,7 @@ from app.realty_map import (  # noqa: E402
     MAP_ADDRESSES,
     address_key,
     clean_text,
+    coord_source_priority,
     apply_geocode_cache,
     load_geocode_cache,
     load_monitoring_map_objects,
@@ -46,6 +49,9 @@ from app.realty_map import (  # noqa: E402
 
 UNIQUE_ADDRESSES = ROOT / "data" / "derived" / "monitoring_map_unique_addresses.csv"
 _LAST_NOMINATIM_REQUEST_AT = 0.0
+MANUAL_EXACT_GREEN_FILLS = {"FF92D050"}
+MOSCOW_REGION_LAT_BOUNDS = (54.0, 57.0)
+MOSCOW_REGION_LON_BOUNDS = (35.0, 40.0)
 
 
 def _nominatim_query_candidates(address: str) -> list[tuple[str, str]]:
@@ -225,13 +231,143 @@ def _import_csv_rows(path: Path, objects: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
+def _header_positions(headers: list[object], names: set[str]) -> list[int]:
+    positions: list[int] = []
+    for i, value in enumerate(headers):
+        text = clean_text(value).lower()
+        if text in names:
+            positions.append(i)
+    return positions
+
+
+def _header_position(headers: list[object], names: set[str]) -> int | None:
+    positions = _header_positions(headers, names)
+    return positions[0] if positions else None
+
+
+def _manual_lat_lon_positions(headers: list[object]) -> tuple[int, int]:
+    lat_positions = _header_positions(headers, {"lat", "latitude"})
+    lon_positions = _header_positions(headers, {"lon", "lng", "longitude"})
+    if not lat_positions or not lon_positions:
+        raise SystemExit("--import-manual-xlsx requires lat/lon columns")
+    # The manually checked workbook has two lat/lon pairs: old coordinates first,
+    # corrected coordinates second. If there is only one pair, use it.
+    return lat_positions[-1], lon_positions[-1]
+
+
+def _cell_fill_rgb(cell: object) -> str:
+    fill = getattr(cell, "fill", None)
+    if fill is None or fill.fill_type != "solid":
+        return ""
+    color = fill.fgColor
+    if color is None:
+        return ""
+    if color.type == "rgb" and color.rgb:
+        return str(color.rgb).upper()
+    return ""
+
+
+def _row_has_manual_fill(row: tuple[object, ...]) -> bool:
+    return any(_cell_fill_rgb(cell) in MANUAL_EXACT_GREEN_FILLS for cell in row)
+
+
+def _valid_manual_coords(lat: float, lon: float) -> bool:
+    return (
+        MOSCOW_REGION_LAT_BOUNDS[0] <= lat <= MOSCOW_REGION_LAT_BOUNDS[1]
+        and MOSCOW_REGION_LON_BOUNDS[0] <= lon <= MOSCOW_REGION_LON_BOUNDS[1]
+    )
+
+
+def _import_manual_xlsx_rows(path: Path, objects: pd.DataFrame) -> pd.DataFrame:
+    workbook = load_workbook(path, read_only=False, data_only=True)
+    sheet = workbook.active
+    headers = [sheet.cell(row=1, column=col).value for col in range(1, sheet.max_column + 1)]
+
+    address_col = _header_position(headers, {"address", "query"})
+    key_col = _header_position(headers, {"address_key", "key"})
+    lat_col, lon_col = _manual_lat_lon_positions(headers)
+    if address_col is None and key_col is None:
+        raise SystemExit("--import-manual-xlsx requires address or address_key column")
+
+    imported_rows: list[dict[str, object]] = []
+    skipped_bad_coords = 0
+    skipped_no_key = 0
+    for cells in sheet.iter_rows(min_row=2):
+        if not _row_has_manual_fill(cells):
+            continue
+
+        lat = pd.to_numeric(cells[lat_col].value, errors="coerce")
+        lon = pd.to_numeric(cells[lon_col].value, errors="coerce")
+        if pd.isna(lat) or pd.isna(lon) or not _valid_manual_coords(float(lat), float(lon)):
+            skipped_bad_coords += 1
+            continue
+
+        address = clean_text(cells[address_col].value) if address_col is not None else ""
+        imported_key = clean_text(cells[key_col].value) if key_col is not None else ""
+        key = imported_key or address_key(address)
+        if not key:
+            skipped_no_key += 1
+            continue
+
+        imported_rows.append({
+            "address_key": key,
+            "address": address,
+            "lat": float(lat),
+            "lon": float(lon),
+        })
+
+    if not imported_rows:
+        print(f"manual exact xlsx rows: 0 from {path}")
+        if skipped_bad_coords or skipped_no_key:
+            print(f"manual exact skipped: bad_coords={skipped_bad_coords}, no_key={skipped_no_key}")
+        return pd.DataFrame()
+
+    imported = (
+        pd.DataFrame(imported_rows)
+        .drop_duplicates("address_key", keep="last")
+    )
+    object_keys = objects[["registry", "object_id", "address", "address_key"]].copy()
+    joined = object_keys.merge(
+        imported[["address_key", "lat", "lon"]],
+        on="address_key",
+        how="inner",
+    )
+    if joined.empty:
+        print(f"manual exact xlsx matched objects: 0 from {path}")
+        return pd.DataFrame()
+
+    joined["coord_source"] = "manual_exact"
+    joined["precision"] = "exact"
+    joined["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    print(
+        "manual exact xlsx rows: "
+        f"{len(imported)}, matched objects: {len(joined)}, "
+        f"skipped bad_coords={skipped_bad_coords}, no_key={skipped_no_key}"
+    )
+    return joined[[
+        "registry", "object_id", "address", "address_key", "lat", "lon",
+        "coord_source", "precision", "updated_at",
+    ]]
+
+
 def _normalize_cache(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=[
             "registry", "object_id", "address", "address_key", "lat", "lon",
             "coord_source", "precision", "updated_at",
         ])
-    return df.drop_duplicates(["registry", "object_id"], keep="last")
+    normalized = df.copy()
+    normalized["__priority"] = normalized.get(
+        "coord_source",
+        pd.Series(index=normalized.index, dtype=object),
+    ).map(coord_source_priority)
+    normalized = normalized.sort_values(
+        ["registry", "object_id", "__priority"],
+        ascending=[True, True, True],
+        kind="stable",
+    )
+    normalized = normalized.drop_duplicates(["registry", "object_id"], keep="last")
+    return normalized.drop(columns=["__priority"])
 
 
 def _write_cache(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -320,6 +456,7 @@ def main() -> int:
     parser.add_argument("--sleep", type=float, default=1.1, help="Delay between external geocoding requests.")
     parser.add_argument("--out", type=Path, default=GEOCODE_CACHE)
     parser.add_argument("--import-csv", type=Path, help="CSV with address/address_key and lat/lon columns to merge into cache.")
+    parser.add_argument("--import-manual-xlsx", type=Path, help="XLSX with green exact coordinate rows and address_key/lat/lon columns.")
     parser.add_argument("--missing-out", type=Path, help="Write unique missing addresses to CSV and exit after cache update.")
     parser.add_argument("--addresses-out", type=Path, default=MAP_ADDRESSES, help="Write all map objects with addresses and coordinates to CSV.")
     parser.add_argument("--unique-addresses-out", type=Path, default=UNIQUE_ADDRESSES, help="Write unique map addresses to CSV.")
@@ -356,6 +493,11 @@ def main() -> int:
             combined = pd.concat([combined, imported_rows], ignore_index=True)
         else:
             print(f"imported geocoded rows: 0 from {args.import_csv}")
+
+    if args.import_manual_xlsx:
+        imported_rows = _import_manual_xlsx_rows(args.import_manual_xlsx, objects)
+        if not imported_rows.empty:
+            combined = pd.concat([combined, imported_rows], ignore_index=True)
 
     if args.provider != "none" and (limit is None or limit > 0):
         yandex_key = _load_yandex_key()

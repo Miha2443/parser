@@ -34,6 +34,7 @@ C_IZHS = COLORS["amber"]     # ИЖС
 C_NEBUDG = COLORS["cyan"]    # небюджет
 C_BUDG = COLORS["blue"]      # бюджет
 C_NZH_IN = COLORS["teal"]    # нежилые в жилье
+C_MOP = COLORS["amber"]      # МОП
 BRANCH_COLORS = [COLORS["blue"], COLORS["cyan"], COLORS["green"], COLORS["amber"], "#A8B5C2"]
 
 
@@ -124,11 +125,41 @@ RENOVATION_VALUES = {
 }
 
 
+MOP_VALUES = {
+    2011: 1.2,
+    2012: 1.3,
+    2013: 1.8,
+    2014: 1.4,
+    2015: 1.8,
+    2016: 1.7,
+    2017: 2.1,
+    2018: 2.3,
+    2019: 3.3,
+    2020: 3.2,
+    2021: 4.7,
+    2022: 3.9,
+    2023: 4.5,
+    2024: 4.1,
+    2025: 4.9,
+}
+
+
 def _upsert_year(df: pd.DataFrame, row: dict) -> pd.DataFrame:
     row_df = pd.DataFrame([row])
     if df is None or df.empty:
         return row_df
     return pd.concat([df, row_df], ignore_index=True).drop_duplicates(subset=["year"], keep="last")
+
+
+def _monitoring_mop_row(rv: pd.DataFrame, year: int) -> dict | None:
+    required = {"Год ввода по Мосстату", "category_моп"}
+    if rv is None or rv.empty or not required.issubset(set(rv.columns)):
+        return None
+    part = rv[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce") == year]
+    if part.empty:
+        return None
+    value = float(pd.to_numeric(part["category_моп"], errors="coerce").fillna(0).sum()) / 1e6
+    return {"year": year, "МОП": value} if value > 0 else None
 
 
 def _monitoring_nonres_row(rv: pd.DataFrame, year: int) -> dict | None:
@@ -214,6 +245,11 @@ st.markdown("### Ввод недвижимости — годовые значе
 
 if is_msk:
     b1 = vvod["msk_total"].copy()
+    mop = pd.DataFrame([{"year": year, "МОП": value} for year, value in MOP_VALUES.items()])
+    mop26 = _monitoring_mop_row(rv, 2026)
+    if mop26:
+        mop = _upsert_year(mop, mop26)
+    b1 = b1.merge(mop, on="year", how="outer")
     # 2026 — из monitoring 2.0: жилье по жилой площади, нежилье по общей.
     zh26 = monitoring_by_year(
         rv,
@@ -232,26 +268,32 @@ if is_msk:
     v_zh = float(zh26["value"].iloc[0]) if not zh26.empty else float("nan")
     v_nzh = float(nzh26["value"].iloc[0]) if not nzh26.empty else float("nan")
     if not (pd.isna(v_zh) and pd.isna(v_nzh)):
-        b1 = pd.concat([b1, pd.DataFrame(
-            [{"year": 2026, "жильё": v_zh, "нежильё": v_nzh}])], ignore_index=True)
+        row26 = {"year": 2026, "жильё": v_zh, "нежильё": v_nzh}
+        if mop26:
+            row26["МОП"] = mop26["МОП"]
+        b1 = _upsert_year(b1, row26)
 else:
     b1 = vvod["rf_total"][["year", "жильё", "нежильё"]].copy()
 
 c_chart, c_txt = st.columns([3, 1])
 with c_chart:
-    render_stacked(
-        b1, [("жильё", "Жильё", C_ZH), ("нежильё", "Нежильё", C_NZH)],
-        year_from=YF, year_to=YT, key="b1", height=320)
+    b1_series = [("жильё", "Жильё", C_ZH), ("нежильё", "Нежильё", C_NZH)]
+    if is_msk:
+        b1_series = [("жильё", "Жильё", C_ZH), ("МОП", "МОП", C_MOP), ("нежильё", "Нежильё", C_NZH)]
+    render_stacked(b1, b1_series, year_from=YF, year_to=YT, key="b1", height=320)
 with c_txt:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         zh = _sum_range(b1, "жильё", y0, y1)
+        mop_sum = _sum_range(b1, "МОП", y0, y1) if is_msk else 0.0
         nzh = _sum_range(b1, "нежильё", y0, y1)
         has26 = (not is_msk) and y1 == 2026
+        mop_line = f"- {ru_num(mop_sum)} млн м² МОП\n" if is_msk else ""
         st.markdown(
             f"**В {y0}-{y1}** введено\n\n"
             f"- {ru_num(zh)} млн м² жилья\n"
+            f"{mop_line}"
             f"- {ru_num(nzh)} млн м² нежилья\n"
-            f"- **{ru_num(zh + nzh)} млн м² недвижимости**"
+            f"- **{ru_num(zh + mop_sum + nzh)} млн м² недвижимости**"
             + ("\n\n*(2026 по РФ — нет данных)*" if has26 else "")
         )
         st.markdown("")
@@ -289,53 +331,57 @@ with c2:
             f"- ИЖС: {ru_num(_sum_range(b2_1, 'ИЖС', y0, y1))} млн м²")
         st.markdown("")
 
-# ② Бюджет / Небюджет (monitoring 2.0, всегда Москва)
-st.markdown("**② Бюджетное и небюджетное (Москва, мониторинг 2.0)**")
-nb = monitoring_by_year(
-    rv,
-    gruppirovka="Жилье",
-    istochnik=["Внебюджет"],
-    value_col="Жилая площадь",
-).rename(columns={"value": "Небюджет"})
-bd = monitoring_by_year(rv, gruppirovka="Жилье",
-                        istochnik=["Городской бюджет", "Федеральный бюджет"],
-                        value_col="Жилая площадь").rename(columns={"value": "Бюджет"})
-b2_2 = pd.merge(nb, bd, on="year", how="outer")
-c1, c2 = st.columns([3, 1])
-with c1:
-    render_stacked(b2_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],
-                   year_from=YF, year_to=YT, key="b2_2", height=300)
-with c2:
-    for (y0, y1) in [(2011, 2025), (2011, 2026)]:
-        st.markdown(
-            f"**Σ {y0}-{y1}**\n\n"
-            f"- Небюджет: {ru_num(_sum_range(b2_2, 'Небюджет', y0, y1))} млн м²\n"
-            f"- Бюджет: {ru_num(_sum_range(b2_2, 'Бюджет', y0, y1))} млн м²")
-        st.markdown("")
+if is_msk:
+    # ② Бюджет / Небюджет (monitoring 2.0, Москва)
+    st.markdown("**② Бюджетное и небюджетное (Москва, мониторинг 2.0)**")
+    nb = monitoring_by_year(
+        rv,
+        gruppirovka="Жилье",
+        istochnik=["Внебюджет"],
+        value_col="Жилая площадь",
+    ).rename(columns={"value": "Небюджет"})
+    bd = monitoring_by_year(rv, gruppirovka="Жилье",
+                            istochnik=["Городской бюджет", "Федеральный бюджет"],
+                            value_col="Жилая площадь").rename(columns={"value": "Бюджет"})
+    b2_2 = pd.merge(nb, bd, on="year", how="outer")
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        render_stacked(b2_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],
+                       year_from=YF, year_to=YT, key="b2_2", height=300)
+    with c2:
+        for (y0, y1) in [(2011, 2025), (2011, 2026)]:
+            st.markdown(
+                f"**Σ {y0}-{y1}**\n\n"
+                f"- Небюджет: {ru_num(_sum_range(b2_2, 'Небюджет', y0, y1))} млн м²\n"
+                f"- Бюджет: {ru_num(_sum_range(b2_2, 'Бюджет', y0, y1))} млн м²")
+            st.markdown("")
 
-# ③ Реновация (ФОНД РЕНОВАЦИИ, всегда Москва), 2017-
-st.markdown("**③ Ввод по реновации (Москва)**")
-b2_3 = pd.DataFrame(
-    [{"year": year, "Реновация": value} for year, value in RENOVATION_VALUES.items()]
-)
-ren26 = monitoring_by_year(
-    rv,
-    gk="ФОНД РЕНОВАЦИИ",
-    gruppirovka="Жилье",
-    value_col="Жилая площадь",
-    year_from=2026,
-    year_to=2026,
-)
-if not ren26.empty:
-    b2_3 = _upsert_year(b2_3, {"year": 2026, "Реновация": float(ren26["value"].iloc[0])})
-c1, c2 = st.columns([3, 1])
-with c1:
-    render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
-                   year_from=2017, year_to=YT, key="b2_3", height=280, totals=False)
-with c2:
-    for (y0, y1) in [(2017, 2025), (2017, 2026)]:
-        st.markdown(f"**Σ {y0}-{y1}**: {ru_num(_sum_range(b2_3, 'Реновация', y0, y1))} млн м²")
-        st.markdown("")
+    # ③ Реновация (ФОНД РЕНОВАЦИИ, Москва), 2017-
+    st.markdown("**③ Ввод по реновации (Москва)**")
+    b2_3 = pd.DataFrame(
+        [{"year": year, "Реновация": value} for year, value in RENOVATION_VALUES.items()]
+    )
+    ren26 = monitoring_by_year(
+        rv,
+        gk="ФОНД РЕНОВАЦИИ",
+        gruppirovka="Жилье",
+        value_col="Жилая площадь",
+        year_from=2026,
+        year_to=2026,
+    )
+    if not ren26.empty:
+        b2_3 = _upsert_year(b2_3, {"year": 2026, "Реновация": float(ren26["value"].iloc[0])})
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
+                       year_from=2017, year_to=YT, key="b2_3", height=280, totals=False)
+    with c2:
+        for (y0, y1) in [(2017, 2025), (2017, 2026)]:
+            st.markdown(f"**Σ {y0}-{y1}**: {ru_num(_sum_range(b2_3, 'Реновация', y0, y1))} млн м²")
+            st.markdown("")
+
+if not is_msk:
+    st.stop()
 
 # ============================================================
 # Блок 3. Нежилая недвижимость — годовые значения (всегда Москва)
@@ -364,9 +410,16 @@ with c2:
 
 # ② Бюджет / Небюджет (monitoring нежильё)
 st.markdown("**② Бюджетное и небюджетное (мониторинг 2.0)**")
-nb3 = monitoring_by_year(rv, gruppirovka="Нежилье", istochnik=["Внебюджет"]).rename(columns={"value": "Небюджет"})
-bd3 = monitoring_by_year(rv, gruppirovka="Нежилье",
-                         istochnik=["Городской бюджет", "Федеральный бюджет"]).rename(columns={"value": "Бюджет"})
+nb3 = monitoring_by_year(
+    rv,
+    istochnik=["Внебюджет"],
+    value_col="category_нежилое_отдельное",
+).rename(columns={"value": "Небюджет"})
+bd3 = monitoring_by_year(
+    rv,
+    istochnik=["Городской бюджет", "Федеральный бюджет"],
+    value_col="category_нежилое_отдельное",
+).rename(columns={"value": "Бюджет"})
 b3_2 = pd.merge(nb3, bd3, on="year", how="outer")
 c1, c2 = st.columns([3, 1])
 with c1:

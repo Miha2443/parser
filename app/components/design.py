@@ -125,20 +125,22 @@ def apply_theme() -> None:
             linear-gradient(180deg, var(--ma-bg2) 0%, var(--ma-bg) 100%);
         }}
 
-        [data-testid="stHeader"] {{
-          background: rgba(12,20,29,.92);
-          border-bottom: 1px solid rgba(43,61,80,.7);
-        }}
-
-        [data-testid="stToolbar"] {{
-          color: var(--ma-muted);
+        [data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        #MainMenu,
+        footer {{
+          display: none !important;
+          height: 0 !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
         }}
 
         [data-testid="stAppViewContainer"] > .main .block-container,
         [data-testid="stMainBlockContainer"],
         .stMainBlockContainer.block-container {{
           max-width: 1540px;
-          padding: 1rem 1.35rem 1.35rem;
+          padding: .65rem 1.35rem 1.35rem;
         }}
 
         [data-testid="stSidebar"] {{

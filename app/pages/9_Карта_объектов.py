@@ -251,7 +251,7 @@ else:
         autosize=True,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, Segoe UI, Arial, sans-serif", color=COLORS["ink"]),
+        font=dict(family="Montserrat, Segoe UI, Roboto, Arial, sans-serif", color=COLORS["ink"]),
         hovermode="closest",
         mapbox=dict(
             style="open-street-map",
@@ -261,7 +261,15 @@ else:
         ),
         height=660,
         margin=dict(l=0, r=0, t=0, b=0),
-        legend=dict(orientation="h", y=0.01, x=0.02, bgcolor="rgba(255,255,255,.86)"),
+        legend=dict(
+            orientation="h",
+            y=0.01,
+            x=0.02,
+            bgcolor="rgba(26,38,52,.9)",
+            bordercolor=COLORS["stroke"],
+            borderwidth=1,
+            font=dict(color=COLORS["text"], size=12),
+        ),
     )
     st.plotly_chart(
         fig,

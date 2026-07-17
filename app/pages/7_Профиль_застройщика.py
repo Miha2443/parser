@@ -795,8 +795,8 @@ def render_delay_card(title: str, value: float | None,
             )
     subs_html = "".join(parts)
     st.markdown(
-        f"<div style='padding:18px;border:1px solid {COLORS['line']};border-radius:8px;"
-        "background:#fff;height:100%;box-shadow:0 1px 2px rgba(16,24,40,.04);'>"
+        f"<div style='padding:18px;border:1px solid {COLORS['line']};border-radius:14px;"
+        f"background:{COLORS['panel']};height:100%;box-shadow:none;'>"
         f"<div style='color:{COLORS['muted']};font-size:11px;text-transform:uppercase;"
         f"letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>"
         f"<div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};"

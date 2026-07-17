@@ -230,6 +230,80 @@ def apply_theme() -> None:
           box-shadow: 0 18px 40px rgba(0,0,0,.18);
         }}
 
+        .ma-brand-header {{
+          display: flex;
+          align-items: center;
+          gap: 1.05rem;
+          width: 100%;
+          max-width: 100%;
+          min-height: 4.2rem;
+          margin: 0 0 .85rem 0;
+          padding: .78rem 1.2rem .78rem 1rem;
+          border: 1px solid var(--ma-stroke);
+          border-radius: 0 0 18px 0;
+          background:
+            linear-gradient(120deg, rgba(35,54,72,.96), rgba(24,38,52,.96));
+          box-shadow: 0 14px 30px rgba(0,0,0,.18);
+        }}
+
+        .ma-brand-mark {{
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 2.55rem;
+          height: 2.55rem;
+          flex: 0 0 auto;
+          border: 2px solid rgba(255,255,255,.82);
+          color: #FFFFFF;
+          font-size: 1.05rem;
+          font-weight: 800;
+          line-height: 1;
+        }}
+
+        .ma-brand-mark.shield {{
+          border-radius: .45rem .45rem .9rem .9rem;
+        }}
+
+        .ma-brand-mark.circle {{
+          border-radius: 50%;
+        }}
+
+        .ma-brand-text {{
+          color: #FFFFFF;
+          font-size: .78rem;
+          line-height: 1.12;
+          font-weight: 800;
+          letter-spacing: .02em;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }}
+
+        .ma-brand-divider {{
+          width: 1px;
+          height: 2.65rem;
+          background: rgba(255,255,255,.28);
+          flex: 0 0 auto;
+        }}
+
+        @media (max-width: 760px) {{
+          .ma-brand-header {{
+            width: 100%;
+            gap: .7rem;
+            padding-right: .85rem;
+          }}
+
+          .ma-brand-text {{
+            font-size: .62rem;
+            white-space: normal;
+          }}
+
+          .ma-brand-mark {{
+            width: 2.1rem;
+            height: 2.1rem;
+            font-size: .88rem;
+          }}
+        }}
+
         .ma-page-header::before {{
           content: "";
           position: absolute;
@@ -336,6 +410,12 @@ def apply_theme() -> None:
           background: var(--ma-panel);
           box-shadow: none;
           overflow: hidden;
+        }}
+
+        div[data-testid="stDataFrame"] [role="grid"],
+        div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
+        div[data-testid="stDataFrame"] div {{
+          border-color: var(--ma-stroke) !important;
         }}
 
         div[data-testid="stVerticalBlockBorderWrapper"] {{
@@ -535,6 +615,14 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
     subtitle_html = f"<div class='ma-subtitle'>{subtitle}</div>" if subtitle else ""
     st.markdown(
         f"""
+        <div class="ma-brand-header">
+          <div class="ma-brand-mark shield">М</div>
+          <div class="ma-brand-divider"></div>
+          <div class="ma-brand-mark circle">ГК</div>
+          <div class="ma-brand-text">Градостроительный<br>комплекс Москвы</div>
+          <div class="ma-brand-mark circle">ДГП</div>
+          <div class="ma-brand-text">Департамент<br>градостроительной политики<br>города Москвы</div>
+        </div>
         <div class="ma-page-header">
           <div class="ma-eyebrow">{eyebrow}</div>
           <h1>{title}</h1>

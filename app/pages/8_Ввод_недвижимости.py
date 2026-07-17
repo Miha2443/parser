@@ -21,6 +21,7 @@ from app.data_access import (
     load_vvod_static,
     load_emiss_34118,
     load_monitoring_2_0,
+    load_monitoring_2011_2026_static,
     monitoring_by_year,
 )
 
@@ -151,6 +152,17 @@ def _upsert_year(df: pd.DataFrame, row: dict) -> pd.DataFrame:
     return pd.concat([df, row_df], ignore_index=True).drop_duplicates(subset=["year"], keep="last")
 
 
+def _budget_split_with_2026(static_df: pd.DataFrame, live_2026: pd.DataFrame) -> pd.DataFrame:
+    cols = ["year", "Небюджет", "Бюджет"]
+    base = pd.DataFrame(columns=cols)
+    if static_df is not None and not static_df.empty:
+        base = static_df[static_df["year"].between(2011, 2025)].copy()
+        base = base[[c for c in cols if c in base.columns]]
+    if live_2026 is not None and not live_2026.empty:
+        base = pd.concat([base, live_2026[cols]], ignore_index=True)
+    return base.drop_duplicates(subset=["year"], keep="last").sort_values("year")
+
+
 def _monitoring_mop_row(rv: pd.DataFrame, year: int) -> dict | None:
     required = {"Год ввода по Мосстату", "category_моп"}
     if rv is None or rv.empty or not required.issubset(set(rv.columns)):
@@ -224,6 +236,7 @@ def _monitoring_nonres_branch_row(rv: pd.DataFrame, year: int) -> dict | None:
 vvod = load_vvod_static()
 emiss = load_emiss_34118()
 mon = load_monitoring_2_0()
+monitoring_static = load_monitoring_2011_2026_static()
 rv = mon.get("rv", pd.DataFrame())
 
 page_header("Ввод недвижимости")
@@ -339,11 +352,16 @@ if is_msk:
         gruppirovka="Жилье",
         istochnik=["Внебюджет"],
         value_col="Жилая площадь",
+        year_from=2026,
+        year_to=2026,
     ).rename(columns={"value": "Небюджет"})
     bd = monitoring_by_year(rv, gruppirovka="Жилье",
                             istochnik=["Городской бюджет", "Федеральный бюджет"],
-                            value_col="Жилая площадь").rename(columns={"value": "Бюджет"})
-    b2_2 = pd.merge(nb, bd, on="year", how="outer")
+                            value_col="Жилая площадь",
+                            year_from=2026,
+                            year_to=2026).rename(columns={"value": "Бюджет"})
+    live_b2_2 = pd.merge(nb, bd, on="year", how="outer")
+    b2_2 = _budget_split_with_2026(monitoring_static["residential_budget_split"], live_b2_2)
     c1, c2 = st.columns([3, 1])
     with c1:
         render_stacked(b2_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],
@@ -414,13 +432,18 @@ nb3 = monitoring_by_year(
     rv,
     istochnik=["Внебюджет"],
     value_col="category_нежилое_отдельное",
+    year_from=2026,
+    year_to=2026,
 ).rename(columns={"value": "Небюджет"})
 bd3 = monitoring_by_year(
     rv,
     istochnik=["Городской бюджет", "Федеральный бюджет"],
     value_col="category_нежилое_отдельное",
+    year_from=2026,
+    year_to=2026,
 ).rename(columns={"value": "Бюджет"})
-b3_2 = pd.merge(nb3, bd3, on="year", how="outer")
+live_b3_2 = pd.merge(nb3, bd3, on="year", how="outer")
+b3_2 = _budget_split_with_2026(monitoring_static["nonres_budget_split"], live_b3_2)
 c1, c2 = st.columns([3, 1])
 with c1:
     render_stacked(b3_2, [("Небюджет", "Небюджет", C_NEBUDG), ("Бюджет", "Бюджет", C_BUDG)],

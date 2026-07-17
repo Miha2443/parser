@@ -1440,3 +1440,97 @@ def monitoring_by_year(
     )
     g["value"] = g["area"] / 1e6  # м² → млн м²
     return g[["year", "value"]]
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_monitoring_2011_2026_static() -> dict[str, pd.DataFrame]:
+    """Static Moscow budget/non-budget rows from monitoring sheet `2011-2026`.
+
+    Values in the workbook are stored in thousand m²; dashboard charts use mln m².
+    """
+    empty = {
+        "residential_budget_split": pd.DataFrame(columns=["year", "Бюджет", "Небюджет", "Итого"]),
+        "nonres_budget_split": pd.DataFrame(columns=["year", "Бюджет", "Небюджет", "Итого"]),
+    }
+    files = _raw_files(MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+    if not files:
+        return empty
+    latest = max(files, key=lambda p: p.stat().st_mtime)
+    try:
+        xl = pd.ExcelFile(latest)
+    except Exception:  # noqa: BLE001
+        return empty
+
+    sheet = next((s for s in xl.sheet_names if str(s).strip() == "2011-2026"), None)
+    if sheet is None:
+        return empty
+
+    try:
+        df = pd.read_excel(latest, sheet_name=sheet, header=None)
+    except Exception:  # noqa: BLE001
+        return empty
+
+    def norm(value: object) -> str:
+        if value is None or pd.isna(value):
+            return ""
+        return " ".join(str(value).replace("\n", " ").casefold().split())
+
+    def strict_year(value: object) -> int | None:
+        if value is None or pd.isna(value):
+            return None
+        if isinstance(value, (int, float)) and not pd.isna(value):
+            year = int(value)
+            return year if 2011 <= year <= 2026 and float(year) == float(value) else None
+        text = str(value).strip()
+        return int(text) if text.isdigit() and 2011 <= int(text) <= 2026 else None
+
+    year_row = None
+    year_cols: dict[int, int] = {}
+    for i in range(min(12, len(df))):
+        found: dict[int, int] = {}
+        for j in range(df.shape[1]):
+            year = strict_year(df.iat[i, j])
+            if year is not None and 2011 <= year <= 2026:
+                found[year] = j
+        if len(found) >= 10:
+            year_row = i
+            year_cols = found
+            break
+    if year_row is None or not year_cols:
+        return empty
+
+    section = ""
+    residential_row = None
+    nonres_row = None
+    for i in range(year_row + 1, len(df)):
+        label = norm(df.iat[i, 1]) if df.shape[1] > 1 else ""
+        metric = norm(df.iat[i, 2]) if df.shape[1] > 2 else ""
+        if label:
+            section = label
+        if "нежилые объекты" in section and "общая пл" in metric:
+            nonres_row = i
+        elif "жилые объекты" in section and "жилая пл" in metric:
+            residential_row = i
+        if residential_row is not None and nonres_row is not None:
+            break
+
+    def build(row_index: int | None) -> pd.DataFrame:
+        if row_index is None:
+            return pd.DataFrame(columns=["year", "Бюджет", "Небюджет", "Итого"])
+        rows = []
+        for year, col in sorted(year_cols.items()):
+            total = _to_float(df.iat[row_index, col]) / 1000.0
+            budget = _to_float(df.iat[row_index, col + 1]) / 1000.0 if col + 1 < df.shape[1] else float("nan")
+            nonbudget = _to_float(df.iat[row_index, col + 2]) / 1000.0 if col + 2 < df.shape[1] else float("nan")
+            rows.append({
+                "year": year,
+                "Бюджет": budget,
+                "Небюджет": nonbudget,
+                "Итого": total,
+            })
+        return pd.DataFrame(rows)
+
+    return {
+        "residential_budget_split": build(residential_row),
+        "nonres_budget_split": build(nonres_row),
+    }

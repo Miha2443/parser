@@ -5,8 +5,8 @@ REM
 REM Что делает:
 REM   - Создаёт лог-файл с датой: data\processed\etl_<YYYY-MM-DD>.log
 REM   - Запускает update_realty.py с per-dev обходом квартирографии
-REM     ТОЛЬКО ПО ПОНЕДЕЛЬНИКАМ (--weekly-kvart-per-dev) — экономит
-REM     ~90 минут в остальные дни
+REM     при каждом плановом прогоне. Это нужно, чтобы площади квартир
+REM     по девелоперам не отставали от агрегатов.
 REM   - Уведомление в TDM шлёт сам update_realty.py
 REM
 REM Запуск вручную (для отладки):
@@ -45,8 +45,8 @@ if exist ".venv\Scripts\python.exe" set PY_EXE=.venv\Scripts\python.exe
 set "PYTHONIOENCODING=utf-8"
 set "PYTHONUTF8=1"
 
-REM Запуск с per-dev обходом ТОЛЬКО ПО ПОНЕДЕЛЬНИКАМ
-%PY_EXE% scripts\update_realty.py --weekly-kvart-per-dev >> "%LOG_FILE%" 2>&1
+REM Запуск с per-dev обходом квартирографии
+%PY_EXE% scripts\update_realty.py >> "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%
 
 echo. >> "%LOG_FILE%"

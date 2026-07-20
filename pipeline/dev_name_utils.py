@@ -45,4 +45,10 @@ def normalize_developer_name(name: str) -> str:
                 s = s[len(p):].strip()
                 changed = True
                 break
+    aliases = {
+        "pioneer": "пионер",
+        "пионер": "пионер",
+    }
+    if s in aliases:
+        return aliases[s]
     return s

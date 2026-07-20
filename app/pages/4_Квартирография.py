@@ -24,7 +24,7 @@ apply_theme()
 COLOR_1K = COLORS["green"]
 COLOR_2K = COLORS["cyan"]
 COLOR_3K = "#D5DEE7"
-COLOR_4K = COLORS["navy"]
+COLOR_4K = COLORS["red"]
 
 
 def ru_num(value, digits=0):

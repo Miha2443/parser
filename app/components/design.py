@@ -505,10 +505,30 @@ def apply_theme() -> None:
           color: var(--ma-text);
         }}
 
+        div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {{
+          min-height: 2.7rem !important;
+          height: auto !important;
+          align-items: flex-start !important;
+          overflow: visible !important;
+        }}
+
         div[data-baseweb="tag"] {{
           background: rgba(232,76,76,.16) !important;
           border: 1px solid rgba(232,76,76,.42) !important;
           color: var(--ma-text) !important;
+          height: auto !important;
+          min-height: 1.55rem !important;
+          max-width: 100% !important;
+          margin-top: .18rem !important;
+          margin-bottom: .18rem !important;
+          white-space: normal !important;
+        }}
+
+        div[data-baseweb="tag"] span {{
+          white-space: normal !important;
+          overflow: visible !important;
+          text-overflow: clip !important;
+          line-height: 1.18 !important;
         }}
 
         label p {{
@@ -637,21 +657,36 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
 
 def style_plotly(fig, *, height: int | None = None):
     """Apply final chart polish to a Plotly figure."""
+    existing_margin = fig.layout.margin.to_plotly_json() if fig.layout.margin else {}
+    margin = {"l": 54, "r": 28, "t": 56, "b": 70}
+    margin.update({k: v for k, v in existing_margin.items() if v is not None})
     fig.update_layout(
         template="moscow_business",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT_STACK, color=COLORS["text"]),
         hovermode="closest",
+        margin=margin,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.18,
+            xanchor="right",
+            x=1,
+            font=dict(size=12, color=COLORS["text"]),
+        ),
+        uniformtext=dict(minsize=10, mode="hide"),
     )
     if height is not None:
         fig.update_layout(height=height)
+    fig.update_traces(cliponaxis=False, selector=dict(type="bar"))
     fig.update_xaxes(
         gridcolor="rgba(43,61,80,.72)",
         zerolinecolor="rgba(43,61,80,.9)",
         linecolor=COLORS["stroke"],
         tickfont=dict(color=COLORS["muted"]),
         title_font=dict(color=COLORS["muted"]),
+        automargin=True,
     )
     fig.update_yaxes(
         gridcolor="rgba(43,61,80,.72)",
@@ -659,5 +694,6 @@ def style_plotly(fig, *, height: int | None = None):
         linecolor=COLORS["stroke"],
         tickfont=dict(color=COLORS["muted"]),
         title_font=dict(color=COLORS["muted"]),
+        automargin=True,
     )
     return fig

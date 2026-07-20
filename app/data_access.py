@@ -1284,19 +1284,29 @@ def load_vvod_static() -> dict:
     return out
 
 
-def _parse_emiss_34118_file(path: Path) -> dict:
-    """Парсит один ЕМИСС-34118 .xls → {year: {'МКД': млн м², 'ИЖС': млн м²}} для РФ.
+def _emiss_period_from_label(value: object) -> tuple[str, int | None]:
+    if value is None or pd.isna(value):
+        return "year", 12
+    s = str(value).strip().lower().replace("–", "-").replace("—", "-")
+    if not s:
+        return "year", 12
+    month_by_name = {name: i + 1 for i, name in enumerate(MONTH_NAMES_RU)}
+    if "-" in s:
+        tail = s.split("-")[-1].strip()
+        month = month_by_name.get(tail)
+        return ("year" if month == 12 else "ytd"), month
+    month = month_by_name.get(s)
+    if month is not None:
+        return "month", month
+    return "year", 12
 
-    Объединяет 2 РФ-строки («Российская Федерация» 2015-2022 +
-    «… без учета новых субъектов» 2023-2025): для каждого года берём ту,
-    где есть значение. МКД = «Жилые здания», если нет — «многоквартирные».
-    ИЖС = «построенные населением». Значения тыс. м² → млн (÷1000).
-    """
+
+def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
+    """Parse one EMISS 34118 xls into RF rows by year/month/category."""
     try:
         df = pd.read_excel(path, sheet_name="Данные", header=None)
     except Exception:  # noqa: BLE001
-        return {}
-    # строка с годами
+        return pd.DataFrame()
     yrow = None
     for i in range(min(6, len(df))):
         yrs = sum(1 for j in range(df.shape[1])
@@ -1305,46 +1315,98 @@ def _parse_emiss_34118_file(path: Path) -> dict:
             yrow = i
             break
     if yrow is None:
-        return {}
-    year_cols = {}
-    for j in range(df.shape[1]):
-        y = _extract_year(df.iat[yrow, j])
-        if y is not None:
-            year_cols[y] = j
+        return pd.DataFrame()
 
-    # собираем по (категория) → {year: value} для РФ-строк (обе вариации)
-    cat = {"многокв": {}, "здания": {}, "ижс": {}}
+    period_row = yrow + 1 if yrow + 1 < len(df) else None
+    col_meta: dict[int, tuple[int, str, int | None]] = {}
+    last_year = None
+    for j in range(df.shape[1]):
+        year = _extract_year(df.iat[yrow, j])
+        if year is not None:
+            last_year = year
+        if last_year is None:
+            continue
+        period_raw = df.iat[period_row, j] if period_row is not None else ""
+        period_type, month = _emiss_period_from_label(period_raw)
+        if month is None:
+            continue
+        col_meta[j] = (last_year, period_type, month)
+
+    records: list[dict] = []
     for i in range(yrow + 1, len(df)):
         region = str(df.iat[i, 0]).lower()
         if "российская федерация" not in region:
             continue
         label = str(df.iat[i, 1]).lower()
-        if "многоквартирн" in label:
-            key = "многокв"
-        elif "построенные населением" in label or "построенных населением" in label:
-            key = "ижс"
+        if "построенные населением" in label or "построенных населением" in label:
+            metric = "ИЖС"
         elif "жилые здания" in label:
-            key = "здания"
+            # Если есть «Жилые здания», оно приоритетнее более узкой строки
+            # «Жилые здания многоквартирные» на том же периоде.
+            metric = "МКД"
+            priority = 2 if "многоквартирн" not in label else 1
+        elif "многоквартирн" in label:
+            metric = "МКД"
+            priority = 1
         else:
             continue
-        for y, j in year_cols.items():
+        if metric == "ИЖС":
+            priority = 1
+        for j, (year, period_type, month) in col_meta.items():
             val = _to_float(df.iat[i, j])
-            if not pd.isna(val):
-                # перекрываем только если ещё нет (первая РФ-строка приоритетна,
-                # но варианты не пересекаются по годам, так что неважно)
-                cat[key].setdefault(y, val)
+            if pd.isna(val):
+                continue
+            records.append({
+                "year": year,
+                "month": month,
+                "quarter": (month - 1) // 3 + 1,
+                "period_type": period_type,
+                "metric": metric,
+                "priority": priority,
+                "value": val / 1000.0,
+                "source_file": path.name,
+            })
 
+    if not records:
+        return pd.DataFrame()
+    out = pd.DataFrame(records)
+    out = (
+        out.sort_values(["year", "month", "period_type", "metric", "priority"])
+        .drop_duplicates(["year", "month", "period_type", "metric"], keep="last")
+        .pivot_table(
+            index=["year", "month", "quarter", "period_type", "source_file"],
+            columns="metric",
+            values="value",
+            aggfunc="first",
+        )
+        .reset_index()
+    )
+    out.columns.name = None
+    return out
+
+
+def _parse_emiss_34118_file(path: Path) -> dict:
+    """Парсит один ЕМИСС-34118 .xls → {year: {'МКД': млн м², 'ИЖС': млн м²}} для РФ.
+
+    Объединяет 2 РФ-строки («Российская Федерация» 2015-2022 +
+    «… без учета новых субъектов» 2023-2025): для каждого года берём ту,
+    где есть значение. МКД = «Жилые здания», если нет — «многоквартирные».
+    ИЖС = «построенные населением». Значения тыс. м² → млн (÷1000).
+    """
+    periods = _parse_emiss_34118_periods_file(path)
+    if periods.empty:
+        return {}
+    annual = periods[
+        ((periods["period_type"] == "year") | (periods["period_type"] == "ytd"))
+        & (periods["month"] == 12)
+    ].copy()
+    if annual.empty:
+        return {}
     out: dict[int, dict] = {}
-    for y in sorted(year_cols):
-        mkd = cat["здания"].get(y)
-        if mkd is None:
-            mkd = cat["многокв"].get(y)
-        izhs = cat["ижс"].get(y)
-        if mkd is None and izhs is None:
-            continue
-        out[y] = {
-            "МКД": (mkd / 1000.0) if mkd is not None else float("nan"),
-            "ИЖС": (izhs / 1000.0) if izhs is not None else float("nan"),
+    for _, row in annual.sort_values(["year", "source_file"]).iterrows():
+        out[int(row["year"])] = {
+            "МКД": row.get("МКД", float("nan")),
+            "ИЖС": row.get("ИЖС", float("nan")),
         }
     return out
 
@@ -1369,7 +1431,7 @@ def load_emiss_34118() -> pd.DataFrame:
             ))
         return out
 
-    mart = _load_realty_mart("emiss_34118", raw_sources)
+    mart = _load_realty_mart("emiss_34118", raw_sources())
     if mart is not None:
         return mart
 
@@ -1387,8 +1449,9 @@ def load_emiss_34118() -> pd.DataFrame:
             key=lambda p: p.stat().st_mtime,
         )
         if live:
-            for y, v in _parse_emiss_34118_file(live[-1]).items():
-                merged[y] = v  # живые перекрывают базу
+            for path in live:
+                for y, v in _parse_emiss_34118_file(path).items():
+                    merged[y] = v  # живые перекрывают базу
 
     if not merged:
         return pd.DataFrame(columns=["year", "МКД", "ИЖС"])
@@ -1398,6 +1461,40 @@ def load_emiss_34118() -> pd.DataFrame:
         "МКД": [merged[y].get("МКД", float("nan")) for y in rows],
         "ИЖС": [merged[y].get("ИЖС", float("nan")) for y in rows],
     })
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_emiss_34118_periods() -> pd.DataFrame:
+    """РФ-ввод жилья из ЕМИСС 34118 по месяцам/кварталам/годам, млн м²."""
+    frames: list[pd.DataFrame] = []
+    base = _vvod_dir()
+    if base is not None:
+        bp = base / "emiss_34118_base.xls"
+        if bp.exists():
+            frames.append(_parse_emiss_34118_periods_file(bp))
+    downloads = PROJECT_ROOT / "downloads"
+    if downloads.exists():
+        for path in sorted(
+            downloads.glob("*Введено в действие общей площади жилых домов*.xls*"),
+            key=lambda p: p.stat().st_mtime,
+        ):
+            frames.append(_parse_emiss_34118_periods_file(path))
+    frames = [f for f in frames if f is not None and not f.empty]
+    if not frames:
+        return pd.DataFrame(
+            columns=["year", "month", "quarter", "period_type", "МКД", "ИЖС", "source_file"]
+        )
+    out = pd.concat(frames, ignore_index=True)
+    out = (
+        out.sort_values(["year", "month", "period_type", "source_file"])
+        .drop_duplicates(["year", "month", "period_type"], keep="last")
+        .sort_values(["year", "month", "period_type"])
+        .reset_index(drop=True)
+    )
+    for col in ("МКД", "ИЖС"):
+        if col not in out.columns:
+            out[col] = float("nan")
+    return out
 
 
 def monitoring_by_year(

@@ -22,7 +22,7 @@ apply_theme()
 COLOR_1K = COLORS["green"]
 COLOR_2K = COLORS["cyan"]
 COLOR_3K = "#D5DEE7"
-COLOR_4K = COLORS["navy"]
+COLOR_4K = COLORS["red"]
 ROOM_COLORS = [COLOR_1K, COLOR_2K, COLOR_3K, COLOR_4K]
 
 
@@ -125,13 +125,15 @@ with chart_l:
             values=list(shares.values()),
             marker=dict(colors=ROOM_COLORS[:len(shares)]),
             textinfo="label+percent",
+            textposition="inside",
+            insidetextorientation="radial",
             hovertemplate="%{label}: %{value}%<extra></extra>",
             sort=False,
         ))
         fig.update_layout(
-            margin=dict(l=0, r=0, t=0, b=0), height=300, showlegend=False,
+            margin=dict(l=18, r=18, t=16, b=32), height=340, showlegend=False,
         )
-        style_plotly(fig, height=300)
+        style_plotly(fig, height=340)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Нет данных по комнатности")

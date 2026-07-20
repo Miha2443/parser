@@ -36,7 +36,7 @@ apply_theme()
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
 CAT_LABELS = ["Жилое", "МОП", "Нежилье в жилье", "Нежилое отдельное"]
-CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["cyan"], "#7B8794"]
+CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["cyan"], COLORS["red"]]
 CAT_COL_PREFIX = "category_"
 
 ERZRF_COLOR = COLORS["blue"]
@@ -86,15 +86,15 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
     ))
     fig.update_layout(
         title=dict(text=title, x=0.5, font=dict(size=13)),
-        height=240,
-        margin=dict(l=10, r=10, t=40, b=10),
+        height=270,
+        margin=dict(l=18, r=18, t=46, b=24),
         annotations=[
             dict(text=f"<b>{ru_num(total/1000, 0)}</b><br>тыс. м²",
                  x=0.5, y=0.5, showarrow=False, font=dict(size=12)),
         ],
         showlegend=False,
     )
-    style_plotly(fig, height=240)
+    style_plotly(fig, height=270)
     st.plotly_chart(fig, use_container_width=True, key=f"donut_{title}")
     if subtitle:
         st.caption(subtitle)
@@ -229,14 +229,14 @@ with cols_top[1]:
             return str(p)
 
     rating_html = f"""
-    <div style='padding-top:18px;font-size:13px;color:#444;line-height:1.5;'>
+    <div style='padding-top:18px;font-size:13px;color:{COLORS["text"]};line-height:1.5;'>
       <div style='font-size:11px;text-transform:uppercase;letter-spacing:0.5px;
-                  color:#888;margin-bottom:4px;'>Рейтинги ЕРЗ</div>
+                  color:{COLORS["muted"]};margin-bottom:4px;'>Рейтинги ЕРЗ</div>
       <table style='border-collapse:collapse;font-size:13px;'>
         <tr>
-          <th style='text-align:left;padding:2px 12px 2px 0;color:#666;font-weight:500;'></th>
-          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>РФ</th>
-          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>Москва</th>
+          <th style='text-align:left;padding:2px 12px 2px 0;color:{COLORS["muted"]};font-weight:500;'></th>
+          <th style='text-align:center;padding:2px 10px;color:{COLORS["muted"]};font-weight:500;'>РФ</th>
+          <th style='text-align:center;padding:2px 10px;color:{COLORS["muted"]};font-weight:500;'>Москва</th>
         </tr>
         <tr>
           <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
@@ -249,7 +249,7 @@ with cols_top[1]:
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_msk)}</td>
         </tr>
       </table>
-      {f"<div style='margin-top:6px;color:#666;'>Оценка ЕРЗ: <b style='color:{ERZRF_COLOR};'>{erz_rating}</b></div>" if erz_rating else ""}
+      {f"<div style='margin-top:6px;color:{COLORS['muted']};'>Оценка ЕРЗ: <b style='color:{ERZRF_COLOR};'>{erz_rating}</b></div>" if erz_rating else ""}
     </div>
     """
     st.markdown(rating_html, unsafe_allow_html=True)
@@ -601,20 +601,20 @@ with right:
                 v_msk = find_num(r_msk, pred)
                 v_rf = find_num(r_rf, pred)
                 rows_html += (
-                    "<tr style='border-top:1px solid #eee;'>"
-                    f"<td style='padding:8px 0;color:#444;'>{label}</td>"
+                    f"<tr style='border-top:1px solid {COLORS['stroke']};'>"
+                    f"<td style='padding:8px 0;color:{COLORS['text']};'>{label}</td>"
                     "<td style='text-align:right;padding:8px 8px;"
-                    f"font-weight:700;font-size:18px;color:#222;'>{v_msk}</td>"
+                    f"font-weight:700;font-size:18px;color:{COLORS['text']};'>{v_msk}</td>"
                     "<td style='text-align:right;padding:8px 0;"
-                    f"font-weight:700;font-size:18px;color:#666;'>{v_rf}</td>"
+                    f"font-weight:700;font-size:18px;color:{COLORS['muted']};'>{v_rf}</td>"
                     "</tr>"
                 )
             html = (
                 "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
                 "<tr>"
-                "<th style='text-align:left;padding:6px 0;color:#888;font-weight:500;'></th>"
-                "<th style='text-align:right;padding:6px 8px;color:#888;font-weight:500;'>Москва</th>"
-                "<th style='text-align:right;padding:6px 0;color:#888;font-weight:500;'>РФ</th>"
+                f"<th style='text-align:left;padding:6px 0;color:{COLORS['muted']};font-weight:500;'></th>"
+                f"<th style='text-align:right;padding:6px 8px;color:{COLORS['muted']};font-weight:500;'>Москва</th>"
+                f"<th style='text-align:right;padding:6px 0;color:{COLORS['muted']};font-weight:500;'>РФ</th>"
                 "</tr>"
                 f"{rows_html}"
                 "</table>"

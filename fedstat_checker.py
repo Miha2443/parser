@@ -87,7 +87,8 @@ INDICATORS = {
 
     "58089": "Индекс физического объема инвестиций в основной капитал с 2017 г. (оперативные данные) (процент)",
 
-    "34118": "Введено в действие общей площади жилых домов (оперативные данные) (тысяча квадратных метров общей площади)",
+    "34118_часть1": "Введено в действие общей площади жилых домов часть1 (2015-2022)",
+    "34118_часть2": "Введено в действие общей площади жилых домов часть2 (с 2023)",
 
     "33575": "Введено в действие общей площади жилых домов, построенных населением (оперативные данные) (тысяча квадратных метров общей площади)",
 
@@ -1215,6 +1216,23 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     }
 
     payload_template = PAYLOADS.get(indicator_id)
+    if payload_template is None and indicator_id in {"34118_часть1", "34118_часть2"}:
+        base = PAYLOADS.get("34118")
+        if base is not None:
+            payload_template = {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in base.items()
+            }
+            years = set(range(2015, 2023)) if indicator_id.endswith("часть1") else set(range(2023, 2100))
+            selected = []
+            for item in payload_template.get("selectedFilterIds", []):
+                m_year = re.fullmatch(r"3_(\d{4})", str(item))
+                if m_year and int(m_year.group(1)) not in years:
+                    continue
+                selected.append(item)
+            payload_template["selectedFilterIds"] = selected
+            suffix = "часть1" if indicator_id.endswith("часть1") else "часть2"
+            payload_template["title"] = f"{payload_template['title']} {suffix}"
     if payload_template is None:
         print(f"  ⚠️  Нет payload для индикатора {indicator_id}")
         return None

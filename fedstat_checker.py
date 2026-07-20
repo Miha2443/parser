@@ -2293,7 +2293,12 @@ def run(force: bool = False, only_ids: list[str] | None = None):
         print(f"  • {f}")
     print(f"{'='*60}\n")
 
-    ok = checked_ok > 0
+    if only_ids:
+        ok = checked_ok > 0 and not failed_downloads and not skipped_indicators
+        if not ok:
+            print("⚠️  Точечный запуск завершён с ошибками: проверьте строки выше.\n")
+    else:
+        ok = checked_ok > 0
     return downloaded_files, ok
 
 

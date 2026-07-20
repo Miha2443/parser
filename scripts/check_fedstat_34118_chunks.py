@@ -80,6 +80,11 @@ def _install_fake_download():
     return original, calls
 
 
+class DummyDriver:
+    def quit(self) -> None:
+        pass
+
+
 def _check_part(indicator_id: str, *, period_chunk_size: int, year_chunk_size: int) -> None:
     payload = fc._payload_34118_part(indicator_id)
     expected_years = set(range(2015, 2023)) if indicator_id.endswith("часть1") else set(range(2023, 2027))
@@ -111,10 +116,53 @@ def _check_part(indicator_id: str, *, period_chunk_size: int, year_chunk_size: i
         fc.download_excel = original_download
 
 
+def _check_targeted_run_is_strict() -> None:
+    original_download_dir = fc.DOWNLOAD_DIR
+    original_state_file = fc.STATE_FILE
+    original_indicators = fc.INDICATORS
+    original_create_driver = fc.create_driver
+    original_get_last_update_date = fc.get_last_update_date
+    original_download_excel = fc.download_excel
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fc.DOWNLOAD_DIR = root / "downloads"
+            fc.STATE_FILE = root / "fedstat_state.json"
+            fc.INDICATORS = {
+                "34118_часть1": "part1",
+                "34118_часть2": "part2",
+            }
+            fc.create_driver = lambda download_dir=None: DummyDriver()
+            fc.get_last_update_date = lambda _driver, _indicator_id: "15.07.2026"
+
+            def fake_download(indicator_id, save_dir, *, remote_date=None, driver=None):
+                if indicator_id == "34118_часть1":
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    path = save_dir / "part1.xlsx"
+                    path.write_bytes(b"xlsx")
+                    return path
+                return None
+
+            fc.download_excel = fake_download
+
+            files, ok = fc.run(force=True, only_ids=["34118_часть1", "34118_часть2"])
+            _require(len(files) == 1, "strict run setup should download exactly one fake file")
+            _require(not ok, "targeted --only run must fail when one requested part is missing")
+    finally:
+        fc.DOWNLOAD_DIR = original_download_dir
+        fc.STATE_FILE = original_state_file
+        fc.INDICATORS = original_indicators
+        fc.create_driver = original_create_driver
+        fc.get_last_update_date = original_get_last_update_date
+        fc.download_excel = original_download_excel
+
+
 def main() -> int:
     _require(fc._parse_only_ids("34118") == ["34118_часть1", "34118_часть2"], "--only=34118 expansion broke")
     _check_part("34118_часть1", period_chunk_size=1, year_chunk_size=99)
     _check_part("34118_часть2", period_chunk_size=1, year_chunk_size=1)
+    _check_targeted_run_is_strict()
     print("fedstat 34118 chunk checks: ok")
     return 0
 

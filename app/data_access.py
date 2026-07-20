@@ -1291,6 +1291,14 @@ def _emiss_period_from_label(value: object) -> tuple[str, int | None]:
     if not s:
         return "year", 12
     month_by_name = {name: i + 1 for i, name in enumerate(MONTH_NAMES_RU)}
+    quarter_by_name = {
+        "i квартал": 3,
+        "ii квартал": 6,
+        "iii квартал": 9,
+        "iv квартал": 12,
+    }
+    if s in quarter_by_name:
+        return "quarter", quarter_by_name[s]
     if "-" in s:
         tail = s.split("-")[-1].strip()
         month = month_by_name.get(tail)

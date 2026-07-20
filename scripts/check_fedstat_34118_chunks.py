@@ -158,11 +158,46 @@ def _check_targeted_run_is_strict() -> None:
         fc.download_excel = original_download_excel
 
 
+def _check_sdmx_obs_value_attribute() -> None:
+    payload = fc._payload_34118_part("34118_часть2")
+    payload["selectedFilterIds"] = fc._subset_34118_filters(
+        payload["selectedFilterIds"],
+        ["3_2024", "3_2025"],
+        ["33560_1540222"],
+    )
+
+    root = ET.Element("GenericData")
+    data_set = ET.SubElement(root, "DataSet")
+    for year in ("3_2024", "3_2025"):
+        series = ET.SubElement(data_set, "Series")
+        key = ET.SubElement(series, "SeriesKey")
+        for field_id, value in (
+            ("3", year),
+            ("33560", "33560_1540222"),
+            ("57831", "57831_1688487"),
+            ("58389", "58389_1754554"),
+        ):
+            ET.SubElement(key, "Value", {"id": field_id, "value": value})
+        ET.SubElement(series, "Obs", {"value": "1234"})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = fc._sdmx_34118_to_excel(
+            ET.tostring(root, encoding="utf-8"),
+            payload,
+            Path(tmp) / "obs_value_attr.xls",
+        )
+        _require(out is not None and out.exists(), "SDMX Obs value attribute did not produce xlsx")
+        parsed = da._parse_emiss_34118_periods_file(out)
+        _require(not parsed.empty, "SDMX Obs value attribute parsed dataframe is empty")
+        _require(float(parsed["ИЖС"].max()) == 1.234, "SDMX Obs value attribute value mismatch")
+
+
 def main() -> int:
     _require(fc._parse_only_ids("34118") == ["34118_часть1", "34118_часть2"], "--only=34118 expansion broke")
     _check_part("34118_часть1", period_chunk_size=1, year_chunk_size=99)
     _check_part("34118_часть2", period_chunk_size=1, year_chunk_size=1)
     _check_targeted_run_is_strict()
+    _check_sdmx_obs_value_attribute()
     print("fedstat 34118 chunk checks: ok")
     return 0
 

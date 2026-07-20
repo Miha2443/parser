@@ -500,6 +500,14 @@ def _sdmx_attr(elem: ET.Element, *names: str) -> str | None:
     return None
 
 
+def _record_obs_value(record: dict[str, str]) -> str | None:
+    for key in ("ObsValue", "OBS_VALUE", "obsValue", "value"):
+        value = record.get(key)
+        if value not in {"", None}:
+            return str(value)
+    return None
+
+
 def _sdmx_records(content: bytes) -> tuple[list[dict[str, str]], dict[str, dict[str, str]]]:
     root = ET.fromstring(content)
     labels = _sdmx_code_labels(root)
@@ -542,7 +550,7 @@ def _sdmx_records(content: bytes) -> tuple[list[dict[str, str]], dict[str, dict[
                         record["ObsValue"] = value
                 elif child_name in {"Attributes", "Value"}:
                     record.update(read_values(child))
-            if "ObsValue" in record or "OBS_VALUE" in record:
+            if _record_obs_value(record) is not None:
                 records.append(record)
 
     # Some SDMX writers emit flat Obs elements without a Series wrapper.
@@ -561,7 +569,7 @@ def _sdmx_records(content: bytes) -> tuple[list[dict[str, str]], dict[str, dict[
                     value = _sdmx_attr(child, "value")
                     if value:
                         record["ObsValue"] = value
-            if "ObsValue" in record or "OBS_VALUE" in record:
+            if _record_obs_value(record) is not None:
                 records.append(record)
     return records, labels
 
@@ -639,7 +647,7 @@ def _sdmx_34118_to_excel(content: bytes, payload_template: dict, save_path: Path
         )
         region = _strip_field_prefix("57831", _record_value(record, "57831"))
         category = _strip_field_prefix("58389", _record_value(record, "58389"))
-        raw_value = record.get("ObsValue") or record.get("OBS_VALUE")
+        raw_value = _record_obs_value(record)
         if not (year and period and region and category and raw_value is not None):
             continue
         value = _to_float(raw_value)

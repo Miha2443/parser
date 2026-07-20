@@ -118,10 +118,15 @@ DIRECT_DOWNLOAD_ON_DATE_FAILURE = (
 )
 DIRECT_FALLBACK_IDS = {
     item.strip()
-    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824").split(",")
+    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824,34118").split(",")
     if item.strip()
 }
 BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
+FEDSTAT_USER_AGENT = os.environ.get(
+    "FEDSTAT_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+)
 
 # ─────────────────────────────────────────────
 
@@ -166,10 +171,9 @@ def create_driver(download_dir: Path | None = None):
     options.add_argument("--disable-features=Translate")
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--lang=ru-RU")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
+    options.add_argument(f"user-agent={FEDSTAT_USER_AGENT}")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     if download_dir is not None:
         download_dir = Path(download_dir).resolve()
         download_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +188,19 @@ def create_driver(download_dir: Path | None = None):
             },
         )
     driver = webdriver.Chrome(options=options)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru']});
+                """
+            },
+        )
+    except Exception:
+        pass
     if download_dir is not None:
         try:
             driver.execute_cdp_cmd(
@@ -276,6 +293,14 @@ def get_last_update_date(driver, indicator_id):
         return None
 
     wait = WebDriverWait(driver, PAGE_TIMEOUT)
+    page_text = ""
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text.strip()
+    except Exception:
+        pass
+    if "forbidden" in page_text.lower():
+        print(f"  ❌ Fedstat отклонил страницу: {' '.join(page_text.split())[:240]}")
+        return None
 
     # Ретраи на flaky-ошибки: appendChild (Chrome 148 JS-инициализация
     # fedstat) и element click intercepted (всплывающее модальное окно
@@ -378,26 +403,80 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
         return None
     save_dir.mkdir(parents=True, exist_ok=True)
     before = {p.resolve() for p in save_dir.glob("*") if p.is_file()}
-    inputs = "\n".join(
-        f'<input type="hidden" name="{html.escape(str(k), quote=True)}" '
-        f'value="{html.escape(str(v), quote=True)}">'
-        for k, v in post_data
-    )
-    form_html = (
-        "<!doctype html><meta charset=\"utf-8\">"
-        f"<form id=\"fedstat\" method=\"post\" action=\"{html.escape(url, quote=True)}\">"
-        f"{inputs}</form>"
-        "<script>document.getElementById('fedstat').submit();</script>"
-    )
     form_path = None
     try:
-        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
-                                         encoding="utf-8") as fh:
-            fh.write(form_html)
-            form_path = Path(fh.name)
-        driver.get(form_path.as_uri())
+        entries = [[str(k), str(v)] for k, v in post_data]
+        if "fedstat.ru" not in (driver.current_url or ""):
+            real_id = next(
+                (value.split("_", 1)[1] for key, value in post_data
+                 if key == "selectedFilterIds" and str(value).startswith("0_")),
+                "",
+            )
+            if real_id:
+                driver.get(f"https://www.fedstat.ru/indicator/{real_id}")
+                time.sleep(2)
+                close_popup(driver)
+
+        # Submit from fedstat.ru itself. A local file:// form can lose SameSite
+        # cookies on cross-site POST and Fedstat responds with 403/no download.
+        if "fedstat.ru" in (driver.current_url or ""):
+            driver.execute_script(
+                """
+                const [action, entries] = arguments;
+                const old = document.getElementById('codex-fedstat-download');
+                if (old) old.remove();
+                const form = document.createElement('form');
+                form.id = 'codex-fedstat-download';
+                form.method = 'post';
+                form.action = action;
+                form.style.display = 'none';
+                for (const [name, value] of entries) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                form.submit();
+                """,
+                url,
+                entries,
+            )
+        else:
+            inputs = "\n".join(
+                f'<input type="hidden" name="{html.escape(str(k), quote=True)}" '
+                f'value="{html.escape(str(v), quote=True)}">'
+                for k, v in post_data
+            )
+            form_html = (
+                "<!doctype html><meta charset=\"utf-8\">"
+                f"<form id=\"fedstat\" method=\"post\" action=\"{html.escape(url, quote=True)}\">"
+                f"{inputs}</form>"
+                "<script>document.getElementById('fedstat').submit();</script>"
+            )
+            with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
+                                             encoding="utf-8") as fh:
+                fh.write(form_html)
+                form_path = Path(fh.name)
+            driver.get(form_path.as_uri())
+
         downloaded = wait_for_download(save_dir, before_snapshot=before, timeout=BROWSER_POST_TIMEOUT)
         if downloaded is None:
+            try:
+                page_text = driver.find_element(By.TAG_NAME, "body").text
+            except Exception:
+                page_text = ""
+            if page_text:
+                text = " ".join(page_text.split())
+                markers = (
+                    "слишком большой объем выборки",
+                    "результат обработки запроса",
+                    "ошибка",
+                    "forbidden",
+                )
+                if any(marker in text.lower() for marker in markers):
+                    print(f"  ⚠️  Fedstat ответил страницей: {text[:240]}")
             print(f"  ⚠️  Browser POST не вернул Excel за {BROWSER_POST_TIMEOUT}с")
             return None
         validate_excel_file(downloaded)
@@ -420,6 +499,55 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
 def _should_direct_fallback(indicator_id: str) -> bool:
     real_id = indicator_id.split("_")[0]
     return "*" in DIRECT_FALLBACK_IDS or indicator_id in DIRECT_FALLBACK_IDS or real_id in DIRECT_FALLBACK_IDS
+
+
+def _payload_34118_part(indicator_id: str) -> dict:
+    """Compact EMISS 34118 export: only РФ/Москва and required housing categories.
+
+    The full site layout is too large and returns an HTML warning instead of xls.
+    """
+    is_part1 = indicator_id.endswith("часть1")
+    years = range(2015, 2023) if is_part1 else range(2023, 2027)
+    suffix = "часть1_2015_2022" if is_part1 else "часть2_2023_2026"
+    period_ids = [
+        "33560_1540222", "33560_1540224", "33560_1540226", "33560_1540227",
+        "33560_1540228", "33560_1540229", "33560_1540230", "33560_1540233",
+        "33560_1540234", "33560_1540235", "33560_1540236", "33560_1540272",
+        "33560_1540273", "33560_1540276", "33560_1540282", "33560_1540283",
+        "33560_1540284", "33560_1540285", "33560_1540286", "33560_1540287",
+        "33560_1540288", "33560_1540289", "33560_1540290", "33560_1540291",
+        "33560_1540292", "33560_1540293", "33560_1540294",
+    ]
+    region_ids = [
+        "57831_1688487",  # Российская Федерация
+        "57831_1688506",  # Москва
+        "57831_1849012",  # РФ без новых субъектов
+    ]
+    category_ids = [
+        "58389_1754554", "58389_1754555", "58389_1754556", "58389_1754557",
+        "58389_1754558", "58389_1754559", "58389_1754560", "58389_1754561",
+        "58389_1754562", "58389_1754563", "58389_1754564", "58389_1754565",
+        "58389_1754566", "58389_1754567", "58389_1754568", "58389_1754569",
+        "58389_1836598", "58389_1836599",
+    ]
+    return {
+        "title": "Введено в действие общей площади жилых домов (оперативные данные)",
+        "filename_title": (
+            f"34118_{suffix}_Введено в действие общей площади жилых домов "
+            "(оперативные данные)"
+        ),
+        "id": "34118",
+        "lineObjectIds": ["0", "30611", "57831", "58389"],
+        "columnObjectIds": ["3", "33560"],
+        "selectedFilterIds": (
+            ["0_34118"]
+            + [f"3_{year}" for year in years]
+            + ["30611_950292"]
+            + period_ids
+            + region_ids
+            + category_ids
+        ),
+    }
 
 
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
@@ -1215,30 +1343,19 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         },
     }
 
-    payload_template = PAYLOADS.get(indicator_id)
-    if payload_template is None and indicator_id in {"34118_часть1", "34118_часть2"}:
-        base = PAYLOADS.get("34118")
-        if base is not None:
-            payload_template = {
-                key: (list(value) if isinstance(value, list) else value)
-                for key, value in base.items()
-            }
-            years = set(range(2015, 2023)) if indicator_id.endswith("часть1") else set(range(2023, 2100))
-            selected = []
-            for item in payload_template.get("selectedFilterIds", []):
-                m_year = re.fullmatch(r"3_(\d{4})", str(item))
-                if m_year and int(m_year.group(1)) not in years:
-                    continue
-                selected.append(item)
-            payload_template["selectedFilterIds"] = selected
-            suffix = "часть1" if indicator_id.endswith("часть1") else "часть2"
-            payload_template["title"] = f"{payload_template['title']} {suffix}"
+    payload_template = (
+        _payload_34118_part(indicator_id)
+        if indicator_id in {"34118_часть1", "34118_часть2"}
+        else PAYLOADS.get(indicator_id)
+    )
     if payload_template is None:
         print(f"  ⚠️  Нет payload для индикатора {indicator_id}")
         return None
 
     post_data = [("format", "excel")]
     for key, value in payload_template.items():
+        if key == "filename_title":
+            continue
         post_key = "indicator_title" if key == "title" else key
         if isinstance(value, list):
             for v in value:
@@ -1248,15 +1365,21 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
 
     url = "https://www.fedstat.ru/indicator/data.do?format=excel"
     real_id = indicator_id.split("_")[0]
+    user_agent = None
+    if driver is not None:
+        try:
+            user_agent = driver.execute_script("return navigator.userAgent")
+        except Exception:
+            user_agent = None
+    if not user_agent:
+        user_agent = FEDSTAT_USER_AGENT
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Referer": f"https://www.fedstat.ru/indicator/{real_id}",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": user_agent,
     }
-    safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
+    file_title = payload_template.get("filename_title", payload_template["title"])
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", file_title)
     safe_title = safe_title[:80]
     # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
     # (а не сегодняшняя). Так файл сразу говорит когда контент

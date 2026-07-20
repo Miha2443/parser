@@ -125,6 +125,7 @@ DIRECT_FALLBACK_IDS = {
 }
 BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
 BROWSER_FETCH_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_FETCH_TIMEOUT", "180"))
+FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE", "6")))
 FEDSTAT_USER_AGENT = os.environ.get(
     "FEDSTAT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -643,6 +644,21 @@ def _chunked(values: list[str], size: int) -> list[list[str]]:
     return [values[i:i + size] for i in range(0, len(values), size)]
 
 
+def _parse_only_ids(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    out: list[str] = []
+    for item in re.split(r"[,;\s]+", raw):
+        item = item.strip()
+        if not item:
+            continue
+        if item == "34118":
+            out.extend(["34118_часть1", "34118_часть2"])
+        else:
+            out.append(item)
+    return out or None
+
+
 def _read_fedstat_data_sheet(path: Path) -> pd.DataFrame:
     try:
         return pd.read_excel(path, sheet_name="Данные", header=None)
@@ -698,7 +714,7 @@ def _download_34118_period_chunks(
     if len(period_ids) <= 6:
         return None
     non_period = [x for x in selected if not str(x).startswith("33560_")]
-    chunks = _chunked(period_ids, 6)
+    chunks = _chunked(period_ids, FEDSTAT_34118_CHUNK_SIZE)
     print(f"  -> Делю 34118 на {len(chunks)} маленьких period-chunk запросов")
 
     with tempfile.TemporaryDirectory(prefix="fedstat-34118-chunks-") as tmp:
@@ -1654,10 +1670,20 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         return None
 
 
-def run(force: bool = False):
+def run(force: bool = False, only_ids: list[str] | None = None):
     """force=True — игнорируем state, перекачиваем все индикаторы."""
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     state = load_state() if not force else {}
+    indicators_to_run = INDICATORS
+    if only_ids:
+        indicators_to_run = {
+            indicator_id: INDICATORS[indicator_id]
+            for indicator_id in only_ids
+            if indicator_id in INDICATORS
+        }
+        missing = [indicator_id for indicator_id in only_ids if indicator_id not in INDICATORS]
+        if missing:
+            print(f"⚠️  Неизвестные indicator id в --only/FEDSTAT_ONLY_IDS: {', '.join(missing)}")
     downloaded_files = []
     checked_ok = 0
     downloaded_without_date = []
@@ -1666,13 +1692,15 @@ def run(force: bool = False):
 
     print(f"\n{'='*60}")
     print(f"Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Индикаторов: {len(INDICATORS)}")
+    print(f"Индикаторов: {len(indicators_to_run)}/{len(INDICATORS)}")
+    if only_ids:
+        print(f"Фильтр: {', '.join(indicators_to_run)}")
     print(f"{'='*60}\n")
 
     driver = create_driver(download_dir=DOWNLOAD_DIR)
 
     try:
-        for indicator_id, name in INDICATORS.items():
+        for indicator_id, name in indicators_to_run.items():
             print(f"📊 [{indicator_id}] {name[:55]}")
 
             remote_date = get_last_update_date(driver, indicator_id)
@@ -1724,7 +1752,7 @@ def run(force: bool = False):
 
     print(f"\n{'='*60}")
     print(f"Итог: скачано файлов — {len(downloaded_files)}")
-    print(f"Проверено индикаторов — {checked_ok}/{len(INDICATORS)}")
+    print(f"Проверено индикаторов — {checked_ok}/{len(indicators_to_run)}")
     if downloaded_without_date:
         print(f"Скачано напрямую без даты — {len(downloaded_without_date)}: {', '.join(downloaded_without_date)}")
     if failed_downloads:
@@ -1742,7 +1770,9 @@ def run(force: bool = False):
 if __name__ == "__main__":
     import sys
     force = "--force" in sys.argv
-    files, ok = run(force=force)
+    only_arg = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--only=")), None)
+    only_ids = _parse_only_ids(only_arg or os.environ.get("FEDSTAT_ONLY_IDS"))
+    files, ok = run(force=force, only_ids=only_ids)
     # exit 2 только если fedstat не удалось проверить вообще. Если все даты
     # прочитаны и новых файлов нет, это штатное "без изменений".
     sys.exit(0 if ok else 2)

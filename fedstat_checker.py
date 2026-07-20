@@ -13,6 +13,7 @@ fedstat_checker.py
 """
 
 import atexit
+import base64
 import html
 import os
 import re
@@ -122,6 +123,7 @@ DIRECT_FALLBACK_IDS = {
     if item.strip()
 }
 BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
+BROWSER_FETCH_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_FETCH_TIMEOUT", "180"))
 FEDSTAT_USER_AGENT = os.environ.get(
     "FEDSTAT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -408,6 +410,15 @@ def _raise_if_html_response(response: requests.Response) -> None:
         raise ValueError(f"Fedstat вернул HTML вместо Excel: {preview}")
 
 
+def _looks_like_excel_bytes(content: bytes) -> bool:
+    return (
+        content.startswith(b"PK\x03\x04")
+        or content.startswith(b"PK\x05\x06")
+        or content.startswith(b"PK\x07\x08")
+        or content.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
+    )
+
+
 def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
                                 save_dir: Path, save_path: Path) -> Path | None:
     """Submit Fedstat Excel POST through Chrome when direct requests are blocked."""
@@ -428,6 +439,70 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
                 driver.get(f"https://www.fedstat.ru/indicator/{real_id}")
                 time.sleep(2)
                 close_popup(driver)
+
+        if "fedstat.ru" in (driver.current_url or ""):
+            try:
+                driver.set_script_timeout(BROWSER_FETCH_TIMEOUT)
+            except Exception:
+                pass
+            try:
+                result = driver.execute_async_script(
+                    """
+                    const done = arguments[arguments.length - 1];
+                    const [action, entries] = arguments;
+                    const body = new URLSearchParams();
+                    for (const [name, value] of entries) body.append(name, value);
+                    fetch(action, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                            'Accept': 'application/vnd.ms-excel,application/octet-stream,*/*'
+                        },
+                        body
+                    }).then(async response => {
+                        const contentType = response.headers.get('content-type') || '';
+                        const buffer = await response.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        let binary = '';
+                        const chunk = 0x8000;
+                        for (let i = 0; i < bytes.length; i += chunk) {
+                            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                        }
+                        let text = '';
+                        if (contentType.toLowerCase().includes('html') || contentType.toLowerCase().startsWith('text/')) {
+                            text = new TextDecoder('utf-8').decode(bytes.slice(0, 1000));
+                        }
+                        done({
+                            ok: response.ok,
+                            status: response.status,
+                            contentType,
+                            length: bytes.length,
+                            bodyBase64: btoa(binary),
+                            text
+                        });
+                    }).catch(error => done({error: String(error)}));
+                    """,
+                    url,
+                    entries,
+                )
+                if result and result.get("bodyBase64"):
+                    content_type = str(result.get("contentType") or "").lower()
+                    status = result.get("status")
+                    body = base64.b64decode(result["bodyBase64"])
+                    if _looks_like_excel_bytes(body):
+                        write_bytes_atomic(save_path, body, validate=validate_excel_file)
+                        return save_path
+                    if "html" in content_type or content_type.startswith("text/"):
+                        preview = _compact_html_preview(result.get("text") or body[:1000].decode("utf-8", "replace"))
+                        print(f"  ⚠️  Browser fetch вернул HTML ({status}): {preview}")
+                    else:
+                        write_bytes_atomic(save_path, body, validate=validate_excel_file)
+                        return save_path
+                elif result and result.get("error"):
+                    print(f"  ⚠️  Browser fetch не сработал: {result.get('error')}")
+            except Exception as exc:
+                print(f"  ⚠️  Browser fetch не сработал: {exc}")
 
         # Submit from fedstat.ru itself. A local file:// form can lose SameSite
         # cookies on cross-site POST and Fedstat responds with 403/no download.

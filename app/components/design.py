@@ -512,6 +512,15 @@ def apply_theme() -> None:
           overflow: visible !important;
         }}
 
+        div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div > div {{
+          display: flex !important;
+          flex-wrap: wrap !important;
+          align-items: center !important;
+          gap: .22rem !important;
+          padding-left: .3rem !important;
+          overflow: visible !important;
+        }}
+
         div[data-baseweb="tag"] {{
           background: rgba(232,76,76,.16) !important;
           border: 1px solid rgba(232,76,76,.42) !important;
@@ -521,7 +530,11 @@ def apply_theme() -> None:
           max-width: 100% !important;
           margin-top: .18rem !important;
           margin-bottom: .18rem !important;
+          margin-left: .18rem !important;
           white-space: normal !important;
+          position: relative !important;
+          z-index: 2 !important;
+          flex: 0 1 auto !important;
         }}
 
         div[data-baseweb="tag"] span {{
@@ -671,8 +684,8 @@ def style_plotly(fig, *, height: int | None = None):
             orientation="h",
             yanchor="top",
             y=-0.18,
-            xanchor="right",
-            x=1,
+            xanchor="center",
+            x=0.5,
             font=dict(size=12, color=COLORS["text"]),
         ),
         uniformtext=dict(minsize=10, mode="hide"),

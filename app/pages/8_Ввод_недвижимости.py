@@ -23,6 +23,8 @@ from app.data_access import (
     load_emiss_34118_periods,
     load_monitoring_2_0,
     load_monitoring_2011_2026_static,
+    MONTH_NAMES_RU,
+    QUARTER_NAMES_RU,
     month_label,
     monitoring_by_year,
     quarter_label,
@@ -103,7 +105,7 @@ def render_stacked(df: pd.DataFrame, series: list[tuple[str, str, str]],
         xaxis=dict(type="category", categoryorder="array", categoryarray=xs,
                    tickmode="array", tickvals=xs, ticktext=xs, tickangle=0),
         bargap=0.25,
-        legend=dict(orientation="h", y=-0.22, x=1, xanchor="right"),
+        legend=dict(orientation="h", y=-0.22, x=0.5, xanchor="center"),
     )
     style_plotly(fig, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
@@ -126,22 +128,65 @@ def _emiss_delta_from_ytd(df: pd.DataFrame, months: list[int]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_period_bars(df: pd.DataFrame, *, period: str, key: str, height: int = 330) -> None:
+def _emiss_annual_for_region(df: pd.DataFrame, region: str) -> pd.DataFrame:
+    if df is None or df.empty or "region" not in df.columns:
+        return pd.DataFrame(columns=["year", "МКД", "ИЖС"])
+    sub = df[
+        (df["region"] == region)
+        & (df["period_type"].isin(["year", "ytd"]))
+        & (df["month"] == 12)
+    ].copy()
+    if sub.empty:
+        return pd.DataFrame(columns=["year", "МКД", "ИЖС"])
+    return (
+        sub.sort_values(["year", "source_file"])
+        .drop_duplicates("year", keep="last")
+        [["year", "МКД", "ИЖС"]]
+        .sort_values("year")
+        .reset_index(drop=True)
+    )
+
+
+def render_period_bars(
+    df: pd.DataFrame,
+    *,
+    region: str,
+    period: str,
+    value_mode: str,
+    months: list[int],
+    quarters: list[int],
+    key: str,
+    height: int = 330,
+) -> None:
     if df is None or df.empty:
         st.info("Нет данных ЕМИСС 34118 для выбранного периода.")
         return
+    if "region" not in df.columns:
+        st.info("В ЕМИСС 34118 нет разреза по регионам.")
+        return
+    df = df[df["region"] == region].copy()
+    if df.empty:
+        st.info(f"В ЕМИСС 34118 пока нет данных для региона «{region}».")
+        return
     if period == "Квартал":
-        src = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin([3, 6, 9, 12])].copy()
-        src = _emiss_delta_from_ytd(src, [3, 6, 9, 12])
+        quarter_months = [q * 3 for q in quarters]
+        src = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin(quarter_months)].copy()
+        if value_mode != "С начала года":
+            src = _emiss_delta_from_ytd(src, [3, 6, 9, 12])
+            src = src[src["quarter"].isin(quarters)].copy()
         src["period"] = src.apply(lambda r: quarter_label(r["year"], r["quarter"]), axis=1)
         src["_sort"] = src["year"] * 10 + src["quarter"]
     else:
-        direct = df[df["period_type"] == "month"].copy()
-        if direct.empty:
-            ytd = df[df["period_type"].isin(["ytd", "year"])].copy()
-            src = _emiss_delta_from_ytd(ytd, list(range(1, 13)))
+        if value_mode != "С начала года":
+            direct = df[(df["period_type"] == "month") & (df["month"].isin(months))].copy()
+            if direct.empty:
+                ytd = df[df["period_type"].isin(["ytd", "year"])].copy()
+                src = _emiss_delta_from_ytd(ytd, list(range(1, 13)))
+                src = src[src["month"].isin(months)].copy()
+            else:
+                src = direct
         else:
-            src = direct
+            src = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin(months)].copy()
         src["period"] = src.apply(lambda r: month_label(r["year"], r["month"]), axis=1)
         src["_sort"] = src["year"] * 100 + src["month"]
     if src.empty:
@@ -168,7 +213,7 @@ def render_period_bars(df: pd.DataFrame, *, period: str, key: str, height: int =
         margin=dict(l=52, r=18, t=28, b=86),
         yaxis=dict(title="млн м²", range=[0, ymax * 1.22]),
         xaxis=dict(type="category", categoryorder="array", categoryarray=periods, tickangle=-45),
-        legend=dict(orientation="h", y=-0.28, x=1, xanchor="right"),
+        legend=dict(orientation="h", y=-0.28, x=0.5, xanchor="center"),
     )
     style_plotly(fig, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
@@ -315,11 +360,49 @@ if all(v.empty for v in vvod.values()) and emiss.empty:
                "data/raw/realty/vvod/")
     st.stop()
 
-region = st.radio("Регион", ["Москва", "РФ"], horizontal=True, key="vvod_region")
+ctrl1, ctrl2 = st.columns([1, 1])
+with ctrl1:
+    region = st.radio("Регион", ["Москва", "РФ"], horizontal=True, key="vvod_region")
+with ctrl2:
+    emiss_period = st.radio("Период", ["Год", "Квартал", "Месяц"], horizontal=True, key="vvod_period")
 is_msk = region == "Москва"
-emiss_period = "Год"
-if not is_msk:
-    emiss_period = st.radio("Период ЕМИСС 34118", ["Год", "Квартал", "Месяц"], horizontal=True)
+value_mode = "За период"
+selected_months = list(range(1, 13))
+selected_quarters = [1, 2, 3, 4]
+if emiss_period != "Год":
+    st.markdown("")
+    val_col, pick_col = st.columns([1, 3])
+    with val_col:
+        period_value_label = "За месяц" if emiss_period == "Месяц" else "За квартал"
+        value_mode = st.radio(
+            "Значение",
+            [period_value_label, "С начала года"],
+            horizontal=True,
+            key="vvod_value_mode",
+        )
+    with pick_col:
+        if emiss_period == "Месяц":
+            selected_months = st.multiselect(
+                "Месяцы",
+                options=list(range(1, 13)),
+                default=list(range(1, 13)),
+                format_func=lambda m: MONTH_NAMES_RU[m - 1],
+                key="vvod_months",
+            )
+        else:
+            selected_quarters = st.multiselect(
+                "Кварталы",
+                options=[1, 2, 3, 4],
+                default=[1, 2, 3, 4],
+                format_func=lambda q: QUARTER_NAMES_RU[q - 1],
+                key="vvod_quarters",
+            )
+    if emiss_period == "Месяц" and not selected_months:
+        st.info("Выберите хотя бы один месяц.")
+        st.stop()
+    if emiss_period == "Квартал" and not selected_quarters:
+        st.info("Выберите хотя бы один квартал.")
+        st.stop()
 
 YF, YT = 2011, 2026
 
@@ -396,9 +479,12 @@ with c_txt:
 # ============================================================
 st.markdown("### Жилая недвижимость — годовые значения")
 
-# ① МКД / ИЖС  (Москва vvod / РФ ЕМИСС 34118)
-st.markdown("**① МКД и ИЖС**" + ("" if is_msk else " — РФ (ЕМИСС 34118)"))
-b2_1 = vvod["msk_residential"].copy() if is_msk else emiss.copy()
+# ① МКД / ИЖС  (ЕМИСС 34118; для Москвы есть fallback на vvod)
+st.markdown("**① МКД и ИЖС**" + f" — {region} (ЕМИСС 34118)")
+emiss_region = "Москва" if is_msk else "РФ"
+b2_1 = _emiss_annual_for_region(emiss_periods, emiss_region)
+if b2_1.empty:
+    b2_1 = vvod["msk_residential"].copy() if is_msk else emiss.copy()
 if is_msk:
     mkd26 = monitoring_by_year(
         rv,
@@ -414,8 +500,17 @@ if is_msk:
         ).drop_duplicates(subset=["year"], keep="last")
 c1, c2 = st.columns([3, 1])
 with c1:
-    if not is_msk and emiss_period != "Год":
-        render_period_bars(emiss_periods, period=emiss_period, key="b2_1_period", height=330)
+    if emiss_period != "Год":
+        render_period_bars(
+            emiss_periods,
+            region=emiss_region,
+            period=emiss_period,
+            value_mode=value_mode,
+            months=selected_months,
+            quarters=selected_quarters,
+            key="b2_1_period",
+            height=330,
+        )
     else:
         render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
                        year_from=YF, year_to=YT, key="b2_1", height=300)

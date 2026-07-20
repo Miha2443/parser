@@ -1301,8 +1301,17 @@ def _emiss_period_from_label(value: object) -> tuple[str, int | None]:
     return "year", 12
 
 
+def _emiss_region_name(value: object) -> str | None:
+    s = "" if value is None or pd.isna(value) else str(value).strip().lower()
+    if "российская федерация" in s:
+        return "РФ"
+    if "москва" in s:
+        return "Москва"
+    return None
+
+
 def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
-    """Parse one EMISS 34118 xls into RF rows by year/month/category."""
+    """Parse one EMISS 34118 xls into rows by region/year/month/category."""
     try:
         df = pd.read_excel(path, sheet_name="Данные", header=None)
     except Exception:  # noqa: BLE001
@@ -1334,15 +1343,17 @@ def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
 
     records: list[dict] = []
     for i in range(yrow + 1, len(df)):
-        region = str(df.iat[i, 0]).lower()
-        if "российская федерация" not in region:
+        region = _emiss_region_name(df.iat[i, 0])
+        if region is None:
             continue
         label = str(df.iat[i, 1]).lower()
         if "построенные населением" in label or "построенных населением" in label:
             metric = "ИЖС"
+            priority = 1
+        elif "жилые дома" in label:
+            metric = "МКД"
+            priority = 3
         elif "жилые здания" in label:
-            # Если есть «Жилые здания», оно приоритетнее более узкой строки
-            # «Жилые здания многоквартирные» на том же периоде.
             metric = "МКД"
             priority = 2 if "многоквартирн" not in label else 1
         elif "многоквартирн" in label:
@@ -1350,13 +1361,12 @@ def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
             priority = 1
         else:
             continue
-        if metric == "ИЖС":
-            priority = 1
         for j, (year, period_type, month) in col_meta.items():
             val = _to_float(df.iat[i, j])
             if pd.isna(val):
                 continue
             records.append({
+                "region": region,
                 "year": year,
                 "month": month,
                 "quarter": (month - 1) // 3 + 1,
@@ -1372,9 +1382,9 @@ def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
     out = pd.DataFrame(records)
     out = (
         out.sort_values(["year", "month", "period_type", "metric", "priority"])
-        .drop_duplicates(["year", "month", "period_type", "metric"], keep="last")
+        .drop_duplicates(["region", "year", "month", "period_type", "metric"], keep="last")
         .pivot_table(
-            index=["year", "month", "quarter", "period_type", "source_file"],
+            index=["region", "year", "month", "quarter", "period_type", "source_file"],
             columns="metric",
             values="value",
             aggfunc="first",
@@ -1397,6 +1407,8 @@ def _parse_emiss_34118_file(path: Path) -> dict:
     if periods.empty:
         return {}
     annual = periods[
+        (periods["region"] == "РФ")
+        &
         ((periods["period_type"] == "year") | (periods["period_type"] == "ytd"))
         & (periods["month"] == 12)
     ].copy()
@@ -1482,13 +1494,13 @@ def load_emiss_34118_periods() -> pd.DataFrame:
     frames = [f for f in frames if f is not None and not f.empty]
     if not frames:
         return pd.DataFrame(
-            columns=["year", "month", "quarter", "period_type", "МКД", "ИЖС", "source_file"]
+            columns=["region", "year", "month", "quarter", "period_type", "МКД", "ИЖС", "source_file"]
         )
     out = pd.concat(frames, ignore_index=True)
     out = (
-        out.sort_values(["year", "month", "period_type", "source_file"])
-        .drop_duplicates(["year", "month", "period_type"], keep="last")
-        .sort_values(["year", "month", "period_type"])
+        out.sort_values(["region", "year", "month", "period_type", "source_file"])
+        .drop_duplicates(["region", "year", "month", "period_type"], keep="last")
+        .sort_values(["region", "year", "month", "period_type"])
         .reset_index(drop=True)
     )
     for col in ("МКД", "ИЖС"):

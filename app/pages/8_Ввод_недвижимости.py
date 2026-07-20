@@ -360,49 +360,8 @@ if all(v.empty for v in vvod.values()) and emiss.empty:
                "data/raw/realty/vvod/")
     st.stop()
 
-ctrl1, ctrl2 = st.columns([1, 1])
-with ctrl1:
-    region = st.radio("Регион", ["Москва", "РФ"], horizontal=True, key="vvod_region")
-with ctrl2:
-    emiss_period = st.radio("Период", ["Год", "Квартал", "Месяц"], horizontal=True, key="vvod_period")
+region = st.radio("Регион", ["Москва", "РФ"], horizontal=True, key="vvod_region")
 is_msk = region == "Москва"
-value_mode = "За период"
-selected_months = list(range(1, 13))
-selected_quarters = [1, 2, 3, 4]
-if emiss_period != "Год":
-    st.markdown("")
-    val_col, pick_col = st.columns([1, 3])
-    with val_col:
-        period_value_label = "За месяц" if emiss_period == "Месяц" else "За квартал"
-        value_mode = st.radio(
-            "Значение",
-            [period_value_label, "С начала года"],
-            horizontal=True,
-            key="vvod_value_mode",
-        )
-    with pick_col:
-        if emiss_period == "Месяц":
-            selected_months = st.multiselect(
-                "Месяцы",
-                options=list(range(1, 13)),
-                default=list(range(1, 13)),
-                format_func=lambda m: MONTH_NAMES_RU[m - 1],
-                key="vvod_months",
-            )
-        else:
-            selected_quarters = st.multiselect(
-                "Кварталы",
-                options=[1, 2, 3, 4],
-                default=[1, 2, 3, 4],
-                format_func=lambda q: QUARTER_NAMES_RU[q - 1],
-                key="vvod_quarters",
-            )
-    if emiss_period == "Месяц" and not selected_months:
-        st.info("Выберите хотя бы один месяц.")
-        st.stop()
-    if emiss_period == "Квартал" and not selected_quarters:
-        st.info("Выберите хотя бы один квартал.")
-        st.stop()
 
 YF, YT = 2011, 2026
 
@@ -500,17 +459,58 @@ if is_msk:
         ).drop_duplicates(subset=["year"], keep="last")
 c1, c2 = st.columns([3, 1])
 with c1:
-    if emiss_period != "Год":
-        render_period_bars(
-            emiss_periods,
-            region=emiss_region,
-            period=emiss_period,
-            value_mode=value_mode,
-            months=selected_months,
-            quarters=selected_quarters,
-            key="b2_1_period",
-            height=330,
+    period_col, value_col = st.columns([1, 1])
+    with period_col:
+        emiss_period = st.radio(
+            "Период",
+            ["Год", "Квартал", "Месяц"],
+            horizontal=True,
+            key="vvod_period",
         )
+    value_mode = "За период"
+    selected_months = list(range(1, 13))
+    selected_quarters = [1, 2, 3, 4]
+    if emiss_period != "Год":
+        with value_col:
+            period_value_label = "За месяц" if emiss_period == "Месяц" else "За квартал"
+            value_mode = st.radio(
+                "Значение",
+                [period_value_label, "С начала года"],
+                horizontal=True,
+                key="vvod_value_mode",
+            )
+        if emiss_period == "Месяц":
+            selected_months = st.multiselect(
+                "Месяцы",
+                options=list(range(1, 13)),
+                default=list(range(1, 13)),
+                format_func=lambda m: MONTH_NAMES_RU[m - 1],
+                key="vvod_months",
+            )
+        else:
+            selected_quarters = st.multiselect(
+                "Кварталы",
+                options=[1, 2, 3, 4],
+                default=[1, 2, 3, 4],
+                format_func=lambda q: QUARTER_NAMES_RU[q - 1],
+                key="vvod_quarters",
+            )
+    if emiss_period != "Год":
+        if emiss_period == "Месяц" and not selected_months:
+            st.info("Выберите хотя бы один месяц.")
+        elif emiss_period == "Квартал" and not selected_quarters:
+            st.info("Выберите хотя бы один квартал.")
+        else:
+            render_period_bars(
+                emiss_periods,
+                region=emiss_region,
+                period=emiss_period,
+                value_mode=value_mode,
+                months=selected_months,
+                quarters=selected_quarters,
+                key="b2_1_period",
+                height=330,
+            )
     else:
         render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
                        year_from=YF, year_to=YT, key="b2_1", height=300)

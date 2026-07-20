@@ -509,6 +509,8 @@ def apply_theme() -> None:
           min-height: 2.7rem !important;
           height: auto !important;
           align-items: flex-start !important;
+          box-sizing: border-box !important;
+          padding-left: .72rem !important;
           overflow: visible !important;
         }}
 
@@ -518,6 +520,11 @@ def apply_theme() -> None:
           align-items: center !important;
           gap: .22rem !important;
           padding-left: .3rem !important;
+          overflow: visible !important;
+        }}
+
+        div[data-testid="stMultiSelect"] div[data-baseweb="select"],
+        div[data-testid="stMultiSelect"] div[data-baseweb="tag"] {{
           overflow: visible !important;
         }}
 
@@ -535,6 +542,10 @@ def apply_theme() -> None:
           position: relative !important;
           z-index: 2 !important;
           flex: 0 1 auto !important;
+        }}
+
+        div[data-testid="stMultiSelect"] div[data-baseweb="tag"]:first-of-type {{
+          margin-left: .42rem !important;
         }}
 
         div[data-baseweb="tag"] span {{

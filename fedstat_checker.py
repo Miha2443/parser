@@ -127,6 +127,8 @@ BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120")
 BROWSER_FETCH_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_FETCH_TIMEOUT", "180"))
 FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE", "1")))
 FEDSTAT_34118_YEAR_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_YEAR_CHUNK_SIZE", "99")))
+FEDSTAT_34118_CHUNK_RETRIES = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_RETRIES", "2")))
+FEDSTAT_34118_CHUNK_RETRY_SLEEP = max(0.0, float(os.environ.get("FEDSTAT_34118_CHUNK_RETRY_SLEEP", "2")))
 FEDSTAT_USER_AGENT = os.environ.get(
     "FEDSTAT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -773,15 +775,26 @@ def _download_34118_period_chunks(
                     f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:03d}"
                 )
                 chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:03d}.xls"
-                downloaded = download_excel(
-                    indicator_id,
-                    tmp_dir,
-                    remote_date=remote_date,
-                    driver=driver,
-                    payload_template_override=chunk_payload,
-                    save_path_override=chunk_path,
-                    allow_34118_chunks=False,
-                )
+                downloaded = None
+                for retry in range(1, FEDSTAT_34118_CHUNK_RETRIES + 1):
+                    if retry > 1:
+                        print(
+                            f"  -> Повторяю chunk {idx}/{len(jobs)} "
+                            f"(попытка {retry}/{FEDSTAT_34118_CHUNK_RETRIES})"
+                        )
+                        if FEDSTAT_34118_CHUNK_RETRY_SLEEP:
+                            time.sleep(FEDSTAT_34118_CHUNK_RETRY_SLEEP)
+                    downloaded = download_excel(
+                        indicator_id,
+                        tmp_dir,
+                        remote_date=remote_date,
+                        driver=driver,
+                        payload_template_override=chunk_payload,
+                        save_path_override=chunk_path,
+                        allow_34118_chunks=False,
+                    )
+                    if downloaded is not None:
+                        break
                 if downloaded is None:
                     print(f"  ⚠️  Chunk {idx}/{len(jobs)} не скачался")
                     failed = True

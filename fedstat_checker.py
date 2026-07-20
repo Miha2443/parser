@@ -209,13 +209,7 @@ def create_driver(download_dir: Path | None = None):
     except Exception:
         pass
     if download_dir is not None:
-        try:
-            driver.execute_cdp_cmd(
-                "Page.setDownloadBehavior",
-                {"behavior": "allow", "downloadPath": str(download_dir)},
-            )
-        except Exception:
-            pass
+        _set_driver_download_dir(driver, download_dir)
     _orig_quit = driver.quit
     def _quit_and_cleanup():
         try:
@@ -224,6 +218,18 @@ def create_driver(download_dir: Path | None = None):
             shutil.rmtree(profile_dir, ignore_errors=True)
     driver.quit = _quit_and_cleanup  # type: ignore[method-assign]
     return driver
+
+
+def _set_driver_download_dir(driver, download_dir: Path) -> None:
+    download_dir = Path(download_dir).resolve()
+    download_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": str(download_dir)},
+        )
+    except Exception:
+        pass
 
 
 def close_popup(driver):
@@ -430,6 +436,7 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
     if driver is None:
         return None
     save_dir.mkdir(parents=True, exist_ok=True)
+    _set_driver_download_dir(driver, save_dir)
     before = {p.resolve() for p in save_dir.glob("*") if p.is_file()}
     form_path = None
     try:

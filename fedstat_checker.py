@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 import requests
 import pandas as pd
 from datetime import datetime
@@ -428,6 +429,356 @@ def _looks_like_excel_bytes(content: bytes) -> bool:
         or content.startswith(b"PK\x07\x08")
         or content.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
     )
+
+
+def _looks_like_xml_bytes(content: bytes) -> bool:
+    head = content[:200].lstrip().lower()
+    return head.startswith(b"<?xml") or head.startswith(b"<")
+
+
+def _to_float(v) -> float:
+    try:
+        if v is None or pd.isna(v):
+            return float("nan")
+    except TypeError:
+        if v is None:
+            return float("nan")
+    s = str(v).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+    if not s:
+        return float("nan")
+    try:
+        return float(s)
+    except ValueError:
+        return float("nan")
+
+
+def _xml_local_name(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _strip_field_prefix(field_id: str, value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = str(value)
+    prefix = f"{field_id}_"
+    if value.startswith(prefix):
+        return value[len(prefix):]
+    return value
+
+
+def _sdmx_code_labels(root: ET.Element) -> dict[str, dict[str, str]]:
+    labels: dict[str, dict[str, str]] = {}
+    for elem in root.iter():
+        if _xml_local_name(elem.tag) not in {"CodeList", "Codelist"}:
+            continue
+        field_id = elem.attrib.get("id")
+        if not field_id:
+            continue
+        field_labels: dict[str, str] = {}
+        for child in elem:
+            if _xml_local_name(child.tag) != "Code":
+                continue
+            value = _strip_field_prefix(field_id, child.attrib.get("value") or child.attrib.get("id"))
+            if not value:
+                continue
+            texts = [
+                (node.text or "").strip()
+                for node in child.iter()
+                if _xml_local_name(node.tag) in {"Name", "Description"} and (node.text or "").strip()
+            ]
+            field_labels[value] = texts[0] if texts else value
+        if field_labels:
+            labels[field_id] = field_labels
+    return labels
+
+
+def _sdmx_attr(elem: ET.Element, *names: str) -> str | None:
+    lowered = {name.lower() for name in names}
+    for key, value in elem.attrib.items():
+        if _xml_local_name(key).lower() in lowered:
+            return value
+    return None
+
+
+def _sdmx_records(content: bytes) -> tuple[list[dict[str, str]], dict[str, dict[str, str]]]:
+    root = ET.fromstring(content)
+    labels = _sdmx_code_labels(root)
+    records: list[dict[str, str]] = []
+
+    def read_values(parent: ET.Element) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for node in parent.iter():
+            if _xml_local_name(node.tag) != "Value":
+                continue
+            key = _sdmx_attr(node, "id", "concept")
+            value = _sdmx_attr(node, "value")
+            if key and value:
+                out[key] = value
+        return out
+
+    for series in root.iter():
+        if _xml_local_name(series.tag) != "Series":
+            continue
+        series_values: dict[str, str] = {}
+        for child in series:
+            if _xml_local_name(child.tag) in {"SeriesKey", "Attributes"}:
+                series_values.update(read_values(child))
+        for obs in series:
+            if _xml_local_name(obs.tag) != "Obs":
+                continue
+            record = dict(series_values)
+            for key, value in obs.attrib.items():
+                record[_xml_local_name(key)] = value
+            for child in obs:
+                child_name = _xml_local_name(child.tag)
+                if child_name == "ObsDimension":
+                    key = _sdmx_attr(child, "id", "concept") or "TIME_PERIOD"
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record[key] = value
+                elif child_name == "ObsValue":
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record["ObsValue"] = value
+                elif child_name in {"Attributes", "Value"}:
+                    record.update(read_values(child))
+            if "ObsValue" in record or "OBS_VALUE" in record:
+                records.append(record)
+
+    # Some SDMX writers emit flat Obs elements without a Series wrapper.
+    if not records:
+        for obs in root.iter():
+            if _xml_local_name(obs.tag) != "Obs":
+                continue
+            record = {_xml_local_name(k): v for k, v in obs.attrib.items()}
+            for child in obs:
+                if _xml_local_name(child.tag) == "Value":
+                    key = _sdmx_attr(child, "id", "concept")
+                    value = _sdmx_attr(child, "value")
+                    if key and value:
+                        record[key] = value
+                elif _xml_local_name(child.tag) == "ObsValue":
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record["ObsValue"] = value
+            if "ObsValue" in record or "OBS_VALUE" in record:
+                records.append(record)
+    return records, labels
+
+
+def _label_from_sdmx(labels: dict[str, dict[str, str]], field_id: str, value_id: str) -> str:
+    value_id = _strip_field_prefix(field_id, value_id) or value_id
+    fallback_labels = {
+        ("57831", "1688487"): "Российская Федерация",
+        ("57831", "1688506"): "Москва",
+        ("57831", "1849012"): "Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        ("58389", "1754554"): "Жилые дома,построенные населением",
+        ("58389", "1754555"): "Жилые дома",
+        ("58389", "1754556"): "Жилые здания многоквартирные",
+        ("33560", "1540222"): "январь-декабрь",
+    }
+    return labels.get(field_id, {}).get(value_id) or fallback_labels.get((field_id, value_id), value_id)
+
+
+def _record_value(record: dict[str, str], field_id: str) -> str | None:
+    candidates = (field_id, f"s_{field_id}", f"{field_id}_code")
+    for candidate in candidates:
+        if candidate in record and record[candidate] not in {"", None}:
+            return str(record[candidate])
+    for key, value in record.items():
+        if str(key).split("-", 1)[0] == field_id and value not in {"", None}:
+            return str(value)
+    return None
+
+
+def _sdmx_34118_to_excel(content: bytes, payload_template: dict, save_path: Path) -> Path | None:
+    records, labels = _sdmx_records(content)
+    if not records:
+        return None
+    selected = list(payload_template.get("selectedFilterIds", []))
+    years = [item.split("_", 1)[1] for item in selected if _is_34118_year_filter(item)]
+    periods = [item.split("_", 1)[1] for item in selected if _is_34118_period_filter(item)]
+    regions = [item.split("_", 1)[1] for item in selected if str(item).startswith("57831_")]
+    categories = [item.split("_", 1)[1] for item in selected if str(item).startswith("58389_")]
+    if not years or not periods or not regions or not categories:
+        return None
+
+    value_by_key: dict[tuple[str, str, str, str], float] = {}
+    for record in records:
+        year = _strip_field_prefix("3", _record_value(record, "3") or _record_value(record, "TIME_PERIOD"))
+        if year and re.fullmatch(r"\d{4}-.+", year):
+            year = year[:4]
+        period = _strip_field_prefix("33560", _record_value(record, "33560")) or (
+            periods[0] if len(periods) == 1 else None
+        )
+        region = _strip_field_prefix("57831", _record_value(record, "57831"))
+        category = _strip_field_prefix("58389", _record_value(record, "58389"))
+        raw_value = record.get("ObsValue") or record.get("OBS_VALUE")
+        if not (year and period and region and category and raw_value is not None):
+            continue
+        value = _to_float(raw_value)
+        if pd.isna(value):
+            continue
+        value_by_key[(str(region), str(category), str(year), str(period))] = value
+
+    if not value_by_key:
+        return None
+
+    columns = [(year, period) for year in years for period in periods]
+    rows: list[list[object]] = [
+        [payload_template.get("title", "")] + [None] * (len(columns) + 1),
+        [None] * (len(columns) + 2),
+        [None, None] + [int(year) if str(year).isdigit() else year for year, _ in columns],
+        [None, None] + [_label_from_sdmx(labels, "33560", period) for _, period in columns],
+    ]
+    for region in regions:
+        for category in categories:
+            row = [
+                _label_from_sdmx(labels, "57831", region),
+                _label_from_sdmx(labels, "58389", category),
+            ]
+            row.extend(value_by_key.get((region, category, year, period), "") for year, period in columns)
+            if any(v != "" for v in row[2:]):
+                rows.append(row)
+
+    if len(rows) <= 4:
+        return None
+    final_path = save_path.with_suffix(".xlsx")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_name(f"{final_path.stem}.tmp{final_path.suffix}")
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            pd.DataFrame(rows).to_excel(writer, sheet_name="Данные", header=False, index=False)
+        validate_excel_file(tmp_path)
+        tmp_path.replace(final_path)
+        return final_path
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _post_data_with_format(post_data: list[tuple[str, str]], data_format: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    replaced = False
+    for key, value in post_data:
+        if key == "format":
+            out.append((key, data_format))
+            replaced = True
+        else:
+            out.append((key, value))
+    if not replaced:
+        out.insert(0, ("format", data_format))
+    return out
+
+
+def _download_34118_sdmx_as_excel(
+    session: requests.Session,
+    post_data: list[tuple[str, str]],
+    headers: dict[str, str],
+    payload_template: dict,
+    save_path: Path,
+    driver=None,
+) -> Path | None:
+    url = "https://www.fedstat.ru/indicator/data.do?format=sdmx"
+    sdmx_headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() != "content-type"
+    }
+    sdmx_headers["Content-Type"] = "application/x-www-form-urlencoded"
+    sdmx_headers["Accept"] = "text/xml,application/xml,*/*"
+    sdmx_post_data = _post_data_with_format(post_data, "sdmx")
+
+    try:
+        response = session.post(url, data=sdmx_post_data, headers=sdmx_headers, timeout=120)
+        response.raise_for_status()
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        content = response.content
+        if "html" in content_type or content[:200].lstrip().lower().startswith(b"<html"):
+            preview = _compact_html_preview(response.text)
+            print(f"  ⚠️  SDMX тоже вернул HTML: {preview}")
+            raise ValueError("SDMX returned HTML")
+        if not _looks_like_xml_bytes(content):
+            print(f"  ⚠️  SDMX ответ не похож на XML ({content_type}, {len(content)} байт)")
+            raise ValueError("SDMX response is not XML")
+        out = _sdmx_34118_to_excel(content, payload_template, save_path)
+        if out is not None:
+            print(f"  ✅ Сохранён через SDMX fallback: {out}")
+            return out
+        raise ValueError("SDMX XML did not contain 34118 rows")
+    except (requests.RequestException, OSError, ValueError, ET.ParseError) as exc:
+        print(f"  ⚠️  SDMX fallback не сработал: {exc}")
+
+    if driver is None or "fedstat.ru" not in (driver.current_url or ""):
+        return None
+    try:
+        driver.set_script_timeout(BROWSER_FETCH_TIMEOUT)
+    except Exception:
+        pass
+    try:
+        entries = [[str(k), str(v)] for k, v in sdmx_post_data]
+        result = driver.execute_async_script(
+            """
+            const done = arguments[arguments.length - 1];
+            const [action, entries] = arguments;
+            const body = new URLSearchParams();
+            for (const [name, value] of entries) body.append(name, value);
+            fetch(action, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'Accept': 'text/xml,application/xml,*/*'
+                },
+                body
+            }).then(async response => {
+                const contentType = response.headers.get('content-type') || '';
+                const buffer = await response.arrayBuffer();
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                const chunk = 0x8000;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                }
+                let text = '';
+                if (contentType.toLowerCase().includes('html') || contentType.toLowerCase().startsWith('text/')) {
+                    text = new TextDecoder('utf-8').decode(bytes.slice(0, 1000));
+                }
+                done({
+                    ok: response.ok,
+                    status: response.status,
+                    contentType,
+                    bodyBase64: btoa(binary),
+                    text
+                });
+            }).catch(error => done({error: String(error)}));
+            """,
+            url,
+            entries,
+        )
+        if not result or not result.get("bodyBase64"):
+            if result and result.get("error"):
+                print(f"  ⚠️  Browser SDMX fetch не сработал: {result.get('error')}")
+            return None
+        content = base64.b64decode(result["bodyBase64"])
+        content_type = str(result.get("contentType") or "").lower()
+        if "html" in content_type or content[:200].lstrip().lower().startswith(b"<html"):
+            preview = _compact_html_preview(result.get("text") or content[:1000].decode("utf-8", "replace"))
+            print(f"  ⚠️  Browser SDMX fetch вернул HTML ({result.get('status')}): {preview}")
+            return None
+        if not _looks_like_xml_bytes(content):
+            print(f"  ⚠️  Browser SDMX ответ не похож на XML ({content_type}, {len(content)} байт)")
+            return None
+        out = _sdmx_34118_to_excel(content, payload_template, save_path)
+        if out is not None:
+            print(f"  ✅ Сохранён через Browser SDMX fallback: {out}")
+        return out
+    except Exception as exc:
+        print(f"  ⚠️  Browser SDMX fallback не сработал: {exc}")
+        return None
 
 
 def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
@@ -1685,6 +2036,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             return chunk_path
         print("  -> 34118 chunks не собрались, пробую полный экспорт")
 
+    session: requests.Session | None = None
     try:
         print(f"  ⬇️  Скачиваю Excel...")
         session = requests.Session()
@@ -1743,6 +2095,18 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             if browser_path is not None:
                 print(f"  ✅ Сохранён через browser POST: {browser_path}")
                 return browser_path
+        if indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
+            print("  -> Пробую SDMX fallback для 34118...")
+            sdmx_path = _download_34118_sdmx_as_excel(
+                session,
+                post_data,
+                headers,
+                payload_template,
+                save_path,
+                driver=driver,
+            )
+            if sdmx_path is not None:
+                return sdmx_path
         if (
             allow_34118_chunks
             and payload_template_override is None

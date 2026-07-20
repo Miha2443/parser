@@ -897,6 +897,7 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
                     if "html" in content_type or content_type.startswith("text/"):
                         preview = _compact_html_preview(result.get("text") or body[:1000].decode("utf-8", "replace"))
                         print(f"  ⚠️  Browser fetch вернул HTML ({status}): {preview}")
+                        return None
                     else:
                         write_bytes_atomic(save_path, body, validate=validate_excel_file)
                         return save_path
@@ -2168,14 +2169,6 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
 
     except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
-        if driver is not None:
-            print("  -> Пробую скачать через browser POST...")
-            browser_path = _download_excel_via_browser(
-                driver, url, post_data, save_dir, save_path
-            )
-            if browser_path is not None:
-                print(f"  ✅ Сохранён через browser POST: {browser_path}")
-                return browser_path
         if indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
             print("  -> Пробую SDMX fallback для 34118...")
             sdmx_path = _download_34118_sdmx_as_excel(
@@ -2189,6 +2182,14 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             )
             if sdmx_path is not None:
                 return sdmx_path
+        if driver is not None:
+            print("  -> Пробую скачать через browser POST...")
+            browser_path = _download_excel_via_browser(
+                driver, url, post_data, save_dir, save_path
+            )
+            if browser_path is not None:
+                print(f"  ✅ Сохранён через browser POST: {browser_path}")
+                return browser_path
         if (
             allow_34118_chunks
             and payload_template_override is None

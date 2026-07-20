@@ -57,6 +57,7 @@ def main() -> int:
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONUNBUFFERED", "1")
 
     cmd = [
         sys.executable,

@@ -30,7 +30,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from pipeline.file_utils import stream_response_atomic, validate_excel_file
+from pipeline.file_utils import stream_response_atomic, validate_excel_file, write_bytes_atomic
 from pipeline.selenium_utils import wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
 
@@ -399,6 +399,13 @@ def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
 def _compact_html_preview(text: str, limit: int = 300) -> str:
     text = re.sub(r"\s+", " ", text or "").strip()
     return text[:limit]
+
+
+def _raise_if_html_response(response: requests.Response) -> None:
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    if "html" in content_type or content_type.startswith("text/"):
+        preview = _compact_html_preview(response.text)
+        raise ValueError(f"Fedstat вернул HTML вместо Excel: {preview}")
 
 
 def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
@@ -1357,11 +1364,15 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         print(f"  ⚠️  Нет payload для индикатора {indicator_id}")
         return None
 
-    post_data = [("format", "excel")]
+    post_data = [
+        ("format", "excel"),
+        ("id", payload_template["id"]),
+        ("indicator_title", payload_template["title"]),
+    ]
     for key, value in payload_template.items():
-        if key == "filename_title":
+        if key in {"filename_title", "id", "title"}:
             continue
-        post_key = "indicator_title" if key == "title" else key
+        post_key = key
         if isinstance(value, list):
             for v in value:
                 post_data.append((post_key, v))
@@ -1407,14 +1418,36 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                     )
             except Exception:
                 pass
-        response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
-        response.raise_for_status()
-        content_type = (response.headers.get("Content-Type") or "").lower()
-        if "html" in content_type or content_type.startswith("text/"):
-            preview = _compact_html_preview(response.text)
-            raise ValueError(f"Fedstat вернул HTML вместо Excel: {preview}")
+        last_error: Exception | None = None
 
-        stream_response_atomic(response, save_path, validate=validate_excel_file)
+        try:
+            response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
+            response.raise_for_status()
+            _raise_if_html_response(response)
+            stream_response_atomic(response, save_path, validate=validate_excel_file)
+        except (requests.RequestException, OSError, ValueError) as exc:
+            last_error = exc
+            try:
+                response.close()  # type: ignore[name-defined]
+            except Exception:
+                pass
+            print(f"  ⚠️  urlencoded POST не дал Excel: {exc}")
+            print("  -> Пробую multipart POST...")
+            multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+            try:
+                multipart = [(key, (None, str(value))) for key, value in post_data]
+                response = session.post(
+                    url,
+                    files=multipart,
+                    headers=multipart_headers,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                _raise_if_html_response(response)
+                write_bytes_atomic(save_path, response.content, validate=validate_excel_file)
+            except (requests.RequestException, OSError, ValueError) as exc2:
+                last_error = exc2
+                raise last_error
 
         print(f"  ✅ Сохранён: {save_path}")
         return save_path

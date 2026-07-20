@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import requests
+import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
@@ -638,8 +639,105 @@ def _payload_34118_part(indicator_id: str) -> dict:
     }
 
 
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    return [values[i:i + size] for i in range(0, len(values), size)]
+
+
+def _read_fedstat_data_sheet(path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_excel(path, sheet_name="Данные", header=None)
+    except Exception:
+        return pd.read_excel(path, sheet_name=0, header=None)
+
+
+def _merge_fedstat_excel_chunks(paths: list[Path], save_path: Path) -> Path | None:
+    frames = []
+    for path in paths:
+        try:
+            df = _read_fedstat_data_sheet(path)
+        except Exception as exc:
+            print(f"  ⚠️  Не смог прочитать chunk {path.name}: {exc}")
+            return None
+        if df.shape[1] < 3:
+            print(f"  ⚠️  В chunk {path.name} слишком мало колонок")
+            return None
+        frames.append(df)
+    if not frames:
+        return None
+
+    base = frames[0].iloc[:, :2].copy()
+    out = pd.concat([base] + [df.iloc[:, 2:].reset_index(drop=True) for df in frames], axis=1)
+    final_path = save_path.with_suffix(".xlsx")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_name(f"{final_path.stem}.tmp{final_path.suffix}")
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            out.to_excel(writer, sheet_name="Данные", header=False, index=False)
+        validate_excel_file(tmp_path)
+        tmp_path.replace(final_path)
+        return final_path
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _download_34118_period_chunks(
+    indicator_id: str,
+    payload_template: dict,
+    save_dir: Path,
+    save_path: Path,
+    *,
+    remote_date: str | None,
+    driver=None,
+) -> Path | None:
+    selected = list(payload_template.get("selectedFilterIds", []))
+    period_ids = [x for x in selected if str(x).startswith("33560_")]
+    if len(period_ids) <= 6:
+        return None
+    non_period = [x for x in selected if not str(x).startswith("33560_")]
+    chunks = _chunked(period_ids, 6)
+    print(f"  -> Делю 34118 на {len(chunks)} маленьких period-chunk запросов")
+
+    with tempfile.TemporaryDirectory(prefix="fedstat-34118-chunks-") as tmp:
+        tmp_dir = Path(tmp)
+        chunk_paths: list[Path] = []
+        for idx, period_chunk in enumerate(chunks, start=1):
+            chunk_payload = {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in payload_template.items()
+            }
+            chunk_payload["selectedFilterIds"] = non_period + period_chunk
+            chunk_payload["filename_title"] = (
+                f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:02d}"
+            )
+            chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:02d}.xls"
+            downloaded = download_excel(
+                indicator_id,
+                tmp_dir,
+                remote_date=remote_date,
+                driver=driver,
+                payload_template_override=chunk_payload,
+                save_path_override=chunk_path,
+                allow_34118_chunks=False,
+            )
+            if downloaded is None:
+                print(f"  ⚠️  Chunk {idx}/{len(chunks)} не скачался")
+                return None
+            chunk_paths.append(downloaded)
+
+        merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
+        if merged is not None:
+            print(f"  ✅ Собрал 34118 из chunks: {merged}")
+        return merged
+
+
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
-                   driver=None):
+                   driver=None, payload_template_override: dict | None = None,
+                   save_path_override: Path | None = None,
+                   allow_34118_chunks: bool = True):
     PAYLOADS = {
         # Введено в действие общей площади жилых домов (оперативные данные).
         # Параметры — из data/raw/realty/vvod/34118_filter.txt (экспорт ЕМИСС).
@@ -1431,7 +1529,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         },
     }
 
-    payload_template = (
+    payload_template = payload_template_override or (
         _payload_34118_part(indicator_id)
         if indicator_id in {"34118_часть1", "34118_часть2"}
         else PAYLOADS.get(indicator_id)
@@ -1478,7 +1576,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     # реально обновлён.
     date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
     filename = f"{date_in_name}_{safe_title}.xls"
-    save_path = save_dir / filename
+    save_path = save_path_override or (save_dir / filename)
 
     try:
         print(f"  ⬇️  Скачиваю Excel...")
@@ -1538,6 +1636,21 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             if browser_path is not None:
                 print(f"  ✅ Сохранён через browser POST: {browser_path}")
                 return browser_path
+        if (
+            allow_34118_chunks
+            and payload_template_override is None
+            and indicator_id in {"34118_часть1", "34118_часть2"}
+        ):
+            chunk_path = _download_34118_period_chunks(
+                indicator_id,
+                payload_template,
+                save_dir,
+                save_path,
+                remote_date=remote_date,
+                driver=driver,
+            )
+            if chunk_path is not None:
+                return chunk_path
         return None
 
 

@@ -589,9 +589,11 @@ def _should_direct_fallback(indicator_id: str) -> bool:
 
 
 def _payload_34118_part(indicator_id: str) -> dict:
-    """Compact EMISS 34118 export: only РФ/Москва and required housing categories.
+    """Compact EMISS 34118 export in the same layout as emiss_34118_base.xls.
 
     The full site layout is too large and returns an HTML warning instead of xls.
+    Keep 0/30611 as hidden filters so the first two columns remain region/category,
+    which is what the dashboard parser expects.
     """
     is_part1 = indicator_id.endswith("часть1")
     years = range(2015, 2023) if is_part1 else range(2023, 2027)
@@ -611,11 +613,9 @@ def _payload_34118_part(indicator_id: str) -> dict:
         "57831_1849012",  # РФ без новых субъектов
     ]
     category_ids = [
-        "58389_1754554", "58389_1754555", "58389_1754556", "58389_1754557",
-        "58389_1754558", "58389_1754559", "58389_1754560", "58389_1754561",
-        "58389_1754562", "58389_1754563", "58389_1754564", "58389_1754565",
-        "58389_1754566", "58389_1754567", "58389_1754568", "58389_1754569",
-        "58389_1836598", "58389_1836599",
+        "58389_1754554",  # Жилые дома, построенные населением / ИЖС
+        "58389_1754555",  # Жилые дома
+        "58389_1754556",  # Жилые здания многоквартирные
     ]
     return {
         "title": "Введено в действие общей площади жилых домов (оперативные данные)",
@@ -624,7 +624,7 @@ def _payload_34118_part(indicator_id: str) -> dict:
             "(оперативные данные)"
         ),
         "id": "34118",
-        "lineObjectIds": ["0", "30611", "57831", "58389"],
+        "lineObjectIds": ["57831", "58389"],
         "columnObjectIds": ["3", "33560"],
         "selectedFilterIds": (
             ["0_34118"]
@@ -634,6 +634,7 @@ def _payload_34118_part(indicator_id: str) -> dict:
             + region_ids
             + category_ids
         ),
+        "filterObjectIds": ["0", "30611"],
     }
 
 

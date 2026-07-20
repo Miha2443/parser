@@ -396,6 +396,11 @@ def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
+def _compact_html_preview(text: str, limit: int = 300) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text[:limit]
+
+
 def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
                                 save_dir: Path, save_path: Path) -> Path | None:
     """Submit Fedstat Excel POST through Chrome when direct requests are blocked."""
@@ -1404,6 +1409,10 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                 pass
         response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
         response.raise_for_status()
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "html" in content_type or content_type.startswith("text/"):
+            preview = _compact_html_preview(response.text)
+            raise ValueError(f"Fedstat вернул HTML вместо Excel: {preview}")
 
         stream_response_atomic(response, save_path, validate=validate_excel_file)
 
@@ -1431,6 +1440,7 @@ def run(force: bool = False):
     checked_ok = 0
     downloaded_without_date = []
     skipped_indicators = []
+    failed_downloads = []
 
     print(f"\n{'='*60}")
     print(f"Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1481,6 +1491,8 @@ def run(force: bool = False):
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date
+            else:
+                failed_downloads.append(indicator_id)
             print()
 
     finally:
@@ -1493,6 +1505,8 @@ def run(force: bool = False):
     print(f"Проверено индикаторов — {checked_ok}/{len(INDICATORS)}")
     if downloaded_without_date:
         print(f"Скачано напрямую без даты — {len(downloaded_without_date)}: {', '.join(downloaded_without_date)}")
+    if failed_downloads:
+        print(f"Обновились, но не скачались — {len(failed_downloads)}: {', '.join(failed_downloads)}")
     if skipped_indicators:
         print(f"Пропущено без даты — {len(skipped_indicators)}: {', '.join(skipped_indicators)}")
     for f in downloaded_files:

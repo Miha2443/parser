@@ -125,7 +125,8 @@ DIRECT_FALLBACK_IDS = {
 }
 BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
 BROWSER_FETCH_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_FETCH_TIMEOUT", "180"))
-FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE", "6")))
+FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE", "1")))
+FEDSTAT_34118_YEAR_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_YEAR_CHUNK_SIZE", "99")))
 FEDSTAT_USER_AGENT = os.environ.get(
     "FEDSTAT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -644,6 +645,30 @@ def _chunked(values: list[str], size: int) -> list[list[str]]:
     return [values[i:i + size] for i in range(0, len(values), size)]
 
 
+def _is_34118_year_filter(value: str) -> bool:
+    return bool(re.fullmatch(r"3_20\d{2}", str(value)))
+
+
+def _is_34118_period_filter(value: str) -> bool:
+    return str(value).startswith("33560_")
+
+
+def _subset_34118_filters(selected: list[str], years: list[str], periods: list[str]) -> list[str]:
+    year_set = set(years)
+    period_set = set(periods)
+    out: list[str] = []
+    for item in selected:
+        if _is_34118_year_filter(item):
+            if item in year_set:
+                out.append(item)
+        elif _is_34118_period_filter(item):
+            if item in period_set:
+                out.append(item)
+        else:
+            out.append(item)
+    return out
+
+
 def _parse_only_ids(raw: str | None) -> list[str] | None:
     if not raw:
         return None
@@ -708,46 +733,72 @@ def _download_34118_period_chunks(
     *,
     remote_date: str | None,
     driver=None,
+    period_chunk_size: int | None = None,
+    year_chunk_size: int | None = None,
 ) -> Path | None:
     selected = list(payload_template.get("selectedFilterIds", []))
-    period_ids = [x for x in selected if str(x).startswith("33560_")]
-    if len(period_ids) <= 6:
+    year_ids = [x for x in selected if _is_34118_year_filter(x)]
+    period_ids = [x for x in selected if _is_34118_period_filter(x)]
+    period_chunk_size = period_chunk_size or FEDSTAT_34118_CHUNK_SIZE
+    year_chunk_size = year_chunk_size or FEDSTAT_34118_YEAR_CHUNK_SIZE
+    if len(period_ids) <= period_chunk_size and len(year_ids) <= year_chunk_size:
         return None
-    non_period = [x for x in selected if not str(x).startswith("33560_")]
-    chunks = _chunked(period_ids, FEDSTAT_34118_CHUNK_SIZE)
-    print(f"  -> Делю 34118 на {len(chunks)} маленьких period-chunk запросов")
 
-    with tempfile.TemporaryDirectory(prefix="fedstat-34118-chunks-") as tmp:
-        tmp_dir = Path(tmp)
-        chunk_paths: list[Path] = []
-        for idx, period_chunk in enumerate(chunks, start=1):
-            chunk_payload = {
-                key: (list(value) if isinstance(value, list) else value)
-                for key, value in payload_template.items()
-            }
-            chunk_payload["selectedFilterIds"] = non_period + period_chunk
-            chunk_payload["filename_title"] = (
-                f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:02d}"
-            )
-            chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:02d}.xls"
-            downloaded = download_excel(
-                indicator_id,
-                tmp_dir,
-                remote_date=remote_date,
-                driver=driver,
-                payload_template_override=chunk_payload,
-                save_path_override=chunk_path,
-                allow_34118_chunks=False,
-            )
-            if downloaded is None:
-                print(f"  ⚠️  Chunk {idx}/{len(chunks)} не скачался")
+    attempts = [(period_chunk_size, year_chunk_size)]
+    if (period_chunk_size, year_chunk_size) != (1, 1):
+        attempts.append((1, 1))
+
+    for attempt_index, (period_size, year_size) in enumerate(attempts, start=1):
+        period_chunks = _chunked(period_ids, period_size)
+        year_chunks = _chunked(year_ids, year_size)
+        jobs = [(years, periods) for years in year_chunks for periods in period_chunks]
+        print(
+            f"  -> Делю 34118 на {len(jobs)} маленьких запросов "
+            f"(лет до {year_size}, периодов до {period_size})"
+        )
+
+        with tempfile.TemporaryDirectory(prefix="fedstat-34118-chunks-") as tmp:
+            tmp_dir = Path(tmp)
+            chunk_paths: list[Path] = []
+            failed = False
+            for idx, (year_chunk, period_chunk) in enumerate(jobs, start=1):
+                chunk_payload = {
+                    key: (list(value) if isinstance(value, list) else value)
+                    for key, value in payload_template.items()
+                }
+                chunk_payload["selectedFilterIds"] = _subset_34118_filters(
+                    selected, year_chunk, period_chunk
+                )
+                chunk_payload["filename_title"] = (
+                    f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:03d}"
+                )
+                chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:03d}.xls"
+                downloaded = download_excel(
+                    indicator_id,
+                    tmp_dir,
+                    remote_date=remote_date,
+                    driver=driver,
+                    payload_template_override=chunk_payload,
+                    save_path_override=chunk_path,
+                    allow_34118_chunks=False,
+                )
+                if downloaded is None:
+                    print(f"  ⚠️  Chunk {idx}/{len(jobs)} не скачался")
+                    failed = True
+                    break
+                chunk_paths.append(downloaded)
+
+            if failed:
+                if attempt_index < len(attempts):
+                    print("  -> Пробую 34118 максимально мелко: один год и один период")
+                    continue
                 return None
-            chunk_paths.append(downloaded)
 
-        merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
-        if merged is not None:
-            print(f"  ✅ Собрал 34118 из chunks: {merged}")
-        return merged
+            merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
+            if merged is not None:
+                print(f"  ✅ Собрал 34118 из chunks: {merged}")
+                return merged
+    return None
 
 
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
@@ -1593,6 +1644,26 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
     filename = f"{date_in_name}_{safe_title}.xls"
     save_path = save_path_override or (save_dir / filename)
+    can_chunk_34118 = (
+        allow_34118_chunks
+        and payload_template_override is None
+        and indicator_id in {"34118_часть1", "34118_часть2"}
+    )
+    tried_34118_chunks = False
+
+    if can_chunk_34118:
+        tried_34118_chunks = True
+        chunk_path = _download_34118_period_chunks(
+            indicator_id,
+            payload_template,
+            save_dir,
+            save_path,
+            remote_date=remote_date,
+            driver=driver,
+        )
+        if chunk_path is not None:
+            return chunk_path
+        print("  -> 34118 chunks не собрались, пробую полный экспорт")
 
     try:
         print(f"  ⬇️  Скачиваю Excel...")
@@ -1656,6 +1727,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             allow_34118_chunks
             and payload_template_override is None
             and indicator_id in {"34118_часть1", "34118_часть2"}
+            and not tried_34118_chunks
         ):
             chunk_path = _download_34118_period_chunks(
                 indicator_id,

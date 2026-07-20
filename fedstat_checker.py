@@ -664,8 +664,7 @@ def _sdmx_34118_to_excel(content: bytes, payload_template: dict, save_path: Path
                 _label_from_sdmx(labels, "58389", category),
             ]
             row.extend(value_by_key.get((region, category, year, period), "") for year, period in columns)
-            if any(v != "" for v in row[2:]):
-                rows.append(row)
+            rows.append(row)
 
     if len(rows) <= 4:
         return None
@@ -701,6 +700,7 @@ def _post_data_with_format(post_data: list[tuple[str, str]], data_format: str) -
 
 
 def _download_34118_sdmx_as_excel(
+    indicator_id: str,
     session: requests.Session,
     post_data: list[tuple[str, str]],
     headers: dict[str, str],
@@ -732,6 +732,8 @@ def _download_34118_sdmx_as_excel(
             raise ValueError("SDMX response is not XML")
         out = _sdmx_34118_to_excel(content, payload_template, save_path)
         if out is not None:
+            if not _validate_34118_file(indicator_id, out, payload_template):
+                raise ValueError("SDMX file did not pass 34118 year validation")
             print(f"  ✅ Сохранён через SDMX fallback: {out}")
             return out
         raise ValueError("SDMX XML did not contain 34118 rows")
@@ -800,6 +802,8 @@ def _download_34118_sdmx_as_excel(
             return None
         out = _sdmx_34118_to_excel(content, payload_template, save_path)
         if out is not None:
+            if not _validate_34118_file(indicator_id, out, payload_template):
+                return None
             print(f"  ✅ Сохранён через Browser SDMX fallback: {out}")
         return out
     except Exception as exc:
@@ -1111,6 +1115,47 @@ def _merge_fedstat_excel_chunks(paths: list[Path], save_path: Path) -> Path | No
             pass
 
 
+def _validate_34118_file(indicator_id: str, path: Path, payload_template: dict | None = None) -> bool:
+    try:
+        df = _read_fedstat_data_sheet(path)
+    except Exception as exc:
+        print(f"  ⚠️  Не смог проверить 34118 файл {path.name}: {exc}")
+        return False
+    selected = list((payload_template or {}).get("selectedFilterIds", []))
+    expected_years = {
+        int(item.split("_", 1)[1])
+        for item in selected
+        if _is_34118_year_filter(item)
+    }
+    if not expected_years:
+        expected_years = (
+            set(range(2015, 2023))
+            if indicator_id.endswith("часть1")
+            else set(range(2023, 2027))
+        )
+    found_years: set[int] = set()
+    for i in range(min(6, len(df))):
+        for j in range(df.shape[1]):
+            value = df.iat[i, j]
+            try:
+                year = int(float(value))
+            except (TypeError, ValueError):
+                continue
+            if 2000 <= year <= 2100:
+                found_years.add(year)
+    missing = sorted(expected_years - found_years)
+    if missing:
+        print(f"  ⚠️  В 34118 {path.name} не нашёл годы: {', '.join(map(str, missing))}")
+        return False
+    years_label = (
+        f"{min(expected_years)}-{max(expected_years)}"
+        if len(expected_years) > 1
+        else str(next(iter(expected_years)))
+    )
+    print(f"  ✅ Проверил 34118 файл: годы {years_label} на месте")
+    return True
+
+
 def _download_34118_period_chunks(
     indicator_id: str,
     payload_template: dict,
@@ -1193,6 +1238,8 @@ def _download_34118_period_chunks(
 
             merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
             if merged is not None:
+                if not _validate_34118_file(indicator_id, merged):
+                    return None
                 print(f"  ✅ Собрал 34118 из chunks: {merged}")
                 return merged
     return None
@@ -2124,6 +2171,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         if indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
             print("  -> Пробую SDMX fallback для 34118...")
             sdmx_path = _download_34118_sdmx_as_excel(
+                indicator_id,
                 session,
                 post_data,
                 headers,

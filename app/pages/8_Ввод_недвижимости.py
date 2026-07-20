@@ -170,10 +170,14 @@ def render_period_bars(
         return
     if period == "Квартал":
         quarter_months = [q * 3 for q in quarters]
-        src = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin(quarter_months)].copy()
         if value_mode != "С начала года":
-            src = _emiss_delta_from_ytd(src, [3, 6, 9, 12])
-            src = src[src["quarter"].isin(quarters)].copy()
+            src = df[(df["period_type"] == "quarter") & df["quarter"].isin(quarters)].copy()
+            if src.empty:
+                ytd = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin(quarter_months)].copy()
+                src = _emiss_delta_from_ytd(ytd, [3, 6, 9, 12])
+                src = src[src["quarter"].isin(quarters)].copy()
+        else:
+            src = df[df["period_type"].isin(["ytd", "year"]) & df["month"].isin(quarter_months)].copy()
         src["period"] = src.apply(lambda r: quarter_label(r["year"], r["quarter"]), axis=1)
         src["_sort"] = src["year"] * 10 + src["quarter"]
     else:

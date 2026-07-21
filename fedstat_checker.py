@@ -29,6 +29,7 @@ from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -135,6 +136,8 @@ FEDSTAT_USER_AGENT = os.environ.get(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
 )
+FEDSTAT_BROWSER_BINARY = os.environ.get("FEDSTAT_BROWSER_BINARY", "").strip()
+FEDSTAT_CHROMEDRIVER_PATH = os.environ.get("FEDSTAT_CHROMEDRIVER_PATH", "").strip()
 
 # ─────────────────────────────────────────────
 
@@ -149,6 +152,13 @@ def save_state(state):
 
 def create_driver(download_dir: Path | None = None):
     options = Options()
+    if FEDSTAT_BROWSER_BINARY:
+        binary_path = Path(FEDSTAT_BROWSER_BINARY)
+        if binary_path.exists():
+            options.binary_location = str(binary_path)
+            print(f"  🛠  browser binary: {binary_path}", flush=True)
+        else:
+            print(f"  ⚠️  FEDSTAT_BROWSER_BINARY не найден: {binary_path}", flush=True)
 
     # Уникальный профиль на инстанс. update_realty.py гоняет fedstat
     # параллельно с rasprod/kvart/erz-top — без своего user-data-dir
@@ -195,7 +205,15 @@ def create_driver(download_dir: Path | None = None):
                 "profile.default_content_setting_values.automatic_downloads": 1,
             },
         )
-    driver = webdriver.Chrome(options=options)
+    service = None
+    if FEDSTAT_CHROMEDRIVER_PATH:
+        driver_path = Path(FEDSTAT_CHROMEDRIVER_PATH)
+        if driver_path.exists():
+            service = Service(str(driver_path))
+            print(f"  🛠  chromedriver: {driver_path}", flush=True)
+        else:
+            print(f"  ⚠️  FEDSTAT_CHROMEDRIVER_PATH не найден: {driver_path}", flush=True)
+    driver = webdriver.Chrome(service=service, options=options) if service else webdriver.Chrome(options=options)
     try:
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",

@@ -159,14 +159,14 @@ def create_driver(download_dir: Path | None = None):
     atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
     options.add_argument(f"--user-data-dir={profile_dir}")
 
-    # HEADLESS_MODE=new → новый headless (быстрее, но в Chrome 149 ломает
-    # тяжёлый React-DOM fedstat с `appendChild on null`). По умолчанию
-    # `=old` — старый headless надёжен, разница в скорости несущественна
-    # для 29 индикаторов.
+    # HEADLESS_MODE=new → новый headless; =off → видимый Chrome для
+    # диагностики блокировок Fedstat; по умолчанию =old.
     mode = os.environ.get("HEADLESS_MODE", "old").lower()
     if mode == "new":
         options.add_argument("--headless=new")
         print("  🛠  headless=new (HEADLESS_MODE=new)", flush=True)
+    elif mode in {"off", "false", "0", "visible"}:
+        print("  🛠  headless=off (visible Chrome)", flush=True)
     else:
         options.add_argument("--headless")
         print("  🛠  headless=old (HEADLESS_MODE=old, default)", flush=True)

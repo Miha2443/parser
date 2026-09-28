@@ -2,7 +2,7 @@
 
 The realty dashboard pages historically read large raw files directly from
 ``data/raw/realty``. This script materializes the same structures returned by
-``app.data_access`` into ``data/marts/realty/*.pkl`` so the UI can start and
+``pipeline.data_access`` into ``data/marts/realty/*.pkl`` so the UI can start and
 switch pages without reparsing heavy workbooks.
 """
 from __future__ import annotations
@@ -11,9 +11,6 @@ import argparse
 import contextlib
 import io
 import json
-import logging
-import os
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,15 +18,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
+from pipeline import paths
+from pipeline.data_access import DataAccess, DataContext
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = paths.ROOT
 MART_DIR = ROOT / "data" / "marts" / "realty"
 MANIFEST = MART_DIR / "manifest.json"
 TEMP_DOWNLOAD_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
-
-logging.getLogger("streamlit").setLevel(logging.ERROR)
-logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
-
 
 @dataclass(frozen=True)
 class MartSpec:
@@ -38,15 +33,9 @@ class MartSpec:
     raw_files: Callable[[Any], list[Path]]
 
 
-def _prepare_imports():
-    """Import app.data_access with mart reads disabled to force raw parsing."""
-    os.environ["PARSER_USE_REALTY_MARTS"] = "0"
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    with contextlib.redirect_stderr(io.StringIO()):
-        from app import data_access  # noqa: PLC0415
-
-    return data_access
+def _prepare_imports() -> DataAccess:
+    """Explicit raw context; importing/building never changes caller environment."""
+    return DataAccess(DataContext(ROOT, downloads=paths.DOWNLOADS_DIR, use_marts=False))
 
 
 def _row_count(value: Any) -> int | None:
@@ -103,8 +92,9 @@ def _source_summary(files: list[Path]) -> list[dict[str, Any]]:
         except OSError:
             continue
         out.append({
-            "path": str(path.relative_to(ROOT)).replace("\\", "/"),
+            "path": path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix(),
             "size_bytes": st.st_size,
+            "mtime_ns": st.st_mtime_ns,
             "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
         })
     return out
@@ -294,55 +284,10 @@ def check_manifest(*, strict: bool = False) -> int:
 
 
 def _specs(da) -> list[MartSpec]:
-    return [
-        MartSpec(
-            "kvartirografia",
-            "load_kvartirografia",
-            lambda da: da._raw_files(da.KVART_PATHS, ["kvartirografia_*.json", "kvartirografia_*.xlsx"]),
-        ),
-        MartSpec(
-            "monitoring_2_0",
-            "load_monitoring_2_0",
-            lambda da: da._raw_files(da.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"]),
-        ),
-        MartSpec(
-            "erzrf_top",
-            "load_erzrf_top",
-            lambda da: da._raw_files(
-                da.ERZRF_PATHS,
-                ["top_*.xlsx", "TOP_EXCEL*.xlsx", "top_developers_*.json"],
-                recursive=True,
-            ),
-        ),
-        MartSpec(
-            "erzrf_cards",
-            "load_erzrf_cards",
-            lambda da: da._raw_files(da.ERZRF_PATHS, ["cards_*.xlsx"], recursive=True),
-        ),
-        MartSpec(
-            "escrow_manual",
-            "load_escrow_manual",
-            lambda da: da._raw_files(da.ESCROW_PATHS, ["*.xlsx"]),
-        ),
-        MartSpec(
-            "rasprodannost",
-            "load_rasprodannost",
-            lambda da: da._raw_files(da.RASPROD_PATHS, ["rasprodannost_*.xlsx"]),
-        ),
-        MartSpec(
-            "vvod_static",
-            "load_vvod_static",
-            lambda da: da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["*.xls*", "*.txt"]),
-        ),
-        MartSpec(
-            "emiss_34118",
-            "load_emiss_34118",
-            lambda da: (
-                da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["emiss_34118_base.xls"])
-                + da._raw_files([ROOT / "downloads"], ["*Введено в действие общей площади жилых домов*.xls*"])
-            ),
-        ),
-    ]
+    names = ("kvartirografia", "monitoring_2_0", "erzrf_top", "erzrf_cards",
+             "escrow_manual", "rasprodannost", "vvod_static", "emiss_34118")
+    return [MartSpec(name, f"load_{name}", lambda access, name=name: access.source_files(name))
+            for name in names]
 
 
 def build(*, strict: bool = False, only: set[str] | None = None) -> int:

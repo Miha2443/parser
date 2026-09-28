@@ -125,10 +125,7 @@ def apply_theme() -> None:
             linear-gradient(180deg, var(--ma-bg2) 0%, var(--ma-bg) 100%);
         }}
 
-        [data-testid="stHeader"],
-        [data-testid="stToolbar"],
         [data-testid="stDecoration"],
-        #MainMenu,
         footer {{
           display: none !important;
           height: 0 !important;
@@ -136,11 +133,17 @@ def apply_theme() -> None:
           pointer-events: none !important;
         }}
 
+        /* Keep Streamlit's native navigation and sidebar toggle available. */
+        [data-testid="stHeader"] {{
+          background: var(--ma-bg);
+          border-bottom: 1px solid var(--ma-stroke);
+        }}
+
         [data-testid="stAppViewContainer"] > .main .block-container,
         [data-testid="stMainBlockContainer"],
         .stMainBlockContainer.block-container {{
           max-width: 1540px;
-          padding: .65rem 1.35rem 1.35rem;
+          padding: 4.5rem 1.35rem 1.35rem;
         }}
 
         [data-testid="stSidebar"] {{
@@ -262,6 +265,13 @@ def apply_theme() -> None:
           line-height: 1;
         }}
 
+        .ma-brand-unit {{
+          display: flex;
+          align-items: center;
+          gap: .7rem;
+          min-width: 0;
+        }}
+
         .ma-brand-mark.shield {{
           border-radius: .45rem .45rem .9rem .9rem;
         }}
@@ -285,25 +295,6 @@ def apply_theme() -> None:
           height: 2.65rem;
           background: rgba(255,255,255,.28);
           flex: 0 0 auto;
-        }}
-
-        @media (max-width: 760px) {{
-          .ma-brand-header {{
-            width: 100%;
-            gap: .7rem;
-            padding-right: .85rem;
-          }}
-
-          .ma-brand-text {{
-            font-size: .62rem;
-            white-space: normal;
-          }}
-
-          .ma-brand-mark {{
-            width: 2.1rem;
-            height: 2.1rem;
-            font-size: .88rem;
-          }}
         }}
 
         .ma-page-header::before {{
@@ -381,6 +372,8 @@ def apply_theme() -> None:
           font-weight: 700;
           letter-spacing: .08em;
           text-transform: uppercase;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }}
 
         div[data-testid="stMetricValue"] {{
@@ -622,6 +615,176 @@ def apply_theme() -> None:
           line-height: 1.55;
         }}
 
+        .ma-table-scroll {{
+          width: 100%;
+          max-width: 100%;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          border-radius: 8px;
+        }}
+
+        .ma-table-scroll table {{
+          min-width: 22rem;
+        }}
+
+        .ma-chart-legend {{
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: .5rem 1rem;
+          margin-bottom: .5rem;
+          font-size: .82rem;
+        }}
+
+        .ma-chart-legend-item {{
+          display: inline-flex;
+          align-items: center;
+          gap: .35rem;
+          max-width: 100%;
+        }}
+
+        .ma-chart-legend-swatch {{
+          width: .7rem;
+          height: .7rem;
+          border-radius: 2px;
+          flex: 0 0 auto;
+        }}
+
+        a:focus-visible,
+        button:focus-visible,
+        [tabindex="0"]:focus-visible {{
+          outline: 2px solid var(--ma-teal) !important;
+          outline-offset: 3px;
+        }}
+
+        /* CSS-only reflow: keep one widget tree and the native session state. */
+        @media (max-width: 900px) {{
+          [data-testid="stHorizontalBlock"] {{
+            flex-direction: column;
+            align-items: stretch;
+            gap: .8rem !important;
+          }}
+
+          [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+          [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+            flex: 1 1 auto !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+          }}
+
+          .ma-feature-card {{
+            min-height: 0;
+          }}
+
+          .ma-brand-header {{
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: .65rem .85rem;
+            padding: .8rem;
+          }}
+
+          .ma-brand-header > .shield {{
+            grid-row: 1 / span 2;
+          }}
+
+          .ma-brand-divider {{
+            display: none;
+          }}
+
+          .ma-brand-unit {{
+            grid-column: 2;
+          }}
+
+          .ma-brand-text {{
+            font-size: .7rem;
+            white-space: normal;
+          }}
+
+          .ma-brand-mark {{
+            width: 2.1rem;
+            height: 2.1rem;
+            font-size: .88rem;
+          }}
+        }}
+
+        @media (max-width: 760px) {{
+          [data-testid="stAppViewContainer"] > .main .block-container,
+          [data-testid="stMainBlockContainer"],
+          .stMainBlockContainer.block-container {{
+            padding: 4.25rem .75rem 1.5rem;
+          }}
+
+          .ma-page-header {{
+            padding: .85rem 1rem;
+          }}
+
+          h1 {{
+            font-size: 1.45rem !important;
+            overflow-wrap: anywhere;
+          }}
+
+          [data-testid="stMetricLabel"] p,
+          [data-testid="stSidebar"] p,
+          [data-testid="stSidebar"] span,
+          [data-testid="stSidebar"] label,
+          [data-testid="stSidebar"] li {{
+            font-size: .9rem;
+            line-height: 1.45;
+          }}
+
+          [data-testid="stMetricValue"],
+          [data-testid="stMetricValue"] > div {{
+            font-size: 1.65rem;
+            white-space: normal;
+            overflow-wrap: anywhere;
+          }}
+
+          [data-testid="stMarkdownContainer"],
+          [data-testid="stAlert"],
+          .ma-feature-meta,
+          .ma-subtitle {{
+            overflow-wrap: anywhere;
+          }}
+
+          button,
+          [data-testid="stPageLink"] a,
+          [data-testid="stSidebarNav"] a,
+          [data-testid="stExpander"] summary,
+          [data-testid="stCheckbox"] label,
+          [data-testid="stRadio"] label,
+          [data-baseweb="select"] > div,
+          [data-baseweb="input"] {{
+            min-height: 44px !important;
+          }}
+
+          [data-testid="stHeader"] button,
+          [data-testid="stSidebar"] button {{
+            min-width: 44px;
+          }}
+
+          input,
+          textarea,
+          [data-baseweb="select"] {{
+            font-size: 16px !important;
+          }}
+
+          [data-testid="stTabs"] [role="tablist"] {{
+            overflow-x: auto;
+            max-width: 100%;
+          }}
+
+          [data-testid="stTabs"] [role="tab"] {{
+            flex-shrink: 0;
+          }}
+
+          [data-testid="stDataFrame"],
+          [data-testid="stPlotlyChart"] {{
+            min-width: 0;
+            max-width: 100%;
+          }}
+        }}
+
         .modebar-container,
         .modebar {{
           display: none !important;
@@ -664,10 +827,14 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
         <div class="ma-brand-header">
           <div class="ma-brand-mark shield">М</div>
           <div class="ma-brand-divider"></div>
-          <div class="ma-brand-mark circle">ГК</div>
-          <div class="ma-brand-text">Градостроительный<br>комплекс Москвы</div>
-          <div class="ma-brand-mark circle">ДГП</div>
-          <div class="ma-brand-text">Департамент<br>градостроительной политики<br>города Москвы</div>
+          <div class="ma-brand-unit">
+            <div class="ma-brand-mark circle">ГК</div>
+            <div class="ma-brand-text">Градостроительный<br>комплекс Москвы</div>
+          </div>
+          <div class="ma-brand-unit">
+            <div class="ma-brand-mark circle">ДГП</div>
+            <div class="ma-brand-text">Департамент<br>градостроительной политики<br>города Москвы</div>
+          </div>
         </div>
         <div class="ma-page-header">
           <div class="ma-eyebrow">{eyebrow}</div>
@@ -685,6 +852,7 @@ def style_plotly(fig, *, height: int | None = None):
     margin = {"l": 54, "r": 28, "t": 56, "b": 70}
     margin.update({k: v for k, v in existing_margin.items() if v is not None})
     fig.update_layout(
+        autosize=True,
         template="moscow_business",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",

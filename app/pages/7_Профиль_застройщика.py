@@ -79,6 +79,7 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
         marker=dict(colors=seg_colors),
         text=seg_texts,
         textinfo="text",
+        textposition="inside",
         textfont=dict(size=11),
         hovertemplate="<b>%{label}</b><br>%{percent}<br>%{value:,.0f} м²<extra></extra>",
         sort=False,
@@ -232,6 +233,7 @@ with cols_top[1]:
     <div style='padding-top:18px;font-size:13px;color:{COLORS["text"]};line-height:1.5;'>
       <div style='font-size:11px;text-transform:uppercase;letter-spacing:0.5px;
                   color:{COLORS["muted"]};margin-bottom:4px;'>Рейтинги ЕРЗ</div>
+      <div class='ma-table-scroll' role='region' aria-label='Рейтинги ЕРЗ: РФ и Москва' tabindex='0'>
       <table style='border-collapse:collapse;font-size:13px;'>
         <tr>
           <th style='text-align:left;padding:2px 12px 2px 0;color:{COLORS["muted"]};font-weight:500;'></th>
@@ -239,7 +241,7 @@ with cols_top[1]:
           <th style='text-align:center;padding:2px 10px;color:{COLORS["muted"]};font-weight:500;'>Москва</th>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
+          <td style='padding:2px 12px 2px 0;'>По накопленному вводу жилья</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_rf)}</td>
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_msk)}</td>
         </tr>
@@ -249,10 +251,22 @@ with cols_top[1]:
           <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_msk)}</td>
         </tr>
       </table>
+      </div>
       {f"<div style='margin-top:6px;color:{COLORS['muted']};'>Оценка ЕРЗ: <b style='color:{ERZRF_COLOR};'>{erz_rating}</b></div>" if erz_rating else ""}
     </div>
     """
     st.markdown(rating_html, unsafe_allow_html=True)
+    nakopl_quality = erzrf_top.get("nakopl_vvod_quality", {}).get("regions", {})
+    unavailable = [
+        label for region, label in (("rf", "РФ"), ("msk", "Москва"))
+        if nakopl_quality.get(region, {}).get("status") == "unavailable"
+    ]
+    if unavailable:
+        st.warning(
+            "Нет подтверждённых данных по накопленному вводу ЕРЗ: "
+            + ", ".join(unavailable)
+            + ". Нужна отдельная выгрузка накопленного ввода для каждого региона."
+        )
 
 
 # === Данные ===
@@ -379,11 +393,10 @@ def other_regions_total() -> str:
 st.markdown("### Структура ввода по типу площади (Москва)")
 
 # Легенда цветов для 4 категорий (общая для всех 3 донатов)
-legend_html = "<div style='text-align:center;margin-bottom:8px;font-size:13px;'>" + \
-    " &nbsp; ".join(
-        f"<span style='display:inline-block;width:11px;height:11px;"
-        f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
-        f"<span style='vertical-align:middle;'>{lbl}</span>"
+legend_html = "<div class='ma-chart-legend'>" + \
+    "".join(
+        f"<span class='ma-chart-legend-item'><span class='ma-chart-legend-swatch' "
+        f"aria-hidden='true' style='background:{c};'></span><span>{lbl}</span></span>"
         for lbl, c in zip(CAT_LABELS, CAT_COLORS)
     ) + "</div>"
 st.markdown(legend_html, unsafe_allow_html=True)
@@ -548,11 +561,10 @@ with left:
         colors=colors_3,
     )
     # Легенда цветов для 3 категорий «В строительстве»
-    legend_3 = "<div style='text-align:center;font-size:13px;'>" + \
-        " &nbsp; ".join(
-            f"<span style='display:inline-block;width:11px;height:11px;"
-            f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
-            f"<span style='vertical-align:middle;'>{lbl}</span>"
+    legend_3 = "<div class='ma-chart-legend'>" + \
+        "".join(
+            f"<span class='ma-chart-legend-item'><span class='ma-chart-legend-swatch' "
+            f"aria-hidden='true' style='background:{c};'></span><span>{lbl}</span></span>"
             for lbl, c in zip(cats_3.keys(), colors_3)
         ) + "</div>"
     st.markdown(legend_3, unsafe_allow_html=True)
@@ -610,6 +622,8 @@ with right:
                     "</tr>"
                 )
             html = (
+                "<div class='ma-table-scroll' role='region' "
+                "aria-label='Распроданность и стройготовность: Москва и РФ' tabindex='0'>"
                 "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
                 "<tr>"
                 f"<th style='text-align:left;padding:6px 0;color:{COLORS['muted']};font-weight:500;'></th>"
@@ -617,7 +631,7 @@ with right:
                 f"<th style='text-align:right;padding:6px 0;color:{COLORS['muted']};font-weight:500;'>РФ</th>"
                 "</tr>"
                 f"{rows_html}"
-                "</table>"
+                "</table></div>"
             )
             st.markdown(html, unsafe_allow_html=True)
             period_str = f"{lm:02d}.{ly}" if latest_period else ""

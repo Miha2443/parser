@@ -58,20 +58,16 @@ approx_count = int(objects["coord_quality"].eq("Приблизительные")
 with_coords_label = f"{len(with_coords):,}".replace(",", " ")
 objects_label = f"{len(objects):,}".replace(",", " ")
 missing_label = f"{missing_count:,}".replace(",", " ")
-exact_label = f"{exact_count:,}".replace(",", " ")
-approx_label = f"{approx_count:,}".replace(",", " ")
 
 st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] > .main .block-container {
       max-width: 1500px;
-      padding-top: 1rem;
     }
     [data-testid="stMainBlockContainer"],
     .stMainBlockContainer.block-container {
       max-width: 1500px !important;
-      padding-top: 1rem !important;
     }
     div[data-testid="stVerticalBlock"] {
       gap: .65rem;
@@ -84,11 +80,6 @@ st.markdown(
     div[data-testid="stSlider"],
     div[data-testid="stCheckbox"] {
       margin-bottom: 0 !important;
-    }
-    label p {
-      font-size: .76rem !important;
-      line-height: 1.1 !important;
-      margin-bottom: .15rem !important;
     }
     div[data-testid="stPlotlyChart"] {
       padding: 0 !important;
@@ -155,37 +146,61 @@ st.markdown(
       pointer-events: auto !important;
       fill: #FFFFFF !important;
     }
+    @media (max-width: 760px) {
+      div[data-testid="stPlotlyChart"] .modebar-btn {
+        min-width: 44px;
+        min-height: 44px;
+      }
+      div[data-testid="stPlotlyChart"] .modebar {
+        max-width: calc(100% - 20px);
+        flex-wrap: wrap;
+      }
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 page_header("Карта объектов", "Объекты мониторинга 2.0 с координатами, статусами и фильтрами.")
-metric_cols = st.columns(5)
+metric_cols = st.columns(3)
 metric_cols[0].metric("Всего", objects_label)
 metric_cols[1].metric("На карте", with_coords_label)
-metric_cols[2].metric("Точные", exact_label)
-metric_cols[3].metric("Приблизительные", approx_label)
-metric_cols[4].metric("Без координат", missing_label)
+metric_cols[2].metric("Без координат", missing_label)
 
-filter_cols = st.columns([2.15, 1.15, 1.1, 1.25, 1.2, .95])
 developers = sorted([x for x in objects["developer"].dropna().unique() if str(x).strip()])
-with filter_cols[0]:
-    developer = st.selectbox("Застройщик", ["Все"] + developers, index=0)
-with filter_cols[1]:
-    statuses = st.multiselect("Статус", sorted(objects["status"].dropna().unique()), default=sorted(objects["status"].dropna().unique()))
-with filter_cols[2]:
-    okrugs = st.multiselect("Округ", sorted([x for x in objects["okrug"].dropna().unique() if str(x).strip()]))
-with filter_cols[3]:
-    years = sorted(int(y) for y in objects["year"].dropna().unique() if 2000 <= int(y) <= 2035)
-    if years:
-        year_range = st.slider("Годы", min_value=min(years), max_value=max(years), value=(min(years), max(years)))
-    else:
-        year_range = None
-with filter_cols[4]:
-    coord_quality = st.selectbox("Координаты", ["Все", "Точные", "Приблизительные"], index=0)
-with filter_cols[5]:
-    only_with_coords = st.checkbox("Только на карте", value=True)
+with st.expander("Фильтры карты", expanded=False):
+    with st.form("map_filters"):
+        developer = st.selectbox("Застройщик", ["Все"] + developers, index=0, key="map_developer")
+        area_cols = st.columns(2)
+        with area_cols[0]:
+            statuses = st.multiselect(
+                "Статус", sorted(objects["status"].dropna().unique()),
+                default=sorted(objects["status"].dropna().unique()), key="map_statuses",
+                help="Пустой выбор означает все статусы.",
+            )
+        with area_cols[1]:
+            okrugs = st.multiselect(
+                "Округ", sorted([x for x in objects["okrug"].dropna().unique() if str(x).strip()]),
+                key="map_okrugs", help="Пустой выбор означает все округа.",
+            )
+        detail_cols = st.columns(3)
+        with detail_cols[0]:
+            years = sorted(int(y) for y in objects["year"].dropna().unique() if 2000 <= int(y) <= 2035)
+            if len(years) > 1:
+                year_range = st.slider(
+                    "Годы", min_value=min(years), max_value=max(years),
+                    value=(min(years), max(years)), key="map_years",
+                )
+            else:
+                year_range = (years[0], years[0]) if years else None
+                st.caption(f"Год: {years[0]}" if years else "Год не указан")
+        with detail_cols[1]:
+            coord_quality = st.selectbox(
+                "Координаты", ["Все", "Точные", "Приблизительные"], index=0, key="map_coord_quality",
+            )
+        with detail_cols[2]:
+            only_with_coords = st.checkbox("Только на карте", value=True, key="map_only_with_coords")
+        st.form_submit_button("Применить фильтры", type="primary", use_container_width=True)
 
 data = objects.copy()
 if developer != "Все":
@@ -202,6 +217,10 @@ if only_with_coords:
     data = data[data["has_coords"]]
 
 map_data = data[data["has_coords"]].copy()
+st.caption(
+    f"По фильтрам: {ru_num(len(data))} объектов, на карте: {ru_num(len(map_data))}. "
+    f"Застройщик: {developer}. Подробности — в таблице объектов ниже."
+)
 
 if map_data.empty:
     st.info("Для выбранных фильтров нет объектов с координатами.")
@@ -259,12 +278,14 @@ else:
             zoom=10.2 if developer == "Все" else 11.2,
             domain=dict(x=[0, 1], y=[0, 1]),
         ),
-        height=660,
-        margin=dict(l=0, r=0, t=0, b=0),
+        height=540,
+        margin=dict(l=0, r=0, t=0, b=90),
         legend=dict(
             orientation="h",
-            y=0.01,
-            x=0.02,
+            yanchor="top",
+            y=-0.02,
+            xanchor="left",
+            x=0,
             bgcolor="rgba(26,38,52,.9)",
             bordercolor=COLORS["stroke"],
             borderwidth=1,
@@ -277,7 +298,7 @@ else:
         config={
             "displayModeBar": True,
             "displaylogo": False,
-            "scrollZoom": True,
+            "scrollZoom": False,
             "responsive": True,
         },
     )
@@ -341,6 +362,7 @@ table = table.rename(columns={
     "coord_source": "Источник координат",
 })
 with st.expander("Таблица объектов", expanded=False):
+    st.caption("Прокрутите таблицу по горизонтали, чтобы увидеть все столбцы.")
     st.dataframe(
         table,
         hide_index=True,

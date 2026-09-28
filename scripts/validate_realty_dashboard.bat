@@ -28,13 +28,16 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_nashdom_atomic_json.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_stat_state_recovery.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_monitoring_parser.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_monitoring_provenance.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_kvartirografia_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_rasprodannost_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_atomic_outputs.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_downloader_contract.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_parsers.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_erzrf_region_scope.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_escrow_manual_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_require.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_data_access_core.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_manifest_pickle.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_partial_build.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_mart_atomic_write.py || exit /b %ERRORLEVEL%

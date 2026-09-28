@@ -68,6 +68,8 @@ DEDUP_IDENTITY_COLUMNS = [
     "metric_column",
     "source_file",
     "source_sheet",
+    "source_row",
+    "source_record_id",
     "registry",
     "region_key",
     "sorting",
@@ -193,6 +195,30 @@ def _write_pickle_atomic(value, target: Path) -> None:
 
 
 def _deduplicate_processed(df: pd.DataFrame) -> pd.DataFrame:
+    if "indicator_id" in df and df["indicator_id"].eq("realty_monitoring_2_0").any():
+        monitoring = df[df["indicator_id"].eq("realty_monitoring_2_0")]
+        other = df[~df["indicator_id"].eq("realty_monitoring_2_0")]
+        # The source row is a component record, not a unique UIN/object. Equal
+        # values in distinct buildings/rows must survive. Reimporting the exact
+        # file/row/metric is idempotent; conflicting values for that identity
+        # indicate parser drift and must not be silently resolved with keep-last.
+        identity = ["source_record_id", "metric_column"]
+        if all(col in monitoring for col in identity):
+            has_identity = (
+                monitoring["source_record_id"].notna() & monitoring["source_record_id"].astype(str).str.strip().ne("")
+                & monitoring["metric_column"].notna() & monitoring["metric_column"].astype(str).str.strip().ne("")
+            )
+            modern = monitoring[has_identity]
+            legacy = monitoring[~has_identity]
+            duplicates = modern[modern.duplicated(identity, keep=False)]
+            if not duplicates.empty and duplicates.groupby(identity, dropna=False)["value"].nunique(dropna=False).gt(1).any():
+                raise ValueError("Conflicting values for one monitoring source row and metric")
+            monitoring = pd.concat([modern.drop_duplicates(identity, keep="last"), legacy]).sort_index(kind="stable")
+        # Legacy rows without provenance cannot safely be collapsed: a repeated
+        # UIN or even an identical row may describe another building/component.
+        if other.empty:
+            return monitoring.reset_index(drop=True)
+        return pd.concat([monitoring, _deduplicate_processed(other)], ignore_index=True)
     has_identity_columns = any(c in df.columns for c in DEDUP_IDENTITY_COLUMNS)
     if has_identity_columns:
         dedup_keys = [c for c in df.columns if c not in {"loaded_at", "value"}]

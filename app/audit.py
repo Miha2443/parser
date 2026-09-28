@@ -12,11 +12,12 @@ from typing import Any
 import pandas as pd
 
 from pipeline.audit import read_audit
+from pipeline.paths import ROOT as PROJECT_ROOT
+from pipeline.data_access import DataAccess
 
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
 REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
 REALTY_UPDATE_STATUSES = {"running", "success", "failed", "interrupted"}
@@ -148,29 +149,10 @@ def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def _current_realty_sources(mart: str) -> list[Path]:
-    """Current raw files for a mart. Used only for freshness diagnostics."""
+    """Use the core source registry for freshness diagnostics, without UI imports."""
     try:
-        with contextlib.redirect_stderr(io.StringIO()):
-            from app import data_access as da  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return []
-    try:
-        mapping = {
-            "kvartirografia": lambda: da._raw_files(da.KVART_PATHS, ["kvartirografia_*.json"]),
-            "monitoring_2_0": lambda: da._raw_files(da.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"]),
-            "erzrf_top": lambda: da._raw_files(da.ERZRF_PATHS, ["top_*.xlsx", "top_developers_*.json"]),
-            "erzrf_cards": lambda: da._raw_files(da.ERZRF_PATHS, ["cards_*.xlsx"], recursive=True),
-            "escrow_manual": lambda: da._raw_files(da.ESCROW_PATHS, ["*.xlsx"]),
-            "rasprodannost": lambda: da._raw_files(da.RASPROD_PATHS, ["rasprodannost_*.xlsx"]),
-            "vvod_static": lambda: da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["*.xls*", "*.txt"]),
-            "emiss_34118": lambda: (
-                da._raw_files([p for p in da.VVOD_PATHS if p.exists()], ["emiss_34118_base.xls"])
-                + da._raw_files([PROJECT_ROOT / "downloads"], ["*Введено в действие общей площади жилых домов*.xls*"])
-            ),
-        }
-        getter = mapping.get(mart)
-        return getter() if getter else []
-    except Exception:  # noqa: BLE001
+        return DataAccess().source_files(mart)
+    except (KeyError, OSError):
         return []
 
 

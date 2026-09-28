@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from pipeline.parsers.common import DATA_COLUMNS
+from pipeline.source_records import file_sha256, source_record_id
 
 
 SHEET_OKS = "Реестр ОКС"
@@ -94,10 +95,14 @@ def parse(path: Path) -> pd.DataFrame:
     rows: list[dict] = []
     loaded_at = datetime.now().isoformat(timespec="seconds")
     source_date = _source_date(path)
+    source_hash = file_sha256(path)
 
     for sheet, df in _read_sheets(path):
         registry = "oks" if sheet == SHEET_OKS else "rv"
-        for _, record in df.iterrows():
+        # _read_sheets uses header=0 and does not filter/reindex worksheet rows.
+        # Persist their original one-based Excel position before metric expansion.
+        for row_index, record in df.iterrows():
+            source_row = int(row_index) + 2
             year = _row_year(record, sheet)
             base = {
                 "section": "realty",
@@ -111,6 +116,9 @@ def parse(path: Path) -> pd.DataFrame:
                 "source_file": path.name,
                 "loaded_at": loaded_at,
                 "source_sheet": sheet,
+                "source_row": source_row,
+                "source_file_sha256": source_hash,
+                "source_record_id": source_record_id(source_hash, sheet, source_row),
                 "registry": registry,
                 "source_date": source_date,
                 "uin": record.get("УИН", ""),
@@ -141,6 +149,8 @@ def parse(path: Path) -> pd.DataFrame:
                     "metric_column": col,
                 })
 
+    if file_sha256(path) != source_hash:
+        raise RuntimeError("Monitoring input changed while parsing")
     if not rows:
         return pd.DataFrame(columns=DATA_COLUMNS)
     return pd.DataFrame(rows)

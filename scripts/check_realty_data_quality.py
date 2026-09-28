@@ -26,6 +26,8 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
 logging.disable(logging.CRITICAL)
 
+from pipeline.data_access import ERZ_NAKOPL_SCHEMA_VERSION, _erz_nakopl_valid
+
 from app.data_access import (  # noqa: E402
     load_erzrf_cards,
     load_erzrf_top,
@@ -52,23 +54,6 @@ def _require_regions(regions: list[str], label: str) -> None:
 
 def _name_col(frame: pd.DataFrame) -> str | None:
     return next((c for c in frame.columns if "Наименование" in str(c)), None)
-
-
-def _place_col(frame: pd.DataFrame) -> str | None:
-    return next((c for c in frame.columns if str(c).strip() == "Место"), None)
-
-
-def _pik_place(frame: pd.DataFrame) -> int | None:
-    name_col = _name_col(frame)
-    place_col = _place_col(frame)
-    if not name_col or not place_col:
-        return None
-    names = frame[name_col].astype(str).str.strip()
-    rows = frame[names.str.startswith("ПИК", na=False)]
-    if rows.empty:
-        return None
-    place = pd.to_numeric(rows[place_col], errors="coerce").dropna()
-    return int(place.iloc[0]) if not place.empty else None
 
 
 def _kvart_name_looks_like_region(name: object) -> bool:
@@ -150,27 +135,48 @@ def check_rasprodannost() -> None:
     _require_columns(data["kpi"], {"region_key", "year", "month", "название", "значение_num"}, "rasprodannost kpi")
 
 
-def check_erzrf() -> None:
+def check_erzrf() -> list[str]:
     top = load_erzrf_top()
     _require(len(top.get("all_developers", [])) >= 100, "erzrf all_developers unexpectedly small")
-    for sorting in ["obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod", "potreb_kachestva", "skorost"]:
+    for sorting in ["obyem_stroitelstva", "obyem_vvoda", "potreb_kachestva", "skorost"]:
         for region in ["rf", "msk"]:
             frame = top.get(sorting, {}).get(region)
             _require(isinstance(frame, pd.DataFrame) and not frame.empty, f"erzrf {sorting}/{region} is empty")
-    _require(_pik_place(top["nakopl_vvod"]["rf"]) == 1, "erzrf nakopl_vvod/rf should have PIK at place 1")
-    _require(_pik_place(top["nakopl_vvod"]["msk"]) == 1, "erzrf nakopl_vvod/msk should have PIK at place 1")
+    quality = top.get("nakopl_vvod_quality", {})
+    _require(quality.get("schema_version") == ERZ_NAKOPL_SCHEMA_VERSION, "erzrf nakopl_vvod missing scoped contract")
+    unavailable: list[str] = []
+    for region in ("rf", "msk"):
+        frame = top.get("nakopl_vvod", {}).get(region)
+        metadata = quality.get("regions", {}).get(region, {})
+        _require(metadata.get("source_scope") == region, f"erzrf nakopl_vvod/{region} wrong source scope")
+        _require(isinstance(frame, pd.DataFrame), f"erzrf nakopl_vvod/{region} missing frame")
+        if metadata.get("status") == "unavailable":
+            _require(frame.empty, f"erzrf nakopl_vvod/{region} exposes unconfirmed data")
+            _require(bool(metadata.get("reason")), f"erzrf nakopl_vvod/{region} has no unavailability reason")
+            unavailable.append(f"nakopl_vvod/{region}")
+            print(f"WARNING: erzrf nakopl_vvod/{region} unavailable: {metadata['reason']}")
+        else:
+            _require(metadata.get("status") == "available", f"erzrf nakopl_vvod/{region} unknown status")
+            _require(not frame.empty and _name_col(frame) is not None, f"erzrf nakopl_vvod/{region} is empty")
+            _require(_erz_nakopl_valid(frame), f"erzrf nakopl_vvod/{region} wrong metric")
+            source_name = str(metadata.get("source") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            _require(source_name.startswith(f"top_nakopl_vvod_{region}_"), f"erzrf nakopl_vvod/{region} wrong source")
     cards = load_erzrf_cards()
     _require(len(cards) >= 50, f"erzrf cards unexpectedly small: {len(cards)}")
     _require_columns(cards, {"name_card", "slug", "url"}, "erzrf cards")
     _require(cards["slug"].astype(str).str.len().gt(0).all(), "erzrf cards has empty slug")
+    return unavailable
 
 
 def main() -> int:
     check_monitoring()
     check_kvartirografia()
     check_rasprodannost()
-    check_erzrf()
-    print("realty data quality checks: ok")
+    unavailable = check_erzrf()
+    if unavailable:
+        print("realty data integrity checks: ok; UNAVAILABLE: " + ", ".join(unavailable))
+    else:
+        print("realty data quality checks: ok")
     return 0
 
 

@@ -29,11 +29,14 @@ def _write_monitoring_workbook(path: Path, names: list[str]) -> None:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Реестр РВ"
-    sheet.append(["Группа компаний"])
+    sheet.append(["Группа компаний", "УИН", "Год ввода по Мосстату", "Отрасли",
+                  "Группировка", "Общая площадь", "Жилая площадь"])
     for name in names:
-        sheet.append([name])
+        sheet.append([name, "component", 2026, "Жилые объекты", "Жилье", 100, 70])
     oks = workbook.create_sheet("Реестр ОКС")
-    oks.append(["Группа компаний"])
+    oks.append(["Группа компаний", "УИН", "Назначение", "Общая площадь", "Жилая площадь"])
+    if names:
+        oks.append([names[0], "construction", "Жилье", 100, 70])
     workbook.save(path)
 
 
@@ -111,7 +114,7 @@ def test_monitoring_fetch_force_overrides_same_day_skip() -> None:
     class Response:
         url = "https://docs.google.com/export"
         status_code = 200
-        content = b"PK\x03\x04workbook-bytes"
+        content = b""
         headers = {
             "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         }
@@ -119,6 +122,9 @@ def test_monitoring_fetch_force_overrides_same_day_skip() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         try:
             nc.DOWNLOAD_DIR = Path(tmp)
+            fixture = nc.DOWNLOAD_DIR / "fixture.xlsx"
+            _write_monitoring_workbook(fixture, ["Developer"])
+            Response.content = fixture.read_bytes()
             nc.requests.get = lambda *args, **kwargs: Response()
             state: dict = {}
             os.environ.pop("NASHDOM_FORCE", None)

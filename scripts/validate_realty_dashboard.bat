@@ -14,11 +14,13 @@ set "PYTHONUTF8=1"
 echo [1/6] python compile checks
 "%PY%" scripts\check_python_compile.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_windows_wrappers.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_scheduler_runtime.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_atomic_pickle.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_downloader_local_files.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_lock.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_dedup_keys.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_orchestrator_realty_offline.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_orchestrator_scope.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_archive_old_collision.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_deduplicate_cache.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_atomic_file_writes.py || exit /b %ERRORLEVEL%
@@ -29,10 +31,14 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_stat_state_recovery.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_monitoring_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_monitoring_provenance.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_monitoring_restore.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_monitoring_download_guard.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_monitoring_area_normalization.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_kvartirografia_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_rasprodannost_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_atomic_outputs.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_downloader_contract.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_erzrf_collector_contract.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_parsers.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_region_scope.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_escrow_manual_parser.py || exit /b %ERRORLEVEL%
@@ -50,6 +56,7 @@ echo [2/6] streamlit page runtime smoke
 
 echo [3/6] update_realty planning checks
 "%PY%" scripts\check_update_realty_plan.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_update_realty_runtime.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_realty_status_summary.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_tdm_file_listing.py || exit /b %ERRORLEVEL%
 

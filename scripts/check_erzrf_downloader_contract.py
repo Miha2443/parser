@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import sys
+import os
 import tempfile
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
+os.environ["TDM_DISABLED"] = "1"
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -79,6 +81,15 @@ def main() -> int:
             else:
                 raise AssertionError("ok=False should fail the downloader")
             _require("top" not in dl._RAN_KEYS, "failed source should not be marked as already run")
+            # A retry must execute the source again, including after a partial
+            # result that already contains a valid file.
+            _install_fake_erzrf(
+                {("top",): ([top_file], True)},
+                {"erzrf_top": {"last_run": "2026-07-07T12:00:00"}},
+            )
+            retried = dl.fetch(SimpleNamespace(source_ids=["top_rf"], file_patterns=[]))
+            _require(retried["new_files"] == [top_file], "failed partial source was not retried")
+            _require("top" in dl._RAN_KEYS, "successful retry should be recorded")
     finally:
         dl.DATA_RAW = original_data_raw
         dl.STATE_DIR = original_state_dir

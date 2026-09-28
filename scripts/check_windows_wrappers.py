@@ -42,6 +42,17 @@ def main() -> int:
         for failure in failures:
             print(f"ERROR: {failure}")
         return 1
+    scheduled = _read(ROOT / "scripts" / "update_realty_scheduled.bat").lower()
+    if 'scripts\\update_realty.py %*' not in scheduled:
+        raise AssertionError("scheduled wrapper discards arguments")
+    registration = _read(ROOT / "scripts" / "register_realty_task.ps1").lower()
+    for required in ("-startwhenavailable", "-multipleinstances ignorenew", "-workingdirectory",
+                     "-logontype interactive", "-logontype password", "supportsshouldprocess"):
+        if required not in registration:
+            raise AssertionError(f"scheduler registration missing {required}")
+    for name in ("register_scheduler.bat", "register_scheduler_user.bat"):
+        if "register_realty_task.ps1" not in _read(ROOT / "scripts" / name):
+            raise AssertionError(f"{name} does not delegate to canonical registration")
     print("windows wrapper checks: ok")
     return 0
 

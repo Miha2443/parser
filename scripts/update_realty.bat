@@ -23,4 +23,5 @@ set "PYTHONIOENCODING=utf-8"
 set "PYTHONUTF8=1"
 
 "%PY%" scripts\update_realty.py %*
-endlocal
+set "EXIT_CODE=%ERRORLEVEL%"
+endlocal & exit /b %EXIT_CODE%

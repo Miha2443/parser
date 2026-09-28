@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+os.environ["TDM_DISABLED"] = "1"
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -26,6 +28,11 @@ def _require(condition: bool, message: str) -> None:
 def _write_valid_workbook(path: Path, version: int) -> None:
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         pd.DataFrame([{"version": version}]).to_excel(writer, sheet_name="cards", index=False)
+
+
+def _write_top_workbook(path: Path, area: int) -> None:
+    pd.DataFrame([{"Место": 1, "Наименование, регион": "Fixture developer",
+                   "Строится, м²": area}]).to_excel(path, index=False)
 
 
 def test_card_content_probe() -> None:
@@ -71,33 +78,33 @@ def main() -> int:
         _require(int(frame.loc[0, "version"]) == 1, "initial XLSX write failed")
 
         browser_download = base / "browser.xlsx"
-        browser_download.write_bytes(b"PK\x03\x04xlsx-bytes")
-        _require(ec._validate_downloaded_excel(browser_download), "valid browser download should pass")
+        _write_top_workbook(browser_download, 123)
+        _require(ec._validate_downloaded_excel(browser_download, "obyem_stroitelstva"), "valid browser download should pass")
         _require(browser_download.exists(), "valid browser download should be kept")
 
         invalid_download = base / "login.xlsx"
         invalid_download.write_bytes(b"<html>login</html>")
         with redirect_stdout(StringIO()):
-            ok = ec._validate_downloaded_excel(invalid_download)
+            ok = ec._validate_downloaded_excel(invalid_download, "obyem_stroitelstva")
         _require(not ok, "invalid browser download should fail")
-        _require(not invalid_download.exists(), "invalid browser download should be removed")
+        _require(invalid_download.exists(), "validation must not delete the source")
 
         final_target = base / "final.xlsx"
-        final_target.write_bytes(b"PK\x03\x04old-xlsx")
+        _write_top_workbook(final_target, 100)
         valid_download = base / "download.xlsx"
-        valid_download.write_bytes(b"PK\x03\x04new-xlsx")
-        _require(ec._finalize_downloaded_excel(valid_download, final_target), "valid browser download should finalize")
-        _require(final_target.read_bytes() == b"PK\x03\x04new-xlsx", "valid browser download did not replace target")
+        _write_top_workbook(valid_download, 200)
+        _require(ec._finalize_downloaded_excel(valid_download, final_target, "obyem_stroitelstva"), "valid browser download should finalize")
+        _require(pd.read_excel(final_target).loc[0, "Строится, м²"] == 200, "valid browser download did not replace target")
         _require(not valid_download.exists(), "finalized browser download should be moved")
 
-        final_target.write_bytes(b"PK\x03\x04old-xlsx")
+        old_bytes = final_target.read_bytes()
         invalid_download = base / "download-invalid.xlsx"
         invalid_download.write_bytes(b"<html>login</html>")
         with redirect_stdout(StringIO()):
-            ok = ec._finalize_downloaded_excel(invalid_download, final_target)
+            ok = ec._finalize_downloaded_excel(invalid_download, final_target, "obyem_stroitelstva")
         _require(not ok, "invalid browser download should not finalize")
-        _require(final_target.read_bytes() == b"PK\x03\x04old-xlsx", "invalid browser download replaced target")
-        _require(not invalid_download.exists(), "invalid browser download should be removed during finalize")
+        _require(final_target.read_bytes() == old_bytes, "invalid browser download replaced target")
+        _require(invalid_download.exists(), "invalid staging download should remain until browser cleanup")
 
         def write_bad_workbook(path: Path) -> None:
             path.write_bytes(b"not an xlsx")

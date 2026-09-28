@@ -143,8 +143,9 @@ def _write_json_atomic(value: Any, target: Path) -> None:
 
 def _load_existing_marts_for_partial_build() -> dict[str, Any] | None:
     if not MANIFEST.exists():
-        print(f"ERROR: --only requires existing manifest: {MANIFEST.relative_to(ROOT)}")
-        return None
+        # Bootstrap only the explicitly requested marts. An existing malformed
+        # manifest still fails below, so unrelated entries are never discarded.
+        return {}
     try:
         existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

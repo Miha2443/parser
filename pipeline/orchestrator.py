@@ -305,7 +305,12 @@ def _process_one(
         audit.error(indicator.id, exc, stage="parse", files=[str(p) for p in local_files])
 
 
-def run_all(*, download: bool = True) -> int:
+def run_all(*, download: bool = True, only: set[str] | None = None, notify: bool = True) -> int:
+    known = {ind.id for ind in INDICATORS}
+    if only is not None and (unknown := set(only) - known):
+        raise ValueError(f"Unknown indicator IDs: {', '.join(sorted(unknown))}")
+    selected = [ind for ind in INDICATORS if only is None or ind.id in only]
+    notify = notify and os.environ.get("TDM_DISABLED", "0").lower() not in {"1", "true", "yes", "on"}
     ensure_dirs()
     if not _acquire_lock():
         print("⚠️  Предыдущий ETL ещё выполняется — выходим без действий.")
@@ -316,16 +321,18 @@ def run_all(*, download: bool = True) -> int:
         print(f"🚀 ETL run_id={audit.run_id}, download={download}")
         print(f"   downloads={DOWNLOADS_DIR}")
         print(f"   processed={DATA_PROCESSED}\n")
-        for ind in INDICATORS:
+        for ind in selected:
             print(f"➡️  {ind.id}")
             _process_one(ind, audit, download=download)
         summary = audit.finalize()
         print("\n──")
         print(f"Итог: success={summary['success']}, skip={summary['skip']}, error={summary['error']}")
-        send_summary(audit.entries)
+        if notify:
+            send_summary(audit.entries)
         return 1 if summary["error"] else 0
     except Exception:
-        send_critical(traceback.format_exc())
+        if notify:
+            send_critical(traceback.format_exc())
         raise
     finally:
         _release_lock()
@@ -338,8 +345,16 @@ def main() -> int:
         action="store_true",
         help="не лезть в сеть, использовать xls из downloads/",
     )
+    ap.add_argument("--only", nargs="+", metavar="INDICATOR_ID",
+                    help="process only these registry indicator IDs; default: all")
+    ap.add_argument("--no-notify", action="store_true", help="disable ETL notifications")
     args = ap.parse_args()
-    return run_all(download=not args.skip_download)
+    if args.only:
+        unknown = set(args.only) - {ind.id for ind in INDICATORS}
+        if unknown:
+            ap.error(f"unknown indicator IDs: {', '.join(sorted(unknown))}")
+    return run_all(download=not args.skip_download,
+                   only=set(args.only) if args.only else None, notify=not args.no_notify)
 
 
 if __name__ == "__main__":

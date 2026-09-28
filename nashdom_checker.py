@@ -228,6 +228,71 @@ def _read_report_date(driver) -> str | None:
 # ─────────────────────────────────────────────
 
 
+def _validate_monitoring_export(path: Path) -> None:
+    """Check cached Excel values and the shared consumer before exposing raw."""
+    import math
+    import pandas as pd
+    from pipeline.data_access import DataAccess, DataContext
+    from pipeline.parsers.nashdom_monitoring_2_0 import METRICS
+
+    required = {
+        "Реестр РВ": {"УИН", "Группа компаний", "Год ввода по Мосстату",
+                      "Отрасли", "Группировка", "Общая площадь", "Жилая площадь"},
+        "Реестр ОКС": {"УИН", "Группа компаний", "Назначение",
+                       "Общая площадь", "Жилая площадь"},
+    }
+    try:
+        validate_excel_file(path)
+        # pandas/openpyxl reads data_only cached values. Google export header
+        # cells may contain formulas whose literal text is not the column name.
+        with pd.ExcelFile(path, engine="openpyxl") as book:
+            if not set(required).issubset(book.sheet_names):
+                raise ValueError("missing required RV/OKS worksheet")
+            for sheet in book.sheet_names:
+                frame = book.parse(sheet, keep_default_na=False)
+                if sheet in required:
+                    missing = required[sheet] - set(frame.columns)
+                    if missing or frame.empty:
+                        raise ValueError(f"{sheet}: missing columns {sorted(missing)} or empty worksheet")
+                elif not {"УИН", "Общая площадь"}.issubset(frame.columns):
+                    continue
+                for column in set(METRICS) & set(frame.columns):
+                    text = frame[column].astype(str).str.replace("\xa0", "", regex=False).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
+                    numeric = pd.to_numeric(text, errors="coerce")
+                    nonfinite = numeric.notna() & ~numeric.map(math.isfinite)
+                    explicit_nan = text.str.lower().isin({"nan", "+nan", "-nan"})
+                    if nonfinite.any() or explicit_nan.any():
+                        raise ValueError(f"{sheet}/{column}: nonfinite metric")
+                    if sheet in required and column in {"Общая площадь", "Жилая площадь"}:
+                        # Match the shared loader's space/comma normalization;
+                        # malformed primary areas must not silently become zero.
+                        direct = numeric
+                        present = frame[column].astype(str).str.len().gt(0)
+                        if (present & direct.isna()).any() or direct.dropna().lt(0).any():
+                            raise ValueError(f"{sheet}/{column}: invalid area value")
+                        if column == "Общая площадь" and not direct.notna().any():
+                            raise ValueError(f"{sheet}: no numeric total area")
+                if sheet == "Реестр РВ":
+                    years = pd.to_numeric(frame["Год ввода по Мосстату"], errors="coerce")
+                    present = frame["Год ввода по Мосстату"].astype(str).str.len().gt(0)
+                    if (present & ~years.between(1900, 2100)).any():
+                        raise ValueError("Реестр РВ: invalid commissioning year")
+
+        payload = DataAccess(DataContext(path.parent, use_marts=False)).load_monitoring_2_0(source_path=path)
+        for registry in ("rv", "oks"):
+            frame = payload[registry]
+            if frame.empty:
+                raise ValueError(f"shared loader returned empty {registry}")
+            if registry == "rv" and not frame["source_sheet"].eq("Реестр РВ").any():
+                raise ValueError("shared loader dropped all primary RV rows")
+            for column in ("Общая площадь", "Жилая площадь", "category_жилое", "category_моп",
+                           "category_нежилое_в_жилом", "category_нежилое_отдельное"):
+                if not frame[column].map(math.isfinite).all():
+                    raise ValueError(f"shared loader returned nonfinite {registry}/{column}")
+    except Exception as exc:
+        raise ValueError(f"invalid monitoring export: {exc}") from exc
+
+
 def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
     """Скачивает Google Sheet целиком через export?format=xlsx."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -260,7 +325,7 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
     target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}.xlsx"
     content_sha256 = _sha256_bytes(r.content)
     state_entry = state.get("monitoring_2_0") or {}
-    if (
+    unchanged = (
         not _nashdom_force_enabled()
         and isinstance(state_entry, dict)
         and _monitoring_same_day_unchanged(
@@ -269,7 +334,18 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
             content_sha256=content_sha256,
             size_bytes=len(r.content),
         )
-    ):
+    )
+    try:
+        # State metadata alone must not bless a corrupt/externally replaced file.
+        unchanged = unchanged and _sha256_bytes(target.read_bytes()) == content_sha256
+        if unchanged:
+            _validate_monitoring_export(target)
+        else:
+            write_bytes_atomic(target, r.content, validate=_validate_monitoring_export)
+    except (OSError, ValueError) as exc:
+        print(f"  ERROR: failed to validate/save {target.name}: {exc}")
+        return [], False
+    if unchanged:
         _record_monitoring_state(
             state,
             target=target,
@@ -281,11 +357,6 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
         print(f"  ⏭ {target.name}: без изменений")
         return [], True
 
-    try:
-        write_bytes_atomic(target, r.content, validate=validate_excel_file)
-    except (OSError, ValueError) as exc:
-        print(f"  ERROR: failed to save {target.name}: {exc}")
-        return [], False
     size_kb = len(r.content) / 1024
     print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
 

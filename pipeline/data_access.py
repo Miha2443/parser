@@ -1079,6 +1079,15 @@ class DataAccess:
         #   МОП = Общая - Жилая (Назначение=Жилье) → category_моп
         #   Нежилое = Общая (Назначение=Нежилье) → category_нежилое_отдельное
         #   category_нежилое_в_жилом всегда 0 (для совместимости).
+        def numeric_area(values):
+            # Google historical sheets also store numeric areas as text with
+            # spaces/NBSP and a comma decimal separator, as the metric parser
+            # already accepts. Preserve the established missing/invalid -> 0
+            # representation; that zero does not prove a source value of zero.
+            normalized = values.map(lambda value: value.replace("\xa0", "").replace(" ", "").replace(",", ".")
+                                    if isinstance(value, str) else value)
+            return pd.to_numeric(normalized, errors="coerce").fillna(0)
+
         def categorize_rv(df):
             df = df.copy()
             df["category_жилое"] = 0.0
@@ -1087,8 +1096,8 @@ class DataAccess:
             df["category_нежилое_отдельное"] = 0.0
             if "Общая площадь" not in df.columns:
                 return df
-            df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
-            df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
+            df["Общая площадь"] = numeric_area(df["Общая площадь"])
+            df["Жилая площадь"] = numeric_area(df["Жилая площадь"])
             is_zh_otrasl = df.get("Отрасли", "") == "Жилые объекты"
             is_zh_grp = df.get("Группировка", "") == "Жилье"
             is_nzh_grp = df.get("Группировка", "") == "Нежилье"
@@ -1114,8 +1123,8 @@ class DataAccess:
             df["category_нежилое_отдельное"] = 0.0   # сюда теперь идёт ВСЁ нежилое
             if "Общая площадь" not in df.columns:
                 return df
-            df["Общая площадь"] = pd.to_numeric(df["Общая площадь"], errors="coerce").fillna(0)
-            df["Жилая площадь"] = pd.to_numeric(df["Жилая площадь"], errors="coerce").fillna(0)
+            df["Общая площадь"] = numeric_area(df["Общая площадь"])
+            df["Жилая площадь"] = numeric_area(df["Жилая площадь"])
             naznachenie = df.get("Назначение", "")
             is_zh = naznachenie == "Жилье"
             df.loc[is_zh, "category_жилое"] = df.loc[is_zh, "Жилая площадь"]

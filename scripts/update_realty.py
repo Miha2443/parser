@@ -35,6 +35,7 @@ import atexit
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -66,6 +67,15 @@ _ARCHIVE_WARNINGS: list[str] = []
 _ARCHIVE_WARNINGS_LOCK = threading.Lock()
 _REALTY_UPDATE_LOCK_HELD = False
 _REALTY_UPDATE_LOCK_TOKEN: str | None = None
+_STATUS_LOCK = threading.RLock()
+_STATUS_WRITE_ERRORS: list[str] = []
+_HEARTBEAT_STOP = threading.Event()
+_HEARTBEAT_THREAD: threading.Thread | None = None
+HEARTBEAT_INTERVAL_SEC = 30
+RUN_HISTORY_LIMIT = 50
+_CHILD_LOCK = threading.Lock()
+_CHILD_PROCESSES: dict[int, subprocess.Popen] = {}
+_RUN_CANCELLED = threading.Event()
 
 # Карта алиасов: алиас → (скрипт, аргументы)
 SOURCE_MAP = {
@@ -184,11 +194,12 @@ def _setup_logging() -> Path:
     """
     global _LOG_FILE, _LOG_FH
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8]
     _LOG_FILE = LOG_DIR / f"update_{ts}.log"
-    _LOG_FH = open(_LOG_FILE, "w", encoding="utf-8", buffering=1)
+    _LOG_FH = open(_LOG_FILE, "x", encoding="utf-8", buffering=1)
     # Ротация — удаляем всё старше 20-го прогона.
-    old_logs = sorted(LOG_DIR.glob("update_*.log"))
+    old_logs = sorted(p for p in LOG_DIR.glob("update_*.log")
+                      if re.fullmatch(r"update_\d{8}_\d{6}(?:_\d{6}_[0-9a-f]{8})?\.log", p.name))
     for path in old_logs[:-20]:
         try:
             path.unlink()
@@ -208,12 +219,13 @@ def _close_logging() -> None:
 
 
 def acquire_realty_update_lock(
-    lock_path: Path = REALTY_UPDATE_LOCK,
+    lock_path: Path | None = None,
     *,
     stale_after_sec: int = REALTY_UPDATE_LOCK_STALE_SEC,
 ) -> bool:
     """Atomically acquire the top-level realty update lock."""
     global _REALTY_UPDATE_LOCK_HELD, _REALTY_UPDATE_LOCK_TOKEN
+    lock_path = lock_path or REALTY_UPDATE_LOCK
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     stale_lock = False
     try:
@@ -249,9 +261,10 @@ def acquire_realty_update_lock(
     return True
 
 
-def release_realty_update_lock(lock_path: Path = REALTY_UPDATE_LOCK) -> None:
+def release_realty_update_lock(lock_path: Path | None = None) -> None:
     """Release the top-level realty update lock if this process acquired it."""
     global _REALTY_UPDATE_LOCK_HELD, _REALTY_UPDATE_LOCK_TOKEN
+    lock_path = lock_path or REALTY_UPDATE_LOCK
     if not _REALTY_UPDATE_LOCK_HELD:
         return
     try:
@@ -283,13 +296,46 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
             pass
 
 
-def write_realty_status(payload: dict) -> None:
+def write_realty_status(payload: dict) -> bool:
     """Пишет машинно-читаемый статус последнего realty-прогона для дашборда."""
-    try:
-        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-        _write_json_atomic(REALTY_STATUS_FILE, payload)
-    except (OSError, json.JSONDecodeError) as exc:
-        _print(f"⚠️  Не удалось записать {REALTY_STATUS_FILE}: {exc}")
+    with _STATUS_LOCK:
+        history_path = None
+        try:
+            REALTY_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            run_id = payload.get("run_id", "")
+            if re.fullmatch(r"\d{8}_\d{6}_\d{6}_[0-9a-f]{8}", run_id):
+                history_dir = REALTY_STATUS_FILE.parent / "realty_update_runs"
+                history_dir.mkdir(parents=True, exist_ok=True)
+                history_path = history_dir / f"run_{run_id}.json"
+                _write_json_atomic(history_path, payload)
+                # Only rotate our own filenames, never unrelated JSON files.
+                history = sorted(p for p in history_dir.glob("run_*.json")
+                                 if re.fullmatch(r"run_\d{8}_\d{6}_\d{6}_[0-9a-f]{8}\.json", p.name))
+                for old in history[:-RUN_HISTORY_LIMIT]:
+                    try:
+                        old.unlink()
+                    except OSError as exc:
+                        _print(f"⚠️  Не удалось удалить старую историю {old}: {exc}")
+            _write_json_atomic(REALTY_STATUS_FILE, payload)
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            message = f"status persistence failed: {type(exc).__name__}: {exc}"
+            if message not in _STATUS_WRITE_ERRORS:
+                _STATUS_WRITE_ERRORS.append(message)
+                _print(f"⚠️  Не удалось сохранить статус/историю {REALTY_STATUS_FILE}: {exc}")
+            # The history may have been saved before latest-status publication
+            # failed. Correct it so it cannot claim a successfully published run.
+            if history_path is not None:
+                failed = dict(payload)
+                failed.update(status="failed", status_published=False,
+                              finished_at=datetime.now().isoformat(timespec="seconds"),
+                              status_write_errors=list(_STATUS_WRITE_ERRORS),
+                              error="; ".join(filter(None, [payload.get("error"), message])))
+                try:
+                    _write_json_atomic(history_path, failed)
+                except (OSError, json.JSONDecodeError):
+                    pass  # Exit code and canonical log still report the failure.
+            return False
 
 
 def write_realty_run_status(
@@ -299,7 +345,7 @@ def write_realty_run_status(
     sources: list[str],
     log_path: Path | None,
     **fields,
-) -> None:
+) -> bool:
     """Write a normalized update status payload for the dashboard."""
     now = datetime.now()
     payload = {
@@ -313,20 +359,25 @@ def write_realty_run_status(
         "failures": fields.pop("failures", []),
     }
     if log_path is not None:
-        payload["log_file"] = str(log_path.relative_to(ROOT)).replace("\\", "/")
+        try:
+            payload["log_file"] = log_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            payload["log_file"] = str(log_path)
     payload.update(fields)
-    write_realty_status(payload)
+    return write_realty_status(payload)
 
 
 def set_active_realty_run(**context) -> None:
     """Remember current run context so unexpected crashes do not leave running status."""
     global _ACTIVE_REALTY_RUN
-    _ACTIVE_REALTY_RUN = context
+    with _STATUS_LOCK:
+        _ACTIVE_REALTY_RUN = context
 
 
 def clear_active_realty_run() -> None:
     global _ACTIVE_REALTY_RUN
-    _ACTIVE_REALTY_RUN = None
+    with _STATUS_LOCK:
+        _ACTIVE_REALTY_RUN = None
 
 
 def mark_active_realty_run_failed(exc: BaseException) -> None:
@@ -336,7 +387,7 @@ def mark_active_realty_run_failed(exc: BaseException) -> None:
     ctx = dict(_ACTIVE_REALTY_RUN)
     try:
         write_realty_run_status(
-            "failed",
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
             started=ctx["started"],
             sources=ctx["sources"],
             log_path=ctx.get("log_path"),
@@ -348,6 +399,10 @@ def mark_active_realty_run_failed(exc: BaseException) -> None:
             force=ctx.get("force"),
             full_rasprod_history=ctx.get("full_rasprod_history"),
             selenium_sleep_scale=ctx.get("selenium_sleep_scale"),
+            run_id=ctx.get("run_id", ""),
+            current_stage=ctx.get("current_stage"),
+            kvart_per_dev=ctx.get("kvart_per_dev"),
+            status_write_errors=list(_STATUS_WRITE_ERRORS),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -355,8 +410,14 @@ def mark_active_realty_run_failed(exc: BaseException) -> None:
 
 def write_active_realty_run_progress(**fields) -> None:
     """Best-effort progress update for the dashboard while a run is still active."""
-    if not _ACTIVE_REALTY_RUN:
-        return
+    with _STATUS_LOCK:
+        if not _ACTIVE_REALTY_RUN:
+            return
+        _ACTIVE_REALTY_RUN.update(fields)
+        _write_active_realty_run_progress_locked()
+
+
+def _write_active_realty_run_progress_locked() -> None:
     ctx = dict(_ACTIVE_REALTY_RUN)
     successes = list(ctx.get("successes") or [])
     failures = list(ctx.get("failures") or [])
@@ -378,10 +439,74 @@ def write_active_realty_run_progress(**fields) -> None:
             force=ctx.get("force"),
             full_rasprod_history=ctx.get("full_rasprod_history"),
             selenium_sleep_scale=ctx.get("selenium_sleep_scale"),
-            **fields,
+            run_id=ctx.get("run_id", ""),
+            current_stage=ctx.get("current_stage", "starting"),
+            active_sources=ctx.get("active_sources", []),
+            last_completed_source=ctx.get("last_completed_source"),
+            last_completed_ok=ctx.get("last_completed_ok"),
+            kvart_per_dev=ctx.get("kvart_per_dev"),
+            status_write_errors=list(_STATUS_WRITE_ERRORS),
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def start_realty_heartbeat() -> None:
+    global _HEARTBEAT_THREAD
+    _HEARTBEAT_STOP.clear()
+
+    def heartbeat() -> None:
+        while not _HEARTBEAT_STOP.wait(HEARTBEAT_INTERVAL_SEC):
+            write_active_realty_run_progress()
+
+    _HEARTBEAT_THREAD = threading.Thread(target=heartbeat, name="realty-heartbeat", daemon=True)
+    _HEARTBEAT_THREAD.start()
+
+
+def stop_realty_heartbeat() -> None:
+    global _HEARTBEAT_THREAD
+    _HEARTBEAT_STOP.set()
+    if _HEARTBEAT_THREAD is not None:
+        _HEARTBEAT_THREAD.join()
+        _HEARTBEAT_THREAD = None
+
+
+def _track_child(proc: subprocess.Popen) -> None:
+    with _CHILD_LOCK:
+        if _RUN_CANCELLED.is_set():
+            _kill_process_tree(proc.pid)
+        _CHILD_PROCESSES[proc.pid] = proc
+
+
+def _cancel_children() -> None:
+    _RUN_CANCELLED.set()
+    with _CHILD_LOCK:
+        children = list(_CHILD_PROCESSES.values())
+    for proc in children:
+        _kill_process_tree(proc.pid)
+
+
+def _run_logged_command(cmd: list[str], label: str) -> int:
+    """Stream every build/archive subprocess into the canonical run log."""
+    child_env = dict((_ACTIVE_REALTY_RUN or {}).get("child_env", os.environ))
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                            errors="replace", env={**child_env, "PYTHONIOENCODING": "utf-8",
+                                                  "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
+    _track_child(proc)
+    try:
+        for line in proc.stdout:
+            _print(f"[{label}] {line.rstrip()}")
+        return proc.wait()
+    except BaseException:
+        _kill_process_tree(proc.pid)
+        proc.wait(timeout=10)
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        with _CHILD_LOCK:
+            _CHILD_PROCESSES.pop(proc.pid, None)
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -633,6 +758,8 @@ def run_source(alias: str, env: dict, force: bool = False,
     не смешивался. После успеха — дедупликация и архивация СВОЕГО
     семейства (старые файлы → _archive/<date>/<source>/).
     """
+    if _RUN_CANCELLED.is_set():
+        return False
     if alias not in SOURCE_MAP:
         _print(f"⚠️  Неизвестный источник: {alias}")
         return False
@@ -680,6 +807,7 @@ def run_source(alias: str, env: dict, force: bool = False,
         _print(f"❌ {alias}: не удалось запустить процесс: {exc}")
         return False
 
+    _track_child(proc)
     # Stream stdout в отдельном потоке с префиксом alias.
     def _stream() -> None:
         try:
@@ -709,6 +837,10 @@ def run_source(alias: str, env: dict, force: bool = False,
         raise
 
     reader.join(timeout=5)
+    with _CHILD_LOCK:
+        _CHILD_PROCESSES.pop(proc.pid, None)
+    if proc.stdout is not None:
+        proc.stdout.close()
     elapsed = time.time() - started
 
     if timed_out:
@@ -738,9 +870,9 @@ def archive_old(keep: int = 1) -> bool:
     _print(f"\n{'─'*60}")
     _print(f"📦 Финальная архивация (safety-net, keep={keep})")
     _print(f"{'─'*60}")
-    result = subprocess.run(cmd, cwd=ROOT, check=False)
-    if result.returncode != 0:
-        _print(f"⚠️  Финальная архивация завершилась с кодом {result.returncode}")
+    returncode = _run_logged_command(cmd, "archive")
+    if returncode != 0:
+        _print(f"⚠️  Финальная архивация завершилась с кодом {returncode}")
         add_archive_warning("final archive failed")
         return False
     return True
@@ -765,9 +897,9 @@ def archive_old_for_source(alias: str, keep: int = 1) -> bool:
         "--paths", *paths_arg,
         "--prefixes", *prefixes,
     ]
-    result = subprocess.run(cmd, cwd=ROOT, check=False)
-    if result.returncode != 0:
-        _print(f"⚠️  {alias}: архивация завершилась с кодом {result.returncode}")
+    returncode = _run_logged_command(cmd, f"archive/{alias}")
+    if returncode != 0:
+        _print(f"⚠️  {alias}: архивация завершилась с кодом {returncode}")
         return False
     return True
 
@@ -899,23 +1031,11 @@ def build_realty_marts(only: set[str] | None = None) -> bool:
     cmd = [sys.executable, "-m", "pipeline.build_realty_marts", "--strict"]
     if only:
         cmd.extend(["--only", *sorted(only)])
-    proc = subprocess.run(
-        cmd,
-        cwd=ROOT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    if proc.stdout:
-        for line in proc.stdout.splitlines():
-            _print(f"[marts] {line}")
-    if proc.returncode == 0:
+    returncode = _run_logged_command(cmd, "marts")
+    if returncode == 0:
         _print("✅ realty-витрины собраны")
         return True
-    _print(f"❌ realty-витрины: код выхода {proc.returncode}")
+    _print(f"❌ realty-витрины: код выхода {returncode}")
     return False
 
 
@@ -926,29 +1046,43 @@ def should_build_processed(successes: list[str], diff: dict) -> bool:
     return bool(changed)
 
 
-def build_processed_pickles() -> bool:
+def select_processed_indicators(sources: list[str]) -> set[str]:
+    """Match aliases to registry source/source_ids for a bounded processed build."""
+    from pipeline.registry import INDICATORS
+
+    selected: set[str] = set()
+    for alias in sources:
+        if alias in {"fedstat", "rosstat"}:
+            selected.update(ind.id for ind in INDICATORS if ind.source == alias)
+        elif alias in {"monitoring", "rasprod", "kvart"}:
+            source_id = SOURCE_MAP[alias][1][0]
+            selected.update(ind.id for ind in INDICATORS
+                            if ind.source == "nashdom" and source_id in ind.source_ids)
+        elif alias in {"erz-top", "erz-cards"}:
+            source_ids = {"top_rf", "top_msk"} if alias == "erz-top" else {"cards"}
+            selected.update(ind.id for ind in INDICATORS
+                            if ind.source == "erzrf" and source_ids.intersection(ind.source_ids))
+        else:
+            raise ValueError(f"unknown processed source: {alias}")
+    return selected
+
+
+def build_processed_pickles(only: set[str] | None = None) -> bool:
     """Rebuild data/processed dashboard pickles from already downloaded files."""
     _print(f"\n{'─'*60}")
     _print("⚙️  Сборка processed-витрин для дашборда из downloads/")
     _print(f"{'─'*60}")
     cmd = [sys.executable, "pipeline/orchestrator.py", "--skip-download"]
-    proc = subprocess.run(
-        cmd,
-        cwd=ROOT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    if proc.stdout:
-        for line in proc.stdout.splitlines():
-            _print(f"[processed] {line}")
-    if proc.returncode == 0:
+    if only is not None:
+        if not only:
+            _print("Processed: no matching indicators")
+            return True
+        cmd.extend(["--only", *sorted(only)])
+    returncode = _run_logged_command(cmd, "processed")
+    if returncode == 0:
         _print("✅ processed-витрины собраны")
         return True
-    _print(f"❌ processed-витрины: код выхода {proc.returncode}")
+    _print(f"❌ processed-витрины: код выхода {returncode}")
     return False
 
 
@@ -1082,9 +1216,10 @@ def realty_update_exit_code(
     marts_ok: bool,
     processed_ok: bool,
     final_archive_ok: bool,
+    status_ok: bool = True,
 ) -> int:
     _ = final_archive_ok
-    return 0 if not failures and marts_ok and processed_ok else 2
+    return 0 if not failures and marts_ok and processed_ok and status_ok else 2
 
 
 def realty_update_error_message(
@@ -1122,12 +1257,12 @@ def expand_requested_sources(requested: list[str]) -> tuple[list[str], list[str]
     return sources, unknown
 
 
-def print_update_plan(sources: list[str], env: dict, *, no_marts: bool) -> None:
+def print_update_plan(sources: list[str], env: dict, *, no_marts: bool, scoped: bool = False) -> None:
     """Печатает быстрый план без запуска скачивателей."""
     print("\nПлан realty-прогона")
     print("=" * 60)
     print(f"Источники: {', '.join(sources)}")
-    print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '1')}")
     print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
     print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     print("")
@@ -1143,6 +1278,10 @@ def print_update_plan(sources: list[str], env: dict, *, no_marts: bool) -> None:
         repair_marts = select_repair_realty_marts()
         if marts is not None:
             marts.update(repair_marts)
+        if scoped:
+            requested = set().union(*(SOURCE_MARTS.get(source, set()) for source in sources))
+            marts = requested if marts is None else marts & requested
+            repair_marts &= requested
         if marts is None:
             print("Realty-витрины: полный bootstrap-build (manifest отсутствует)")
         elif marts:
@@ -1154,7 +1293,7 @@ def print_update_plan(sources: list[str], env: dict, *, no_marts: bool) -> None:
     print("=" * 60)
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1189,6 +1328,8 @@ def main():
                         help="Сколько раз повторять упавшие источники "
                              "(default: 2; задержка 30/60с между раундами)")
     args = parser.parse_args()
+    if args.keep < 1 or args.retries < 0:
+        parser.error("--keep must be >= 1 and --retries must be >= 0")
 
     # Разворачиваем группы в отдельные источники
     sources, unknown = expand_requested_sources(args.sources)
@@ -1203,6 +1344,10 @@ def main():
 
     # Подготовка env (KVART_PER_DEV)
     env = os.environ.copy()
+    if args.no_notify:
+        env["TDM_DISABLED"] = "1"
+    env.setdefault("KVART_PER_DEV", "1")
+    env.setdefault("RASPROD_FULL_HISTORY", "0")
     if args.skip_kvart_per_dev:
         env["KVART_PER_DEV"] = "0"
     elif args.weekly_kvart_per_dev:
@@ -1215,7 +1360,7 @@ def main():
     env.setdefault("SELENIUM_SLEEP_SCALE", "0.8")
 
     if args.plan:
-        print_update_plan(sources, env, no_marts=args.no_marts)
+        print_update_plan(sources, env, no_marts=args.no_marts, scoped="all" not in args.sources)
         return 0
 
     if not acquire_realty_update_lock():
@@ -1229,7 +1374,7 @@ def main():
     _print(f"\n{'='*60}")
     _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     _print(f"Источники: {', '.join(sources)}")
-    _print(f"KVART_PER_DEV={env.get('KVART_PER_DEV', '0')}")
+    _print(f"KVART_PER_DEV={env['KVART_PER_DEV']}")
     _print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
     _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")
     _print(f"Лог-файл: {log_path}")
@@ -1238,31 +1383,39 @@ def main():
     successes, failures = [], []
     do_archive = not args.no_archive
     run_meta = {
+        "run_id": log_path.stem.removeprefix("update_"),
         "archive": not args.no_archive,
         "keep": args.keep,
         "force": args.force,
-        "full_rasprod_history": bool(args.full_rasprod_history or args.force),
+        "full_rasprod_history": env["RASPROD_FULL_HISTORY"].lower() in {"1", "true", "yes", "on"},
+        "kvart_per_dev": env["KVART_PER_DEV"],
         "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
     }
-    write_realty_run_status(
+    status_ok = write_realty_run_status(
         "running",
         started=started,
         sources=sources,
         log_path=log_path,
         completed_sources=[],
         pending_sources=sources,
+        current_stage="starting",
         **run_meta,
     )
+    if not status_ok:
+        raise RuntimeError("initial status persistence failed; sources were not started")
     set_active_realty_run(
         started=started,
         sources=sources,
         log_path=log_path,
         successes=successes,
         failures=failures,
+        child_env=env,
         **run_meta,
     )
+    start_realty_heartbeat()
 
     # SNAPSHOT ДО прогона
+    write_active_realty_run_progress(current_stage="snapshot before")
     before = snapshot_files()
 
     def _run_wave(wave: list[str], label: str) -> None:
@@ -1273,6 +1426,8 @@ def main():
         _print(f"\n{'═'*60}")
         _print(f"{label}: {', '.join(wave)} (max parallel = {PARALLEL_LIMIT})")
         _print(f"{'═'*60}")
+        active_sources = list(wave)
+        write_active_realty_run_progress(current_stage=label, active_sources=active_sources)
         with ThreadPoolExecutor(max_workers=PARALLEL_LIMIT) as pool:
             futures = {
                 pool.submit(run_source, alias, env,
@@ -1280,19 +1435,27 @@ def main():
                             do_archive=do_archive): alias
                 for alias in wave
             }
-            for f in as_completed(futures):
-                alias = futures[f]
-                try:
-                    ok = f.result()
-                except Exception as exc:  # noqa: BLE001
-                    _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
-                    ok = False
-                (successes if ok else failures).append(alias)
-                write_active_realty_run_progress(
-                    current_stage=label,
-                    last_completed_source=alias,
-                    last_completed_ok=ok,
-                )
+            try:
+                for f in as_completed(futures):
+                    alias = futures[f]
+                    try:
+                        ok = f.result()
+                    except Exception as exc:  # noqa: BLE001
+                        _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
+                        ok = False
+                    (successes if ok else failures).append(alias)
+                    active_sources.remove(alias)
+                    write_active_realty_run_progress(
+                        current_stage=label,
+                        active_sources=list(active_sources),
+                        last_completed_source=alias,
+                        last_completed_ok=ok,
+                    )
+            except BaseException:
+                _cancel_children()
+                for future in futures:
+                    future.cancel()
+                raise
 
     try:
         # Первый проход — волнами (внутри волны параллельно)
@@ -1310,6 +1473,8 @@ def main():
             _print(f"🔁 Retry #{retry_round}: жду {wait_s}с и повторяю "
                   f"{len(stuck)} источников: {', '.join(sorted(stuck))}")
             _print(f"{'─'*60}")
+            write_active_realty_run_progress(current_stage=f"retry {retry_round} wait",
+                                             active_sources=[])
             time.sleep(wait_s)
             failures.clear()
             for i, wave in enumerate(WAVES_DEFAULT, 1):
@@ -1318,32 +1483,22 @@ def main():
                     continue
                 _run_wave(wave_retry, f"   Retry #{retry_round} волна {i}")
     except KeyboardInterrupt:
-        _print(f"\n\n⚠️  Прогон прерван. Готово: {len(successes)} из {len(sources)}")
-        write_realty_run_status(
-            "interrupted",
-            started=started,
-            sources=sources,
-            log_path=log_path,
-            successes=successes,
-            failures=failures,
-            **run_meta,
-        )
-        clear_active_realty_run()
-        _close_logging()
-        release_realty_update_lock()
-        sys.exit(130)
+        raise
 
     # Дедупликация (safety-net): на этом этапе всё уже было дедуплицировано
     # per-source внутри run_source, но если что-то осталось — добьём.
-    deduped_count, real_new_count = deduplicate_new_files(before)
+    write_active_realty_run_progress(current_stage="deduplication", active_sources=[])
+    deduped_count, real_new_count = deduplicate_new_files(before) if do_archive else (0, 0)
 
     # SNAPSHOT ПОСЛЕ прогона и дедупликации (до архивирования).
+    write_active_realty_run_progress(current_stage="snapshot after")
     after = snapshot_files()
     diff = diff_snapshots(before, after)
 
     # Архивирование
     final_archive_ok = True
     if not args.no_archive:
+        write_active_realty_run_progress(current_stage="archive")
         final_archive_ok = archive_old(keep=args.keep)
     archive_warnings = get_archive_warnings()
 
@@ -1352,11 +1507,14 @@ def main():
 
     processed_ok = True
     if should_build_processed(successes, diff):
-        processed_ok = build_processed_pickles()
+        write_active_realty_run_progress(current_stage="processed build")
+        processed_ok = build_processed_pickles(
+            only=None if "all" in args.sources else select_processed_indicators(sources))
 
     marts_ok = True
     marts_selected: set[str] | None = set()
     if not args.no_marts:
+        write_active_realty_run_progress(current_stage="marts selection")
         changed_for_marts = diff["added"] + diff["changed"]
         marts_changed_aliases = sorted({
             alias for path in changed_for_marts
@@ -1364,11 +1522,16 @@ def main():
         })
         marts_repair_selected = sorted(select_repair_realty_marts())
         marts_selected = select_realty_marts_for_changes(changed_for_marts)
+        if "all" not in args.sources:
+            requested_marts = set().union(*(SOURCE_MARTS.get(source, set()) for source in sources))
+            marts_selected = requested_marts if marts_selected is None else marts_selected & requested_marts
+            marts_repair_selected = sorted(set(marts_repair_selected) & requested_marts)
         if marts_selected == set():
             _print(f"\n{'─'*60}")
             _print("⚙️  Realty-витрины: нет затронутых источников, сборка пропущена")
             _print(f"{'─'*60}")
         else:
+            write_active_realty_run_progress(current_stage="marts build")
             marts_ok = build_realty_marts(only=marts_selected)
     else:
         changed_for_marts = []
@@ -1398,8 +1561,9 @@ def main():
     _print(f"{'='*60}\n")
     _print(f"📁 Полный лог сохранён: {log_path}")
 
-    write_realty_run_status(
-        "success" if not failures and marts_ok and processed_ok else "failed",
+    stop_realty_heartbeat()
+    status_ok = write_realty_run_status(
+        "success" if not failures and marts_ok and processed_ok and not _STATUS_WRITE_ERRORS else "failed",
         started=started,
         sources=sources,
         log_path=log_path,
@@ -1413,12 +1577,14 @@ def main():
         processed_ok=processed_ok,
         final_archive_ok=final_archive_ok,
         archive_warnings=archive_warnings,
-        error=realty_update_error_message(
+        current_stage="finished",
+        status_write_errors=list(_STATUS_WRITE_ERRORS),
+        error="; ".join(part for part in [realty_update_error_message(
             failures=failures,
             marts_ok=marts_ok,
             processed_ok=processed_ok,
             final_archive_ok=final_archive_ok,
-        ),
+        ), *_STATUS_WRITE_ERRORS] if part),
         **run_meta,
         deduped_count=deduped_count,
         real_new_count=real_new_count,
@@ -1441,24 +1607,39 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
-    clear_active_realty_run()
-    _close_logging()
-    release_realty_update_lock()
     return realty_update_exit_code(
         failures=failures,
         marts_ok=marts_ok,
         processed_ok=processed_ok,
         final_archive_ok=final_archive_ok,
+        status_ok=status_ok and not _STATUS_WRITE_ERRORS,
     )
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """Own the complete lifecycle, including interrupts outside download waves."""
+    _STATUS_WRITE_ERRORS.clear()
+    _RUN_CANCELLED.clear()
     try:
-        sys.exit(main())
+        return _main()
+    except KeyboardInterrupt as exc:
+        _cancel_children()
+        stop_realty_heartbeat()
+        _print("⚠️  update_realty.py: interrupted")
+        mark_active_realty_run_failed(exc)
+        return 130
     except Exception as exc:  # noqa: BLE001
+        _cancel_children()
+        stop_realty_heartbeat()
         _print(f"❌ update_realty.py: unexpected failure — {type(exc).__name__}: {exc}")
         mark_active_realty_run_failed(exc)
+        return 2
+    finally:
+        stop_realty_heartbeat()
         clear_active_realty_run()
         _close_logging()
         release_realty_update_lock()
-        sys.exit(2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

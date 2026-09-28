@@ -5,7 +5,8 @@ erzrf_checker.py
 
 1. **erzrf_top** — `https://erzrf.ru/top-zastroyshchikov/`. Для каждой
    комбинации (5 сортировок × 2 региона) кликает кнопку «Скачать TOP в
-   Excel». Получено по факту (Шаг 0 fixtures, 03.06.2026):
+   Excel». Ожидаемые схемы (исторические имена части файлов были ошибочны;
+   исправленное соответствие см. docs/audit/erzrf_collector.md):
    - «По объёму текущего строительства»     → 15 колонок
    - «По объёму ввода МКД»                  → 15 колонок
    - «По накопленному вводу МКД с 2016 года»→ 16 колонок (+ «Ушёл с рынка»)
@@ -30,13 +31,19 @@ State в `state/erzrf_state.json`. Запуск:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import re
 import sys
+import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import parse_qs, urlparse
+from zipfile import BadZipFile
 
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -60,14 +67,15 @@ from pipeline.state_utils import load_json_state, write_json_atomic
 BASE = "https://erzrf.ru"
 TOP_URL = f"{BASE}/top-zastroyshchikov"
 
-# topType — URL-параметр erzrf для выбора сортировки (увидено в URL
-# 03.06.2026: `?regionKey=0&topType=0&date=260601`).
+# Values have public-source evidence (28.09.2026).
+# The complete mapping is checked against the site's sorting select every run;
+# historical values 2/3/4 were wrong. See docs/audit/erzrf_collector.md.
 TOP_TYPES = {
     "obyem_stroitelstva":  0,   # По объёму текущего строительства (default)
     "obyem_vvoda":         1,   # По объёму ввода
-    "nakopl_vvod":         2,   # По накопленному вводу
-    "potreb_kachestva":    3,   # По потребительским качествам
-    "skorost":             4,   # По скорости строительства
+    "nakopl_vvod":         4,   # По накопленному вводу с 2016 года
+    "potreb_kachestva":    2,   # По потребительским качествам
+    "skorost":             3,   # По скорости строительства
 }
 
 # Все 5 сортировок (по факту дают разные наборы колонок).
@@ -98,8 +106,18 @@ REGIONS = [
 ]
 
 
-def _build_top_url(region: dict, sorting_key: str) -> str:
-    top_type = TOP_TYPES.get(sorting_key, 0)
+def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None) -> str:
+    known_sortings = {item["key"] for item in SORTINGS}
+    if sorting_key not in known_sortings:
+        raise ValueError(f"unknown TOP sorting: {sorting_key}")
+    if region not in REGIONS:
+        raise ValueError(f"unknown TOP region: {region.get('key')}")
+    mapping = TOP_TYPES if top_types is None else top_types
+    if sorting_key not in mapping or type(mapping[sorting_key]) is not int:
+        raise ValueError(f"unverified topType for sorting: {sorting_key}")
+    top_type = mapping[sorting_key]
+    if top_type < 0:
+        raise ValueError("topType must be nonnegative")
     return (
         f"{BASE}/top-zastroyshchikov/{region['path']}"
         f"?topType={top_type}&{region['extra_query']}"
@@ -153,21 +171,123 @@ def _write_excel_atomic(path: Path, write_func) -> None:
             pass
 
 
-def _validate_downloaded_excel(path: Path) -> bool:
+def _normalise_label(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold().replace("ё", "е")
+
+
+TOP_LABEL_ALIASES = {
+    "obyem_stroitelstva": {"По объёму текущего строительства"},
+    "obyem_vvoda": {"По объёму ввода", "По объёму ввода МКД", "По объёму ввода жилья"},
+    "nakopl_vvod": {
+        "По накопленному вводу", "По накопленному вводу МКД",
+        "По накопленному вводу МКД с 2016 года", "По накопленному вводу жилья",
+        "По накопленному вводу с 2016 года",
+    },
+    "potreb_kachestva": {"По потребительским качествам", "По потребительским качествам жилья"},
+    "skorost": {"По скорости строительства", "По скорости строительства жилья"},
+}
+
+
+def _sorting_from_label(label: str) -> str | None:
+    normalised = _normalise_label(label)
+    matches = [key for key, labels in TOP_LABEL_ALIASES.items()
+               if normalised in {_normalise_label(text) for text in labels}]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _excel_contract(path: Path, sorting_key: str) -> dict:
+    """Validate actual XLSX cells, not the browser name or ZIP signature."""
+    from openpyxl import load_workbook
+
+    metric_names = {
+        "obyem_stroitelstva": "Строится, м²",
+        "obyem_vvoda": "Введено, м²",
+        "nakopl_vvod": "Введено, м²",
+        "potreb_kachestva": "Средняя оценка",
+        "skorost": "Скорость строительства, дней/дом",
+    }
+    if sorting_key not in metric_names:
+        raise ValueError(f"unknown TOP sorting: {sorting_key}")
+    if path.suffix.lower() != ".xlsx":
+        raise ValueError("TOP export must be XLSX")
+    validate_excel_file(path)
+    workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        validate_excel_file(path)
+        if len(workbook.worksheets) != 1:
+            raise ValueError("expected exactly one TOP worksheet")
+        rows = workbook.worksheets[0].iter_rows(values_only=True)
+        headers = [_normalise_label(value) for value in next(rows, ())]
+        if not headers or "" in headers or len(set(headers)) != len(headers):
+            raise ValueError("missing, blank or duplicate TOP headers")
+        name_headers = {"наименование", "наименование, регион"}
+        name_columns = [i for i, header in enumerate(headers) if header in name_headers]
+        if len(name_columns) != 1 or "место" not in headers:
+            raise ValueError("TOP name/rank columns missing or ambiguous")
+        metric = _normalise_label(metric_names[sorting_key])
+        if metric not in headers:
+            raise ValueError(f"{sorting_key}: missing metric {metric_names[sorting_key]}")
+        # Annual and accumulated exports share the area column. Quality also
+        # contains construction area, so the primary metric alone is insufficient.
+        markers = {
+            "quality": "средняя оценка" in headers,
+            "speed": "скорость строительства, дней/дом" in headers,
+            "accumulated": "ушел с рынка" in headers,
+            "commissioned": "введено, м²" in headers,
+            "construction": "строится, м²" in headers,
+        }
+        expected = {
+            "obyem_stroitelstva": (False, False, False, False, True),
+            "obyem_vvoda": (False, False, False, True, False),
+            "nakopl_vvod": (False, False, True, True, False),
+            "potreb_kachestva": (True, False, False, False, True),
+            "skorost": (False, True, False, False, False),
+        }[sorting_key]
+        if tuple(markers.values()) != expected:
+            raise ValueError(f"{sorting_key}: conflicting export schema {markers}")
+        if sorting_key == "potreb_kachestva" and "жк/пт, всего в расчете" not in headers:
+            raise ValueError("quality export has no ЖК/ПТ calculation column")
+        if sorting_key == "skorost" and "введено мкд по дду за 3 года" not in headers:
+            raise ValueError("speed export has no three-year ДДУ column")
+        metric_col, rank_col = headers.index(metric), headers.index("место")
+        count = 0
+        for excel_row, row in enumerate(rows, 2):
+            if all(value is None for value in row):
+                continue
+            name = row[name_columns[0]]
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"row {excel_row}: missing developer name")
+            for column, positive, integer in ((metric_col, sorting_key == "skorost", False),
+                                             (rank_col, True, True)):
+                value = row[column]
+                if isinstance(value, bool) or value is None:
+                    raise ValueError(f"row {excel_row}: missing/invalid {headers[column]}")
+                try:
+                    number = float(re.sub(r"\s+", "", str(value)).replace(",", "."))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"row {excel_row}: invalid {headers[column]}") from exc
+                if not math.isfinite(number) or number < 0 or (positive and number <= 0):
+                    raise ValueError(f"row {excel_row}: invalid range {headers[column]}")
+                if integer and not number.is_integer():
+                    raise ValueError(f"row {excel_row}: invalid rank")
+            count += 1
+        if not count:
+            raise ValueError("TOP export contains no developer rows")
+        return {"rows": count, "columns": headers, "metric": metric_names[sorting_key]}
+    finally:
+        workbook.close()
+
+
+def _validate_downloaded_excel(path: Path, sorting_key: str) -> bool:
+    try:
+        _excel_contract(path, sorting_key)
         return True
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, BadZipFile, KeyError, IndexError) as exc:
         print(f"       ERROR: invalid downloaded Excel {path.name}: {exc}")
-        try:
-            path.unlink()
-        except OSError:
-            pass
         return False
 
 
-def _finalize_downloaded_excel(source: Path, target: Path) -> bool:
-    if not _validate_downloaded_excel(source):
+def _finalize_downloaded_excel(source: Path, target: Path, sorting_key: str) -> bool:
+    if not _validate_downloaded_excel(source, sorting_key):
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -624,167 +744,293 @@ PER_YEAR_SORTINGS = {"obyem_vvoda"}
 PER_YEAR_RANGE = list(range(2022, 2027))  # 2022..2026 включительно
 
 
+@dataclass(frozen=True)
+class TopExport:
+    region_key: str
+    sorting_key: str
+    year: int | None = None
+
+    @property
+    def region(self) -> dict:
+        return next(region for region in REGIONS if region["key"] == self.region_key)
+
+    def filename(self, date_str: str) -> str:
+        year = f"_{self.year}" if self.year is not None else ""
+        return f"top_{self.sorting_key}_{self.region_key}{year}_{date_str}.xlsx"
+
+
+@dataclass
+class TopFetchResult:
+    required_files: set[str]
+    files: list[Path] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def missing_files(self) -> list[str]:
+        return sorted(self.required_files - {path.name for path in self.files})
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.required_files) and not self.error and not self.missing_files
+
+
+class TopExportError(ValueError):
+    """An uncertain export ends the browser session before another download."""
+
+
+def _top_export_plan() -> list[TopExport]:
+    return [TopExport(region["key"], sorting["key"], year)
+            for region in REGIONS for sorting in SORTINGS
+            for year in [None, *(PER_YEAR_RANGE if sorting["key"] in PER_YEAR_SORTINGS else [])]]
+
+
+def _read_top_selection(driver) -> dict:
+    return driver.execute_script(r"""
+        const totals = [...(document.body.innerText || '').matchAll(
+            /из\s+([\d\s\u00a0\u202f]+)\s+застройщик(?:ов|а)?/gi
+        )].map(m => Number(m[1].replace(/\s/g, '')));
+        return {url: location.href, developer_totals: totals,
+            selects: [...document.querySelectorAll('select')].map(s => ({
+            id: s.id, value: s.value,
+            selected_text: s.selectedOptions.length === 1 ? s.selectedOptions[0].textContent.trim() : '',
+            options: [...s.options].map(o => ({value: o.value, text: o.textContent.trim()}))
+        }))};
+    """)
+
+
+def _sorting_control(selection: dict) -> tuple[dict, dict]:
+    candidates = []
+    for control in selection.get("selects", []):
+        mapping = {}
+        for option in control.get("options", []):
+            key = _sorting_from_label(option.get("text", ""))
+            if key is None:
+                continue
+            value = str(option.get("value", ""))
+            if key in mapping or not re.fullmatch(r"\d+", value):
+                raise TopExportError("ambiguous/non-numeric sorting option")
+            mapping[key] = int(value)
+        if set(mapping) == {sorting["key"] for sorting in SORTINGS}:
+            if len(set(mapping.values())) != len(mapping):
+                raise TopExportError("duplicate topType values")
+            candidates.append((control, mapping))
+    if len(candidates) != 1:
+        raise TopExportError("cannot establish one complete sorting selector")
+    control, mapping = candidates[0]
+    if mapping != TOP_TYPES:
+        raise TopExportError("source sorting mapping changed; source evidence needs review")
+    return control, mapping
+
+
+def _year_control(selection: dict) -> dict:
+    controls = [item for item in selection.get("selects", [])
+                if len([option for option in item.get("options", [])
+                        if re.fullmatch(r"20\d{2}", str(option.get("value", "")))]) >= 2]
+    if (len(controls) != 1
+            or not re.fullmatch(r"20\d{2}", str(controls[0].get("value", "")))):
+        raise TopExportError("selected annual period is missing or ambiguous")
+    return controls[0]
+
+
+def _top_table_digest(driver) -> str:
+    rows = _scrape_developers_from_table(driver)
+    if not rows or not all(row.get("name") and row.get("card_url") and row.get("cells") for row in rows):
+        raise TopExportError("cannot establish nonempty developer table contents")
+    return hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
+    selection = _read_top_selection(driver)
+    control, observed_mapping = _sorting_control(selection)
+    if observed_mapping != top_types:
+        raise TopExportError("sorting mapping changed during collection")
+    if (_sorting_from_label(control.get("selected_text", "")) != request.sorting_key
+            or str(control.get("value")) != str(top_types[request.sorting_key])):
+        raise TopExportError("selected sorting differs from requested sorting")
+    wanted_url = _build_top_url(request.region, request.sorting_key, top_types)
+    actual, wanted = urlparse(selection.get("url", "")), urlparse(wanted_url)
+    query, wanted_query = parse_qs(actual.query), parse_qs(wanted.query)
+    if ((actual.scheme, actual.netloc, actual.path.rstrip("/"))
+            != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
+            or any(query.get(key) != value for key, value in wanted_query.items())):
+        raise TopExportError("current URL differs from requested region/sorting")
+    region_controls = [item for item in selection.get("selects", [])
+                       if {"0", "143443001"}.issubset(
+                           {str(option.get("value")) for option in item.get("options", [])})]
+    if (len(region_controls) != 1
+            or str(region_controls[0].get("value")) != wanted_query["regionKey"][0]):
+        raise TopExportError("selected region is missing, ambiguous or incorrect")
+    selected_year = None
+    if request.sorting_key in PER_YEAR_SORTINGS:
+        selected_year = int(_year_control(selection)["value"])
+        if request.year is not None and selected_year != request.year:
+            raise TopExportError("selected year differs from requested year")
+    elif request.year is not None:
+        raise TopExportError("year cannot be requested for this sorting")
+    totals = selection.get("developer_totals", [])
+    if (not totals or any(type(total) is not int or total <= 0 for total in totals)
+            or len(set(totals)) != 1):
+        raise TopExportError("full-list developer count is missing or ambiguous")
+    return {"requested_url": wanted_url, "observed_url": selection["url"],
+            "sorting": request.sorting_key, "top_type": top_types[request.sorting_key],
+            "selected_sorting": control["selected_text"], "region": request.region_key,
+            "selected_region": region_controls[0].get("selected_text", ""),
+            "requested_year": request.year, "selected_year": selected_year,
+            "expected_rows": totals[0]}
+
+
+def _download_top_export(driver, request: TopExport, date_str: str,
+                         staging: Path, top_types: dict) -> Path:
+    """A private attempt directory plus session abort prevents late-file reuse."""
+    evidence = _top_request_evidence(driver, request, top_types)
+    year_evidence = getattr(driver, "_erzrf_year_evidence", None)
+    if request.year is not None and (not year_evidence or year_evidence.get("year") != request.year):
+        raise TopExportError("explicit year has no observed selection/render acknowledgement")
+    table_digest = _top_table_digest(driver)
+    attempt = staging / request.filename(date_str).removesuffix(".xlsx")
+    attempt.mkdir()  # Never reuse a previous attempt directory.
+    driver.execute_cdp_cmd("Browser.setDownloadBehavior", {
+        "behavior": "allow", "downloadPath": str(attempt.resolve()),
+    })
+    click_info = _click_download_excel(driver, target_label="Весь список")
+    if not click_info.get("clicked"):
+        raise TopExportError("export button was not found")
+    source = wait_for_download(attempt, before_snapshot=set(), timeout=180)
+    if source is None:
+        raise TopExportError("export timed out; browser session must be closed")
+    candidates = [path for path in attempt.iterdir() if path.is_file()]
+    if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
+            or candidates[0].resolve() != source.resolve()):
+        raise TopExportError("ambiguous or unrelated export download")
+    if _top_request_evidence(driver, request, top_types) != evidence:
+        raise TopExportError("selected request changed while export was downloading")
+    if _top_table_digest(driver) != table_digest:
+        raise TopExportError("table changed while export was downloading")
+    # Run the semantic contract before publication; keep failures private until
+    # the session closes and the staging directory is cleaned up.
+    contract = _excel_contract(source, request.sorting_key)
+    if contract["rows"] != evidence["expected_rows"]:
+        raise TopExportError(f"incomplete full-list export: {contract['rows']} / {evidence['expected_rows']} rows")
+    evidence.update({"schema_version": 1, "received_at": datetime.now().isoformat(timespec="seconds"),
+                     "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                     "workbook": contract,
+                     "visible_table_sha256": table_digest,
+                     "year_selection_evidence": year_evidence,
+                     "period_verified": False,
+                     "period_evidence": "selected_year is a UI selection, not an independently verified response period"})
+    target = DOWNLOAD_DIR / request.filename(date_str)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(target)
+    _write_json_atomic(target.with_suffix(".xlsx.provenance.json"), evidence)
+    print(f"       ✅ {target.name} ({contract['rows']} rows)")
+    return target
+
+
 def _switch_year_filter(driver, year: int) -> bool:
-    """Переключает фильтр года ввода через скрытый <select> (Select2 wrapper).
+    """Require selected year and an observed table change after a year switch.
 
-    HTML (предоставлен пользователем):
-        <select id="select6" class="styleClass select2-hidden-accessible">
-          <option value="2026">2026</option>
-          <option value="2025">2025</option>
-          ...
-        </select>
-
-    Select2 рендерит видимый span, но слушает события change на скрытом
-    select. Меняем value и шлём 'change' с bubbles — Select2 и Angular
-    оба подхватывают.
-
-    Возвращает True если переключение прошло (текущий year == year).
+    A select value alone acknowledges our own assignment, not a site response.
+    Identical/stale table contents therefore fail closed when the year changes.
+    This is render acknowledgement, not independent evidence of the data period.
     """
+    control = _year_control(_read_top_selection(driver))
+    before = _top_table_digest(driver)
     target = str(year)
-    ok = driver.execute_script(
-        """
-        const target = String(arguments[0]).trim();
-        // Ищем select с опциями годов (id='select6' по примеру или
-        // любой select где есть option с нужным value).
-        let sel = document.getElementById('select6');
-        if (!sel) {
-            sel = [...document.querySelectorAll('select')].find(s =>
-                [...s.options].some(o => (o.value || '').trim() === target));
-        }
-        if (!sel) return false;
-        if (sel.value === target) return true;
+    driver._erzrf_year_evidence = None
+    if str(control["value"]) == target:
+        driver._erzrf_year_evidence = {"year": year, "already_selected": True,
+                                      "table_changed": False}
+        return True
+    if not control.get("id"):
+        return False
+    ok = driver.execute_script("""
+        const sel = document.getElementById(arguments[0]);
+        const target = arguments[1];
+        if (!sel || ![...sel.options].some(o => o.value === target)) return false;
         sel.value = target;
         sel.dispatchEvent(new Event('input', {bubbles: true}));
         sel.dispatchEvent(new Event('change', {bubbles: true}));
-        // jQuery trigger если есть (Select2 слушает именно jq-event)
-        if (window.jQuery) {
-            try { window.jQuery(sel).val(target).trigger('change'); }
-            catch(e) {}
-        }
+        if (window.jQuery) window.jQuery(sel).val(target).trigger('change');
         return sel.value === target;
-        """,
-        target,
-    )
+    """, control["id"], target)
     if not ok:
         return False
-    # Ждём пока контент перерисуется (можно по смене таблицы)
-    selenium_sleep(4)
+
+    def changed_and_selected(browser):
+        if str(_year_control(_read_top_selection(browser))["value"]) != target:
+            return False
+        try:
+            return _top_table_digest(browser) != before
+        except TopExportError:
+            return False
+
+    try:
+        WebDriverWait(driver, 30).until(changed_and_selected)
+    except TimeoutException:
+        return False
+    driver._erzrf_year_evidence = {"year": year, "already_selected": False,
+                                  "table_changed": True}
     return True
 
 
-def fetch_top(state: dict) -> list[Path]:
+def fetch_top(state: dict) -> TopFetchResult:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    new_files: list[Path] = []
-
-    # Одна сессия Chrome на весь обход — кука авторизации сохраняется.
-    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-
-        if not _ensure_logged_in(driver):
-            print("  ❌ Без авторизации скачивание xlsx невозможно. Пропускаем TOP.")
-            return []
-
-        date_str = datetime.now().strftime("%Y%m%d")
-
-        def _download_current(filename_base: str) -> Path | None:
-            """Кликает «Весь список», ждёт xlsx, переименовывает в target."""
-            before = set(DOWNLOAD_DIR.glob("*"))
-            click_info = _click_download_excel(driver, target_label="Весь список")
-            if not click_info.get("clicked"):
-                print(f"       ⚠️  кнопка «Весь список» не найдена")
-                _save_debug_snapshot(driver, f"{filename_base}_no_button")
-                return None
-            print(
-                f"       клик: [{click_info.get('matched')}] "
-                f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
-            )
-            new_file = wait_for_download(
-                DOWNLOAD_DIR, before_snapshot=before, timeout=180
-            )
-            if new_file is None:
-                print(f"       ⚠️  xlsx не появился в папке за 180 сек")
-                _save_debug_snapshot(driver, f"{filename_base}_after_click")
-                return None
-            target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
-            if not _finalize_downloaded_excel(new_file, target):
-                _save_debug_snapshot(driver, f"{filename_base}_invalid_download")
-                return None
-            print(f"       ✅ {target.name}")
-            return target
-
-        for region in REGIONS:
-            print(f"  🌐 регион: {region['key']} ({region['label']})")
-
-            # Шаг A: качаем «Весь список» по всем 5 сортировкам
-            for sorting in SORTINGS:
-                url = _build_top_url(region, sorting["key"])
-                print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
-                print(f"       URL: {url}")
+    date_str = datetime.now().strftime("%Y%m%d")
+    plan = _top_export_plan()
+    required = {request.filename(date_str) for request in plan}
+    required.update(f"top_developers_{region['key']}_{date_str}.json" for region in REGIONS)
+    result = TopFetchResult(required_files=required)
+    driver = None
+    # Staging is outside the discoverable raw/erzrf folder, on the same volume
+    # as the final destination. Close Chrome before removing any attempt files.
+    with tempfile.TemporaryDirectory(prefix=".erzrf-top-", dir=DOWNLOAD_DIR.parent) as tmp:
+        staging = Path(tmp)
+        try:
+            driver = create_chrome(download_dir=staging, headless=HEADLESS)
+            driver.set_page_load_timeout(PAGE_TIMEOUT)
+            if not _ensure_logged_in(driver):
+                raise TopExportError("authorization unavailable; no TOP exports downloaded")
+            driver.get(_build_top_url(REGIONS[0], "obyem_stroitelstva"))
+            if not _wait_for_top_content(driver):
+                raise TopExportError("initial TOP content did not load")
+            _, top_types = _sorting_control(_read_top_selection(driver))
+            for request in plan:
+                url = _build_top_url(request.region, request.sorting_key, top_types)
+                print(f"  TOP {request.region_key}/{request.sorting_key}/{request.year or 'current'}: {url}")
+                driver._erzrf_year_evidence = None
                 driver.get(url)
-                selenium_sleep(4)
-
                 if not _wait_for_top_content(driver):
-                    print(f"       ⚠️  контент не появился")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
-                    continue
-
-                # 1) Скачиваем «текущее» состояние (без явного выбора года —
-                # это последний год по умолчанию)
-                base_name = f"top_{sorting['key']}_{region['key']}_{date_str}"
-                target = _download_current(base_name)
-                if target:
-                    new_files.append(target)
-
-                # 2) Для obyem_vvoda — циклим по годам 2022-2026 и для
-                # каждого скачиваем отдельный xlsx с суффиксом года.
-                if sorting["key"] in PER_YEAR_SORTINGS:
-                    print(f"       ── обход по годам: {PER_YEAR_RANGE}")
-                    for year in PER_YEAR_RANGE:
-                        ok = _switch_year_filter(driver, year)
-                        if not ok:
-                            print(f"          ⚠️  год {year} — не удалось переключить")
-                            continue
-                        # Подождём ещё немного для гарантированного ререндера
-                        if not _wait_for_top_content(driver):
-                            print(f"          ⚠️  год {year} — контент не появился")
-                            continue
-                        year_name = f"top_{sorting['key']}_{region['key']}_{year}_{date_str}"
-                        ytarget = _download_current(year_name)
-                        if ytarget:
-                            new_files.append(ytarget)
-
-            # Шаг B: собираем ТОП-100 застройщиков пагинацией (5 страниц × 20)
-            # — это для fetch_cards (карточки нужны только по ТОП-100).
-            print(f"     ── Сбор ТОП-{TOP_N_DEVELOPERS} застройщиков для карточек:")
-            developers = _collect_top_n_developers(
-                driver, region, n=TOP_N_DEVELOPERS
-            )
-            if developers:
-                dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
-                _write_json_atomic(
-                    dev_file,
-                    {
-                        "region": region["key"],
-                        "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                        "developers": developers,
-                    },
-                )
-                print(f"     ✅ {dev_file.name} ({len(developers)} застройщиков)")
-                new_files.append(dev_file)
-            else:
-                print(f"     ⚠️  не удалось собрать ТОП-{TOP_N_DEVELOPERS}")
-    except WebDriverException as exc:
-        print(f"  ❌ {exc}")
-    finally:
-        driver.quit()
-
-    if new_files:
-        state["erzrf_top"] = {
-            "last_run": datetime.now().isoformat(timespec="seconds"),
-            "files": [p.name for p in new_files],
-        }
-    return new_files
+                    raise TopExportError("TOP content did not load")
+                if request.year is not None and not _switch_year_filter(driver, request.year):
+                    raise TopExportError(f"year {request.year} could not be selected")
+                result.files.append(_download_top_export(driver, request, date_str, staging, top_types))
+            for region in REGIONS:
+                developers = _collect_top_n_developers(driver, region, n=TOP_N_DEVELOPERS)
+                urls = {dev.get("card_url") for dev in developers if dev.get("card_url")}
+                if len(developers) != TOP_N_DEVELOPERS or len(urls) != TOP_N_DEVELOPERS:
+                    raise TopExportError(f"incomplete TOP-{TOP_N_DEVELOPERS} developers for {region['key']}")
+                target = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
+                _write_json_atomic(target, {"region": region["key"],
+                                           "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                                           "developers": developers})
+                result.files.append(target)
+        except Exception as exc:  # An uncertain download must end this session.
+            result.error = f"{type(exc).__name__}: {exc}"
+            print(f"  ERROR TOP: {result.error}")
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except WebDriverException as exc:
+                    result.error = result.error or f"browser cleanup failed: {exc}"
+    attempted_at = datetime.now().isoformat(timespec="seconds")
+    state["erzrf_top_attempt"] = {"attempted_at": attempted_at, "complete": result.complete,
+                                  "required_files": sorted(required),
+                                  "files": [path.name for path in result.files],
+                                  "missing_files": result.missing_files, "error": result.error}
+    if result.complete:
+        state["erzrf_top"] = {"last_run": attempted_at, "files": [path.name for path in result.files]}
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -1098,12 +1344,10 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
         print(f"  ⚠️  Неизвестный ключ: {key}")
     if "top" in keys:
         try:
-            files = fetch_top(state)
-            all_new.extend(files)
+            result = fetch_top(state)
+            all_new.extend(result.files)
             save_state(state)
-            # Если top запускался и ничего не вернул — это неуспех
-            # (без авторизации или сайт лежит).
-            if not files:
+            if not result.complete:
                 failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ top: {exc}")
@@ -1122,7 +1366,7 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Итог: новых/обновлённых файлов — {len(all_new)}")
     if failed:
-        print(f"erzrf.ru | ⚠️  Один или несколько источников ничего не скачали")
+        print(f"erzrf.ru | ⚠️  Один или несколько источников завершились неполно")
     print(f"{'='*60}\n")
     return all_new, not failed
 

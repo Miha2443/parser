@@ -30,6 +30,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_nashdom_atomic_json.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_stat_state_recovery.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_fedstat_status.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_fedstat_transport.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_download_provenance.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_monitoring_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_monitoring_provenance.py || exit /b %ERRORLEVEL%

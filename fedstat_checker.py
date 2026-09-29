@@ -15,6 +15,7 @@ fedstat_checker.py
 import atexit
 import base64
 import html
+from html.parser import HTMLParser
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -455,6 +457,61 @@ def _looks_like_xml_bytes(content: bytes) -> bool:
     return head.startswith(b"<?xml") or head.startswith(b"<")
 
 
+class _ExportTokenParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.depth = 0
+        self.entries = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "div" and (self.depth or attrs.get("id") == "downloadTokenHolder"):
+            self.depth += 1
+        if self.depth and tag == "input" and attrs.get("type") == "hidden":
+            self.entries.append((attrs.get("name"), attrs.get("value")))
+
+    def handle_endtag(self, tag):
+        if tag == "div" and self.depth:
+            self.depth -= 1
+
+
+def _export_post_with_token(session, driver, real_id: str, post_data, *, refresh=False):
+    """Use the ordinary download form's CSRF token and its matching session.
+
+    Current FGrid.downloadFile posts title + savePreview fields and these hidden
+    fields to downloadData.do. data.do is the table/preview endpoint, not export.
+    Never log token values, cookies, or complete request payloads.
+    """
+    page_url = f"https://www.fedstat.ru/indicator/{real_id}"
+    if driver is not None:
+        current = urlsplit(driver.current_url or "")
+        if refresh or current.hostname != "www.fedstat.ru" or current.path != f"/indicator/{real_id}":
+            driver.get(page_url)
+        entries = driver.execute_script("""
+            return Array.from(document.querySelectorAll('#downloadTokenHolder input[type="hidden"]'))
+                .map(input => [input.name, input.value]);
+        """)
+        for cookie in driver.get_cookies():
+            session.cookies.set(cookie.get("name"), cookie.get("value"),
+                                domain=cookie.get("domain"), path=cookie.get("path", "/"))
+    else:
+        response = session.get(page_url, timeout=30)
+        try:
+            response.raise_for_status()
+            parser = _ExportTokenParser()
+            parser.feed(response.text)
+            entries = parser.entries
+        finally:
+            response.close()
+    values = dict(entries or [])
+    token_name = values.get("struts.token.name")
+    if not isinstance(token_name, str) or not token_name or not values.get(token_name):
+        raise ValueError("Fedstat: не удалось прочитать CSRF-поля формы экспорта")
+    clean = [(key, value) for key, value in post_data
+             if key not in {"struts.token.name", token_name}]
+    return clean + [("struts.token.name", token_name), (token_name, values[token_name])]
+
+
 def _to_float(v) -> float:
     try:
         if v is None or pd.isna(v):
@@ -735,7 +792,7 @@ def _download_34118_sdmx_as_excel(
     save_path: Path,
     driver=None,
 ) -> Path | None:
-    url = "https://www.fedstat.ru/indicator/data.do?format=sdmx"
+    url = "https://www.fedstat.ru/indicator/downloadData.do?format=sdmx"
     sdmx_headers = {
         key: value
         for key, value in headers.items()
@@ -746,6 +803,8 @@ def _download_34118_sdmx_as_excel(
     sdmx_post_data = _post_data_with_format(post_data, "sdmx")
 
     try:
+        sdmx_post_data = _export_post_with_token(
+            session, driver, str(payload_template["id"]), sdmx_post_data, refresh=True)
         response = session.post(url, data=sdmx_post_data, headers=sdmx_headers, timeout=120)
         response.raise_for_status()
         content_type = (response.headers.get("Content-Type") or "").lower()
@@ -774,6 +833,8 @@ def _download_34118_sdmx_as_excel(
     except Exception:
         pass
     try:
+        sdmx_post_data = _export_post_with_token(
+            session, driver, str(payload_template["id"]), sdmx_post_data, refresh=True)
         entries = [[str(k), str(v)] for k, v in sdmx_post_data]
         result = driver.execute_async_script(
             """
@@ -836,6 +897,26 @@ def _download_34118_sdmx_as_excel(
     except Exception as exc:
         print(f"  ⚠️  Browser SDMX fallback не сработал: {exc}")
         return None
+
+
+def _wait_for_browser_download(driver, save_dir: Path, before: set[Path]) -> Path | None:
+    """Stop promptly on an explicit HTTP error page after form navigation."""
+    deadline = time.monotonic() + BROWSER_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        downloaded = wait_for_download(
+            save_dir, before_snapshot=before,
+            timeout=min(5, max(0, deadline - time.monotonic())),
+        )
+        if downloaded is not None:
+            return downloaded
+        try:
+            title = str(driver.title or "")
+            if re.match(r"^\s*(?:403|404|500|502|503|504)\b", title):
+                print(f"  ⚠️  Browser form POST: {title[:160]}")
+                return None
+        except Exception:
+            pass
+    return None
 
 
 def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
@@ -910,16 +991,16 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
                     content_type = str(result.get("contentType") or "").lower()
                     status = result.get("status")
                     body = base64.b64decode(result["bodyBase64"])
-                    if _looks_like_excel_bytes(body):
+                    if result.get("ok") and _looks_like_excel_bytes(body):
                         write_bytes_atomic(save_path, body, validate=validate_excel_file)
                         return save_path
                     if "html" in content_type or content_type.startswith("text/"):
                         preview = _compact_html_preview(result.get("text") or body[:1000].decode("utf-8", "replace"))
                         print(f"  ⚠️  Browser fetch вернул HTML ({status}): {preview}")
-                        return None
                     else:
-                        write_bytes_atomic(save_path, body, validate=validate_excel_file)
-                        return save_path
+                        print(f"  ⚠️  Browser fetch не вернул Excel (HTTP {status}, {len(body)} байт)")
+                    # A fetch is not a navigation/download request. Continue to
+                    # the site's ordinary form POST after HTML/error responses.
                 elif result and result.get("error"):
                     print(f"  ⚠️  Browser fetch не сработал: {result.get('error')}")
             except Exception as exc:
@@ -927,6 +1008,14 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
 
         # Submit from fedstat.ru itself. A local file:// form can lose SameSite
         # cookies on cross-site POST and Fedstat responds with 403/no download.
+        # Struts tokens may be single-use: reload the public indicator before
+        # another request instead of replaying the token used by fetch.
+        real_id = next((str(value) for key, value in post_data if key == "id"), "")
+        if real_id:
+            with requests.Session() as token_session:
+                post_data = _export_post_with_token(
+                    token_session, driver, real_id, post_data, refresh=True)
+            entries = [[str(k), str(v)] for k, v in post_data]
         if "fedstat.ru" in (driver.current_url or ""):
             driver.execute_script(
                 """
@@ -969,7 +1058,7 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
                 form_path = Path(fh.name)
             driver.get(form_path.as_uri())
 
-        downloaded = wait_for_download(save_dir, before_snapshot=before, timeout=BROWSER_POST_TIMEOUT)
+        downloaded = _wait_for_browser_download(driver, save_dir, before)
         if downloaded is None:
             try:
                 page_text = driver.find_element(By.TAG_NAME, "body").text
@@ -985,7 +1074,7 @@ def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str
                 )
                 if any(marker in text.lower() for marker in markers):
                     print(f"  ⚠️  Fedstat ответил страницей: {text[:240]}")
-            print(f"  ⚠️  Browser POST не вернул Excel за {BROWSER_POST_TIMEOUT}с")
+            print(f"  ⚠️  Browser POST не вернул Excel (лимит ожидания {BROWSER_POST_TIMEOUT}с)")
             return None
         validate_excel_file(downloaded)
         if downloaded.resolve() != save_path.resolve():
@@ -1095,8 +1184,8 @@ def _parse_only_ids(raw: str | None) -> list[str] | None:
         item = item.strip()
         if not item:
             continue
-        if item == "34118":
-            out.extend(["34118_часть1", "34118_часть2"])
+        if item in {"34118", "31074"}:
+            out.extend([f"{item}_часть1", f"{item}_часть2"])
         else:
             out.append(item)
     return out or None
@@ -2081,7 +2170,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     post_data = [
         ("format", "excel"),
         ("id", payload_template["id"]),
-        ("indicator_title", payload_template["title"]),
+        ("title", payload_template["title"]),
     ]
     for key, value in payload_template.items():
         if key in {"filename_title", "id", "title"}:
@@ -2093,7 +2182,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         else:
             post_data.append((post_key, value))
 
-    url = "https://www.fedstat.ru/indicator/data.do?format=excel"
+    url = "https://www.fedstat.ru/indicator/downloadData.do?format=excel"
     real_id = indicator_id.split("_")[0]
     user_agent = None
     if driver is not None:
@@ -2142,17 +2231,12 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     try:
         print(f"  ⬇️  Скачиваю Excel...")
         session = requests.Session()
-        if driver is not None:
-            try:
-                for cookie in driver.get_cookies():
-                    session.cookies.set(
-                        cookie.get("name"),
-                        cookie.get("value"),
-                        domain=cookie.get("domain"),
-                        path=cookie.get("path", "/"),
-                    )
-            except Exception:
-                pass
+        try:
+            post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
+        except Exception as exc:
+            print(f"  ❌ Не удалось подготовить форму экспорта ({type(exc).__name__})")
+            return None
+        print(f"  -> POST {url} (CSRF-поля получены из формы)")
         last_error: Exception | None = None
 
         try:
@@ -2170,6 +2254,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             print("  -> Пробую multipart POST...")
             multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
             try:
+                post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
                 multipart = [(key, (None, str(value))) for key, value in post_data]
                 response = session.post(
                     url,
@@ -2204,6 +2289,11 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                 return sdmx_path
         if driver is not None:
             print("  -> Пробую скачать через browser POST...")
+            try:
+                post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
+            except Exception as exc:
+                print(f"  ❌ Не удалось обновить форму экспорта ({type(exc).__name__})")
+                return None
             browser_path = _download_excel_via_browser(
                 driver, url, post_data, save_dir, save_path
             )
@@ -2232,7 +2322,9 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
 def run(force: bool = False, only_ids: list[str] | None = None):
     """force=True — игнорируем state, перекачиваем все индикаторы."""
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    state = load_state() if not force else {}
+    # Force bypasses the date comparison; it must never erase prior success
+    # dates when an export fails or when only a subset was requested.
+    state = load_state()
     indicators_to_run = INDICATORS
     if only_ids:
         indicators_to_run = {
@@ -2243,6 +2335,7 @@ def run(force: bool = False, only_ids: list[str] | None = None):
         missing = [indicator_id for indicator_id in only_ids if indicator_id not in INDICATORS]
         if missing:
             print(f"⚠️  Неизвестные indicator id в --only/FEDSTAT_ONLY_IDS: {', '.join(missing)}")
+            return [], False
     downloaded_files = []
     checked_ok = 0
     downloaded_without_date = []
@@ -2286,7 +2379,9 @@ def run(force: bool = False, only_ids: list[str] | None = None):
             checked_ok += 1
             saved_date = state.get(indicator_id)
 
-            if saved_date is None:
+            if force:
+                print(f"  🔄 Принудительная загрузка. Дата: {remote_date}")
+            elif saved_date is None:
                 print(f"  ℹ️  Первая загрузка. Дата: {remote_date}")
             elif remote_date != saved_date:
                 print(f"  🔄 Обновился! Было: {saved_date} → Стало: {remote_date}")

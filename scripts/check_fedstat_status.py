@@ -45,6 +45,7 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
         stack.enter_context(patch.multiple(
             fc, DOWNLOAD_DIR=downloads, STATE_FILE=root / "state.json",
             INDICATORS={src: src for src in dates},
+            DEFAULT_INDICATOR_USAGE={src: "offline fixture" for src in dates},
             DIRECT_DOWNLOAD_ON_DATE_FAILURE=direct,
         ))
         stack.enter_context(patch.multiple(dl, DOWNLOADS_DIR=downloads, ROOT=root))

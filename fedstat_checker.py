@@ -114,6 +114,20 @@ INDICATORS = {
 
 }
 
+# Default collection scope, audited against dashboard pages AND direct Excel
+# loaders in pipeline/data_access.py. INDICATORS above remains the full catalog
+# for deliberate --only / FEDSTAT_ONLY_IDS requests. Add an entry here only
+# when its data has a dashboard consumer; see docs/fedstat_dashboard_scope.md.
+# Keep the heavy 34118 exports last so salary and IPC are checked first.
+DEFAULT_INDICATOR_USAGE = {
+    "43246": "1_Заработная_плата.py: load_salary, история по 2016 г.",
+    "57824": "1_Заработная_плата.py: load_salary, с 2017 г.",
+    "31074_часть1": "2_ИПЦ.py: load_ipc, история 2011–2018",
+    "31074_часть2": "2_ИПЦ.py: load_ipc, с 2019 г.",
+    "34118_часть1": "8_Ввод_недвижимости.py: load_emiss_34118 / periods, 2015–2022",
+    "34118_часть2": "8_Ввод_недвижимости.py: load_emiss_34118 / periods, с 2023 г.",
+}
+
 DOWNLOAD_DIR = Path("downloads")
 STATE_FILE = Path("fedstat_state.json")
 PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
@@ -2320,22 +2334,24 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
 
 
 def run(force: bool = False, only_ids: list[str] | None = None):
-    """force=True — игнорируем state, перекачиваем все индикаторы."""
+    """Update dashboard sources, or an explicit selection from the full catalog.
+
+    force bypasses date comparison, never the default scope or prior state.
+    """
+    selected_ids = only_ids or list(DEFAULT_INDICATOR_USAGE)
+    missing = [indicator_id for indicator_id in selected_ids if indicator_id not in INDICATORS]
+    if missing:
+        selection = "--only/FEDSTAT_ONLY_IDS" if only_ids else "DEFAULT_INDICATOR_USAGE"
+        print(f"⚠️  Неизвестные indicator id в {selection}: {', '.join(missing)}")
+        return [], False
+    indicators_to_run = {indicator_id: INDICATORS[indicator_id] for indicator_id in selected_ids}
+    if not indicators_to_run:
+        print("⚠️  Нет известных индикаторов в выбранном наборе Fedstat")
+        return [], False
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     # Force bypasses the date comparison; it must never erase prior success
     # dates when an export fails or when only a subset was requested.
     state = load_state()
-    indicators_to_run = INDICATORS
-    if only_ids:
-        indicators_to_run = {
-            indicator_id: INDICATORS[indicator_id]
-            for indicator_id in only_ids
-            if indicator_id in INDICATORS
-        }
-        missing = [indicator_id for indicator_id in only_ids if indicator_id not in INDICATORS]
-        if missing:
-            print(f"⚠️  Неизвестные indicator id в --only/FEDSTAT_ONLY_IDS: {', '.join(missing)}")
-            return [], False
     downloaded_files = []
     checked_ok = 0
     downloaded_without_date = []
@@ -2345,8 +2361,14 @@ def run(force: bool = False, only_ids: list[str] | None = None):
     print(f"\n{'='*60}")
     print(f"Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Индикаторов: {len(indicators_to_run)}/{len(INDICATORS)}")
+    active = [src for src in DEFAULT_INDICATOR_USAGE if src in INDICATORS]
+    disabled = [src for src in INDICATORS if src not in DEFAULT_INDICATOR_USAGE]
+    print(f"Дашборд — активны по умолчанию ({len(active)}): {', '.join(active)}")
+    print(f"Отключены по умолчанию ({len(disabled)}): {', '.join(disabled)}")
     if only_ids:
         print(f"Фильтр: {', '.join(indicators_to_run)}")
+    else:
+        print("Режим: только источники текущих визуализаций; --force не расширяет набор")
     print(f"{'='*60}\n")
 
     driver = create_driver(download_dir=DOWNLOAD_DIR)
@@ -2423,12 +2445,16 @@ def run(force: bool = False, only_ids: list[str] | None = None):
     return downloaded_files, ok
 
 
-if __name__ == "__main__":
-    import sys
-    force = "--force" in sys.argv
-    only_arg = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--only=")), None)
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    force = "--force" in args
+    only_arg = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--only=")), None)
     only_ids = _parse_only_ids(only_arg or os.environ.get("FEDSTAT_ONLY_IDS"))
     files, ok = run(force=force, only_ids=only_ids)
     # exit 2 при любой незавершённой проверке/загрузке. Полностью проверенные
     # данные без изменений (или успешный direct fallback) — штатный успех.
-    sys.exit(0 if ok else 2)
+    return 0 if ok else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

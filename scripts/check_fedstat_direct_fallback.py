@@ -30,6 +30,7 @@ def main() -> int:
     original_download_dir = fc.DOWNLOAD_DIR
     original_state_file = fc.STATE_FILE
     original_indicators = fc.INDICATORS
+    original_usage = fc.DEFAULT_INDICATOR_USAGE
     original_create_driver = fc.create_driver
     original_get_last_update_date = fc.get_last_update_date
     original_download_excel = fc.download_excel
@@ -41,6 +42,7 @@ def main() -> int:
             fc.DOWNLOAD_DIR = root / "downloads"
             fc.STATE_FILE = root / "fedstat_state.json"
             fc.INDICATORS = {"57824": "salary"}
+            fc.DEFAULT_INDICATOR_USAGE = {"57824": "offline fixture"}
             fc.DIRECT_DOWNLOAD_ON_DATE_FAILURE = True
 
             driver = DummyDriver()
@@ -68,6 +70,7 @@ def main() -> int:
         fc.DOWNLOAD_DIR = original_download_dir
         fc.STATE_FILE = original_state_file
         fc.INDICATORS = original_indicators
+        fc.DEFAULT_INDICATOR_USAGE = original_usage
         fc.create_driver = original_create_driver
         fc.get_last_update_date = original_get_last_update_date
         fc.download_excel = original_download_excel

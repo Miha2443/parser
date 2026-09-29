@@ -84,7 +84,7 @@ SOURCE_MAP = {
     "kvart":      ("nashdom_checker.py", ["kvartirografia"]),
     "erz-top":    ("erzrf_checker.py",   ["top"]),
     "erz-cards":  ("erzrf_checker.py",   ["cards"]),
-    "fedstat":    ("fedstat_checker.py", []),   # зарплата, ИПЦ, ВРП и пр.
+    "fedstat":    ("fedstat_checker.py", []),   # зарплата, ИПЦ, ввод жилья (dashboard scope)
     "rosstat":    ("rosstat_checker.py", []),   # ВРП/ВВП по годам
 }
 

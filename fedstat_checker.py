@@ -37,6 +37,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from pipeline.file_utils import stream_response_atomic, validate_excel_file, write_bytes_atomic
 from pipeline.selenium_utils import wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
+from pipeline.download_provenance import record_successful_download
 
 
 try:
@@ -1272,6 +1273,7 @@ def _download_34118_period_chunks(
     return None
 
 
+@record_successful_download
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                    driver=None, payload_template_override: dict | None = None,
                    save_path_override: Path | None = None,

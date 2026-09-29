@@ -12,7 +12,7 @@ from app.audit import (
     realty_update_status_summary,
 )
 from app.components.design import apply_theme, page_header
-from app.data_access import latest_loaded_at, load_ipc, load_salary
+from app.data_access import dataset_download_summary, load_ipc, load_salary
 
 st.set_page_config(
     page_title="Аналитика Москвы — дашборд",
@@ -99,7 +99,7 @@ with col1:
         [
             f"<b>Регионы:</b> {', '.join(sorted(salary['region'].unique())) if not salary.empty else '—'}",
             f"<b>Отрасли:</b> {', '.join(sorted(salary['view'].unique())) if not salary.empty else '—'}",
-            f"<b>Обновлено:</b> {latest_loaded_at(salary)}",
+            f"{dataset_download_summary(salary)}",
         ],
     )
     st.page_link("pages/1_Заработная_плата.py", label="Открыть раздел →")
@@ -111,7 +111,7 @@ with col2:
         "Индексы потребительских цен на товары и услуги: год, квартал и месяц.",
         [
             f"<b>Регионы:</b> {', '.join(sorted(ipc['region'].unique())) if not ipc.empty else '—'}",
-            f"<b>Обновлено:</b> {latest_loaded_at(ipc)}",
+            f"{dataset_download_summary(ipc)}",
         ],
     )
     st.page_link("pages/2_ИПЦ.py", label="Открыть раздел →")

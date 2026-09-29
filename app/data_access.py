@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from pipeline.data_access import DataAccess, DataContext
+from pipeline.download_provenance import source_provenance, download_summary
 from pipeline.data_access import (
     MONTH_NAMES_RU,
     MONTH_SHORT_RU,
@@ -104,6 +105,21 @@ def load_salary() -> pd.DataFrame:
 
 def load_ipc() -> pd.DataFrame:
     return _load('load_ipc')
+
+
+def dataset_source_provenance(df: pd.DataFrame) -> pd.DataFrame:
+    return source_provenance(df, get_data_access().DOWNLOADS_DIR)
+
+
+def dataset_download_summary(df: pd.DataFrame) -> str:
+    return download_summary(dataset_source_provenance(df))
+
+
+def show_dataset_sources(df: pd.DataFrame) -> None:
+    with st.expander("Исходные файлы и даты скачивания", expanded=True):
+        st.caption("Дата файла — время изменения локального файла, а не подтверждённое скачивание. "
+                   "Период данных указан отдельно для каждого исходника.")
+        st.dataframe(dataset_source_provenance(df), hide_index=True, width="stretch")
 
 
 def load_national_accounts() -> pd.DataFrame:

@@ -21,7 +21,7 @@ import streamlit as st
 
 from app.components.design import COLORS, SERIES, apply_theme, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
-from app.data_access import latest_loaded_at, load_national_accounts
+from app.data_access import dataset_download_summary, show_dataset_sources, load_national_accounts
 
 st.set_page_config(page_title="ВРП и ВВП — Аналитика Москвы", layout="wide")
 apply_theme()
@@ -268,8 +268,9 @@ def main() -> None:
     df = df[df["year"] >= 2011].copy()
     page_header(
         "ВРП и ВВП",
-        f"Обновлено: {latest_loaded_at(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)",
+        f"{dataset_download_summary(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)",
     )
+    show_dataset_sources(df)
 
     st.subheader("1. ВРП Москвы и ВВП России, трлн руб")
     _two_region_chart(

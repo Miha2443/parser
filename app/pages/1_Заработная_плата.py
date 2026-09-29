@@ -11,7 +11,7 @@ from app.data_access import (
     MONTH_NAMES_RU,
     QUARTER_NAMES_RU,
     format_thousands,
-    latest_loaded_at,
+    dataset_download_summary, show_dataset_sources,
     load_salary,
     month_label,
     quarter_label,
@@ -267,8 +267,9 @@ def main() -> None:
 
     page_header(
         "Среднемесячная заработная плата",
-        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 57824",
+        f"{dataset_download_summary(df)} · Источник: fedstat.ru, индикатор 57824",
     )
+    show_dataset_sources(df)
 
     top = st.container()
     with top:

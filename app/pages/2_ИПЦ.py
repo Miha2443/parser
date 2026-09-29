@@ -10,7 +10,7 @@ from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
     QUARTER_NAMES_RU,
-    latest_loaded_at,
+    dataset_download_summary, show_dataset_sources,
     load_ipc,
     month_label,
     quarter_label,
@@ -204,15 +204,16 @@ def main() -> None:
     df = load_ipc()
     if df.empty:
         st.warning(
-            "Файлы ИПЦ не найдены в `data/processed/prices_ipc.pkl`. "
+            "Файлы ИПЦ не найдены в `data/processed/ipc.pkl`. "
             "Запустите `py pipeline/run_etl.py`."
         )
         return
 
     page_header(
         "Индексы потребительских цен",
-        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)",
+        f"{dataset_download_summary(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)",
     )
+    show_dataset_sources(df)
 
     c1, c2 = st.columns([1.2, 2.0])
     with c1:

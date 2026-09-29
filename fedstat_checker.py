@@ -2320,12 +2320,9 @@ def run(force: bool = False, only_ids: list[str] | None = None):
         print(f"  • {f}")
     print(f"{'='*60}\n")
 
-    if only_ids:
-        ok = checked_ok > 0 and not failed_downloads and not skipped_indicators
-        if not ok:
-            print("⚠️  Точечный запуск завершён с ошибками: проверьте строки выше.\n")
-    else:
-        ok = checked_ok > 0
+    ok = checked_ok > 0 and not failed_downloads and not skipped_indicators
+    if not ok:
+        print("⚠️  Запуск завершён с ошибками: проверьте строки выше.\n")
     return downloaded_files, ok
 
 
@@ -2335,6 +2332,6 @@ if __name__ == "__main__":
     only_arg = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--only=")), None)
     only_ids = _parse_only_ids(only_arg or os.environ.get("FEDSTAT_ONLY_IDS"))
     files, ok = run(force=force, only_ids=only_ids)
-    # exit 2 только если fedstat не удалось проверить вообще. Если все даты
-    # прочитаны и новых файлов нет, это штатное "без изменений".
+    # exit 2 при любой незавершённой проверке/загрузке. Полностью проверенные
+    # данные без изменений (или успешный direct fallback) — штатный успех.
     sys.exit(0 if ok else 2)

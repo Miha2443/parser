@@ -71,25 +71,40 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     new_files: list[Path] = []
     prev_date = ""
     new_date = ""
+    failures: list[str] = []
+    unchanged = False
     try:
         for src_id in indicator.source_ids:
             remote_date = fc.get_last_update_date(driver, src_id)
             if remote_date is None:
+                failures.append(f"{src_id}: не удалось получить дату обновления")
                 continue
             saved_date = state.get(src_id)
             prev_date = prev_date or (saved_date or "")
             new_date = remote_date
             if saved_date == remote_date:
+                unchanged = True
                 continue
-            saved_path = fc.download_excel(src_id, DOWNLOADS_DIR, driver=driver)
+            saved_path = fc.download_excel(
+                src_id, DOWNLOADS_DIR, remote_date=remote_date, driver=driver
+            )
             if saved_path:
                 new_files.append(Path(saved_path))
                 state[src_id] = remote_date
+            else:
+                failures.append(f"{src_id}: обновился, но не скачался")
     finally:
         driver.quit()
         fc.save_state(state)
 
-    if new_files:
+    # Оркестратор записывает исключение как stage=download, а не «без изменений».
+    # Успешные загрузки остаются в state; старые файлы при неполном запуске сохраняем.
+    if failures:
+        raise RuntimeError("Fedstat: " + "; ".join(failures))
+
+    # Паттерны общие для нескольких source_ids: при частичном обновлении нельзя
+    # архивировать файлы неизменившихся источников вместе со старыми версиями.
+    if new_files and not unchanged:
         _archive_old(list(indicator.file_patterns), keep=new_files)
 
     return {

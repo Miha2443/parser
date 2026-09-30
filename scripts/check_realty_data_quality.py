@@ -126,6 +126,13 @@ def check_kvartirografia() -> None:
 def check_rasprodannost() -> None:
     data = load_rasprodannost()
     _require_regions(data["regions_available"], "rasprodannost")
+    periods_by_region = data.get("periods_by_region", {})
+    latest_by_region = data.get("latest_period_by_region", {})
+    _require({"rf", "msk"}.issubset(periods_by_region),
+             "rasprodannost region-specific periods are missing")
+    _require(all(periods_by_region[region][-1] == latest_by_region[region]
+                 for region in ("rf", "msk")),
+             "rasprodannost latest period must be calculated per region")
     _require(len(data["kpi"]) >= 100, "rasprodannost kpi unexpectedly small")
     _require(len(data["developers"]) >= 1_000, "rasprodannost developers unexpectedly small")
     _require(len(data["periods"]) >= 60, "rasprodannost history unexpectedly short")

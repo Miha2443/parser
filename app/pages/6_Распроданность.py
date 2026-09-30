@@ -70,8 +70,6 @@ page_header("Распроданность и стройготовность жи
 # === Шапка: фильтры ===
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
 available_regions = [r for r in data["regions_available"] if r in region_map]
-periods = data["periods"]
-period_labels = [period_label(y, m) for y, m in periods]
 
 cols_top = st.columns([2, 5, 2])
 with cols_top[0]:
@@ -82,6 +80,7 @@ with cols_top[0]:
         horizontal=True,
         key="rasprod_region",
     )
+periods = data.get("periods_by_region", {}).get(sel_reg, [])
 with cols_top[1]:
     if periods:
         # По умолчанию — последний доступный период
@@ -91,7 +90,7 @@ with cols_top[1]:
             options=list(range(len(periods))),
             value=default_idx,
             format_func=lambda i: period_label(*periods[i]),
-            key="rasprod_period",
+            key=f"rasprod_period_{sel_reg}",
         )
         sel_year, sel_month = periods[sel_period_idx]
     else:

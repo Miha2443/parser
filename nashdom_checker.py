@@ -2525,12 +2525,14 @@ def _switch_region_rasprodannost(
         print(f"       ⚠️  ошибка клика триггера: {exc}")
         return False
 
-    # 2) Ждём search-input ПО PLACEHOLDER (не по offsetParent —
-    # попап в fixed-оверлее)
+    # 2) Ждём search-input именно внутри regionSelect. На странице есть
+    # одноимённые подписи в таблице «Регионы»; глобальный поиск раньше мог
+    # кликнуть по строке таблицы вместо пункта выпадающего списка.
     try:
         WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
-                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
+                "return !!document.querySelector("
+                "'#regionSelect input[placeholder=\"Поиск по названию\"]');"
             )
         )
     except TimeoutException:
@@ -2544,7 +2546,8 @@ def _switch_region_rasprodannost(
         ok = driver.execute_script(
             """
             const q = arguments[0];
-            const inp = document.querySelector('input[placeholder="Поиск по названию"]');
+            const inp = document.querySelector(
+                '#regionSelect input[placeholder="Поиск по названию"]');
             if (!inp) return false;
             const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
             setter.call(inp, q);
@@ -2557,15 +2560,21 @@ def _switch_region_rasprodannost(
         print(f"       · ввёл в поиск: '{search_query}' (ok={ok})")
         selenium_sleep(2)
 
-    # 4) Дождаться появления target_label и кликнуть по div-родителю span
-    # (там висит React-handler чекбокса)
+    # 4) Дождаться пункта внутри ОТКРЫТОГО списка и кликнуть его строку.
+    # Спан с тем же текстом есть ниже в аналитической таблице, а после первого
+    # выбора ещё и в закрытом trigger. Требуем предка tabindex с search-input.
     try:
         WebDriverWait(driver, 10).until(
             lambda d: d.execute_script(
                 """
                 const target = arguments[0];
-                return [...document.querySelectorAll('span')]
-                    .some(s => (s.innerText || '').trim() === target);
+                const root = document.querySelector('#regionSelect');
+                if (!root) return false;
+                return [...root.querySelectorAll('span')].some(s => {
+                    const popup = s.closest('[tabindex="0"]');
+                    return (s.innerText || '').trim() === target && popup &&
+                        popup.querySelector('input[placeholder="Поиск по названию"]');
+                });
                 """,
                 target_label,
             )
@@ -2578,10 +2587,15 @@ def _switch_region_rasprodannost(
     clicked = driver.execute_script(
         """
         const target = arguments[0];
-        const span = [...document.querySelectorAll('span')]
-            .find(s => (s.innerText || '').trim() === target);
+        const root = document.querySelector('#regionSelect');
+        if (!root) return false;
+        const span = [...root.querySelectorAll('span')].find(s => {
+            const popup = s.closest('[tabindex="0"]');
+            return (s.innerText || '').trim() === target && popup &&
+                popup.querySelector('input[placeholder="Поиск по названию"]');
+        });
         if (!span) return false;
-        // Кликаем по родителю-row (содержит чекбокс + span).
+        // Кликаем по строке пункта (содержит индикатор + span).
         let row = span.parentElement;
         if (!row) row = span;
         row.scrollIntoView({block: 'center'});
@@ -2594,23 +2608,32 @@ def _switch_region_rasprodannost(
     if not clicked:
         return False
 
-    # 5) Закрыть попап
-    selenium_sleep(1)
-    try:
-        driver.execute_script("document.body.click();")
-    except WebDriverException:
-        pass
-
-    # 6) Верификация: KPI должен смениться
+    # 5) Верификация: выбранная подпись и KPI должны смениться. Закрываем
+    # попап только после этого, чтобы ранний body.click не отменял React state.
     try:
         WebDriverWait(driver, 25).until(
             lambda d: (
                 _get_rasprod_kpi_value(d, "Объем жилищного строительства") != baseline
                 and _get_rasprod_kpi_value(d, "Объем жилищного строительства") != ""
+                and d.execute_script(
+                    """
+                    const target = arguments[0];
+                    const root = document.querySelector('#regionSelect');
+                    if (!root) return false;
+                    return [...root.querySelectorAll(':scope > [tabindex="0"]')]
+                        .some(el => !el.querySelector('input') &&
+                            (el.innerText || '').trim() === target);
+                    """,
+                    target_label,
+                )
             )
         )
         new_val = _get_rasprod_kpi_value(driver, "Объем жилищного строительства")
         print(f"       ✅ данные сменились: {baseline} → {new_val}")
+        try:
+            driver.execute_script("document.body.click();")
+        except WebDriverException:
+            pass
         selenium_sleep(2)
         return True
     except TimeoutException:
@@ -2897,7 +2920,7 @@ def _latest_rasprod_entry(entries: list[dict]) -> dict:
     return max(entries, key=sort_key, default={})
 
 
-def fetch_rasprodannost(state: dict) -> list[Path]:
+def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
     kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
 
@@ -2933,6 +2956,7 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
 
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
     all_data: list[dict] = list(history_data)
+    refreshed_regions: set[str] = set()
     new_files: list[Path] = []
 
     def flush():
@@ -3087,6 +3111,8 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
                         f"          KPI={len(data.get('kpi') or [])}, "
                         f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
                     )
+                    if data.get("kpi"):
+                        refreshed_regions.add(region["key"])
                     all_data.append(data)
                     # flush раз в 5 периодов: каждый flush пересобирает
                     # весь xlsx с нуля из all_data (77+ периодов × 6 sections
@@ -3111,7 +3137,8 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
         state["rasprodannost"] = {
             "report_period": latest_entry.get("report_period", ""),
             "filename": target_xlsx.name,
-            "regions": [r["key"] for r in RASPROD_REGIONS],
+            "regions": sorted(refreshed_regions),
+            "complete": refreshed_regions == {r["key"] for r in RASPROD_REGIONS},
             "has_content": bool(all_data),
         }
     except KeyboardInterrupt:
@@ -3126,7 +3153,11 @@ def fetch_rasprodannost(state: dict) -> list[Path]:
             driver.quit()
         except Exception:  # noqa: BLE001
             pass
-    return new_files
+    complete = refreshed_regions == {r["key"] for r in RASPROD_REGIONS}
+    if not complete:
+        missing = sorted({r["key"] for r in RASPROD_REGIONS} - refreshed_regions)
+        print(f"  ❌ rasprodannost: не обновлены регионы: {', '.join(missing)}")
+    return new_files, complete
 
 
 

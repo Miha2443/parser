@@ -1396,12 +1396,35 @@ class DataAccess:
                  + соответствующие _num колонки
           'regions_available': list[str] — ['rf', 'msk']
           'periods': list[(year, month)] отсортированных
-          'latest_period': (year, month) последний доступный
+          'latest_period': (year, month) последний доступный вообще
+          'periods_by_region': dict[str, list[(year, month)]]
+          'latest_period_by_region': dict[str, (year, month)]
         """
+        def add_region_periods(payload: dict) -> dict:
+            """Add region-specific periods to raw and older mart payloads."""
+            kdf = payload.get("kpi")
+            by_region: dict[str, list[tuple[int, int]]] = {}
+            if isinstance(kdf, pd.DataFrame) and not kdf.empty:
+                required = {"region_key", "year", "month"}
+                if required.issubset(kdf.columns):
+                    for region, rows in kdf.groupby("region_key"):
+                        periods = sorted({
+                            (int(row["year"]), int(row["month"]))
+                            for _, row in rows.iterrows()
+                            if pd.notna(row.get("year")) and pd.notna(row.get("month"))
+                        })
+                        if periods:
+                            by_region[str(region)] = periods
+            payload["periods_by_region"] = by_region
+            payload["latest_period_by_region"] = {
+                region: periods[-1] for region, periods in by_region.items()
+            }
+            return payload
+
         raw_files = lambda: self._raw_files(self.RASPROD_PATHS, ["rasprodannost_*.xlsx"])
         mart = self._load_realty_mart("rasprodannost", raw_files)
         if mart is not None:
-            return mart
+            return add_region_periods(mart)
         files = raw_files()
         if not files:
             return {
@@ -1410,6 +1433,8 @@ class DataAccess:
                 "regions_available": [],
                 "periods": [],
                 "latest_period": None,
+                "periods_by_region": {},
+                "latest_period_by_region": {},
             }
         # Откат к более старому файлу если самый свежий битый: rasprod-чекер
         # мог быть убит по watchdog'у посреди скачивания и оставить
@@ -1438,6 +1463,8 @@ class DataAccess:
                 "regions_available": [],
                 "periods": [],
                 "latest_period": None,
+                "periods_by_region": {},
+                "latest_period_by_region": {},
             }
         out: dict = {"regions_available": [], "periods": [], "latest_period": None}
 
@@ -1487,7 +1514,7 @@ class DataAccess:
             ))
             out["periods"] = periods
             out["latest_period"] = periods[-1] if periods else None
-        return out
+        return add_region_periods(out)
 
 
     def _vvod_dir(self) -> Path | None:

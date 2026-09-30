@@ -20,7 +20,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.components.design import apply_theme, page_header  # noqa: E402
-from app.tdm_files import list_tdm_realty_files  # noqa: E402
+from app.tdm_files import (  # noqa: E402
+    list_tdm_datasets,
+    list_tdm_realty_files,
+    prepare_tdm_dataset,
+)
 from pipeline.tdm_notify import (  # noqa: E402
     notify, notify_file, get_all_groups,
     _get_token, _get_workspace_id, _get_group_id, _is_disabled,
@@ -34,6 +38,11 @@ page_header("Отправка файлов в TDM", "Выбор свежей в�
 @st.cache_data(show_spinner=False, ttl=60)
 def _cached_tdm_realty_files(root: str):
     return list_tdm_realty_files(Path(root))
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _cached_tdm_datasets(root: str):
+    return list_tdm_datasets(Path(root))
 
 
 # === Статус подключения ===
@@ -95,19 +104,46 @@ with st.expander("Статус подключения", expanded=not all_ok):
 st.markdown("---")
 
 # === Выбор источника файла ===
-st.markdown("### 1. Выбери файл")
+st.markdown("### 1. Выбери данные")
 source = st.radio(
-    "Откуда взять файл",
-    ["Из data/raw/realty/", "Загрузить с компьютера"],
+    "Источник",
+    ["Из раздела дашборда", "Выбрать исходный файл", "Загрузить с компьютера"],
     horizontal=True,
 )
 
 selected_path: Path | None = None
+selected_dataset = None
 selected_size: int | None = None
 selected_name: str | None = None
 upload_buffer = None
 
-if source == "Из data/raw/realty/":
+if source == "Из раздела дашборда":
+    dataset_options = _cached_tdm_datasets(str(ROOT))
+    if not dataset_options:
+        st.info("Файлы, используемые дашбордом, пока не найдены")
+    else:
+        sections = list(dict.fromkeys(option.spec.section for option in dataset_options))
+        section = st.selectbox("Раздел", sections)
+        section_options = [option for option in dataset_options if option.spec.section == section]
+        by_key = {option.spec.key: option for option in section_options}
+        dataset_key = st.selectbox(
+            "Данные / график",
+            list(by_key),
+            format_func=lambda key: by_key[key].spec.title,
+        )
+        if dataset_key:
+            selected_dataset = by_key[dataset_key]
+            selected_name = (
+                selected_dataset.files[0].name if len(selected_dataset.files) == 1
+                else f"{selected_dataset.spec.bundle_name}.zip"
+            )
+            selected_size = sum(path.stat().st_size for path in selected_dataset.files)
+            st.success(f"Выбрано: **{selected_dataset.spec.title}**")
+            with st.expander("Какие исходные файлы войдут", expanded=False):
+                for path in selected_dataset.files:
+                    st.code(str(path.relative_to(ROOT)), language="text")
+
+elif source == "Выбрать исходный файл":
     realty_root = ROOT / "data" / "raw" / "realty"
     file_options = _cached_tdm_realty_files(str(realty_root))
     if not file_options:
@@ -161,7 +197,7 @@ if selected_name and selected_size is not None:
             f"группа `{override_group or _get_group_id() or '—'}`")
 
 ready = (
-    (selected_path or upload_buffer is not None)
+    (selected_dataset or selected_path or upload_buffer is not None)
     and _get_token()
     and (override_group or (_get_workspace_id() and _get_group_id()))
     and not _is_disabled()
@@ -177,7 +213,18 @@ if btn:
     grp_to = (override_group.strip() or None) if override_group else None
     cap = caption.strip()
     with st.spinner("Отправляю в TDM…"):
-        if selected_path:
+        if selected_dataset:
+            tmp_dir = ROOT / "data" / "_tmp_tdm"
+            send_path, cleanup = prepare_tdm_dataset(selected_dataset, tmp_dir)
+            try:
+                ok = notify_file(send_path, caption=cap, group_id=grp_to)
+            finally:
+                if cleanup:
+                    try:
+                        send_path.unlink(missing_ok=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+        elif selected_path:
             ok = notify_file(selected_path, caption=cap, group_id=grp_to)
         else:
             tmp_dir = ROOT / "data" / "_tmp_tdm"

@@ -261,15 +261,28 @@ with cols_top[1]:
     """
     st.markdown(rating_html, unsafe_allow_html=True)
     nakopl_quality = erzrf_top.get("nakopl_vvod_quality", {}).get("regions", {})
-    unavailable = [
-        label for region, label in (("rf", "РФ"), ("msk", "Москва"))
+    unavailable = {
+        label: nakopl_quality.get(region, {}).get("reason", "missing")
+        for region, label in (("rf", "РФ"), ("msk", "Москва"))
         if nakopl_quality.get(region, {}).get("status") == "unavailable"
-    ]
+    }
     if unavailable:
+        invalid = [label for label, reason in unavailable.items()
+                   if reason == "invalid_commissioned_table"]
+        missing = [label for label, reason in unavailable.items()
+                   if reason != "invalid_commissioned_table"]
+        details = []
+        if invalid:
+            details.append(
+                "для " + ", ".join(invalid)
+                + " файл содержит другую таблицу ЕРЗ (нет колонки «Введено, м²»)"
+            )
+        if missing:
+            details.append("для " + ", ".join(missing) + " файл не найден")
         st.warning(
             "Нет подтверждённых данных по накопленному вводу ЕРЗ: "
-            + ", ".join(unavailable)
-            + ". Нужна отдельная выгрузка накопленного ввода для каждого региона."
+            + "; ".join(details)
+            + ". Запусти обновление ЕРЗ — старые неверно подписанные файлы не используются."
         )
 
 
@@ -583,15 +596,17 @@ with right:
     rasprod_dev_df = rasprod.get("developers")
     if rasprod_dev_df is not None and not rasprod_dev_df.empty and "наименование" in rasprod_dev_df.columns:
         all_rows = find_dev_rows(rasprod_dev_df, "наименование", sel_key)
-        latest_period = rasprod.get("latest_period")
-        if latest_period and not all_rows.empty:
-            ly, lm = latest_period
-            all_rows = all_rows[(all_rows["year"] == ly) & (all_rows["month"] == lm)]
         if not all_rows.empty:
-            row_rf = all_rows[all_rows["region_key"] == "rf"]
-            row_msk = all_rows[all_rows["region_key"] == "msk"]
-            r_rf = row_rf.iloc[0] if not row_rf.empty else None
-            r_msk = row_msk.iloc[0] if not row_msk.empty else None
+            def latest_region_row(region_key: str):
+                rows = all_rows[all_rows["region_key"] == region_key].copy()
+                if rows.empty:
+                    return None, None
+                rows = rows.sort_values(["year", "month"], ascending=False)
+                row = rows.iloc[0]
+                return row, (int(row["year"]), int(row["month"]))
+
+            r_rf, period_rf = latest_region_row("rf")
+            r_msk, period_msk = latest_region_row("msk")
 
             def find_num(r, predicate) -> str:
                 if r is None:
@@ -643,9 +658,13 @@ with right:
                 "</table></div>"
             )
             st.markdown(html, unsafe_allow_html=True)
-            period_str = f"{lm:02d}.{ly}" if latest_period else ""
-            if period_str:
-                st.caption(f"На {period_str}")
+            period_parts = []
+            if period_msk:
+                period_parts.append(f"Москва — {period_msk[1]:02d}.{period_msk[0]}")
+            if period_rf:
+                period_parts.append(f"РФ — {period_rf[1]:02d}.{period_rf[0]}")
+            if period_parts:
+                st.caption("Период: " + "; ".join(period_parts))
         else:
             st.info("Застройщик не найден в распроданности")
     else:

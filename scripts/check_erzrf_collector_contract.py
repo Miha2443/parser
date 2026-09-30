@@ -31,7 +31,8 @@ def fixture_frame(kind: str) -> pd.DataFrame:
     elif kind in {"obyem_vvoda", "nakopl_vvod"}:
         row["Введено, м²"] = 250
         if kind == "nakopl_vvod":
-            row["Ушел с рынка"] = "Нет"
+            row["С переносом срока, м²"] = 50
+            row["Уточнение срока, мес."] = 1.25
     elif kind == "potreb_kachestva":
         row.update({"Строится, м²": 500, "Средняя оценка": 79.84,
                     "ЖК/ПТ, всего в расчете": 15})
@@ -167,6 +168,14 @@ class CollectorContract(unittest.TestCase):
             with self.subTest(kind=kind):
                 report = ec._excel_contract(self.workbook(kind), kind)
                 self.assertEqual(report["rows"], 1)
+
+    def test_accumulated_input_requires_both_current_deadline_columns(self):
+        for missing in ("С переносом срока, м²", "Уточнение срока, мес."):
+            frame = fixture_frame("nakopl_vvod").drop(columns=[missing])
+            with self.subTest(missing=missing), self.assertRaises(ValueError):
+                ec._excel_contract(
+                    self.workbook("nakopl_vvod", frame=frame), "nakopl_vvod"
+                )
 
     def test_historical_three_mislabelled_schemas_fail(self):
         cases = [("potreb_kachestva", "nakopl_vvod"), ("skorost", "potreb_kachestva"),

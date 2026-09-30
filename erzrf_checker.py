@@ -228,10 +228,19 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             raise ValueError(f"{sorting_key}: missing metric {metric_names[sorting_key]}")
         # Annual and accumulated exports share the area column. Quality also
         # contains construction area, so the primary metric alone is insufficient.
+        transfer_marker = any(
+            header.startswith("с переносом срока") for header in headers
+        )
+        clarification_marker = any(
+            header.startswith("уточнение срока") for header in headers
+        )
         markers = {
             "quality": "средняя оценка" in headers,
             "speed": "скорость строительства, дней/дом" in headers,
-            "accumulated": "ушел с рынка" in headers,
+            # The current accumulated-input export is identified by the two
+            # deadline columns visible in the ERZ table. Older validation used
+            # a removed «Ушел с рынка» column and rejected valid 2026 files.
+            "accumulated": transfer_marker and clarification_marker,
             "commissioned": "введено, м²" in headers,
             "construction": "строится, м²" in headers,
         }

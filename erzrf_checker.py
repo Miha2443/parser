@@ -182,8 +182,12 @@ TOP_LABEL_ALIASES = {
         "По накопленному вводу", "По накопленному вводу МКД",
         "По накопленному вводу МКД с 2016 года", "По накопленному вводу жилья",
         "По накопленному вводу с 2016 года",
+        "По накопленному вводу жилья (с 2016 г.)",
     },
-    "potreb_kachestva": {"По потребительским качествам", "По потребительским качествам жилья"},
+    "potreb_kachestva": {
+        "По потребительским качествам", "По потребительским качествам жилья",
+        "По потребительским качествам ЖК",
+    },
     "skorost": {"По скорости строительства", "По скорости строительства жилья"},
 }
 
@@ -809,6 +813,7 @@ def _read_top_selection(driver) -> dict:
 
 def _sorting_control(selection: dict) -> tuple[dict, dict]:
     candidates = []
+    observed = []
     for control in selection.get("selects", []):
         mapping = {}
         for option in control.get("options", []):
@@ -819,12 +824,17 @@ def _sorting_control(selection: dict) -> tuple[dict, dict]:
             if key in mapping or not re.fullmatch(r"\d+", value):
                 raise TopExportError("ambiguous/non-numeric sorting option")
             mapping[key] = int(value)
+        if mapping:
+            observed.append({"id": control.get("id", ""), "mapping": mapping})
         if set(mapping) == {sorting["key"] for sorting in SORTINGS}:
             if len(set(mapping.values())) != len(mapping):
                 raise TopExportError("duplicate topType values")
             candidates.append((control, mapping))
     if len(candidates) != 1:
-        raise TopExportError("cannot establish one complete sorting selector")
+        raise TopExportError(
+            "cannot establish one complete sorting selector; "
+            f"candidates={len(candidates)}, observed={observed}"
+        )
     control, mapping = candidates[0]
     if mapping != TOP_TYPES:
         raise TopExportError("source sorting mapping changed; source evidence needs review")

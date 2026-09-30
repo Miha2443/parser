@@ -125,6 +125,18 @@ class CollectorContract(unittest.TestCase):
                                       "nakopl_vvod": 4, "potreb_kachestva": 2, "skorost": 3})
         self.assertEqual(ec._sorting_control(selection(self.request))[1], ec.TOP_TYPES)
 
+    def test_current_live_sorting_labels_are_recognised(self):
+        current = selection(self.request)
+        current["selects"][0]["options"] = [
+            {"value": "0", "text": "По объему текущего строительства"},
+            {"value": "1", "text": "По объему ввода жилья"},
+            {"value": "4", "text": "По накопленному вводу жилья (с 2016 г.)"},
+            {"value": "2", "text": "По потребительским качествам ЖК"},
+            {"value": "3", "text": "По скорости строительства"},
+            {"value": "6", "text": "По зеленому строительству"},
+        ]
+        self.assertEqual(ec._sorting_control(current)[1], ec.TOP_TYPES)
+
     def test_mapping_missing_ambiguous_or_changed_fails(self):
         original = selection(self.request)
         cases = []

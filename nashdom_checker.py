@@ -33,7 +33,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -2488,6 +2488,36 @@ def _get_rasprod_kpi_value(driver, kpi_substring: str) -> str:
     ) or ""
 
 
+def _rasprod_region_url(url: str, target_label: str) -> str | None:
+    """Build the site's stable regional URL without using the fragile popup."""
+    region_code = {"Город Москва": "77", "Все": "all"}.get(target_label)
+    if region_code is None:
+        return None
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["regionCd"] = region_code
+    if region_code == "all":
+        query["foCd"] = "all"
+    else:
+        query.pop("foCd", None)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path,
+                       urlencode(query), parts.fragment))
+
+
+def _rasprod_selected_region_label(driver, target_label: str) -> bool:
+    return bool(driver.execute_script(
+        """
+        const target = arguments[0];
+        const root = document.querySelector('#regionSelect');
+        if (!root) return false;
+        return [...root.querySelectorAll(':scope > [tabindex="0"]')]
+            .some(el => !el.querySelector('input') &&
+                (el.innerText || '').trim() === target);
+        """,
+        target_label,
+    ))
+
+
 def _switch_region_rasprodannost(
     driver, target_label: str, search_query: str = ""
 ) -> bool:
@@ -2505,6 +2535,44 @@ def _switch_region_rasprodannost(
     if not baseline:
         print(f"       ⚠️  не нашёл baseline KPI")
         return False
+
+    # Основной способ: URL-параметр самого сайта. На живой странице выбор
+    # Москвы добавляет regionCd=77. Это надёжнее popup: в DOM одновременно
+    # присутствуют пункт фильтра и строка таблицы с одинаковым текстом.
+    direct_url = _rasprod_region_url(driver.current_url, target_label)
+    original_url = driver.current_url
+    if direct_url and direct_url != original_url:
+        try:
+            print(f"       · прямой выбор региона: regionCd="
+                  f"{'77' if target_label == 'Город Москва' else 'all'}")
+            driver.get(direct_url)
+            WebDriverWait(driver, 45).until(
+                lambda d: (
+                    _rasprod_selected_region_label(d, target_label)
+                    and _get_rasprod_kpi_value(
+                        d, "Объем жилищного строительства"
+                    ) != ""
+                )
+            )
+            new_val = _get_rasprod_kpi_value(
+                driver, "Объем жилищного строительства"
+            )
+            print(f"       ✅ регион подтверждён URL и подписью: "
+                  f"{baseline} → {new_val}")
+            selenium_sleep(2)
+            return True
+        except (TimeoutException, WebDriverException) as exc:
+            print(f"       ⚠️  прямой выбор региона не подтверждён: "
+                  f"{type(exc).__name__}; пробую popup")
+            try:
+                driver.get(original_url)
+                WebDriverWait(driver, 45).until(
+                    lambda d: _get_rasprod_kpi_value(
+                        d, "Объем жилищного строительства"
+                    ) != ""
+                )
+            except (TimeoutException, WebDriverException):
+                return False
 
     # 1) Клик на триггер #regionSelect [tabindex=0] — через JS (надёжнее для SPA)
     try:
@@ -2595,11 +2663,9 @@ def _switch_region_rasprodannost(
                 popup.querySelector('input[placeholder="Поиск по названию"]');
         });
         if (!span) return false;
-        // Кликаем по строке пункта (содержит индикатор + span).
-        let row = span.parentElement;
-        if (!row) row = span;
-        row.scrollIntoView({block: 'center'});
-        row.click();
+        // На текущей версии сайта React-handler висит на самом span.
+        span.scrollIntoView({block: 'center'});
+        span.click();
         return true;
         """,
         target_label,

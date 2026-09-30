@@ -1336,6 +1336,8 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Источники: {', '.join(sorted(keys))}")
+    print("Контракт TOP: nakopl_vvod=4, potreb_kachestva=2, skorost=3; "
+          "каждый Excel проверяется до публикации")
     print(f"{'='*60}\n")
 
     all_new: list[Path] = []

@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from pipeline.parsers import nashdom_rasprodannost as parser  # noqa: E402
 from pipeline.parsers.common import DATA_COLUMNS  # noqa: E402
+from nashdom_checker import _rasprod_region_url  # noqa: E402
 
 
 def _require(condition: bool, message: str) -> None:
@@ -21,6 +23,18 @@ def _require(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    base_url = "https://example.test/report?repYear=2026&repMonth=8&foCd=all&regionCd=all"
+    msk_url = _rasprod_region_url(base_url, "Город Москва")
+    msk_query = parse_qs(urlsplit(msk_url).query)
+    _require(msk_query.get("regionCd") == ["77"],
+             "Moscow URL should use the site's regionCd=77")
+    _require("foCd" not in msk_query and msk_query.get("repMonth") == ["8"],
+             "Moscow URL should preserve period and remove the all-Russia district")
+    rf_url = _rasprod_region_url(msk_url, "Все")
+    rf_query = parse_qs(urlsplit(rf_url).query)
+    _require(rf_query.get("regionCd") == ["all"] and rf_query.get("foCd") == ["all"],
+             "Russia URL should restore all-region filters")
+
     payload = [
         {
             "report_date": "11.06.2026",

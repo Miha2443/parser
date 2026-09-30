@@ -194,6 +194,36 @@ class TransportTests(unittest.TestCase):
         self.assertIsNone(result)
         session.post.assert_not_called()
 
+    def test_34118_tries_validated_full_export_before_chunks(self):
+        session = Mock()
+        response = Mock(headers={"Content-Type": "application/vnd.ms-excel"})
+        response.content = self.excel
+        session.post.return_value = response
+        with patch.object(fc.requests, "Session", return_value=session), \
+                patch.object(fc, "_export_post_with_token", return_value=self.entries), \
+                patch.object(fc, "_validate_34118_file", return_value=True) as validate, \
+                patch.object(fc, "_download_34118_period_chunks") as chunks, \
+                redirect_stdout(StringIO()):
+            result = fc.download_excel("34118_часть1", self.root, remote_date="19.09.2026")
+        self.assertIsNotNone(result)
+        validate.assert_called_once()
+        chunks.assert_not_called()
+        session.post.assert_called_once()
+
+    def test_34118_uses_chunks_after_full_export_failure(self):
+        session = Mock()
+        session.post.side_effect = fc.requests.RequestException("503")
+        chunk_result = self.root / "chunked.xls"
+        chunk_result.write_bytes(self.excel)
+        with patch.object(fc.requests, "Session", return_value=session), \
+                patch.object(fc, "_export_post_with_token", return_value=self.entries), \
+                patch.object(fc, "_download_34118_period_chunks", return_value=chunk_result) as chunks, \
+                redirect_stdout(StringIO()):
+            result = fc.download_excel("34118_часть2", self.root, remote_date="19.09.2026")
+        self.assertEqual(result, chunk_result)
+        self.assertEqual(session.post.call_count, 2)
+        chunks.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

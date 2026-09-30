@@ -135,6 +135,7 @@ SOURCE_MARTS = {
     "erz-cards": {"erzrf_cards"},
     "escrow-manual": {"escrow_manual"},
     "rosstat": {"vvod_static", "emiss_34118"},
+    "fedstat": {"emiss_34118"},
 }
 
 # Параллельный пул для волн (можно урезать через env PARALLEL_LIMIT=2).
@@ -585,7 +586,7 @@ def snapshot_files(
         if not base.exists():
             continue
         for f in base.rglob("*"):
-            if not f.is_file() or "_archive" in f.parts:
+            if not f.is_file() or "_archive" in f.parts or ".fedstat_resume" in f.parts:
                 continue
             if f.name.startswith(SNAPSHOT_TEMP_NAME_PREFIXES):
                 continue

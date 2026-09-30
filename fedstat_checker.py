@@ -2283,20 +2283,6 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
     )
     tried_34118_chunks = False
 
-    if can_chunk_34118:
-        tried_34118_chunks = True
-        chunk_path = _download_34118_period_chunks(
-            indicator_id,
-            payload_template,
-            save_dir,
-            save_path,
-            remote_date=remote_date,
-            driver=driver,
-        )
-        if chunk_path is not None:
-            return chunk_path
-        print("  -> 34118 chunks не собрались, пробую полный экспорт")
-
     session: requests.Session | None = None
     try:
         print(f"  ⬇️  Скачиваю Excel...")
@@ -2338,11 +2324,29 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                 last_error = exc2
                 raise last_error
 
+        if indicator_id in {"34118_часть1", "34118_часть2"}:
+            if not _validate_34118_file(indicator_id, save_path, payload_template):
+                save_path.unlink(missing_ok=True)
+                raise ValueError("полный экспорт 34118 не прошёл проверку годов")
+
         print(f"  ✅ Сохранён: {save_path}")
         return save_path
 
     except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
+        if can_chunk_34118 and not tried_34118_chunks:
+            tried_34118_chunks = True
+            print("  -> Полный экспорт 34118 не сработал, пробую chunks")
+            chunk_path = _download_34118_period_chunks(
+                indicator_id,
+                payload_template,
+                save_dir,
+                save_path,
+                remote_date=remote_date,
+                driver=driver,
+            )
+            if chunk_path is not None:
+                return chunk_path
         if not fast_fail and indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
             print("  -> Пробую SDMX fallback для 34118...")
             sdmx_path = _download_34118_sdmx_as_excel(
@@ -2369,22 +2373,6 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             if browser_path is not None:
                 print(f"  ✅ Сохранён через browser POST: {browser_path}")
                 return browser_path
-        if (
-            allow_34118_chunks
-            and payload_template_override is None
-            and indicator_id in {"34118_часть1", "34118_часть2"}
-            and not tried_34118_chunks
-        ):
-            chunk_path = _download_34118_period_chunks(
-                indicator_id,
-                payload_template,
-                save_dir,
-                save_path,
-                remote_date=remote_date,
-                driver=driver,
-            )
-            if chunk_path is not None:
-                return chunk_path
         return None
 
 

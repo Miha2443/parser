@@ -89,6 +89,17 @@ def main() -> int:
             _assert_equal(removed, {}, "removed file should disappear from snapshot")
             if cache_key in ur._SNAPSHOT_DIGEST_CACHE:
                 raise AssertionError("snapshot cache retained deleted file")
+
+            downloads = Path(tmp) / "downloads"
+            (downloads / ".fedstat_resume" / "34118").mkdir(parents=True)
+            (downloads / ".fedstat_resume" / "34118" / "chunk001.xls").write_bytes(b"chunk")
+            (downloads / "34118_final.xls").write_bytes(b"final")
+            snapshot = ur.snapshot_files(roots=[(downloads, "downloads", "")])
+            _assert_equal(
+                sorted(snapshot),
+                ["downloads:34118_final.xls"],
+                "Fedstat resume chunks are excluded from update snapshots",
+            )
     finally:
         ur.REALTY_ROOT = original_realty_root
 
@@ -166,7 +177,11 @@ def main() -> int:
 
     selected = ur.select_realty_marts_for_sources(["fedstat"])
     if selected is not None:
-        _assert_equal(selected, set(), "fedstat does not touch realty marts")
+        _assert_equal(
+            selected,
+            {"emiss_34118", "escrow_manual"},
+            "fedstat rebuilds the 34118 mart",
+        )
 
     selected = ur.select_realty_marts_for_changes([
         "realty:nashdom/rasprodannost_20260702.xlsx",

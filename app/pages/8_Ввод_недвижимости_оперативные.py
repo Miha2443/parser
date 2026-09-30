@@ -32,18 +32,25 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
     data["Год"] = data["Год"].astype(int).astype(str)
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=data["Год"], y=data["За год, млн м²"], name="В целом за год",
-        marker_color="#C9D4DA", width=.72,
-        text=[fmt(v, 2) if pd.notna(v) else "" for v in data["За год, млн м²"]],
-        textposition="outside",
-        hovertemplate="<b>%{x}</b><br>За год: %{y:.3f} млн м²<extra></extra>",
-    ))
-    fig.add_trace(go.Bar(
         x=data["Год"], y=data["За выбранный период, млн м²"], name=period_label.capitalize(),
         marker_color=COLORS["red"], width=.72,
         text=[fmt(v, 2) if pd.notna(v) else "" for v in data["За выбранный период, млн м²"]],
         textposition="inside", textfont=dict(color="white"),
         hovertemplate="<b>%{x}</b><br>За период: %{y:.3f} млн м²<extra></extra>",
+    ))
+    remainder = (data["За год, млн м²"] - data["За выбранный период, млн м²"]).clip(lower=0).fillna(0)
+    fig.add_trace(go.Bar(
+        x=data["Год"], y=remainder, name="Остаток до итога года",
+        marker_color="#C9D4DA", width=.72,
+        hovertemplate="<b>%{x}</b><br>Остаток до годового итога: %{y:.3f} млн м²<extra></extra>",
+    ))
+    totals = data["За год, млн м²"].where(
+        data["За год, млн м²"].notna(), data["За выбранный период, млн м²"]
+    )
+    fig.add_trace(go.Scatter(
+        x=data["Год"], y=totals, mode="text", showlegend=False,
+        text=[fmt(v, 2) if pd.notna(v) else "" for v in totals],
+        textposition="top center", hoverinfo="skip",
     ))
     growth = data["Изменение полного года, %"]
     fig.add_trace(go.Scatter(
@@ -55,7 +62,7 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
         hovertemplate="<b>%{x}</b><br>Темп за год: %{y:+.1f}%<extra></extra>",
     ))
     fig.update_layout(
-        title=title, barmode="overlay", height=500, bargap=.22,
+        title=title, barmode="stack", height=500, bargap=.22,
         margin=dict(l=55, r=55, t=75, b=70),
         yaxis=dict(title="млн м²", rangemode="tozero"),
         yaxis2=dict(title="Темп, %", overlaying="y", side="right", showgrid=False, range=[-80, 100]),
@@ -123,6 +130,7 @@ period_label = MONTH_LABELS[month]
 
 st.subheader("1. Ввод жилья")
 housing = housing_ytd_table(vvod["msk_total"], rv, history["housing_monthly"], month)
+housing = housing[housing["Год"] >= 2022].reset_index(drop=True)
 housing_fig = period_chart(housing, "Ввод жилой площади", period_label, "housing_operational")
 st.plotly_chart(housing_fig, use_container_width=True, key="housing_operational")
 with st.expander("Скачать график", expanded=False):
@@ -144,6 +152,7 @@ st.caption(
 nonres = nonres_ytd_table(
     vvod["msk_nonres"], rv, month, exclude_mkd=exclude_mkd
 )
+nonres = nonres[nonres["Год"] >= 2022].reset_index(drop=True)
 nonres_fig = period_chart(nonres, f"Ввод нежилой недвижимости · {nonres_mode.lower()}", period_label, "nonres_operational")
 st.plotly_chart(nonres_fig, use_container_width=True, key="nonres_operational")
 with st.expander("Скачать график", expanded=False):
@@ -152,13 +161,15 @@ st.caption("Таблица 2. Нежильё: полный год и накоп�
 render_table(nonres, f"vvod_nezhilya_{period_label}", "nonres_table")
 
 st.subheader("3. Структура ввода за квартал")
-qcol1, qcol2 = st.columns(2)
+qcol1, qcol2, qcol3 = st.columns(3)
 years = sorted(pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").dropna().astype(int).unique(), reverse=True)
 with qcol1:
     tree_year = st.selectbox("Год", years, index=years.index(current_year), key="tree_year")
 with qcol2:
     quarter = st.selectbox("Квартал", [1, 2, 3, 4], index=0, format_func=lambda q: f"{q} квартал", key="tree_quarter")
-tree = quarter_tree(rv, tree_year, quarter)
+with qcol3:
+    tree_mode = st.radio("Расчёт периода", ["За квартал", "С начала года"], horizontal=True, key="tree_mode")
+tree = quarter_tree(rv, tree_year, quarter, cumulative=tree_mode == "С начала года")
 
 st.metric("Всего введено недвижимости", f"{fmt(tree['total'])} млн м²")
 left, right = st.columns(2)

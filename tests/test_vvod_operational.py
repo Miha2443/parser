@@ -58,6 +58,15 @@ class OperationalVvodChecks(unittest.TestCase):
         self.assertAlmostEqual(tree["mkd_total"], .00017)
         self.assertAlmostEqual(tree["nonres_total"], .00006)
 
+    def test_quarter_tree_can_accumulate_from_start_of_year(self):
+        second_quarter = _rv().iloc[[0]].copy()
+        second_quarter["Квартал ввода по Мосстату"] = "2-й квартал"
+        combined = pd.concat([_rv(), second_quarter], ignore_index=True)
+        single = quarter_tree(combined, 2026, 2)
+        cumulative = quarter_tree(combined, 2026, 2, cumulative=True)
+        self.assertAlmostEqual(single["total"], .00017)
+        self.assertAlmostEqual(cumulative["total"], .00041)
+
 
 if __name__ == "__main__":
     unittest.main()

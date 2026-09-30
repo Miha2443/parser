@@ -270,7 +270,7 @@ def main() -> None:
             default_idx = region_options.index("Москва") if "Москва" in region_options else 0
             region = st.radio("Регион", options=region_options, index=default_idx)
         with c2:
-            period = st.radio("Период", options=["Год", "Квартал", "Месяц"])
+            period = st.radio("Период", options=["Год", "Квартал", "Месяц"], index=2)
         with c3:
             views = st.multiselect(
                 "Отрасль",

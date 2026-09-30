@@ -212,7 +212,7 @@ def main() -> None:
     )
     c1, c2 = st.columns([1.2, 2.0])
     with c1:
-        period = st.radio("Период", options=["Год", "Квартал", "Месяц"])
+        period = st.radio("Период", options=["Год", "Квартал", "Месяц"], index=2)
     with c2:
         regions = st.multiselect(
             "Регионы",

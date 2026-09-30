@@ -68,7 +68,7 @@ LIGHT_COLORS = {
 
 # The dictionary is mutated in place so modules that imported COLORS keep a
 # live reference when the user changes the theme.
-COLORS = DARK_COLORS.copy()
+COLORS = LIGHT_COLORS.copy()
 
 SERIES = [
     COLORS["red"],
@@ -89,7 +89,7 @@ _NATIVE_DATAFRAME = st._ma_native_dataframe
 
 
 def _active_theme() -> str:
-    return str(st.session_state.get("dashboard_theme", "dark"))
+    return str(st.session_state.get("dashboard_theme", "light"))
 
 
 def _activate_palette(theme: str) -> None:
@@ -235,6 +235,12 @@ def apply_theme() -> None:
     _activate_palette(_active_theme())
     _register_plotly_template()
     st.dataframe = dataframe if _active_theme() == "light" else _NATIVE_DATAFRAME
+    light = _active_theme() == "light"
+    page_header_bg = "#FFFFFF" if light else "linear-gradient(120deg, #16222f 0%, #1c2c3d 56%, #233b52 100%)"
+    brand_header_bg = "#FFFFFF" if light else "linear-gradient(120deg, rgba(35,54,72,.96), rgba(24,38,52,.96))"
+    header_text = COLORS["text"] if light else "#FFFFFF"
+    header_muted = COLORS["muted"] if light else "#AFC0CF"
+    brand_divider = COLORS["stroke"] if light else "rgba(255,255,255,.28)"
     st.markdown(
         f"""
         <style>
@@ -281,7 +287,7 @@ def apply_theme() -> None:
 
         /* Keep Streamlit's native navigation and sidebar toggle available. */
         [data-testid="stHeader"] {{
-          background: var(--ma-bg);
+          background: var(--ma-panel);
           border-bottom: 1px solid var(--ma-stroke);
         }}
 
@@ -369,6 +375,15 @@ def apply_theme() -> None:
           margin-top: .9rem !important;
         }}
 
+        .ma-home-section-title {{
+          margin: 2rem 0 1rem !important;
+          padding-bottom: .55rem;
+          border-bottom: 3px solid var(--ma-red);
+          font-size: 1.65rem !important;
+          line-height: 1.2 !important;
+          font-weight: 820 !important;
+        }}
+
         .ma-page-header {{
           position: relative;
           overflow: hidden;
@@ -376,8 +391,7 @@ def apply_theme() -> None:
           padding: 1rem 1.2rem 1.1rem;
           border: 1px solid var(--ma-stroke);
           border-radius: 14px;
-          background:
-            linear-gradient(120deg, #16222f 0%, #1c2c3d 56%, #233b52 100%);
+          background: {page_header_bg};
           box-shadow: 0 18px 40px rgba(0,0,0,.18);
         }}
 
@@ -392,8 +406,7 @@ def apply_theme() -> None:
           padding: .78rem 1.2rem .78rem 1rem;
           border: 1px solid var(--ma-stroke);
           border-radius: 0 0 18px 0;
-          background:
-            linear-gradient(120deg, rgba(35,54,72,.96), rgba(24,38,52,.96));
+          background: {brand_header_bg};
           box-shadow: 0 14px 30px rgba(0,0,0,.18);
         }}
 
@@ -404,8 +417,8 @@ def apply_theme() -> None:
           width: 2.55rem;
           height: 2.55rem;
           flex: 0 0 auto;
-          border: 2px solid rgba(255,255,255,.82);
-          color: #FFFFFF;
+          border: 2px solid {header_text};
+          color: {header_text};
           font-size: 1.05rem;
           font-weight: 800;
           line-height: 1;
@@ -427,7 +440,7 @@ def apply_theme() -> None:
         }}
 
         .ma-brand-text {{
-          color: #FFFFFF;
+          color: {header_text};
           font-size: .78rem;
           line-height: 1.12;
           font-weight: 800;
@@ -439,7 +452,7 @@ def apply_theme() -> None:
         .ma-brand-divider {{
           width: 1px;
           height: 2.65rem;
-          background: rgba(255,255,255,.28);
+          background: {brand_divider};
           flex: 0 0 auto;
         }}
 
@@ -468,7 +481,7 @@ def apply_theme() -> None:
         }}
 
         .ma-eyebrow {{
-          color: #AFC0CF;
+          color: {header_muted};
           font-size: .68rem;
           font-weight: 760;
           letter-spacing: .14em;
@@ -477,12 +490,12 @@ def apply_theme() -> None:
         }}
 
         .ma-page-header h1 {{
-          color: #FFFFFF !important;
+          color: {header_text} !important;
           margin-bottom: .45rem !important;
         }}
 
         .ma-subtitle {{
-          color: #AFC0CF;
+          color: {header_muted};
           font-size: .86rem;
           line-height: 1.45;
           max-width: 1080px;

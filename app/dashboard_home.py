@@ -12,7 +12,6 @@ from app.audit import (
     realty_update_status_summary,
 )
 from app.components.design import apply_theme, page_header
-from app.data_access import dataset_download_summary, load_ipc, load_salary
 
 st.set_page_config(
     page_title="Аналитика Москвы — дашборд",
@@ -58,88 +57,42 @@ with st.sidebar:
 badge = latest_data_badge()
 page_header(
     "Аналитика Москвы",
-    ("Единый дашборд по экономическим показателям, рынку недвижимости "
-     "и состоянию обновления источников.")
-    + (f" Обновление данных: {badge}." if badge else ""),
+    f"Обновление данных: {badge}." if badge else None,
 )
 
-salary = load_salary()
-ipc = load_ipc()
-
-summary_cols = st.columns(4)
-summary_cols[0].metric("Разделов", "12")
-summary_cols[1].metric("Регионы в зарплатах", len(salary["region"].unique()) if not salary.empty else 0)
-summary_cols[2].metric("Регионы в ИПЦ", len(ipc["region"].unique()) if not ipc.empty else 0)
-summary_cols[3].metric("Формат", "BI")
-
-def _feature_card(index: str, title: str, body: str, meta: list[str]) -> None:
-    meta_html = "<br>".join(meta)
-    st.markdown(
-        f"""
-        <div class="ma-feature-card">
-          <div class="ma-feature-index">{index}</div>
-          <h3>{title}</h3>
-          <p>{body}</p>
-          <div class="ma-feature-meta">{meta_html}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-st.markdown("### 1. Рынок недвижимости")
+st.markdown("<h2 class='ma-home-section-title'>Рынок недвижимости</h2>", unsafe_allow_html=True)
 realty_cols = st.columns(3)
 with realty_cols[0]:
-    _feature_card(
-        "1.1 / Оперативные данные", "Текущее строительство",
-        "Единая группа оперативных показателей рынка и строящихся объектов.",
-        ["Квартирография", "Квартиры по девелоперу", "Распроданность", "Карта объектов"],
-    )
-    st.page_link("pages/0_Текущее_строительство.py", label="Открыть раздел →")
-    st.page_link("pages/4_Квартирография.py", label="Квартирография →")
-    st.page_link("pages/5_Квартирография_по_девелоперу.py", label="Квартиры по девелоперу →")
-    st.page_link("pages/9_Карта_объектов.py", label="Карта объектов →")
+    with st.container(border=True):
+        st.markdown("### Текущее строительство")
+        st.page_link("pages/0_Текущее_строительство.py", label="Оперативные данные →")
+        st.page_link("pages/4_Квартирография.py", label="Квартирография →")
+        st.page_link("pages/9_Карта_объектов.py", label="Карта объектов →")
 with realty_cols[1]:
-    _feature_card(
-        "1.2 / Ввод недвижимости", "Ввод недвижимости",
-        "Оперативный ввод жилья и нежилья, квартальная структура и годовые показатели.",
-        ["<b>Оперативно:</b> Москва, выбор месяца", "<b>За год:</b> Москва / РФ", "<b>Период:</b> с 2011 года"],
-    )
-    st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные →")
-    st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные →")
+    with st.container(border=True):
+        st.markdown("### Ввод недвижимости")
+        st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные →")
+        st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные →")
 with realty_cols[2]:
-    _feature_card(
-        "1.3 / Девелоперы", "Профиль застройщика",
-        "Карточка группы компаний: строительство, ввод, рейтинги, переносы и эскроу.",
-        ["<b>Источники:</b> 5 витрин", "<b>Режим:</b> выбор застройщика"],
-    )
-    st.page_link("pages/7_Профиль_застройщика.py", label="Открыть раздел →")
+    with st.container(border=True):
+        st.markdown("### Профиль застройщика")
+        st.page_link("pages/7_Профиль_застройщика.py", label="Профиль →")
+        st.page_link("pages/5_Квартирография_по_девелоперу.py", label="Квартирография по застройщику →")
 
-st.markdown("### 2. Данные Мосстата / Росстата")
+st.markdown("<h2 class='ma-home-section-title'>Данные Мосстата / Росстата</h2>", unsafe_allow_html=True)
 stat_cols = st.columns(3)
 with stat_cols[0]:
-    _feature_card(
-        "2.1 / Национальные счета", "ВВП и ВРП",
-        "ВВП России, ВРП Москвы и валовая добавленная стоимость по отраслям.",
-        ["<b>Период:</b> с 2011 года", "<b>Состав:</b> 6 аналитических блоков"],
-    )
-    st.page_link("pages/3_ВРП_и_ВВП.py", label="Открыть раздел →")
+    with st.container(border=True):
+        st.markdown("### ВВП и ВРП")
+        st.page_link("pages/3_ВРП_и_ВВП.py", label="Открыть →")
 with stat_cols[1]:
-    _feature_card(
-        "2.2 / Цены", "ИПЦ",
-        "Индексы потребительских цен на товары и услуги: год, квартал и месяц.",
-        [f"<b>Регионы:</b> {', '.join(sorted(ipc['region'].unique())) if not ipc.empty else '—'}",
-         dataset_download_summary(ipc)],
-    )
-    st.page_link("pages/2_ИПЦ.py", label="Открыть раздел →")
+    with st.container(border=True):
+        st.markdown("### ИПЦ")
+        st.page_link("pages/2_ИПЦ.py", label="Открыть →")
 with stat_cols[2]:
-    _feature_card(
-        "2.3 / Доходы", "Заработная плата",
-        "Среднемесячная номинальная зарплата по Москве и России с разрезом по отраслям.",
-        [f"<b>Регионы:</b> {', '.join(sorted(salary['region'].unique())) if not salary.empty else '—'}",
-         dataset_download_summary(salary)],
-    )
-    st.page_link("pages/1_Заработная_плата.py", label="Открыть раздел →")
+    with st.container(border=True):
+        st.markdown("### Заработная плата")
+        st.page_link("pages/1_Заработная_плата.py", label="Открыть →")
 
 st.markdown("### 3–4. Сервис")
 service_cols = st.columns(2)

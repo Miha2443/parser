@@ -94,9 +94,10 @@ def nonres_ytd_table(
     return _with_growth(pd.DataFrame(rows))
 
 
-def quarter_tree(rv: pd.DataFrame, year: int, quarter: int) -> dict[str, float]:
+def quarter_tree(rv: pd.DataFrame, year: int, quarter: int, *, cumulative: bool = False) -> dict[str, float]:
     prepared = _prepared_monitoring(rv)
-    selected = prepared[(prepared["_year"] == year) & (prepared["_quarter"] == quarter)]
+    quarter_mask = prepared["_quarter"].le(quarter) if cumulative else prepared["_quarter"].eq(quarter)
+    selected = prepared[(prepared["_year"] == year) & quarter_mask]
     housing_objects = selected[selected["Отрасли"].astype(str).str.strip().eq("Жилые объекты")]
     standalone = selected[~selected.index.isin(housing_objects.index)]
     industries = standalone["Отрасли"].astype(str).str.casefold()

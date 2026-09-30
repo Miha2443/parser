@@ -718,7 +718,7 @@ class DataAccess:
         """The single source registry used by loaders, UI versions and mart builds."""
         if mart == "kvartirografia":
             return self._raw_files(self.KVART_PATHS, ["kvartirografia_*.json", "kvartirografia_*.xlsx"])
-        if mart in {"monitoring_2_0", "monitoring_2011_2026_static"}:
+        if mart in {"monitoring_2_0", "monitoring_2011_2026_static", "monitoring_operational_history"}:
             return self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
         if mart == "erzrf_top":
             return self._raw_files(self.ERZRF_PATHS, ["top_*.xlsx", "TOP_EXCEL*.xlsx", "top_developers_*.json"], recursive=True)
@@ -754,7 +754,7 @@ class DataAccess:
         else:
             mart = loader.removeprefix("load_")
             inputs = self.source_files(mart)
-            if mart not in {"emiss_34118_periods", "monitoring_2011_2026_static"}:
+            if mart not in {"emiss_34118_periods", "monitoring_2011_2026_static", "monitoring_operational_history"}:
                 inputs += [self.DATA_MARTS_REALTY / "manifest.json", self.DATA_MARTS_REALTY / f"{mart}.pkl"]
         return tuple(file_signature(path) for path in sorted(set(inputs)))
 
@@ -1820,4 +1820,49 @@ class DataAccess:
         return {
             "residential_budget_split": build(residential_row),
             "nonres_budget_split": build(nonres_row),
+        }
+
+    def load_monitoring_operational_history(self) -> dict[str, object]:
+        """Monthly Moscow commissioning history from `Данные с 2011 года`.
+
+        The workbook stores monthly values in thousand m². The returned tidy
+        tables preserve those units so callers can aggregate an arbitrary YTD.
+        """
+        empty: dict[str, object] = {
+            "housing_monthly": pd.DataFrame(columns=["year", "month", "value_thousand_m2"]),
+            "source_file": "",
+            "source_date": "",
+        }
+        files = self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+        if not files:
+            return empty
+        latest = max(files, key=lambda p: p.stat().st_mtime)
+        try:
+            frame = pd.read_excel(latest, sheet_name="Данные с 2011 года", header=None)
+        except Exception:  # noqa: BLE001
+            return empty
+
+        def number(value: object) -> float:
+            return _to_float(value)
+
+        housing_rows: list[dict[str, object]] = []
+        # In the source layout each housing row has its year in column F and
+        # January–December in G:R.
+        for i in range(len(frame)):
+            year = number(frame.iat[i, 5]) if frame.shape[1] > 5 else float("nan")
+            if not pd.notna(year) or not 2011 <= int(year) <= 2100:
+                continue
+            for month, col in enumerate(range(6, 18), start=1):
+                value = number(frame.iat[i, col]) if col < frame.shape[1] else float("nan")
+                if pd.notna(value):
+                    housing_rows.append({"year": int(year), "month": month, "value_thousand_m2": value})
+
+        match = re.search(r"(20\d{6})", latest.name)
+        source_date = ""
+        if match:
+            source_date = f"{match.group(1)[6:8]}.{match.group(1)[4:6]}.{match.group(1)[:4]}"
+        return {
+            "housing_monthly": pd.DataFrame(housing_rows),
+            "source_file": str(latest),
+            "source_date": source_date,
         }

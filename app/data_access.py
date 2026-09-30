@@ -164,3 +164,7 @@ def load_emiss_34118_periods() -> pd.DataFrame:
 
 def load_monitoring_2011_2026_static() -> dict[str, pd.DataFrame]:
     return _load('load_monitoring_2011_2026_static')
+
+
+def load_monitoring_operational_history() -> dict[str, object]:
+    return _load('load_monitoring_operational_history')

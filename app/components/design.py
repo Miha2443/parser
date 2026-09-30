@@ -1,6 +1,9 @@
 """Shared visual system for the Streamlit dashboard."""
 from __future__ import annotations
 
+from html import escape
+
+import pandas as pd
 import plotly.io as pio
 import streamlit as st
 
@@ -30,6 +33,8 @@ DARK_COLORS = {
     "surface": "#1A2634",
     "surface_2": "#212F40",
     "sidebar": "#1A2634",
+    "neutral": "#C6D4E0",
+    "red_tint": "rgba(232,76,76,.16)",
 }
 
 LIGHT_COLORS = {
@@ -57,6 +62,8 @@ LIGHT_COLORS = {
     "surface": "#FFFFFF",
     "surface_2": "#EAF0F5",
     "sidebar": "#FFFFFF",
+    "neutral": "#536579",
+    "red_tint": "rgba(198,40,40,.12)",
 }
 
 # The dictionary is mutated in place so modules that imported COLORS keep a
@@ -75,6 +82,10 @@ SERIES = [
 ]
 
 FONT_STACK = "Montserrat, Segoe UI, Roboto, Arial, sans-serif"
+
+if not hasattr(st, "_ma_native_dataframe"):
+    st._ma_native_dataframe = st.dataframe
+_NATIVE_DATAFRAME = st._ma_native_dataframe
 
 
 def _active_theme() -> str:
@@ -102,6 +113,76 @@ def theme_selector() -> None:
         key="dashboard_theme_choice",
     )
     st.session_state["dashboard_theme"] = "light" if choice == "Светлая" else "dark"
+
+
+def _display_value(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        if bool(pd.isna(value)):
+            return "—"
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, float):
+        if value.is_integer():
+            return f"{int(value):,}".replace(",", " ")
+        return f"{value:,.1f}".replace(",", " ").replace(".", ",")
+    return str(value)
+
+
+def _light_dataframe(data, *, hide_index: bool | None = None, height=None, **_kwargs):
+    """Render dataframes as real themed tables because Streamlit's canvas grid
+    keeps the server theme colors and cannot follow our runtime theme selector.
+    """
+    if hasattr(data, "data") and data.__class__.__name__ == "Styler":
+        table_html = data.to_html(
+            border=0,
+            table_attributes='class="ma-light-dataframe-table" role="table"',
+        )
+    else:
+        frame = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        show_index = not bool(hide_index)
+        headers = ([frame.index.name or ""] if show_index else []) + [str(c) for c in frame.columns]
+        head = "".join(f"<th scope='col'>{escape(label)}</th>" for label in headers)
+        rows = []
+        for index, row in frame.iterrows():
+            cells = []
+            if show_index:
+                cells.append(f"<th scope='row'>{escape(_display_value(index))}</th>")
+            for column, value in row.items():
+                rendered = escape(_display_value(value))
+                is_percent = "%" in str(column)
+                if is_percent and pd.notna(value):
+                    try:
+                        percent = max(0.0, min(100.0, float(value)))
+                    except (TypeError, ValueError):
+                        percent = None
+                    if percent is not None:
+                        rendered = (
+                            "<div class='ma-progress-cell'>"
+                            f"<span class='ma-progress-track'><span style='width:{percent:.2f}%'></span></span>"
+                            f"<span>{rendered}%</span></div>"
+                        )
+                cells.append(f"<td>{rendered}</td>")
+            rows.append("<tr>" + "".join(cells) + "</tr>")
+        table_html = (
+            "<table class='ma-light-dataframe-table' role='table'>"
+            f"<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+        )
+    max_height = "none"
+    if isinstance(height, int) and height > 0:
+        max_height = f"{height}px"
+    st.markdown(
+        f"<div class='ma-light-dataframe' style='max-height:{max_height}'>{table_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def dataframe(data=None, *args, **kwargs):
+    """Theme-aware replacement for st.dataframe used by dashboard pages."""
+    if _active_theme() == "light":
+        return _light_dataframe(data, **kwargs)
+    return _NATIVE_DATAFRAME(data, *args, **kwargs)
 
 
 def _register_plotly_template() -> None:
@@ -153,6 +234,7 @@ def apply_theme() -> None:
     """Apply global CSS and Plotly defaults for all dashboard pages."""
     _activate_palette(_active_theme())
     _register_plotly_template()
+    st.dataframe = dataframe if _active_theme() == "light" else _NATIVE_DATAFRAME
     st.markdown(
         f"""
         <style>
@@ -171,6 +253,8 @@ def apply_theme() -> None:
           --ma-green: {COLORS["green"]};
           --ma-blue: {COLORS["blue"]};
           --ma-amber: {COLORS["amber"]};
+          --ma-neutral: {COLORS["neutral"]};
+          --ma-red-tint: {COLORS["red_tint"]};
         }}
 
         html,
@@ -250,7 +334,7 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] a[aria-current="page"] {{
           background: var(--ma-panel2) !important;
           box-shadow: inset 3px 0 0 var(--ma-red);
-          color: #FFFFFF !important;
+          color: var(--ma-text) !important;
         }}
 
         [data-testid="stSidebar"] .stButton > button {{
@@ -384,7 +468,7 @@ def apply_theme() -> None:
         }}
 
         .ma-eyebrow {{
-          color: var(--ma-muted);
+          color: #AFC0CF;
           font-size: .68rem;
           font-weight: 760;
           letter-spacing: .14em;
@@ -524,6 +608,7 @@ def apply_theme() -> None:
 
         .stButton > button:hover,
         .stDownloadButton > button:hover {{
+          background: var(--ma-teal) !important;
           border-color: var(--ma-teal) !important;
           color: #FFFFFF !important;
         }}
@@ -584,8 +669,8 @@ def apply_theme() -> None:
         }}
 
         div[data-baseweb="tag"] {{
-          background: rgba(232,76,76,.16) !important;
-          border: 1px solid rgba(232,76,76,.42) !important;
+          background: var(--ma-red-tint) !important;
+          border: 1px solid var(--ma-red) !important;
           color: var(--ma-text) !important;
           height: auto !important;
           min-height: 1.55rem !important;
@@ -687,6 +772,78 @@ def apply_theme() -> None:
 
         .ma-table-scroll table {{
           min-width: 22rem;
+        }}
+
+        .ma-light-dataframe {{
+          width: 100%;
+          max-width: 100%;
+          overflow: auto;
+          border: 1px solid var(--ma-stroke);
+          border-radius: 10px;
+          background: var(--ma-panel);
+        }}
+
+        .ma-light-dataframe-table {{
+          width: 100%;
+          min-width: max-content;
+          border-collapse: separate;
+          border-spacing: 0;
+          color: var(--ma-text);
+          background: var(--ma-panel);
+          font-family: {FONT_STACK};
+          font-size: .82rem;
+        }}
+
+        .ma-light-dataframe-table th,
+        .ma-light-dataframe-table td {{
+          padding: .58rem .68rem;
+          border-right: 1px solid var(--ma-stroke);
+          border-bottom: 1px solid var(--ma-stroke);
+          text-align: left;
+          white-space: nowrap;
+          vertical-align: middle;
+        }}
+
+        .ma-light-dataframe-table thead th {{
+          position: sticky;
+          top: 0;
+          z-index: 1;
+          color: var(--ma-muted);
+          background: var(--ma-panel2);
+          font-weight: 700;
+        }}
+
+        .ma-light-dataframe-table tbody th {{
+          color: var(--ma-text);
+          background: var(--ma-bg2);
+          font-weight: 700;
+        }}
+
+        .ma-light-dataframe-table tr:last-child > * {{ border-bottom: 0; }}
+        .ma-light-dataframe-table tr > *:last-child {{ border-right: 0; }}
+        .ma-light-dataframe-table tbody tr:hover > * {{ background: var(--ma-panel2); }}
+
+        .ma-progress-cell {{
+          display: grid;
+          grid-template-columns: minmax(3.5rem, 1fr) auto;
+          align-items: center;
+          gap: .5rem;
+          min-width: 7rem;
+        }}
+
+        .ma-progress-track {{
+          display: block;
+          height: .42rem;
+          overflow: hidden;
+          border-radius: 99px;
+          background: var(--ma-panel2);
+        }}
+
+        .ma-progress-track > span {{
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          background: var(--ma-red);
         }}
 
         .ma-chart-legend {{

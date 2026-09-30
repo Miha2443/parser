@@ -30,7 +30,7 @@ MSK = "Москва"
 RF = "Российская Федерация"
 MSK_COLOR = COLORS["red"]
 RF_COLOR = COLORS["blue"]
-REST_COLOR = "#D5DEE7"
+REST_COLOR = COLORS["neutral"]
 INDUSTRY_PALETTE = SERIES
 DEFAULT_INDUSTRY = "Строительство"
 # Разделители для plotly: дробная часть — запятая, разряды — неразрывный пробел.

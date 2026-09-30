@@ -24,7 +24,7 @@ apply_theme()
 # Единая деловая палитра для комнатности.
 COLOR_1K = COLORS["green"]
 COLOR_2K = COLORS["cyan"]
-COLOR_3K = "#D5DEE7"
+COLOR_3K = COLORS["neutral"]
 COLOR_4K = COLORS["red"]
 
 

@@ -116,8 +116,8 @@ st.markdown(
       display: flex !important;
       right: 10px !important;
       top: 10px !important;
-      background: rgba(7, 23, 35, .72);
-      border: 1px solid rgba(255,255,255,.18);
+      background: var(--ma-panel);
+      border: 1px solid var(--ma-stroke);
       border-radius: 7px;
       padding: 3px;
     }
@@ -136,7 +136,7 @@ st.markdown(
       border-radius: 5px;
     }
     div[data-testid="stPlotlyChart"] .modebar-btn:hover {
-      background: rgba(255,255,255,.14) !important;
+      background: var(--ma-panel2) !important;
       opacity: 1 !important;
     }
     div[data-testid="stPlotlyChart"] .modebar-btn svg,
@@ -145,7 +145,7 @@ st.markdown(
       opacity: 1 !important;
       visibility: visible !important;
       pointer-events: auto !important;
-      fill: #FFFFFF !important;
+      fill: var(--ma-text) !important;
     }
     @media (max-width: 760px) {
       div[data-testid="stPlotlyChart"] .modebar-btn {

@@ -22,7 +22,7 @@ apply_theme()
 
 COLOR_1K = COLORS["green"]
 COLOR_2K = COLORS["cyan"]
-COLOR_3K = "#D5DEE7"
+COLOR_3K = COLORS["neutral"]
 COLOR_4K = COLORS["red"]
 ROOM_COLORS = [COLOR_1K, COLOR_2K, COLOR_3K, COLOR_4K]
 

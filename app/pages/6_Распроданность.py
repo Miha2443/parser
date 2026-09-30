@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import load_rasprodannost, MONTH_NAMES_RU, MONTH_SHORT_RU
 
 st.set_page_config(page_title="Распроданность — Аналитика Москвы", layout="wide")
@@ -151,6 +152,10 @@ if not forecast_rows.empty:
         ys = []
         for c in forecast_cols:
             ys.append(_parse_val := row.get(f"{c}_num"))
+        forecast_data.extend(
+            {"Показатель": name, "Год": year, "Значение": value}
+            for year, value in zip(forecast_years, ys)
+        )
         color = KPI_COLORS.get(name.strip(), "#666")
         fig.add_trace(go.Bar(
             x=forecast_years, y=ys, name=name,
@@ -168,6 +173,9 @@ if not forecast_rows.empty:
     )
     style_plotly(fig, height=310)
     st.plotly_chart(fig, use_container_width=True)
+    chart_data_expander(
+        fig, pd.DataFrame(forecast_data), name="rasprod_forecast", key="rasprod_forecast"
+    )
 
 
 # === Динамика KPI по месяцам с 2020 года ===
@@ -203,6 +211,13 @@ if not time_series.empty:
         )
         style_plotly(fig_vol, height=280)
         st.plotly_chart(fig_vol, use_container_width=True)
+        chart_data_expander(
+            fig_vol,
+            vol_ts[["period", "значение_num"]].rename(
+                columns={"period": "Период", "значение_num": "Объём, тыс. м²"}
+            ),
+            name="rasprod_volume", key="rasprod_volume",
+        )
 
     # График 2: 3 процентных KPI на одной оси
     st.markdown("**Распроданность · Стройготовность · Отношение, %**")
@@ -233,6 +248,13 @@ if not time_series.empty:
     )
     style_plotly(fig_pct, height=320)
     st.plotly_chart(fig_pct, use_container_width=True)
+    chart_data_expander(
+        fig_pct,
+        time_series[["period", "название", "значение_num"]].rename(
+            columns={"period": "Период", "название": "Показатель", "значение_num": "Значение, %"}
+        ),
+        name="rasprod_percent", key="rasprod_percent",
+    )
 
 
 # === 6 таблиц ===

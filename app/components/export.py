@@ -62,3 +62,18 @@ def chart_download_button(fig: go.Figure, *, name: str, key: str) -> None:
         mime="image/png",
         key=f"{key}_dl",
     )
+
+
+def chart_data_expander(
+    fig: go.Figure,
+    df: pd.DataFrame,
+    *,
+    name: str,
+    key: str,
+    label: str = "Данные графика и скачивание",
+) -> None:
+    """Collapsed data table and exports placed immediately below a chart."""
+    with st.expander(label, expanded=False):
+        chart_download_button(fig, name=name, key=f"{key}_png")
+        st.dataframe(df, hide_index=True, use_container_width=True)
+        table_download_buttons(df, name=name, key_prefix=f"{key}_data")

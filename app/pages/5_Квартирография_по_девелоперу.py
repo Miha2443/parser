@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import load_kvartirografia
 
 st.set_page_config(page_title="Квартирография — Девелопер — Аналитика", layout="wide")
@@ -117,6 +118,7 @@ shares = {
     "4+ комн": row["доля_4+комн_%_num"],
 }
 shares = {k: v for k, v in shares.items() if v is not None}
+shares_df = pd.DataFrame([{"Тип": k, "Доля, %": v} for k, v in shares.items()])
 
 with chart_l:
     if shares:
@@ -135,15 +137,15 @@ with chart_l:
         )
         style_plotly(fig, height=340)
         st.plotly_chart(fig, use_container_width=True)
+        chart_data_expander(
+            fig, shares_df, name=f"rooms_{sel_dev}", key="developer_rooms"
+        )
     else:
         st.info("Нет данных по комнатности")
 
 with chart_r:
-    df_show = pd.DataFrame(
-        [{"Тип": k, "Доля, %": v} for k, v in shares.items()]
-    )
     st.dataframe(
-        df_show, hide_index=True, use_container_width=True,
+        shares_df, hide_index=True, use_container_width=True,
         column_config={
             "Доля, %": st.column_config.ProgressColumn(
                 format="%d%%", min_value=0, max_value=100,

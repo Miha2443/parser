@@ -68,6 +68,7 @@ def _install_fake_download():
         payload_template_override=None,
         save_path_override=None,
         allow_34118_chunks=True,
+        fast_fail=False,
     ):
         payload = payload_template_override
         _require(payload is not None, "chunk download must pass a payload override")

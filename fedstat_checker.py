@@ -14,8 +14,10 @@ fedstat_checker.py
 
 import atexit
 import base64
+import hashlib
 import html
 from html.parser import HTMLParser
+import json
 import os
 import re
 import shutil
@@ -130,6 +132,7 @@ DEFAULT_INDICATOR_USAGE = {
 
 DOWNLOAD_DIR = Path("downloads")
 STATE_FILE = Path("fedstat_state.json")
+RUN_CHECKPOINT_FILE = Path("state/fedstat_run_checkpoint.json")
 PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
 PAGE_LOAD_TOTAL_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_TOTAL_TIMEOUT", "120"))
 PAGE_LOAD_ATTEMPT_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_ATTEMPT_TIMEOUT", "20"))
@@ -148,6 +151,9 @@ FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE",
 FEDSTAT_34118_YEAR_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_YEAR_CHUNK_SIZE", "99")))
 FEDSTAT_34118_CHUNK_RETRIES = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_RETRIES", "2")))
 FEDSTAT_34118_CHUNK_RETRY_SLEEP = max(0.0, float(os.environ.get("FEDSTAT_34118_CHUNK_RETRY_SLEEP", "2")))
+FEDSTAT_34118_RESUME_DIR = Path(os.environ.get(
+    "FEDSTAT_34118_RESUME_DIR", "downloads/.fedstat_resume"
+))
 FEDSTAT_USER_AGENT = os.environ.get(
     "FEDSTAT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -165,6 +171,30 @@ def load_state():
 
 def save_state(state):
     write_json_atomic(STATE_FILE, state)
+
+
+def _load_run_checkpoint(run_id: str | None) -> dict:
+    """Load completion receipts shared by retries of one update_realty run."""
+    if not run_id:
+        return {"run_id": "", "completed": {}}
+    checkpoint = load_json_state(RUN_CHECKPOINT_FILE, label="fedstat run")
+    if checkpoint.get("run_id") != run_id:
+        return {"run_id": run_id, "completed": {}}
+    if not isinstance(checkpoint.get("completed"), dict):
+        checkpoint["completed"] = {}
+    return checkpoint
+
+
+def _mark_run_completed(checkpoint: dict, indicator_id: str, remote_date: str | None) -> None:
+    """Persist one indicator immediately so a watchdog cannot lose its success."""
+    run_id = checkpoint.get("run_id")
+    if not run_id:
+        return
+    checkpoint.setdefault("completed", {})[indicator_id] = {
+        "remote_date": remote_date,
+        "completed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    write_json_atomic(RUN_CHECKPOINT_FILE, checkpoint)
 
 
 def create_driver(download_dir: Path | None = None):
@@ -1306,11 +1336,12 @@ def _download_34118_period_chunks(
     if len(period_ids) <= period_chunk_size and len(year_ids) <= year_chunk_size:
         return None
 
+    # Keep a stable chunk plan across process retries. Switching from the
+    # normal all-years-per-period plan to year-by-year after one transient 503
+    # multiplies 27 requests into 108 and prevents reuse by payload hash.
     attempts = [(period_chunk_size, year_chunk_size)]
-    if (period_chunk_size, year_chunk_size) != (1, 1):
-        attempts.append((1, 1))
 
-    for attempt_index, (period_size, year_size) in enumerate(attempts, start=1):
+    for period_size, year_size in attempts:
         period_chunks = _chunked(period_ids, period_size)
         year_chunks = _chunked(year_ids, year_size)
         jobs = [(years, periods) for years in year_chunks for periods in period_chunks]
@@ -1319,60 +1350,85 @@ def _download_34118_period_chunks(
             f"(лет до {year_size}, периодов до {period_size})"
         )
 
-        with tempfile.TemporaryDirectory(prefix="fedstat-34118-chunks-") as tmp:
-            tmp_dir = Path(tmp)
-            chunk_paths: list[Path] = []
-            failed = False
-            for idx, (year_chunk, period_chunk) in enumerate(jobs, start=1):
-                chunk_payload = {
-                    key: (list(value) if isinstance(value, list) else value)
-                    for key, value in payload_template.items()
-                }
-                chunk_payload["selectedFilterIds"] = _subset_34118_filters(
-                    selected, year_chunk, period_chunk
-                )
-                chunk_payload["filename_title"] = (
-                    f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:03d}"
-                )
-                chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:03d}.xls"
-                downloaded = None
-                for retry in range(1, FEDSTAT_34118_CHUNK_RETRIES + 1):
-                    if retry > 1:
-                        print(
-                            f"  -> Повторяю chunk {idx}/{len(jobs)} "
-                            f"(попытка {retry}/{FEDSTAT_34118_CHUNK_RETRIES})"
-                        )
-                        if FEDSTAT_34118_CHUNK_RETRY_SLEEP:
-                            time.sleep(FEDSTAT_34118_CHUNK_RETRY_SLEEP)
-                    downloaded = download_excel(
-                        indicator_id,
-                        tmp_dir,
-                        remote_date=remote_date,
-                        driver=driver,
-                        payload_template_override=chunk_payload,
-                        save_path_override=chunk_path,
-                        allow_34118_chunks=False,
+        resume_spec = {
+            "indicator_id": indicator_id,
+            "remote_date": remote_date,
+            "period_size": period_size,
+            "year_size": year_size,
+            "payload": payload_template,
+        }
+        resume_key = hashlib.sha256(
+            json.dumps(resume_spec, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        tmp_dir = FEDSTAT_34118_RESUME_DIR / indicator_id / resume_key
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(tmp_dir / "manifest.json", resume_spec)
+        chunk_paths: list[Path] = []
+        failed = False
+        reused = 0
+        for idx, (year_chunk, period_chunk) in enumerate(jobs, start=1):
+            chunk_payload = {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in payload_template.items()
+            }
+            chunk_payload["selectedFilterIds"] = _subset_34118_filters(
+                selected, year_chunk, period_chunk
+            )
+            chunk_payload["filename_title"] = (
+                f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:03d}"
+            )
+            chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:03d}.xls"
+            if chunk_path.is_file():
+                try:
+                    validate_excel_file(chunk_path)
+                    if _validate_34118_file(indicator_id, chunk_path, chunk_payload):
+                        chunk_paths.append(chunk_path)
+                        reused += 1
+                        continue
+                except (OSError, ValueError):
+                    pass
+                try:
+                    chunk_path.unlink()
+                except OSError:
+                    pass
+            downloaded = None
+            for retry in range(1, FEDSTAT_34118_CHUNK_RETRIES + 1):
+                if retry > 1:
+                    print(
+                        f"  -> Повторяю chunk {idx}/{len(jobs)} "
+                        f"(попытка {retry}/{FEDSTAT_34118_CHUNK_RETRIES})"
                     )
-                    if downloaded is not None:
-                        break
-                if downloaded is None:
-                    print(f"  ⚠️  Chunk {idx}/{len(jobs)} не скачался")
-                    failed = True
+                    if FEDSTAT_34118_CHUNK_RETRY_SLEEP:
+                        time.sleep(FEDSTAT_34118_CHUNK_RETRY_SLEEP)
+                downloaded = download_excel(
+                    indicator_id,
+                    tmp_dir,
+                    remote_date=remote_date,
+                    driver=driver,
+                    payload_template_override=chunk_payload,
+                    save_path_override=chunk_path,
+                    allow_34118_chunks=False,
+                    fast_fail=True,
+                )
+                if downloaded is not None:
                     break
-                chunk_paths.append(downloaded)
+            if downloaded is None:
+                print(f"  ⚠️  Chunk {idx}/{len(jobs)} не скачался")
+                failed = True
+                break
+            chunk_paths.append(downloaded)
+        if reused:
+            print(f"  ♻️  Продолжаю 34118: использую готовые chunks {reused}/{len(jobs)}")
 
-            if failed:
-                if attempt_index < len(attempts):
-                    print("  -> Пробую 34118 максимально мелко: один год и один период")
-                    continue
+        if failed:
+            return None
+
+        merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
+        if merged is not None:
+            if not _validate_34118_file(indicator_id, merged, payload_template):
                 return None
-
-            merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
-            if merged is not None:
-                if not _validate_34118_file(indicator_id, merged):
-                    return None
-                print(f"  ✅ Собрал 34118 из chunks: {merged}")
-                return merged
+            print(f"  ✅ Собрал 34118 из chunks: {merged}")
+            return merged
     return None
 
 
@@ -1380,7 +1436,7 @@ def _download_34118_period_chunks(
 def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
                    driver=None, payload_template_override: dict | None = None,
                    save_path_override: Path | None = None,
-                   allow_34118_chunks: bool = True):
+                   allow_34118_chunks: bool = True, fast_fail: bool = False):
     PAYLOADS = {
         # Введено в действие общей площади жилых домов (оперативные данные).
         # Параметры — из data/raw/realty/vvod/34118_filter.txt (экспорт ЕМИСС).
@@ -2250,35 +2306,34 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         except Exception as exc:
             print(f"  ❌ Не удалось подготовить форму экспорта ({type(exc).__name__})")
             return None
-        print(f"  -> POST {url} (CSRF-поля получены из формы)")
+        print(f"  -> multipart POST {url} (CSRF-поля получены из формы)")
         last_error: Exception | None = None
-
+        multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
         try:
-            response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
+            multipart = [(key, (None, str(value))) for key, value in post_data]
+            response = session.post(
+                url, files=multipart, headers=multipart_headers,
+                timeout=60 if fast_fail else 120,
+            )
             response.raise_for_status()
             _raise_if_html_response(response)
-            stream_response_atomic(response, save_path, validate=validate_excel_file)
+            write_bytes_atomic(save_path, response.content, validate=validate_excel_file)
         except (requests.RequestException, OSError, ValueError) as exc:
             last_error = exc
             try:
                 response.close()  # type: ignore[name-defined]
             except Exception:
                 pass
-            print(f"  ⚠️  urlencoded POST не дал Excel: {exc}")
-            print("  -> Пробую multipart POST...")
-            multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+            print(f"  ⚠️  multipart POST не дал Excel: {exc}")
+            if fast_fail:
+                raise last_error
+            print("  -> Пробую urlencoded POST...")
             try:
                 post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
-                multipart = [(key, (None, str(value))) for key, value in post_data]
-                response = session.post(
-                    url,
-                    files=multipart,
-                    headers=multipart_headers,
-                    timeout=120,
-                )
+                response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
                 response.raise_for_status()
                 _raise_if_html_response(response)
-                write_bytes_atomic(save_path, response.content, validate=validate_excel_file)
+                stream_response_atomic(response, save_path, validate=validate_excel_file)
             except (requests.RequestException, OSError, ValueError) as exc2:
                 last_error = exc2
                 raise last_error
@@ -2288,7 +2343,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
 
     except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
-        if indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
+        if not fast_fail and indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
             print("  -> Пробую SDMX fallback для 34118...")
             sdmx_path = _download_34118_sdmx_as_excel(
                 indicator_id,
@@ -2301,7 +2356,7 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
             )
             if sdmx_path is not None:
                 return sdmx_path
-        if driver is not None:
+        if not fast_fail and driver is not None:
             print("  -> Пробую скачать через browser POST...")
             try:
                 post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
@@ -2352,6 +2407,8 @@ def run(force: bool = False, only_ids: list[str] | None = None):
     # Force bypasses the date comparison; it must never erase prior success
     # dates when an export fails or when only a subset was requested.
     state = load_state()
+    state_persisted = False
+    run_checkpoint = _load_run_checkpoint(os.environ.get("FEDSTAT_RUN_ID"))
     downloaded_files = []
     checked_ok = 0
     downloaded_without_date = []
@@ -2377,6 +2434,11 @@ def run(force: bool = False, only_ids: list[str] | None = None):
         for indicator_id, name in indicators_to_run.items():
             print(f"📊 [{indicator_id}] {name[:55]}")
 
+            if indicator_id in run_checkpoint.get("completed", {}):
+                print("  ♻️  Уже завершён в этом прогоне; пропускаю после retry\n")
+                checked_ok += 1
+                continue
+
             remote_date = get_last_update_date(driver, indicator_id)
 
             if remote_date is None:
@@ -2390,6 +2452,7 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                         downloaded_files.append(saved_path)
                         downloaded_without_date.append(indicator_id)
                         checked_ok += 1
+                        _mark_run_completed(run_checkpoint, indicator_id, None)
                         print("  ✅ Скачано напрямую; state по дате не обновляю\n")
                         continue
                 elif DIRECT_DOWNLOAD_ON_DATE_FAILURE:
@@ -2409,6 +2472,7 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                 print(f"  🔄 Обновился! Было: {saved_date} → Стало: {remote_date}")
             else:
                 print(f"  ✔️  Без изменений ({remote_date})\n")
+                _mark_run_completed(run_checkpoint, indicator_id, remote_date)
                 continue
 
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
@@ -2417,6 +2481,11 @@ def run(force: bool = False, only_ids: list[str] | None = None):
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date
+                # Persist every completed indicator. A watchdog must not erase
+                # progress made before a later heavy export.
+                save_state(state)
+                state_persisted = True
+                _mark_run_completed(run_checkpoint, indicator_id, remote_date)
             else:
                 failed_downloads.append(indicator_id)
             print()
@@ -2424,7 +2493,8 @@ def run(force: bool = False, only_ids: list[str] | None = None):
     finally:
         driver.quit()
 
-    save_state(state)
+    if not state_persisted:
+        save_state(state)
 
     print(f"\n{'='*60}")
     print(f"Итог: скачано файлов — {len(downloaded_files)}")

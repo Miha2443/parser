@@ -108,6 +108,10 @@ Fedstat по умолчанию проверяет только 6 источни
 `--only` / `FEDSTAT_ONLY_IDS`; `--force` не расширяет набор.
 [Состав, отключённые показатели и включение позже](docs/fedstat_dashboard_scope.md).
 
+[Возобновление Fedstat после 503 и watchdog](docs/fedstat_resilience.md).
+
+[Навигация, темы и раскрываемые данные](docs/dashboard_navigation_20260930.md).
+
 
 ## Данные и витрины
 

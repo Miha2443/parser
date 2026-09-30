@@ -170,7 +170,7 @@ class TransportTests(unittest.TestCase):
             <input type="hidden" name="struts.token.name" value="token">
             <input type="hidden" name="token" value="fixture-csrf"></div>''')
         response = Mock(headers={"Content-Type": "application/vnd.ms-excel"})
-        response.iter_content.return_value = [self.excel]
+        response.content = self.excel
         session.post.return_value = response
         template = {"id": "31074", "title": "ИПЦ", "selectedFilterIds": ["3_2025", "3_2026"]}
         with patch.object(fc.requests, "Session", return_value=session), redirect_stdout(StringIO()):
@@ -179,7 +179,8 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(result, self.output)
         session.get.assert_called_once_with("https://www.fedstat.ru/indicator/31074", timeout=30)
         self.assertEqual(session.post.call_args.args[0], "https://www.fedstat.ru/indicator/downloadData.do?format=excel")
-        data = session.post.call_args.kwargs["data"]
+        multipart = session.post.call_args.kwargs["files"]
+        data = [(key, value[1]) for key, value in multipart]
         self.assertIn(("title", "ИПЦ"), data)
         self.assertNotIn("indicator_title", dict(data))
         self.assertIn(("token", "fixture-csrf"), data)

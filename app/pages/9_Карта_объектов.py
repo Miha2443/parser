@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header
+from app.components.export import table_download_buttons
 from app.realty_map import GEOCODE_CACHE, MAP_ADDRESSES, load_monitoring_map_objects
 
 MISSING_REPORT = GEOCODE_CACHE.parent / "monitoring_geocodes_missing.csv"
@@ -225,6 +226,12 @@ st.caption(
 if map_data.empty:
     st.info("Для выбранных фильтров нет объектов с координатами.")
 else:
+    large_map = st.toggle(
+        "Увеличенная карта",
+        value=False,
+        help="Разворачивает карту по высоте. Масштабируйте колёсиком мыши или кнопками +/−.",
+        key="map_large_view",
+    )
     color_map = {
         "Введено": COLORS["green"],
         "Строится": COLORS["blue"],
@@ -278,7 +285,7 @@ else:
             zoom=10.2 if developer == "Все" else 11.2,
             domain=dict(x=[0, 1], y=[0, 1]),
         ),
-        height=540,
+        height=820 if large_map else 540,
         margin=dict(l=0, r=0, t=0, b=90),
         legend=dict(
             orientation="h",
@@ -286,7 +293,7 @@ else:
             y=-0.02,
             xanchor="left",
             x=0,
-            bgcolor="rgba(26,38,52,.9)",
+            bgcolor=COLORS["panel"],
             bordercolor=COLORS["stroke"],
             borderwidth=1,
             font=dict(color=COLORS["text"], size=12),
@@ -298,10 +305,18 @@ else:
         config={
             "displayModeBar": True,
             "displaylogo": False,
-            "scrollZoom": False,
+            "scrollZoom": True,
             "responsive": True,
         },
     )
+    with st.expander("Данные карты и скачивание", expanded=False):
+        export_cols = [
+            "status", "developer", "object_name", "address", "okrug", "district",
+            "year", "area_total", "apartments", "lat", "lon", "coord_source",
+        ]
+        export = map_data[[c for c in export_cols if c in map_data.columns]].copy()
+        st.dataframe(export, hide_index=True, use_container_width=True, height=360)
+        table_download_buttons(export, name="map_objects", key_prefix="map_objects")
 
 with st.expander("Статус координат", expanded=False):
     unique_missing_addresses = int(

@@ -22,6 +22,7 @@ data/raw/realty/**/*.crdownload
 state/
 *_state.json
 *.lock
+downloads/.fedstat_resume/
 
 # Личные секреты — примеры лежат в config/*.example.json
 config/telegram.json

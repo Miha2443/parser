@@ -5,7 +5,7 @@ import plotly.io as pio
 import streamlit as st
 
 
-COLORS = {
+DARK_COLORS = {
     "bg": "#0C141D",
     "bg_2": "#101923",
     "panel": "#1A2634",
@@ -32,6 +32,37 @@ COLORS = {
     "sidebar": "#1A2634",
 }
 
+LIGHT_COLORS = {
+    "bg": "#F4F7FA",
+    "bg_2": "#FFFFFF",
+    "panel": "#FFFFFF",
+    "panel_2": "#EAF0F5",
+    "stroke": "#C8D2DC",
+    "text": "#17212B",
+    "muted": "#536579",
+    "red": "#C62828",
+    "red_soft": "rgba(198,40,40,.88)",
+    "gray_bar": "#64748B",
+    "navy_bar": "#274C77",
+    "blue": "#1D5D96",
+    "blue_2": "#327AB7",
+    "navy": "#17324D",
+    "teal": "#087E8B",
+    "cyan": "#0077A6",
+    "green": "#18794E",
+    "green_2": "#5B7F19",
+    "amber": "#9A6700",
+    "ink": "#17212B",
+    "line": "#C8D2DC",
+    "surface": "#FFFFFF",
+    "surface_2": "#EAF0F5",
+    "sidebar": "#FFFFFF",
+}
+
+# The dictionary is mutated in place so modules that imported COLORS keep a
+# live reference when the user changes the theme.
+COLORS = DARK_COLORS.copy()
+
 SERIES = [
     COLORS["red"],
     COLORS["blue"],
@@ -46,7 +77,37 @@ SERIES = [
 FONT_STACK = "Montserrat, Segoe UI, Roboto, Arial, sans-serif"
 
 
+def _active_theme() -> str:
+    return str(st.session_state.get("dashboard_theme", "dark"))
+
+
+def _activate_palette(theme: str) -> None:
+    palette = LIGHT_COLORS if theme == "light" else DARK_COLORS
+    COLORS.clear()
+    COLORS.update(palette)
+    SERIES[:] = [
+        COLORS["red"], COLORS["blue"], COLORS["teal"], COLORS["green"],
+        COLORS["amber"], COLORS["gray_bar"], COLORS["blue_2"], COLORS["green_2"],
+    ]
+
+
+def theme_selector() -> None:
+    """Render the global light/dark selector in the shared sidebar."""
+    current = _active_theme()
+    choice = st.radio(
+        "Тема сайта",
+        ["Тёмная", "Светлая"],
+        index=1 if current == "light" else 0,
+        horizontal=True,
+        key="dashboard_theme_choice",
+    )
+    st.session_state["dashboard_theme"] = "light" if choice == "Светлая" else "dark"
+
+
 def _register_plotly_template() -> None:
+    light = _active_theme() == "light"
+    grid = "rgba(100,116,139,.26)" if light else "rgba(43,61,80,.72)"
+    zero = "rgba(100,116,139,.48)" if light else "rgba(43,61,80,.9)"
     pio.templates["moscow_business"] = {
         "layout": {
             "font": {"family": FONT_STACK, "color": COLORS["text"]},
@@ -55,16 +116,16 @@ def _register_plotly_template() -> None:
             "colorway": SERIES,
             "margin": {"l": 18, "r": 18, "t": 44, "b": 34},
             "xaxis": {
-                "gridcolor": "rgba(43,61,80,.72)",
-                "zerolinecolor": "rgba(43,61,80,.9)",
+                "gridcolor": grid,
+                "zerolinecolor": zero,
                 "linecolor": COLORS["stroke"],
                 "tickcolor": COLORS["stroke"],
                 "tickfont": {"color": COLORS["muted"], "size": 11},
                 "title": {"font": {"color": COLORS["muted"], "size": 12}},
             },
             "yaxis": {
-                "gridcolor": "rgba(43,61,80,.72)",
-                "zerolinecolor": "rgba(43,61,80,.9)",
+                "gridcolor": grid,
+                "zerolinecolor": zero,
                 "linecolor": COLORS["stroke"],
                 "tickcolor": COLORS["stroke"],
                 "tickfont": {"color": COLORS["muted"], "size": 11},
@@ -76,10 +137,10 @@ def _register_plotly_template() -> None:
                 "y": 1.02,
                 "xanchor": "right",
                 "x": 1,
-                "font": {"size": 12, "color": "#C6D4E0"},
+                "font": {"size": 12, "color": COLORS["text"]},
             },
             "hoverlabel": {
-                "bgcolor": "#0E1720",
+                "bgcolor": COLORS["panel"],
                 "bordercolor": COLORS["stroke"],
                 "font": {"color": COLORS["text"], "size": 12},
             },
@@ -90,6 +151,7 @@ def _register_plotly_template() -> None:
 
 def apply_theme() -> None:
     """Apply global CSS and Plotly defaults for all dashboard pages."""
+    _activate_palette(_active_theme())
     _register_plotly_template()
     st.markdown(
         f"""
@@ -160,7 +222,7 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] span,
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] li {{
-          color: #D8E3EE !important;
+          color: var(--ma-text) !important;
           font-size: .82rem;
         }}
 
@@ -168,7 +230,7 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3,
         [data-testid="stSidebar"] strong {{
-          color: #FFFFFF !important;
+          color: var(--ma-text) !important;
         }}
 
         [data-testid="stSidebar"] hr {{
@@ -602,7 +664,7 @@ def apply_theme() -> None:
 
         .ma-feature-card p,
         .ma-card p {{
-          color: #AFC0CF;
+          color: var(--ma-muted);
           font-size: .9rem;
           line-height: 1.52;
           margin-bottom: .75rem;
@@ -848,6 +910,9 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
 
 def style_plotly(fig, *, height: int | None = None):
     """Apply final chart polish to a Plotly figure."""
+    light = _active_theme() == "light"
+    grid = "rgba(100,116,139,.26)" if light else "rgba(43,61,80,.72)"
+    zero = "rgba(100,116,139,.48)" if light else "rgba(43,61,80,.9)"
     existing_margin = fig.layout.margin.to_plotly_json() if fig.layout.margin else {}
     margin = {"l": 54, "r": 28, "t": 56, "b": 70}
     margin.update({k: v for k, v in existing_margin.items() if v is not None})
@@ -857,6 +922,7 @@ def style_plotly(fig, *, height: int | None = None):
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT_STACK, color=COLORS["text"]),
+        title_font=dict(family=FONT_STACK, color=COLORS["text"]),
         hovermode="closest",
         margin=margin,
         legend=dict(
@@ -873,16 +939,16 @@ def style_plotly(fig, *, height: int | None = None):
         fig.update_layout(height=height)
     fig.update_traces(cliponaxis=False, selector=dict(type="bar"))
     fig.update_xaxes(
-        gridcolor="rgba(43,61,80,.72)",
-        zerolinecolor="rgba(43,61,80,.9)",
+        gridcolor=grid,
+        zerolinecolor=zero,
         linecolor=COLORS["stroke"],
         tickfont=dict(color=COLORS["muted"]),
         title_font=dict(color=COLORS["muted"]),
         automargin=True,
     )
     fig.update_yaxes(
-        gridcolor="rgba(43,61,80,.72)",
-        zerolinecolor="rgba(43,61,80,.9)",
+        gridcolor=grid,
+        zerolinecolor=zero,
         linecolor=COLORS["stroke"],
         tickfont=dict(color=COLORS["muted"]),
         title_font=dict(color=COLORS["muted"]),

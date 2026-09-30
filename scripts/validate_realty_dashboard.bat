@@ -32,6 +32,8 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_fedstat_status.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_fedstat_scope.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_fedstat_transport.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_fedstat_34118_chunks.py || exit /b %ERRORLEVEL%
+"%PY%" -m unittest discover -s tests -v || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_download_provenance.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_monitoring_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_monitoring_provenance.py || exit /b %ERRORLEVEL%

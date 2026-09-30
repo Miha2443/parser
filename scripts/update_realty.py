@@ -1391,6 +1391,9 @@ def _main():
         "kvart_per_dev": env["KVART_PER_DEV"],
         "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
     }
+    # All retries of the same Fedstat subprocess share completion receipts.
+    # A new top-level realty run gets a new id and checks remote dates normally.
+    env["FEDSTAT_RUN_ID"] = run_meta["run_id"]
     status_ok = write_realty_run_status(
         "running",
         started=started,

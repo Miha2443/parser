@@ -15,6 +15,7 @@ import plotly.express as px
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import load_kvartirografia
 
 st.set_page_config(page_title="Квартирография — Аналитика Москвы", layout="wide")
@@ -103,6 +104,14 @@ with b1_right:
         style_plotly(fig, height=350)
         fig.update_yaxes(visible=False)
         st.plotly_chart(fig, use_container_width=True)
+        chart_data_expander(
+            fig,
+            df[["диапазон", "доля_num"]].rename(
+                columns={"диапазон": "Площадь, м²", "доля_num": "Доля, %"}
+            ),
+            name=f"kvart_distribution_{sel}",
+            key=f"kvart_distribution_{sel}",
+        )
 
 
 # === Блок 2 + 3: таблицы по девелоперам и регионам ===

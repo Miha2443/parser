@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import (
     load_monitoring_2_0,
     load_erzrf_top,
@@ -97,6 +98,12 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
     )
     style_plotly(fig, height=270)
     st.plotly_chart(fig, use_container_width=True, key=f"donut_{title}")
+    chart_data_expander(
+        fig,
+        pd.DataFrame([{"Категория": label, "Площадь, м²": value} for label, value in values.items()]),
+        name=f"developer_{title}",
+        key=f"donut_data_{title}",
+    )
     if subtitle:
         st.caption(subtitle)
 
@@ -164,9 +171,6 @@ if date_erzrf_cards: src_dates.append(f"ERZRF карточки — **{date_erzrf
 if date_kvart: src_dates.append(f"Квартирография — **{date_kvart}**")
 if date_rasprod: src_dates.append(f"Распроданность — **{date_rasprod}**")
 if date_escrow: src_dates.append(f"Эскроу — **{date_escrow}**")
-if src_dates:
-    st.caption("Даты выгрузки источников: " + " · ".join(src_dates))
-
 cols_top = st.columns([3, 2])
 with cols_top[0]:
     sel_canon = st.selectbox(
@@ -536,6 +540,11 @@ else:
         )
         style_plotly(fig, height=330)
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
+        export = by_year_chart[["Год ввода по Мосстату"] + [f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].copy()
+        export.columns = ["Год"] + CAT_LABELS
+        chart_data_expander(
+            fig, export, name="developer_commissioning", key="developer_commissioning"
+        )
 
 
 # === В строительстве (donut слева) + Распроданность/стройготовность (справа) ===
@@ -1105,3 +1114,9 @@ with st.expander("Все объекты с разрешением на стро�
                 ["Статус объекта", "Общая площадь"], ascending=[True, False]),
             hide_index=True, use_container_width=True, height=300,
         )
+
+with st.expander("Исходные файлы и даты скачивания", expanded=False):
+    if src_dates:
+        st.markdown("\n".join(f"- {item}" for item in src_dates))
+    else:
+        st.caption("Даты источников не определены.")

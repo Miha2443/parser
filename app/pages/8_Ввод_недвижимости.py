@@ -17,6 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     load_vvod_static,
     load_emiss_34118,
@@ -109,6 +110,12 @@ def render_stacked(df: pd.DataFrame, series: list[tuple[str, str, str]],
     )
     style_plotly(fig, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name=key, key=f"{key}_png")
+        export = d[["year"] + [col for col, _, _ in series]].copy()
+        export = export.rename(columns={col: label for col, label, _ in series})
+        st.dataframe(export, hide_index=True, use_container_width=True)
+        table_download_buttons(export, name=key, key_prefix=f"{key}_data")
 
 
 def _emiss_delta_from_ytd(df: pd.DataFrame, months: list[int]) -> pd.DataFrame:
@@ -221,6 +228,12 @@ def render_period_bars(
     )
     style_plotly(fig, height=height)
     st.plotly_chart(fig, use_container_width=True, key=key)
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name=key, key=f"{key}_png")
+        export_cols = [c for c in ["year", "quarter", "month", "period", "МКД", "ИЖС"] if c in src.columns]
+        export = src[export_cols].copy()
+        st.dataframe(export, hide_index=True, use_container_width=True)
+        table_download_buttons(export, name=key, key_prefix=f"{key}_data")
 
 
 def _sum_range(df: pd.DataFrame, col: str, y0: int, y1: int) -> float:
@@ -463,61 +476,9 @@ if is_msk:
         ).drop_duplicates(subset=["year"], keep="last")
 c1, c2 = st.columns([3, 1])
 with c1:
-    period_col, value_col = st.columns([1, 1])
-    with period_col:
-        emiss_period = st.radio(
-            "Период",
-            ["Год", "Квартал", "Месяц"],
-            horizontal=True,
-            key="vvod_period",
-        )
-    value_mode = "За период"
-    selected_months = list(range(1, 13))
-    selected_quarters = [1, 2, 3, 4]
-    if emiss_period != "Год":
-        with value_col:
-            period_value_label = "За месяц" if emiss_period == "Месяц" else "За квартал"
-            value_mode = st.radio(
-                "Значение",
-                [period_value_label, "С начала года"],
-                horizontal=True,
-                key="vvod_value_mode",
-            )
-        if emiss_period == "Месяц":
-            selected_months = st.multiselect(
-                "Месяцы",
-                options=list(range(1, 13)),
-                default=list(range(1, 13)),
-                format_func=lambda m: MONTH_NAMES_RU[m - 1],
-                key="vvod_months",
-            )
-        else:
-            selected_quarters = st.multiselect(
-                "Кварталы",
-                options=[1, 2, 3, 4],
-                default=[1, 2, 3, 4],
-                format_func=lambda q: QUARTER_NAMES_RU[q - 1],
-                key="vvod_quarters",
-            )
-    if emiss_period != "Год":
-        if emiss_period == "Месяц" and not selected_months:
-            st.info("Выберите хотя бы один месяц.")
-        elif emiss_period == "Квартал" and not selected_quarters:
-            st.info("Выберите хотя бы один квартал.")
-        else:
-            render_period_bars(
-                emiss_periods,
-                region=emiss_region,
-                period=emiss_period,
-                value_mode=value_mode,
-                months=selected_months,
-                quarters=selected_quarters,
-                key="b2_1_period",
-                height=330,
-            )
-    else:
-        render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
-                       year_from=YF, year_to=YT, key="b2_1", height=300)
+    st.caption("На странице показаны только годовые значения.")
+    render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
+                   year_from=YF, year_to=YT, key="b2_1", height=300)
 with c2:
     for (y0, y1) in [(2011, 2025), (2011, 2026)]:
         st.markdown(

@@ -270,8 +270,6 @@ def main() -> None:
         "ВРП и ВВП",
         f"{dataset_download_summary(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)",
     )
-    show_dataset_sources(df)
-
     st.subheader("1. ВРП Москвы и ВВП России, трлн руб")
     _two_region_chart(
         df, msk_metric="vrp_total", rf_metric="gdp_total",
@@ -324,6 +322,9 @@ def main() -> None:
     with c4:
         show_total6 = st.checkbox("Показывать «Всего по всем отраслям»", value=True, key="b6_show_total")
     _industry_index_block(df, region=region6, key=f"na_block6_{region6}", show_total=show_total6)
+
+    st.divider()
+    show_dataset_sources(df)
 
 
 main()

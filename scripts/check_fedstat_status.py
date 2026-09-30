@@ -80,7 +80,15 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
             _require(len(files) == len(set(calls) - failed), "successful files remain available")
 
         driver.quit.assert_called_once()
-        saved.assert_called_once()
+        successful_dated_downloads = sum(
+            1 for src in calls if src not in failed and dates[src] is not None
+        )
+        _require(
+            saved.call_count == max(1, successful_dated_downloads),
+            "state must be checkpointed after every confirmed dated download "
+            f"(actual={saved.call_count}, expected={max(1, successful_dated_downloads)}, "
+            f"pipeline={pipeline}, dates={dates}, failed={failed}, calls={calls})",
+        )
         expected_state = initial.copy()
         for src in calls:
             if src not in failed and dates[src] is not None:

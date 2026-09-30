@@ -73,6 +73,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     new_date = ""
     failures: list[str] = []
     unchanged = False
+    state_persisted = False
     try:
         for src_id in indicator.source_ids:
             remote_date = fc.get_last_update_date(driver, src_id)
@@ -91,11 +92,14 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             if saved_path:
                 new_files.append(Path(saved_path))
                 state[src_id] = remote_date
+                fc.save_state(state)
+                state_persisted = True
             else:
                 failures.append(f"{src_id}: обновился, но не скачался")
     finally:
         driver.quit()
-        fc.save_state(state)
+        if not state_persisted:
+            fc.save_state(state)
 
     # Оркестратор записывает исключение как stage=download, а не «без изменений».
     # Успешные загрузки остаются в state; старые файлы при неполном запуске сохраняем.

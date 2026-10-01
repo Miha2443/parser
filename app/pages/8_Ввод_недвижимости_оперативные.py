@@ -52,20 +52,10 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
         text=[fmt(v, 2) if pd.notna(v) else "" for v in totals],
         textposition="top center", hoverinfo="skip",
     ))
-    growth = data["Изменение полного года, %"]
-    fig.add_trace(go.Scatter(
-        x=data["Год"], y=growth, name="Темп за полный год", yaxis="y2",
-        mode="lines+markers+text", line=dict(color=COLORS["blue"], dash="dot", width=2),
-        marker=dict(size=7),
-        text=[f"{v:+.0f}%" if pd.notna(v) else "" for v in growth],
-        textposition="top center",
-        hovertemplate="<b>%{x}</b><br>Темп за год: %{y:+.1f}%<extra></extra>",
-    ))
     fig.update_layout(
         title=title, barmode="stack", height=500, bargap=.22,
         margin=dict(l=55, r=55, t=75, b=70),
         yaxis=dict(title="млн м²", rangemode="tozero"),
-        yaxis2=dict(title="Темп, %", overlaying="y", side="right", showgrid=False, range=[-80, 100]),
         legend=dict(orientation="h", y=-.18, x=.5, xanchor="center"),
     )
     for _, row in data.dropna(subset=["За выбранный период, млн м²", "Изменение к аналогичному периоду, %"]).iterrows():

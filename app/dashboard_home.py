@@ -63,18 +63,18 @@ page_header(
 st.markdown("<h2 class='ma-home-section-title'>Рынок недвижимости</h2>", unsafe_allow_html=True)
 realty_cols = st.columns(3)
 with realty_cols[0]:
-    with st.container(border=True):
+    with st.container(border=True, height=220):
         st.markdown("### Текущее строительство")
         st.page_link("pages/0_Текущее_строительство.py", label="Оперативные данные →")
         st.page_link("pages/4_Квартирография.py", label="Квартирография →")
         st.page_link("pages/9_Карта_объектов.py", label="Карта объектов →")
 with realty_cols[1]:
-    with st.container(border=True):
+    with st.container(border=True, height=220):
         st.markdown("### Ввод недвижимости")
         st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные →")
         st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные →")
 with realty_cols[2]:
-    with st.container(border=True):
+    with st.container(border=True, height=220):
         st.markdown("### Профиль застройщика")
         st.page_link("pages/7_Профиль_застройщика.py", label="Профиль →")
         st.page_link("pages/5_Квартирография_по_девелоперу.py", label="Квартирография по застройщику →")
@@ -100,5 +100,3 @@ with service_cols[0]:
     st.page_link("pages/8_Отправка_в_TDM.py", label="Отправка в TDM →")
 with service_cols[1]:
     st.page_link("pages/99_Обновления.py", label="Журнал обновлений →")
-
-st.caption("Таблицы и скачивание находятся в закрытых блоках под соответствующими графиками. Источники и даты скачивания — внизу страниц.")

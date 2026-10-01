@@ -13,7 +13,7 @@ DARK_COLORS = {
     "bg_2": "#101923",
     "panel": "#1A2634",
     "panel_2": "#212F40",
-    "stroke": "#2B3D50",
+    "stroke": "#50657A",
     "text": "#E8EEF4",
     "muted": "#8BA0B5",
     "red": "#E84C4C",
@@ -29,7 +29,7 @@ DARK_COLORS = {
     "green_2": "#A4C866",
     "amber": "#D39B46",
     "ink": "#E8EEF4",
-    "line": "#2B3D50",
+    "line": "#50657A",
     "surface": "#1A2634",
     "surface_2": "#212F40",
     "sidebar": "#1A2634",
@@ -82,6 +82,7 @@ SERIES = [
 ]
 
 FONT_STACK = "Montserrat, Segoe UI, Roboto, Arial, sans-serif"
+THEME_DEFAULT_VERSION = "20261001-light"
 
 if not hasattr(st, "_ma_native_dataframe"):
     st._ma_native_dataframe = st.dataframe
@@ -104,11 +105,14 @@ def _activate_palette(theme: str) -> None:
 
 def theme_selector() -> None:
     """Render the global light/dark selector in the shared sidebar."""
-    current = _active_theme()
+    if st.session_state.get("dashboard_theme_default_version") != THEME_DEFAULT_VERSION:
+        st.session_state["dashboard_theme"] = "light"
+        st.session_state["dashboard_theme_choice"] = "Светлая"
+        st.session_state["dashboard_theme_default_version"] = THEME_DEFAULT_VERSION
     choice = st.radio(
         "Тема сайта",
         ["Тёмная", "Светлая"],
-        index=1 if current == "light" else 0,
+        index=None,
         horizontal=True,
         key="dashboard_theme_choice",
     )
@@ -573,7 +577,7 @@ def apply_theme() -> None:
         }}
 
         div[data-testid="stVerticalBlockBorderWrapper"] {{
-          border-color: var(--ma-stroke) !important;
+          border: 1px solid var(--ma-stroke) !important;
           background: var(--ma-panel) !important;
           box-shadow: none;
         }}

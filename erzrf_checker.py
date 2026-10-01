@@ -271,6 +271,7 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
         metric_col, rank_col = headers.index(metric), headers.index("место")
         count = 0
         ranks: list[int] = []
+        metric_values: list[float] = []
         row_preview: list[dict] = []
         for excel_row, row in enumerate(rows, 2):
             if all(value is None for value in row):
@@ -278,6 +279,7 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             name = row[name_columns[0]]
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"row {excel_row}: missing developer name")
+            metric_number = None
             for column, positive, integer in ((metric_col, sorting_key == "skorost", False),
                                              (rank_col, True, True)):
                 value = row[column]
@@ -293,10 +295,14 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
                     raise ValueError(f"row {excel_row}: invalid rank")
                 if integer:
                     ranks.append(int(number))
-            if len(row_preview) < 25:
+                else:
+                    metric_number = number
+            metric_values.append(metric_number)
+            if len(row_preview) < 100:
                 row_preview.append({
                     "rank": ranks[-1],
                     "name": re.sub(r"\s+", " ", name).strip(),
+                    "metric": metric_number,
                 })
             count += 1
         if not count:
@@ -307,6 +313,10 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
         # Reject duplicate, missing and out-of-order ranks before publication.
         if ranks != list(range(1, count + 1)):
             raise ValueError("TOP ranks must be a unique continuous sequence 1..N")
+        if (sorting_key == "obyem_vvoda"
+                and any(left + 1e-9 < right
+                        for left, right in zip(metric_values, metric_values[1:]))):
+            raise ValueError("annual input metric must be non-increasing by rank")
         schema_family = (
             "commissioned_with_deadlines"
             if sorting_key in {"obyem_vvoda", "nakopl_vvod"}
@@ -906,28 +916,132 @@ def _top_table_digest(driver) -> str:
     return _top_table_snapshot(driver)[1]
 
 
+def _visible_metric(row: dict) -> float | None:
+    """Read the first rating metric after the developer-name cell."""
+    cells = row.get("cells") or []
+    visible_name = _normalise_label(row.get("name", ""))
+    name_index = None
+    for index, cell in enumerate(cells):
+        cell_name = _normalise_label(cell)
+        if visible_name and (cell_name == visible_name or cell_name.startswith(visible_name + ",")):
+            name_index = index
+            break
+    candidates = cells[name_index + 1:] if name_index is not None else cells[3:]
+    for value in candidates:
+        cleaned = re.sub(r"[^0-9,.-]", "", str(value).replace("\xa0", "").replace(" ", ""))
+        if not cleaned:
+            continue
+        try:
+            number = float(cleaned.replace(",", "."))
+        except ValueError:
+            continue
+        if math.isfinite(number) and number >= 0:
+            return number
+    return None
+
+
+def _developer_correlation_key(value: object) -> str:
+    """Narrow ERZ display-name normalization used only by stale-UI fallback."""
+    name = _normalise_label(value)
+    return re.sub(r"^гк\s+", "", name)
+
+
 def _assert_visible_prefix_matches_workbook(
-        visible_rows: list[dict], contract: dict, required_rows: int) -> None:
-    """Bind the downloaded workbook to the ranking visible before its click."""
+        visible_rows: list[dict], contract: dict, required_rows: int,
+        request: TopExport | None = None, ui_total_rows: int | None = None) -> dict:
+    """Bind the export to the UI, allowing a proven fresher current-year export."""
     preview = contract.get("row_preview") or []
     if required_rows <= 0 or len(visible_rows) < required_rows:
         raise TopExportError("visible table has too few rows for request correlation")
     if len(preview) < required_rows:
         raise TopExportError("workbook has no sufficient row preview for request correlation")
+    exact = True
+    first_mismatch = None
     for index, visible in enumerate(visible_rows[:required_rows]):
         place_match = re.match(r"\s*(\d+)", str(visible.get("place", "")))
         if not place_match:
             raise TopExportError("visible table rank cannot be parsed")
         workbook = preview[index]
         if int(place_match.group(1)) != workbook.get("rank"):
-            raise TopExportError("workbook ranking differs from the visible table")
+            exact = False
+            first_mismatch = f"rank at row {index + 1}"
+            break
         visible_name = _normalise_label(visible.get("name", ""))
         workbook_name = _normalise_label(workbook.get("name", ""))
         if not visible_name or not (
             workbook_name == visible_name
             or workbook_name.startswith(visible_name + ",")
         ):
-            raise TopExportError("workbook developers differ from the visible table")
+            exact = False
+            first_mismatch = (
+                f"developer at row {index + 1}: UI={visible.get('name', '')!r}, "
+                f"XLSX={workbook.get('name', '')!r}"
+            )
+            break
+    if exact:
+        return {"mode": "exact_visible_prefix", "matched_rows": required_rows}
+
+    # ERZ can refresh the generated XLSX before invalidating the visible table
+    # cache.  Accept that narrow case only for the current annual rating and
+    # only when every visible leader appears near the top of the workbook with
+    # a metric that did not move backwards.  This still rejects another year,
+    # another rating and partial/unrelated exports.
+    workbook_rows = contract.get("rows")
+    if not (request and request.sorting_key == "obyem_vvoda"
+            and request.year == datetime.now().year
+            and required_rows >= 20
+            and type(ui_total_rows) is int and ui_total_rows > 0
+            and type(workbook_rows) is int
+            and ui_total_rows <= workbook_rows <= math.floor(ui_total_rows * 1.25)):
+        raise TopExportError(f"workbook differs from the visible table: {first_mismatch}")
+    workbook_by_name: dict[str, dict] = {}
+    for item in preview[:25]:
+        name = _developer_correlation_key(item.get("name", ""))
+        if name:
+            if name in workbook_by_name:
+                raise TopExportError("ambiguous developer names in workbook correlation window")
+            workbook_by_name[name] = item
+    matches = []
+    strict_increases = 0
+    exact_metric_anchors = 0
+    for visible in visible_rows[:required_rows]:
+        visible_name = _developer_correlation_key(visible.get("name", ""))
+        candidates = [item for name, item in workbook_by_name.items()
+                      if name == visible_name or name.startswith(visible_name + ",")]
+        visible_value = _visible_metric(visible)
+        if len(candidates) != 1 or visible_value is None:
+            raise TopExportError(
+                f"current-year export cannot prove fresher UI correlation: {first_mismatch}"
+            )
+        workbook_value = candidates[0].get("metric")
+        if workbook_value is None or workbook_value + 1e-9 < visible_value:
+            raise TopExportError(
+                f"current-year export metric is older/different for {visible.get('name', '')!r}"
+            )
+        if workbook_value > visible_value + 1e-9:
+            strict_increases += 1
+        else:
+            exact_metric_anchors += 1
+        matches.append({
+            "visible_rank": int(re.match(r"\s*(\d+)", str(visible.get("place", ""))).group(1)),
+            "workbook_rank": candidates[0]["rank"],
+            "name": visible.get("name", ""),
+            "visible_metric": visible_value,
+            "workbook_metric": workbook_value,
+        })
+    if strict_increases == 0 or exact_metric_anchors < 5:
+        raise TopExportError(
+            "reordered current-year export lacks five stable metric anchors and fresher metrics"
+        )
+    return {
+        "mode": "fresh_export_ahead_of_visible_page",
+        "matched_rows": len(matches),
+        "strict_metric_increases": strict_increases,
+        "exact_metric_anchors": exact_metric_anchors,
+        "row_count_ratio": workbook_rows / ui_total_rows,
+        "matches": matches,
+        "first_exact_prefix_mismatch": first_mismatch,
+    }
 
 
 def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
@@ -1004,20 +1118,22 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     # the session closes and the staging directory is cleaned up.
     contract = _excel_contract(source, request.sorting_key)
     ui_rows = evidence.pop("expected_rows")
-    _assert_visible_prefix_matches_workbook(
-        visible_rows, contract, required_rows=min(20, ui_rows)
-    )
     if contract["rows"] < ui_rows:
         raise TopExportError(
             f"full-list export has fewer rows than the page: {contract['rows']} / {ui_rows}"
         )
+    correlation = _assert_visible_prefix_matches_workbook(
+        visible_rows, contract, required_rows=min(20, ui_rows), request=request,
+        ui_total_rows=ui_rows,
+    )
     evidence.update({
         "ui_developer_count": ui_rows,
         "workbook_developer_count": contract["rows"],
         "row_count_discrepancy": contract["rows"] - ui_rows,
         "completeness_evidence": "continuous unique workbook ranks 1..N; workbook rows >= UI count",
+        "request_correlation": correlation,
     })
-    evidence.update({"schema_version": 2, "received_at": datetime.now().isoformat(timespec="seconds"),
+    evidence.update({"schema_version": 3, "received_at": datetime.now().isoformat(timespec="seconds"),
                      "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                      "workbook": contract,
                      "visible_table_sha256": table_digest,

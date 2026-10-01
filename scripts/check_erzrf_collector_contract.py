@@ -341,6 +341,15 @@ class CollectorContract(unittest.TestCase):
             self.download(driver)
         self.assertFalse(ec.DOWNLOAD_DIR.exists())
 
+    def test_annual_metric_must_be_non_increasing_by_rank(self):
+        frame = pd.concat([fixture_frame("obyem_vvoda")] * 2, ignore_index=True)
+        frame["Место"] = [1, 2]
+        frame["Наименование, регион"] = ["A, регион", "B, регион"]
+        frame["Введено, м²"] = [100, 101]
+        path = self.workbook("obyem_vvoda", frame=frame)
+        with self.assertRaisesRegex(ValueError, "non-increasing"):
+            ec._excel_contract(path, "obyem_vvoda")
+
     def test_partial_visible_table_cannot_correlate_a_full_page(self):
         visible = [{"place": "1", "name": "Fixture developer"}]
         preview = [{"rank": index, "name": f"Developer {index}"}
@@ -350,6 +359,83 @@ class CollectorContract(unittest.TestCase):
             ec._assert_visible_prefix_matches_workbook(
                 visible, {"row_preview": preview}, required_rows=20
             )
+
+    def test_fresher_current_annual_export_can_reorder_visible_leaders(self):
+        names = [f"Developer {index}" for index in range(1, 21)]
+        visible = [{"place": str(index), "name": name,
+                    "cells": [str(index), "0", name + ", регион", str(1000 - index)]}
+                   for index, name in enumerate(names, 1)]
+        reordered = names[5:] + names[:5]
+        preview = [{"rank": index, "name": name + ", регион",
+                    "metric": float(1000 - names.index(name) - 1
+                                    + (0 if names.index(name) < 5 else 10))}
+                   for index, name in enumerate(reordered, 1)]
+        evidence = ec._assert_visible_prefix_matches_workbook(
+            visible, {"row_preview": preview, "rows": 110}, required_rows=20,
+            request=ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+            ui_total_rows=100,
+        )
+        self.assertEqual(evidence["mode"], "fresh_export_ahead_of_visible_page")
+        self.assertEqual(evidence["matched_rows"], 20)
+        self.assertEqual(evidence["exact_metric_anchors"], 5)
+
+    def test_reordered_current_annual_export_with_lower_metric_is_rejected(self):
+        visible = [{"place": str(index), "name": f"Developer {index}",
+                    "cells": [str(index), "0", f"Developer {index}, регион", "100"]}
+                   for index in range(1, 21)]
+        preview = [{"rank": index, "name": f"Developer {21 - index}, регион",
+                    "metric": 99.0 if index == 20 else 110.0}
+                   for index in range(1, 21)]
+        with self.assertRaises(ec.TopExportError):
+            ec._assert_visible_prefix_matches_workbook(
+                visible, {"row_preview": preview, "rows": 110}, required_rows=20,
+                request=ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+                ui_total_rows=100,
+            )
+
+    def test_reordered_export_is_not_allowed_for_past_year(self):
+        visible = [{"place": str(index), "name": f"Developer {index}",
+                    "cells": [str(index), "0", f"Developer {index}, регион", "100"]}
+                   for index in range(1, 21)]
+        preview = [{"rank": index, "name": f"Developer {21 - index}, регион", "metric": 110.0}
+                   for index in range(1, 21)]
+        with self.assertRaises(ec.TopExportError):
+            ec._assert_visible_prefix_matches_workbook(
+                visible, {"row_preview": preview, "rows": 110}, required_rows=20,
+                request=ec.TopExport("rf", "obyem_vvoda", datetime.now().year - 1),
+                ui_total_rows=100,
+            )
+
+    def test_all_higher_metrics_cannot_masquerade_as_same_snapshot(self):
+        visible = [{"place": str(index), "name": f"Developer {index}",
+                    "cells": [str(index), "0", f"Developer {index}, регион", "100"]}
+                   for index in range(1, 21)]
+        preview = [{"rank": index, "name": f"Developer {21 - index}, регион", "metric": 200.0}
+                   for index in range(1, 21)]
+        with self.assertRaises(ec.TopExportError):
+            ec._assert_visible_prefix_matches_workbook(
+                visible, {"row_preview": preview, "rows": 110}, required_rows=20,
+                request=ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+                ui_total_rows=100,
+            )
+
+    def test_current_annual_fallback_accepts_narrow_gk_display_alias(self):
+        names = [f"Developer {index}" for index in range(1, 20)] + ["ГК ИНСИТИ девелопмент"]
+        visible = [{"place": str(index), "name": name,
+                    "cells": [str(index), "0", name + ", регион", "100"]}
+                   for index, name in enumerate(names, 1)]
+        workbook_names = names[5:] + names[:5]
+        workbook_names = ["ИНСИТИ девелопмент" if name.startswith("ГК ИНСИТИ") else name
+                          for name in workbook_names]
+        preview = [{"rank": index, "name": name + ", регион",
+                    "metric": 100.0 if name in names[:5] else 110.0}
+                   for index, name in enumerate(workbook_names, 1)]
+        evidence = ec._assert_visible_prefix_matches_workbook(
+            visible, {"row_preview": preview, "rows": 110}, required_rows=20,
+            request=ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+            ui_total_rows=100,
+        )
+        self.assertEqual(evidence["matched_rows"], 20)
 
     def test_late_file_outside_current_attempt_is_rejected(self):
         self.browser_stubs(FakeDriver())

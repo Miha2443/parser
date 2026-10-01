@@ -22,7 +22,7 @@ def _assert_equal(actual, expected, label: str) -> None:
 
 def main() -> int:
     sources, unknown = ur.expand_requested_sources(["nashdom"])
-    _assert_equal(sources, ["monitoring", "rasprod", "kvart"], "nashdom expansion")
+    _assert_equal(sources, ["monitoring", "rasprod", "kvart", "construction"], "nashdom expansion")
     _assert_equal(unknown, [], "nashdom unknown")
 
     sources, unknown = ur.expand_requested_sources(["erzrf", "monitoring", "bad"])
@@ -37,7 +37,7 @@ def main() -> int:
     _assert_equal(unknown, [], "all unknown")
     _assert_equal(
         sources,
-        ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards", "fedstat", "rosstat"],
+        ["monitoring", "rasprod", "kvart", "construction", "erz-top", "erz-cards", "fedstat", "rosstat"],
         "all expansion",
     )
 
@@ -173,6 +173,14 @@ def main() -> int:
             sorted(selected),
             ["erzrf_top", "escrow_manual", "rasprodannost"],
             "affected marts for rasprod+erz-top",
+        )
+
+    selected = ur.select_realty_marts_for_sources(["monitoring"])
+    if selected is not None:
+        _assert_equal(
+            sorted(selected),
+            ["construction_operational", "escrow_manual", "monitoring_2_0"],
+            "monitoring also rebuilds construction permit history",
         )
 
     selected = ur.select_realty_marts_for_sources(["fedstat"])

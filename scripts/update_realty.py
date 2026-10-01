@@ -11,8 +11,9 @@
   1. nashdom_checker monitoring_2_0   (~1 мин, requests)
   2. nashdom_checker rasprodannost    (инкрементально; полный обход ~15-30 мин)
   3. nashdom_checker kvartirografia   (~5 мин агрегаты + ~90 мин per-dev обход)
-  4. erzrf_checker top                (~5 мин)
-  5. erzrf_checker cards              (~10 мин, по топ-100)
+  4. nashdom_checker construction_operational (~2 мин)
+  5. erzrf_checker top                (~5 мин)
+  6. erzrf_checker cards              (~10 мин, по топ-100)
   → ПОСЛЕ всего: архивируется устаревшее в data/raw/realty/_archive/<date>/
   → Уведомление в TDM с детальным отчётом что обновилось
 
@@ -23,6 +24,7 @@ Escrow (data/raw/realty/escrow_manual/) — РУЧНАЯ выгрузка с
   monitoring     → nashdom monitoring_2_0
   rasprod        → nashdom rasprodannost
   kvart          → nashdom kvartirografia
+  construction   → nashdom текущее строительство и реализация квартир
   erz-top        → erzrf top
   erz-cards      → erzrf cards
   nashdom        → все nashdom-источники
@@ -82,6 +84,7 @@ SOURCE_MAP = {
     "monitoring": ("nashdom_checker.py", ["monitoring_2_0"]),
     "rasprod":    ("nashdom_checker.py", ["rasprodannost"]),
     "kvart":      ("nashdom_checker.py", ["kvartirografia"]),
+    "construction": ("nashdom_checker.py", ["construction_operational"]),
     "erz-top":    ("erzrf_checker.py",   ["top"]),
     "erz-cards":  ("erzrf_checker.py",   ["cards"]),
     "fedstat":    ("fedstat_checker.py", []),   # зарплата, ИПЦ, ввод жилья (dashboard scope)
@@ -89,10 +92,10 @@ SOURCE_MAP = {
 }
 
 GROUP_MAP = {
-    "nashdom": ["monitoring", "rasprod", "kvart"],
+    "nashdom": ["monitoring", "rasprod", "kvart", "construction"],
     "erzrf":   ["erz-top", "erz-cards"],
     "stats":   ["fedstat", "rosstat"],
-    "all":     ["monitoring", "rasprod", "kvart", "erz-top", "erz-cards",
+    "all":     ["monitoring", "rasprod", "kvart", "construction", "erz-top", "erz-cards",
                 "fedstat", "rosstat"],
 }
 
@@ -102,6 +105,7 @@ SOURCE_TIMEOUT_MIN = {
     "monitoring":  5,
     "rasprod":     180,
     "kvart":       180,
+    "construction": 15,
     "erz-top":     15,
     "erz-cards":   30,
     "fedstat":     45,
@@ -115,6 +119,7 @@ SOURCE_ARCHIVE_PATHS = {
     "monitoring":  ["nashdom"],
     "rasprod":     ["nashdom"],
     "kvart":       ["nashdom"],
+    "construction": ["nashdom"],
     "erz-top":     ["erzrf"],
     "erz-cards":   ["erzrf/cards", "erzrf"],
 }
@@ -122,15 +127,18 @@ SOURCE_PREFIXES = {
     "monitoring":  ["monitoring_2_0_"],
     "rasprod":     ["rasprodannost_"],
     "kvart":       ["kvartirografia_"],
+    "construction": ["construction_operational_"],
     "erz-top":     ["top_obyem_", "top_developers_", "top_nakopl_",
                     "top_skorost_", "top_potreb_"],
     "erz-cards":   ["cards_", "card_"],
 }
 
 SOURCE_MARTS = {
-    "monitoring": {"monitoring_2_0"},
+    # construction_operational also contains permit history derived from Monitoring 2.0.
+    "monitoring": {"monitoring_2_0", "construction_operational"},
     "rasprod": {"rasprodannost"},
     "kvart": {"kvartirografia"},
+    "construction": {"construction_operational"},
     "erz-top": {"erzrf_top"},
     "erz-cards": {"erzrf_cards"},
     "escrow-manual": {"escrow_manual"},
@@ -150,7 +158,7 @@ PARALLEL_LIMIT = max(1, int(os.environ.get("PARALLEL_LIMIT", "4")))
 # параллельность ломает; сейчас исправлено downgrade'ом selenium до 4.43,
 # но оставляю в отдельной волне как буфер).
 WAVES_DEFAULT = [
-    ["monitoring", "kvart", "erz-top", "rosstat"],
+    ["monitoring", "kvart", "construction", "erz-top", "rosstat"],
     ["erz-cards"],
     ["rasprod"],
     ["fedstat"],
@@ -766,7 +774,7 @@ def run_source(alias: str, env: dict, force: bool = False,
         return False
     script, args = SOURCE_MAP[alias]
     extra = []
-    if force and alias in ("fedstat", "rosstat", "monitoring", "rasprod", "kvart"):
+    if force and alias in ("fedstat", "rosstat", "monitoring", "rasprod", "kvart", "construction"):
         extra.append("--force")
     cmd = [sys.executable, "-u", str(ROOT / script), *args, *extra]
     timeout_min = SOURCE_TIMEOUT_MIN.get(alias, DEFAULT_TIMEOUT_MIN)
@@ -948,6 +956,8 @@ def source_alias_for_changed_path(rel_with_prefix: str) -> str | None:
         return "rasprod"
     if "kvartirografia" in p:
         return "kvart"
+    if "construction_operational" in p:
+        return "construction"
     if "realty:erzrf/cards/" in p or "/cards_" in p or "/card_" in p:
         return "erz-cards"
     if any(prefix in p for prefix in (
@@ -1055,7 +1065,7 @@ def select_processed_indicators(sources: list[str]) -> set[str]:
     for alias in sources:
         if alias in {"fedstat", "rosstat"}:
             selected.update(ind.id for ind in INDICATORS if ind.source == alias)
-        elif alias in {"monitoring", "rasprod", "kvart"}:
+        elif alias in {"monitoring", "rasprod", "kvart", "construction"}:
             source_id = SOURCE_MAP[alias][1][0]
             selected.update(ind.id for ind in INDICATORS
                             if ind.source == "nashdom" and source_id in ind.source_ids)
@@ -1300,7 +1310,7 @@ def _main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("sources", nargs="*", default=["all"],
-                        help="Список источников или групп: monitoring, rasprod, kvart, "
+                        help="Список источников или групп: monitoring, rasprod, kvart, construction, "
                              "erz-top, erz-cards, nashdom, erzrf, all")
     parser.add_argument("--no-archive", action="store_true",
                         help="Не архивировать старые файлы после прогона")

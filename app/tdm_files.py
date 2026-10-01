@@ -68,8 +68,9 @@ TDM_DATASETS: tuple[TdmDatasetSpec, ...] = (
         "ВВП_ВРП_ВДС",
     ),
     TdmDatasetSpec(
-        "current_construction", "Рынок недвижимости", "Текущее строительство и карта объектов",
-        ("data/raw/realty/nashdom/monitoring_2_0_*.xlsx",),
+        "current_construction", "Рынок недвижимости", "Текущее строительство — оперативные данные",
+        ("data/raw/realty/nashdom/construction_operational_*.json",
+         "data/raw/realty/nashdom/monitoring_2_0_*.xlsx"),
         "Текущее_строительство",
     ),
     TdmDatasetSpec(

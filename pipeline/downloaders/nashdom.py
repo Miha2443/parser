@@ -6,7 +6,8 @@
 
 Внутри переадресует пути nashdom_checker в `paths.DATA_RAW/realty/nashdom/`
 и `paths.STATE_DIR/nashdom_state.json`, и запускает только ключи из
-`indicator.source_ids` (monitoring_2_0 / rasprodannost / kvartirografia).
+`indicator.source_ids` (monitoring_2_0 / rasprodannost / kvartirografia /
+construction_operational).
 """
 from __future__ import annotations
 

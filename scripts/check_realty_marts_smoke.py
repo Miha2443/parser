@@ -54,6 +54,26 @@ def main() -> int:
     _require(len(rasprod.get("periods") or []) > 0, "rasprodannost periods is empty")
     _require(len(rasprod.get("developers", [])) > 0, "rasprodannost developers is empty")
 
+    construction = _load(da.load_construction_operational)
+    _require(len(construction.get("construction", [])) == 4,
+             "current construction RF/Moscow areas are incomplete")
+    _require(len(construction.get("sales", [])) == 2,
+             "apartment sales RF/Moscow snapshots are incomplete")
+    _require(len(construction.get("permits", [])) > 0,
+             "construction permit history is empty")
+    _require(len(construction.get("permit_annual", [])) > 0,
+             "construction permit annual controls are empty")
+    permits = construction["permits"]
+    annual = construction["permit_annual"]
+    housing_2011 = annual[annual["year"].eq(2011) & annual["kind"].eq("housing")]
+    _require(len(housing_2011) == 1 and abs(housing_2011.iloc[0]["value_thousand_m2"] - 2972) < 0.1,
+             "2011 housing permit annual control is wrong")
+    ytd_2011 = permits[
+        permits["year"].eq(2011) & permits["kind"].eq("housing") & permits["month"].le(8)
+    ]["value_thousand_m2"].sum()
+    _require(abs(ytd_2011 - 1086.24) < 0.2,
+             "2011 housing permit Jan-Aug history is wrong")
+
     erz_top = _load(da.load_erzrf_top)
     _require(bool(erz_top.get("obyem_stroitelstva")), "erzrf top construction data is empty")
 
@@ -66,6 +86,7 @@ def main() -> int:
         f"monitoring.rv={len(monitoring.get('rv', []))}",
         f"kvart.developers={len(kvart.get('developers', []))}",
         f"rasprod.developers={len(rasprod.get('developers', []))}",
+        f"construction.permits={len(construction.get('permits', []))}",
         f"erz.cards={len(cards)}",
     )
     return 0

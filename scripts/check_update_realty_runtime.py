@@ -64,7 +64,9 @@ class RuntimeChecks(unittest.TestCase):
         self.assertEqual(self.run_update(), 0)
         first = self.payload()
         self.processed.assert_called_once_with(only={"realty_monitoring_2_0"})
-        self.marts.assert_called_once_with(only={"monitoring_2_0"})
+        self.marts.assert_called_once_with(
+            only={"monitoring_2_0", "construction_operational"}
+        )
         self.assertEqual(first["status"], "success")
         self.assertEqual(first["kvart_per_dev"], os.environ.get("KVART_PER_DEV", "1"))
         self.assertEqual(first["marts_repair_selected"], [])

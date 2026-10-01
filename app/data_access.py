@@ -150,6 +150,10 @@ def load_rasprodannost() -> dict:
     return _load('load_rasprodannost')
 
 
+def load_construction_operational() -> dict:
+    return _load('load_construction_operational')
+
+
 def load_vvod_static() -> dict:
     return _load('load_vvod_static')
 

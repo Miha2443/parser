@@ -42,6 +42,7 @@ echo [1/6] python compile checks
 "%PY%" scripts\check_monitoring_area_normalization.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_kvartirografia_parser.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_nashdom_rasprodannost_parser.py || exit /b %ERRORLEVEL%
+"%PY%" scripts\check_nashdom_construction_operational.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_atomic_outputs.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_downloader_contract.py || exit /b %ERRORLEVEL%
 "%PY%" scripts\check_erzrf_collector_contract.py || exit /b %ERRORLEVEL%

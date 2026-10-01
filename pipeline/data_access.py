@@ -11,6 +11,7 @@ import re
 import fnmatch
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -409,7 +410,7 @@ def _parse_rasprod_number(value) -> float | None:
     if not s or s in ("-", "—", "nan"):
         return None
     # Убираем единицы измерения
-    for unit in ["тыс. м²", "млн руб", "тыс. шт", "%", "тыс."]:
+    for unit in ["тыс. м²", "млн руб", "тыс. шт", "руб.", "руб", "%", "тыс."]:
         s = s.replace(unit, "")
     s = s.strip().replace(" ", "").replace(",", ".")
     try:
@@ -663,6 +664,7 @@ class DataAccess:
         self.KVART_PATHS = [raw / "nashdom", self.PROJECT_ROOT / "nashdom"]
         self.MONITORING_PATHS = list(self.KVART_PATHS)
         self.RASPROD_PATHS = list(self.KVART_PATHS)
+        self.CONSTRUCTION_OPERATIONAL_PATHS = list(self.KVART_PATHS)
         self.ERZRF_PATHS = [raw / "erzrf", self.PROJECT_ROOT / "erzrf", self.PROJECT_ROOT / "nashdom"]
         self.ESCROW_PATHS = [raw / "escrow_manual", self.PROJECT_ROOT / "escrow_manual"]
         self.VVOD_PATHS = [raw / "vvod", self.PROJECT_ROOT / "vvod"]
@@ -728,6 +730,12 @@ class DataAccess:
             return self._raw_files(self.ESCROW_PATHS, ["*.xlsx"])
         if mart == "rasprodannost":
             return self._raw_files(self.RASPROD_PATHS, ["rasprodannost_*.xlsx"])
+        if mart == "construction_operational":
+            return (
+                self._raw_files(self.CONSTRUCTION_OPERATIONAL_PATHS,
+                                ["construction_operational_*.json"])
+                + self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+            )
         if mart == "vvod_static":
             # These loaders intentionally choose the first existing VVOD root.
             # Registry/freshness must describe that same input selection, not a
@@ -1418,6 +1426,161 @@ class DataAccess:
         except Exception:  # noqa: BLE001
             return pd.DataFrame()
         return df
+
+
+    def load_construction_operational(self) -> dict:
+        """Current construction/sales snapshots plus permit-issue history."""
+        empty = {
+            "construction": pd.DataFrame(columns=[
+                "region_key", "report_date", "report_period", "area_kind", "value_thousand_m2"
+            ]),
+            "sales": pd.DataFrame(),
+            "permits": pd.DataFrame(columns=["year", "month", "kind", "value_thousand_m2"]),
+            "permit_annual": pd.DataFrame(columns=["year", "kind", "value_thousand_m2"]),
+            "source_file": "",
+        }
+        raw_files = lambda: self.source_files("construction_operational")
+        # Migration-safe: before the first update an older manifest naturally
+        # has no entry for this newly introduced mart, so read raw once.
+        mart = (self._load_realty_mart("construction_operational", raw_files)
+                if self._realty_mart_manifest_entry("construction_operational") else None)
+        if mart is not None:
+            return mart
+        json_files = self._raw_files(
+            self.CONSTRUCTION_OPERATIONAL_PATHS, ["construction_operational_*.json"]
+        )
+        out = dict(empty)
+        if json_files:
+            latest = max(json_files, key=lambda path: path.stat().st_mtime)
+            try:
+                payload = json.loads(latest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+            construction_rows = []
+            for row in payload.get("construction") or []:
+                construction_rows.append({
+                    "region_key": row.get("region_key"),
+                    "report_date": row.get("report_date", ""),
+                    "report_period": row.get("report_period", ""),
+                    "area_kind": row.get("area_kind"),
+                    "value_thousand_m2": _parse_rasprod_number(row.get("area_thousand_m2")),
+                })
+            out["construction"] = pd.DataFrame(construction_rows)
+            sales_rows = []
+            for row in payload.get("sales") or []:
+                item = {
+                    "region_key": row.get("region_key"),
+                    "report_date": row.get("report_date", ""),
+                    "report_period": row.get("report_period", ""),
+                }
+                item.update({key: _parse_rasprod_number(value)
+                             for key, value in (row.get("metrics") or {}).items()})
+                sales_rows.append(item)
+            out["sales"] = pd.DataFrame(sales_rows)
+            out["source_file"] = str(latest)
+
+        monitoring = self.load_monitoring_2_0()
+        oks = monitoring.get("oks", pd.DataFrame()) if isinstance(monitoring, dict) else pd.DataFrame()
+        required = {"Назначение", "Срок выдачи РС", "Год выдачи", "Общая площадь", "Жилая площадь"}
+        if not oks.empty and required.issubset(oks.columns):
+            frame = oks.copy()
+            frame["issue_date"] = pd.to_datetime(frame["Срок выдачи РС"], errors="coerce")
+            fallback_year = pd.to_numeric(frame["Год выдачи"], errors="coerce")
+            missing = frame["issue_date"].isna() & fallback_year.notna()
+            frame.loc[missing, "issue_date"] = pd.to_datetime(
+                fallback_year[missing].astype(int).astype(str) + "-01-01", errors="coerce"
+            )
+            frame["year"] = frame["issue_date"].dt.year
+            frame["month"] = frame["issue_date"].dt.month
+            purpose = frame["Назначение"].astype(str).str.strip().str.casefold()
+            frame["kind"] = ""
+            frame.loc[purpose.eq("жилье"), "kind"] = "housing"
+            frame.loc[purpose.eq("нежилье"), "kind"] = "nonresidential"
+            total = pd.to_numeric(frame["Общая площадь"], errors="coerce")
+            living = pd.to_numeric(frame["Жилая площадь"], errors="coerce")
+            frame["value_thousand_m2"] = 0.0
+            frame.loc[frame["kind"].eq("housing"), "value_thousand_m2"] = living / 1000
+            frame.loc[frame["kind"].eq("nonresidential"), "value_thousand_m2"] = total / 1000
+            frame = frame[
+                frame["kind"].ne("") & frame["year"].between(2022, datetime.now().year)
+                & frame["value_thousand_m2"].notna()
+            ]
+            if not frame.empty:
+                out["permits"] = frame.groupby(
+                    ["year", "month", "kind"], as_index=False
+                )["value_thousand_m2"].sum()
+
+        # The current OKS registry does not contain a complete early history.
+        # Monitoring 2.0 keeps the monthly 2011–2021 permit series on
+        # `Вспомогат1` and authoritative annual controls on
+        # `Данные с 2011 года`.
+        monitoring_files = self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+        historical_rows: list[dict] = []
+        annual_rows: list[dict] = []
+        if monitoring_files:
+            latest_monitoring = max(monitoring_files, key=lambda path: path.stat().st_mtime)
+            try:
+                history = pd.read_excel(latest_monitoring, sheet_name="Вспомогат1", header=None)
+                annual_history = pd.read_excel(
+                    latest_monitoring, sheet_name="Данные с 2011 года", header=None
+                )
+            except Exception:  # noqa: BLE001
+                history = pd.DataFrame()
+                annual_history = pd.DataFrame()
+            month_names = {
+                "янв": 1, "фев": 2, "мар": 3, "апр": 4, "май": 5, "июн": 6,
+                "июл": 7, "авг": 8, "сен": 9, "окт": 10, "ноя": 11, "дек": 12,
+            }
+            for year_col, month_col, value_col, kind in (
+                (1, 1, 3, "housing"),
+                (5, 5, 6, "nonresidential"),
+            ):
+                year: int | None = None
+                for _, row in history.iterrows():
+                    raw_label = row.iloc[year_col] if year_col < len(row) else None
+                    numeric_year = pd.to_numeric(raw_label, errors="coerce")
+                    if pd.notna(numeric_year) and 2011 <= int(numeric_year) <= 2021:
+                        year = int(numeric_year)
+                        continue
+                    label = str(row.iloc[month_col] if month_col < len(row) else "").strip().casefold()
+                    month = next((number for stem, number in month_names.items()
+                                  if label.startswith(stem)), None)
+                    value = pd.to_numeric(row.iloc[value_col], errors="coerce") if value_col < len(row) else None
+                    if year is not None and month is not None and pd.notna(value):
+                        historical_rows.append({
+                            "year": year, "month": month, "kind": kind,
+                            "value_thousand_m2": float(value) / 1000,
+                        })
+            for marker, kind in (
+                ("выдача рс жилье по годам", "housing"),
+                ("выдача рс нежилье по годам", "nonresidential"),
+            ):
+                marker_rows = annual_history.index[
+                    annual_history.iloc[:, 1].astype(str).str.strip().str.casefold().eq(marker)
+                ].tolist() if annual_history.shape[1] > 2 else []
+                if not marker_rows:
+                    continue
+                for row_index in range(marker_rows[0] + 1, len(annual_history)):
+                    year = pd.to_numeric(annual_history.iat[row_index, 1], errors="coerce")
+                    value = pd.to_numeric(annual_history.iat[row_index, 2], errors="coerce")
+                    if pd.isna(year):
+                        break
+                    if 2011 <= int(year) <= datetime.now().year and pd.notna(value):
+                        annual_rows.append({
+                            "year": int(year), "kind": kind,
+                            "value_thousand_m2": float(value),
+                        })
+        if historical_rows:
+            historical = pd.DataFrame(historical_rows)
+            out["permits"] = pd.concat([historical, out["permits"]], ignore_index=True)
+            out["permits"] = out["permits"].groupby(
+                ["year", "month", "kind"], as_index=False
+            )["value_thousand_m2"].sum()
+        if annual_rows:
+            out["permit_annual"] = pd.DataFrame(annual_rows).drop_duplicates(
+                ["year", "kind"], keep="last"
+            )
+        return out
 
 
     def load_rasprodannost(self) -> dict:

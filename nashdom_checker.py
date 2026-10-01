@@ -67,6 +67,8 @@ GSHEETS_EXPORT_URL = (
 # для requests).
 RASPRODANNOST_PATH = "аналитика/распроданность-стройготовность"
 KVARTIROGRAFIA_PATH = "аналитика/квартирография"
+CONSTRUCTION_INDICATORS_PATH = "аналитика/показатели_жилищного_строительства"
+APARTMENT_SALES_PATH = "аналитика/реализация_строящихся_квартир"
 
 DOWNLOAD_DIR = Path("data/raw/realty/nashdom")
 STATE_FILE = Path("state/nashdom_state.json")
@@ -112,6 +114,14 @@ def _build_rasprodannost_url() -> str:
 
 def _build_kvartirografia_url() -> str:
     return f"{NASHDOM_BASE}/{quote(KVARTIROGRAFIA_PATH)}"
+
+
+def _build_construction_indicators_url() -> str:
+    return f"{NASHDOM_BASE}/{quote(CONSTRUCTION_INDICATORS_PATH)}"
+
+
+def _build_apartment_sales_url() -> str:
+    return f"{NASHDOM_BASE}/{quote(APARTMENT_SALES_PATH)}"
 
 
 # ─────────────────────────────────────────────
@@ -3226,6 +3236,323 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     return new_files, complete
 
 
+def _operational_fingerprint(driver, page: str) -> str:
+    if page == "construction":
+        return driver.execute_script(
+            """
+            const rows=[...document.querySelectorAll('.HousingTable__Name')];
+            const n=rows.find(x=>(x.innerText||'').trim()==='Все механизмы');
+            return n ? n.parentElement.innerText.trim() : '';
+            """
+        ) or ""
+    return driver.execute_script(
+        """
+        const n=[...document.querySelectorAll('span')]
+          .find(x=>(x.innerText||'').trim()==='Всего жилой площади');
+        return n && n.parentElement ? n.parentElement.innerText.trim() : '';
+        """
+    ) or ""
+
+
+def _operational_selected_region(driver) -> str:
+    return driver.execute_script(
+        """
+        const root=document.querySelector('#regionSelect');
+        if(!root) return '';
+        const direct=[...root.querySelectorAll(':scope > [tabindex="0"] span')]
+          .find(x=>['Все','Город Москва'].includes((x.innerText||'').trim()));
+        return direct ? direct.innerText.trim() : '';
+        """
+    ) or ""
+
+
+def _switch_operational_region(driver, target: str, page: str) -> bool:
+    current = _operational_selected_region(driver)
+    if current == target:
+        return True
+    baseline = _operational_fingerprint(driver, page)
+    try:
+        opened = driver.execute_script(
+            """
+            const trigger=document.querySelector('#regionSelect > [tabindex="0"]');
+            if(!trigger) return false; trigger.click(); return true;
+            """
+        )
+        if not opened:
+            return False
+        WebDriverWait(driver, 10).until(lambda d: d.execute_script(
+            "return !!document.querySelector('#regionSelect input[placeholder=\"Поиск по названию\"]')"
+        ))
+        query = "Москва" if target == "Город Москва" else ""
+        if query:
+            driver.execute_script(
+                """
+                const inp=document.querySelector('#regionSelect input[placeholder="Поиск по названию"]');
+                const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+                setter.call(inp,arguments[0]);
+                inp.dispatchEvent(new Event('input',{bubbles:true}));
+                """,
+                query,
+            )
+            selenium_sleep(1)
+        clicked = driver.execute_script(
+            """
+            const target=arguments[0], root=document.querySelector('#regionSelect');
+            const span=[...root.querySelectorAll('span')].find(x=>
+              (x.innerText||'').trim()===target && x.closest('[tabindex="0"]')?.querySelector('input'));
+            if(!span) return false;
+            (span.parentElement||span).click(); return true;
+            """,
+            target,
+        )
+        if not clicked:
+            return False
+        selenium_sleep(1)
+        driver.execute_script("document.body.click()")
+        WebDriverWait(driver, 30).until(lambda d: (
+            _operational_selected_region(d) == target
+            and _operational_fingerprint(d, page)
+            and _operational_fingerprint(d, page) != baseline
+        ))
+        selenium_sleep(1)
+        return True
+    except (TimeoutException, WebDriverException):
+        return False
+
+
+def _click_area_mode(driver, target: str) -> bool:
+    current = driver.execute_script(
+        """
+        const headers=[...document.querySelectorAll('.HousingTable__Name')];
+        const h=headers.find(x=>(x.innerText||'').includes('Механизм привлечения'));
+        const text=h ? h.parentElement.innerText : '';
+        return text.includes('Общая площадь') ? 'Общая' : text.includes('Жилая площадь') ? 'Жилая' : '';
+        """
+    ) or ""
+    if current == target:
+        return True
+    before = _operational_fingerprint(driver, "construction")
+    clicked = driver.execute_script(
+        """
+        const target=arguments[0];
+        const span=[...document.querySelectorAll('span')]
+          .find(x=>(x.innerText||'').trim()===target);
+        if(!span) return false; (span.closest('button')||span.parentElement).click(); return true;
+        """,
+        target,
+    )
+    if not clicked:
+        return False
+    try:
+        WebDriverWait(driver, 20).until(lambda d: (
+            target in (_operational_fingerprint(d, "construction") or "")
+            or _operational_fingerprint(d, "construction") != before
+        ))
+    except TimeoutException:
+        # On this page the table header is the authoritative selected mode.
+        pass
+    selected = driver.execute_script(
+        """
+        const headers=[...document.querySelectorAll('.HousingTable__Name')];
+        const h=headers.find(x=>(x.innerText||'').includes('Механизм привлечения'));
+        const text=h ? h.parentElement.innerText : '';
+        return text.includes('Общая площадь') ? 'Общая' : text.includes('Жилая площадь') ? 'Жилая' : '';
+        """
+    ) or ""
+    return selected == target
+
+
+def _read_construction_snapshot(driver) -> dict:
+    row = driver.execute_script(
+        """
+        const nodes=[...document.querySelectorAll('.HousingTable__Name')];
+        const header=nodes.find(x=>(x.innerText||'').includes('Механизм привлечения'));
+        const data=nodes.find(x=>(x.innerText||'').trim()==='Все механизмы');
+        if(!header||!data) return null;
+        return {headers:[...header.parentElement.children].map(x=>x.innerText.trim()),
+                values:[...data.parentElement.children].map(x=>x.innerText.trim())};
+        """
+    )
+    if not row:
+        raise ValueError("construction indicators summary row is missing")
+    pairs = dict(zip(row["headers"], row["values"]))
+    area_key = next((key for key in pairs if "площадь" in key.lower()), None)
+    if not area_key:
+        raise ValueError("construction area column is missing")
+    body = driver.execute_script("return document.body.innerText") or ""
+    period = re.search(r"Отчетный период\s+([А-Яа-яЁё]+\s+\d{4})", body)
+    return {
+        "region": _operational_selected_region(driver),
+        "report_date": _parse_russian_date(body),
+        "report_period": period.group(1) if period else "",
+        "area_kind": "total" if "общая" in area_key.lower() else "living",
+        "area_thousand_m2": pairs[area_key],
+    }
+
+
+def _class_has(value, needle: str) -> bool:
+    if isinstance(value, (list, tuple)):
+        value = " ".join(value)
+    return bool(value and needle in str(value))
+
+
+def _parse_apartment_sales_html(html: str, region: str) -> dict:
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "lxml")
+    text = soup.get_text(" ", strip=True)
+    out = {
+        "region": region,
+        "report_date": _parse_russian_date(text),
+        "report_period": "",
+        "metrics": {},
+    }
+    period = re.search(r"Отчетный период\s+([А-Яа-яЁё]+\s+\d{4})", text)
+    if period:
+        out["report_period"] = period.group(1)
+
+    def exact(label):
+        return soup.find(string=lambda value: value and value.strip() == label)
+
+    for label, key in (("Всего жилой площади", "total_living_thousand_m2"),
+                       ("Продажи открыты", "sales_open_thousand_m2")):
+        node = exact(label)
+        wrapper = node.parent.parent if node else None
+        value = wrapper.find(class_=lambda c: _class_has(c, "IndicatorValue")) if wrapper else None
+        out["metrics"][key] = value.get_text(" ", strip=True) if value else ""
+    for label, key in (("Проданная площадь", "sold"),
+                       ("Непроданная площадь", "unsold"),
+                       ("Продажи не открыты", "sales_not_open")):
+        for node in soup.find_all(string=lambda value: value and value.strip() == label):
+            wrapper = node.parent.parent
+            value = wrapper.find(class_=lambda c: _class_has(c, "Value-sc-18spgfx"))
+            percent = wrapper.find(class_=lambda c: _class_has(c, "Value-sc-1x9zma"))
+            if value and percent:
+                out["metrics"][f"{key}_thousand_m2"] = value.get_text(" ", strip=True)
+                out["metrics"][f"{key}_pct"] = percent.get_text(" ", strip=True)
+                break
+    for label, key in (("Стоимость 1 квадратного метра", "price_per_m2_rub"),
+                       ("Объем привлеченных средств", "funds_million_rub")):
+        node = exact(label)
+        wrapper = node.parent.parent if node else None
+        value = wrapper.find(class_=lambda c: _class_has(c, "Value-sc-182uuls")) if wrapper else None
+        out["metrics"][key] = value.get_text(" ", strip=True) if value else ""
+    required = {
+        "total_living_thousand_m2", "sales_open_thousand_m2",
+        "sold_thousand_m2", "sold_pct", "unsold_thousand_m2", "unsold_pct",
+        "sales_not_open_thousand_m2", "sales_not_open_pct",
+        "price_per_m2_rub", "funds_million_rub",
+    }
+    if not required.issubset({key for key, value in out["metrics"].items() if value}):
+        raise ValueError("apartment sales metrics are incomplete")
+    return out
+
+
+def _operational_number(value) -> float | None:
+    match = re.search(r"-?[\d\s\u00a0]+(?:[,.]\d+)?", str(value or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace("\u00a0", "").replace(" ", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _validate_construction_operational_result(result: dict) -> None:
+    construction = result.get("construction") or []
+    expected_pairs = {(region, kind) for region in ("rf", "msk")
+                      for kind in ("living", "total")}
+    actual_pairs = {(row.get("region_key"), row.get("area_kind")) for row in construction}
+    if len(construction) != 4 or actual_pairs != expected_pairs:
+        raise ValueError("construction RF/Moscow living/total coverage is incomplete")
+    construction_periods = {row.get("report_period") for row in construction}
+    if len(construction_periods) != 1 or not next(iter(construction_periods), ""):
+        raise ValueError("construction report periods are missing or inconsistent")
+    for row in construction:
+        value = _operational_number(row.get("area_thousand_m2"))
+        if value is None or value <= 0:
+            raise ValueError("construction area is not a positive number")
+
+    sales = result.get("sales") or []
+    if len(sales) != 2 or {row.get("region_key") for row in sales} != {"rf", "msk"}:
+        raise ValueError("apartment sales RF/Moscow coverage is incomplete")
+    sales_periods = {row.get("report_period") for row in sales}
+    if len(sales_periods) != 1 or not next(iter(sales_periods), ""):
+        raise ValueError("apartment sales periods are missing or inconsistent")
+    required = {
+        "total_living_thousand_m2", "sales_open_thousand_m2",
+        "sold_thousand_m2", "sold_pct", "unsold_thousand_m2", "unsold_pct",
+        "sales_not_open_thousand_m2", "sales_not_open_pct",
+        "price_per_m2_rub", "funds_million_rub",
+    }
+    for row in sales:
+        metrics = row.get("metrics") or {}
+        numeric = {key: _operational_number(metrics.get(key)) for key in required}
+        if any(value is None or value < 0 for value in numeric.values()):
+            raise ValueError("apartment sales contains a missing or invalid metric")
+        if abs(numeric["sold_thousand_m2"] + numeric["unsold_thousand_m2"]
+               - numeric["sales_open_thousand_m2"]) > 2:
+            raise ValueError("sold and unsold areas do not equal sales-open area")
+        if abs(numeric["sales_open_thousand_m2"] + numeric["sales_not_open_thousand_m2"]
+               - numeric["total_living_thousand_m2"]) > 2:
+            raise ValueError("sales-open and not-open areas do not equal total living area")
+        if abs(numeric["sold_pct"] + numeric["unsold_pct"]
+               + numeric["sales_not_open_pct"] - 100) > 1:
+            raise ValueError("apartment sales shares do not add up to 100%")
+
+
+def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
+    """Collect current construction and apartment-sales snapshots for RF/Moscow."""
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    result = {"source": "construction_operational", "scraped_at": datetime.now().isoformat(timespec="seconds"),
+              "construction": [], "sales": []}
+    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    try:
+        driver.set_page_load_timeout(PAGE_TIMEOUT)
+        driver.get(_build_construction_indicators_url())
+        WebDriverWait(driver, 45).until(lambda d: _operational_fingerprint(d, "construction") != "")
+        for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
+            if not _switch_operational_region(driver, label, "construction"):
+                raise ValueError(f"construction region did not switch: {label}")
+            for mode_label in ("Жилая", "Общая"):
+                if not _click_area_mode(driver, mode_label):
+                    raise ValueError(f"construction area mode did not switch: {mode_label}")
+                snap = _read_construction_snapshot(driver)
+                snap["region_key"] = region_key
+                result["construction"].append(snap)
+
+        driver.get(_build_apartment_sales_url())
+        WebDriverWait(driver, 45).until(lambda d: _operational_fingerprint(d, "sales") != "")
+        for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
+            if not _switch_operational_region(driver, label, "sales"):
+                raise ValueError(f"sales region did not switch: {label}")
+            snap = _parse_apartment_sales_html(driver.page_source, label)
+            snap["region_key"] = region_key
+            result["sales"].append(snap)
+    except (TimeoutException, WebDriverException, ValueError) as exc:
+        print(f"  ❌ construction_operational: {exc}")
+        return [], False
+    finally:
+        driver.quit()
+
+    try:
+        _validate_construction_operational_result(result)
+    except ValueError as exc:
+        print(f"  ❌ construction_operational: {exc}")
+        return [], False
+    date_str = datetime.now().strftime("%Y%m%d")
+    target = DOWNLOAD_DIR / f"construction_operational_{date_str}.json"
+    _write_json_atomic(target, result)
+    report_dates = [row.get("report_date", "") for row in result["construction"] + result["sales"]]
+    state["construction_operational"] = {
+        "report_date": max((date for date in report_dates if date), default=""),
+        "filename": target.name,
+        "scraped_at": result["scraped_at"],
+        "complete": True,
+    }
+    print(f"  ✅ {target.name}: строительство РФ/Москва + реализация РФ/Москва")
+    return [target], True
+
+
 
 
 # ─────────────────────────────────────────────
@@ -3237,6 +3564,7 @@ SOURCE_FUNCS = {
     "monitoring_2_0": fetch_monitoring_2_0,
     "rasprodannost": fetch_rasprodannost,
     "kvartirografia": fetch_kvartirografia,
+    "construction_operational": fetch_construction_operational,
 }
 
 

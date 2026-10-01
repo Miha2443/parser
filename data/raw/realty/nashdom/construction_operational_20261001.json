@@ -1,0 +1,76 @@
+{
+  "source": "construction_operational",
+  "scraped_at": "2026-10-01T12:53:02",
+  "construction": [
+    {
+      "region": "Все",
+      "report_date": "01.10.2026",
+      "report_period": "Октябрь 2026",
+      "area_kind": "living",
+      "area_thousand_m2": "121 876",
+      "region_key": "rf"
+    },
+    {
+      "region": "Все",
+      "report_date": "01.10.2026",
+      "report_period": "Октябрь 2026",
+      "area_kind": "total",
+      "area_thousand_m2": "205 560",
+      "region_key": "rf"
+    },
+    {
+      "region": "Город Москва",
+      "report_date": "01.10.2026",
+      "report_period": "Октябрь 2026",
+      "area_kind": "living",
+      "area_thousand_m2": "15 640",
+      "region_key": "msk"
+    },
+    {
+      "region": "Город Москва",
+      "report_date": "01.10.2026",
+      "report_period": "Октябрь 2026",
+      "area_kind": "total",
+      "area_thousand_m2": "26 964",
+      "region_key": "msk"
+    }
+  ],
+  "sales": [
+    {
+      "region": "Все",
+      "report_date": "11.09.2026",
+      "report_period": "Август 2026",
+      "metrics": {
+        "total_living_thousand_m2": "120 629 тыс. м²",
+        "sales_open_thousand_m2": "91 720 тыс. м²",
+        "sold_thousand_m2": "36 898 тыс. м²",
+        "sold_pct": "31%",
+        "unsold_thousand_m2": "54 822 тыс. м²",
+        "unsold_pct": "45%",
+        "sales_not_open_thousand_m2": "28 909 тыс. м²",
+        "sales_not_open_pct": "24%",
+        "price_per_m2_rub": "219 713 руб.",
+        "funds_million_rub": "8 107 053 млн руб."
+      },
+      "region_key": "rf"
+    },
+    {
+      "region": "Город Москва",
+      "report_date": "11.09.2026",
+      "report_period": "Август 2026",
+      "metrics": {
+        "total_living_thousand_m2": "15 743 тыс. м²",
+        "sales_open_thousand_m2": "14 140 тыс. м²",
+        "sold_thousand_m2": "7 366 тыс. м²",
+        "sold_pct": "47%",
+        "unsold_thousand_m2": "6 774 тыс. м²",
+        "unsold_pct": "43%",
+        "sales_not_open_thousand_m2": "1 603 тыс. м²",
+        "sales_not_open_pct": "10%",
+        "price_per_m2_rub": "441 306 руб.",
+        "funds_million_rub": "3 250 869 млн руб."
+      },
+      "region_key": "msk"
+    }
+  ]
+}

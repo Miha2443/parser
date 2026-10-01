@@ -162,6 +162,21 @@ INDICATORS: list[Indicator] = [
         description="наш.дом.рф/аналитика/распроданность-новостроек. DOM-скрейп, 5 классов (Все+Типовой+Комфорт+Бизнес+Элитный), ТОП-100+Все.",
     ),
     Indicator(
+        id="realty_construction_operational",
+        section="realty",
+        title="Текущее строительство — оперативные данные",
+        unit="тыс. м²",
+        source="nashdom",
+        source_ids=["construction_operational"],
+        parser="nashdom_construction_operational",
+        file_patterns=["realty/nashdom/construction_operational_*.json"],
+        page="",
+        description=(
+            "Основные показатели жилищного строительства и реализация квартир "
+            "в строящихся домах; РФ и Москва."
+        ),
+    ),
+    Indicator(
         id="realty_kvartirografia",
         section="realty",
         title="Квартирография новостроек",

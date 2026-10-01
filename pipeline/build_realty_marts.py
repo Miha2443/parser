@@ -285,8 +285,9 @@ def check_manifest(*, strict: bool = False) -> int:
 
 
 def _specs(da) -> list[MartSpec]:
-    names = ("kvartirografia", "monitoring_2_0", "erzrf_top", "erzrf_cards",
-             "escrow_manual", "rasprodannost", "vvod_static", "emiss_34118")
+    names = ("kvartirografia", "monitoring_2_0", "construction_operational",
+             "erzrf_top", "erzrf_cards", "escrow_manual", "rasprodannost",
+             "vvod_static", "emiss_34118")
     return [MartSpec(name, f"load_{name}", lambda access, name=name: access.source_files(name))
             for name in names]
 

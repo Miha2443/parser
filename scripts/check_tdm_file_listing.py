@@ -53,9 +53,11 @@ def main() -> int:
         _write(root / "downloads" / "20260901_Индексы потребительских цен часть1.xls", b"one", 1_700_000_300)
         _write(root / "downloads" / "20260901_Индексы потребительских цен часть2.xls", b"two", 1_700_000_400)
         _write(root / "data" / "raw" / "realty" / "nashdom" / "kvartirografia_20260901.xlsx", b"kv", 1_700_000_500)
+        _write(root / "data" / "raw" / "realty" / "nashdom" / "construction_operational_20260901.json", b"{}", 1_700_000_600)
+        _write(root / "data" / "raw" / "realty" / "nashdom" / "monitoring_2_0_20260901.xlsx", b"monitoring", 1_700_000_700)
 
         datasets = {option.spec.key: option for option in list_tdm_datasets(root)}
-        _require("ipc" in datasets and "kvartirografia" in datasets,
+        _require("ipc" in datasets and "kvartirografia" in datasets and "current_construction" in datasets,
                  "friendly TDM catalog should resolve dashboard datasets")
         _require(len(datasets["ipc"].files) == 2,
                  "IPC should include newest part 1 and part 2")
@@ -67,6 +69,11 @@ def main() -> int:
         single, cleanup = prepare_tdm_dataset(datasets["kvartirografia"], root / "tmp")
         _require(not cleanup and single.name.startswith("kvartirografia_"),
                  "single-file dataset should be sent without repacking")
+        construction_bundle, cleanup = prepare_tdm_dataset(
+            datasets["current_construction"], root / "tmp"
+        )
+        _require(cleanup and construction_bundle.suffix == ".zip",
+                 "current construction should bundle its Nashdom snapshot and Monitoring source")
 
     print("tdm file listing checks: ok")
     return 0

@@ -75,10 +75,13 @@ with area_cols[1]:
 periods = rasprod.get("periods_by_region", {}).get(region, [])
 rasprod_period = f"{MONTHS[periods[-1][1]]} {periods[-1][0]}" if periods else ""
 st.subheader(f"2. Распроданность и стройготовность{f' · {rasprod_period}' if rasprod_period else ''}")
+st.caption("Источник: раздел «Распроданность и стройготовность» на наш.дом.рф; "
+           "показан последний подтверждённый период выбранного региона.")
 kpi_cols = st.columns(3)
 for column, (needle, label) in zip(kpi_cols, [
     ("Распроданность", "Распроданность"), ("Стройготовность", "Стройготовность"),
-    ("Отношение", "Отношение распроданности к стройготовности"),
+    ("Отношение распроданности к стройготовности",
+     "Отношение распроданности к стройготовности"),
 ]):
     row = latest_rasprod_row(rasprod, region, needle)
     value = row.get("значение_num") if row is not None else None
@@ -107,13 +110,14 @@ else:
         pct, area = sale.get(f"{key}_pct"), sale.get(f"{key}_thousand_m2")
         fig = go.Figure(go.Pie(values=[pct or 0, max(0, 100 - (pct or 0))], labels=[label, "Остальное"],
                                hole=.72, marker_colors=[color, "#E8EDF0"], textinfo="none", sort=False,
+                               name=label, domain=dict(x=[.12, .88], y=[.08, .92]),
                                hovertemplate="%{label}: %{value:.0f}%<extra></extra>"))
         fig.add_annotation(text=f"<b>{fmt(pct, 0)}%</b>", showarrow=False, font_size=22)
-        fig.update_layout(showlegend=False, margin=dict(l=5, r=5, t=5, b=5), height=190)
-        style_plotly(fig, height=190)
+        fig.update_layout(showlegend=False, margin=dict(l=4, r=4, t=4, b=4), height=180)
+        style_plotly(fig, height=180)
         with column:
             st.markdown(f"**{label}**")
-            st.plotly_chart(fig, use_container_width=True, key=f"sales_{region}_{key}")
+            st.plotly_chart(fig, width="stretch", key=f"sales_{region}_{key}")
             st.markdown(f"<div style='text-align:center'>{fmt(in_millions(area))} млн м²</div>", unsafe_allow_html=True)
     extra_cols = st.columns(2)
     with extra_cols[0]:
@@ -158,6 +162,7 @@ else:
                 text=[fmt(value, 0) for value in table["С начала года, тыс. м²"]], textposition="inside")
     fig.add_bar(x=table["Год"].astype(str), y=remainder, name="Остаток до итога года", marker_color="#C9D4DA")
     fig.add_scatter(x=table["Год"].astype(str), y=table["За год, тыс. м²"], mode="text", showlegend=False,
+                    name="Итог за год", hoverinfo="skip",
                     text=[fmt(value, 0) for value in table["За год, тыс. м²"]], textposition="top center")
     for _, row in table.dropna(subset=["Изменение, %"]).iterrows():
         fig.add_annotation(x=str(int(row["Год"])), y=row["С начала года, тыс. м²"], yshift=9,

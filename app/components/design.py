@@ -1085,18 +1085,18 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
 def style_plotly(fig, *, height: int | None = None):
     """Apply final chart polish to a Plotly figure."""
     light = _active_theme() == "light"
+    has_title = bool(fig.layout.title and fig.layout.title.text)
     grid = "rgba(100,116,139,.26)" if light else "rgba(43,61,80,.72)"
     zero = "rgba(100,116,139,.48)" if light else "rgba(43,61,80,.9)"
     existing_margin = fig.layout.margin.to_plotly_json() if fig.layout.margin else {}
     margin = {"l": 54, "r": 28, "t": 56, "b": 70}
     margin.update({k: v for k, v in existing_margin.items() if v is not None})
-    fig.update_layout(
+    layout_options = dict(
         autosize=True,
         template="moscow_business",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT_STACK, color=COLORS["text"]),
-        title_font=dict(family=FONT_STACK, color=COLORS["text"]),
         hovermode="closest",
         margin=margin,
         legend=dict(
@@ -1109,6 +1109,16 @@ def style_plotly(fig, *, height: int | None = None):
         ),
         uniformtext=dict(minsize=10, mode="hide"),
     )
+    # Supplying title_font without title text makes Plotly render the literal
+    # word "undefined" in some Streamlit/Plotly combinations.
+    if has_title:
+        layout_options["title_font"] = dict(family=FONT_STACK, color=COLORS["text"])
+    else:
+        # An actual (invisible) text value is required here: with None or an
+        # empty string Plotly.js may turn Streamlit's missing title into
+        # visible "undefined" text.
+        layout_options["title"] = dict(text="\u200b")
+    fig.update_layout(**layout_options)
     if height is not None:
         fig.update_layout(height=height)
     fig.update_traces(cliponaxis=False, selector=dict(type="bar"))

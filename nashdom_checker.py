@@ -3233,6 +3233,8 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     if not complete:
         missing = sorted({r["key"] for r in RASPROD_REGIONS} - refreshed_regions)
         print(f"  ❌ rasprodannost: не обновлены регионы: {', '.join(missing)}")
+    else:
+        print(f"  ✅ rasprodannost: обновлены регионы: {', '.join(sorted(refreshed_regions))}")
     return new_files, complete
 
 

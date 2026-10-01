@@ -1297,7 +1297,7 @@ class DataAccess:
                         result[sorting][reg] = df
                         name_col = next((c for c in df.columns
                                          if "Наименование" in str(c)), None)
-                        if name_col:
+                        if name_col and sorting != "obyem_vvoda":
                             for v in df[name_col].dropna().unique():
                                 all_names.add(str(v).strip())
                     except Exception:  # noqa: BLE001
@@ -1314,6 +1314,42 @@ class DataAccess:
                             result["obyem_vvoda_by_year"][reg][year] = df
                         except Exception:  # noqa: BLE001
                             pass
+
+        # The collector downloads annual input only with an explicit year.
+        # When both scopes exist, use their newest common year so RF and Moscow
+        # cannot silently describe different periods after a damaged/missing
+        # file. A single available scope can still be shown on its own.
+        annual = result["obyem_vvoda_by_year"]
+        nonempty = {region: tables for region, tables in annual.items() if tables}
+        current_years: dict[str, int] = {}
+        if nonempty:
+            # Once the explicit-year contract is present, legacy unscoped
+            # frames must not fill a missing region with an unknown period.
+            result["obyem_vvoda"] = {}
+        if len(nonempty) == len(regions):
+            common_years = set.intersection(*(set(tables) for tables in nonempty.values()))
+            if common_years:
+                common_year = max(common_years)
+                current_years = {region: common_year for region in regions}
+            else:
+                for region in regions:
+                    result["obyem_vvoda"].pop(region, None)
+                self._report_issue(
+                    "warning", "ERZ annual input has no common RF/Moscow year"
+                )
+        else:
+            current_years = {
+                region: max(tables) for region, tables in nonempty.items()
+            }
+        for region, year in current_years.items():
+            current = annual[region][year]
+            result["obyem_vvoda"][region] = current
+            name_col = next((column for column in current.columns
+                             if "Наименование" in str(column)), None)
+            if name_col:
+                for value in current[name_col].dropna().unique():
+                    all_names.add(str(value).strip())
+        result["obyem_vvoda_current_year"] = current_years
 
         result["all_developers"] = sorted(all_names)
         return self._apply_erz_nakopl_fallback(result)

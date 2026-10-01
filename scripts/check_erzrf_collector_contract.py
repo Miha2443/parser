@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +21,7 @@ os.environ["TDM_DISABLED"] = "1"
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import erzrf_checker as ec  # noqa: E402
+from pipeline.data_access import DataAccess, DataContext  # noqa: E402
 
 
 # These schema signatures come from the existing 20260702 raw files, whose
@@ -390,13 +392,75 @@ class CollectorContract(unittest.TestCase):
         self.assertFalse(driver.destinations[0].exists())
         self.assertEqual(state["erzrf_top"]["last_run"], "previous-success")
         self.assertFalse(state["erzrf_top_attempt"]["complete"])
-        self.assertEqual(len(state["erzrf_top_attempt"]["missing_files"]), 22)
+        self.assertEqual(
+            len(state["erzrf_top_attempt"]["missing_files"]),
+            len(ec._top_export_plan()) + len(ec.REGIONS),
+        )
 
-    def test_full_plan_has_twenty_exports_and_ten_explicit_years(self):
+    def test_full_plan_has_current_year_exports_and_no_redundant_current_annual(self):
         plan = ec._top_export_plan()
-        self.assertEqual(len(plan), 20)
-        self.assertEqual(sum(request.year is not None for request in plan), 10)
-        self.assertEqual(len({request.filename("20260928") for request in plan}), 20)
+        year_count = datetime.now().year - 2021
+        expected = 8 + 2 * year_count
+        self.assertEqual(len(plan), expected)
+        self.assertEqual(sum(request.year is not None for request in plan), 2 * year_count)
+        self.assertEqual(len({request.filename("20260928") for request in plan}), expected)
+        self.assertEqual(max(request.year for request in plan if request.year), datetime.now().year)
+        self.assertFalse(any(request.sorting_key == "obyem_vvoda" and request.year is None
+                             for request in plan))
+
+    def test_latest_explicit_annual_export_is_used_as_current(self):
+        root = self.base / "loader-root"
+        raw = root / "data" / "raw" / "realty" / "erzrf"
+        raw.mkdir(parents=True)
+        for name, developer, value in [
+            ("top_obyem_vvoda_rf_2025_20260930.xlsx", "Year 2025, регион", 25),
+            ("top_obyem_vvoda_rf_2026_20261001.xlsx", "Year 2026, регион", 26),
+            ("top_obyem_vvoda_rf_20260930.xlsx", "Stale unscoped, регион", 99),
+        ]:
+            frame = fixture_frame("obyem_vvoda")
+            frame["Наименование, регион"] = developer
+            frame["Введено, м²"] = value
+            frame.to_excel(raw / name, index=False)
+        access = DataAccess(DataContext(root, use_marts=False))
+        result = access.load_erzrf_top()
+        self.assertEqual(
+            result["obyem_vvoda"]["rf"].iloc[0]["Наименование, регион"],
+            "Year 2026, регион",
+        )
+        self.assertEqual(set(result["obyem_vvoda_by_year"]["rf"]), {2025, 2026})
+
+    def test_current_annual_uses_newest_common_rf_moscow_year(self):
+        root = self.base / "paired-loader-root"
+        raw = root / "data" / "raw" / "realty" / "erzrf"
+        raw.mkdir(parents=True)
+        for region, year in [("rf", 2025), ("rf", 2026), ("msk", 2025)]:
+            frame = fixture_frame("obyem_vvoda")
+            frame["Наименование, регион"] = f"{region}-{year}, регион"
+            frame.to_excel(
+                raw / f"top_obyem_vvoda_{region}_{year}_20261001.xlsx", index=False
+            )
+        result = DataAccess(DataContext(root, use_marts=False)).load_erzrf_top()
+        self.assertEqual(result["obyem_vvoda_current_year"], {"rf": 2025, "msk": 2025})
+        self.assertEqual(
+            result["obyem_vvoda"]["rf"].iloc[0]["Наименование, регион"],
+            "rf-2025, регион",
+        )
+
+    def test_explicit_annual_never_mixes_with_other_region_legacy_unscoped(self):
+        root = self.base / "mixed-loader-root"
+        raw = root / "data" / "raw" / "realty" / "erzrf"
+        raw.mkdir(parents=True)
+        for name, developer in [
+            ("top_obyem_vvoda_rf_2026_20261001.xlsx", "Fresh RF, регион"),
+            ("top_obyem_vvoda_msk_20260930.xlsx", "Stale Moscow, регион"),
+        ]:
+            frame = fixture_frame("obyem_vvoda")
+            frame["Наименование, регион"] = developer
+            frame.to_excel(raw / name, index=False)
+        result = DataAccess(DataContext(root, use_marts=False)).load_erzrf_top()
+        self.assertEqual(result["obyem_vvoda_current_year"], {"rf": 2026})
+        self.assertNotIn("msk", result["obyem_vvoda"])
+        self.assertNotIn("Stale Moscow, регион", result["all_developers"])
 
     def test_year_switch_waits_for_changed_table_not_just_assigned_value(self):
         driver = FakeDriver()
@@ -441,12 +505,17 @@ class CollectorContract(unittest.TestCase):
             path = folder / "site.xlsx"
             fixture_frame(driver.request.sorting_key).to_excel(path, index=False)
             return path
+        def switch(browser, year):
+            browser.request = ec.TopExport(browser.request.region_key, browser.request.sorting_key, year)
+            browser._erzrf_year_evidence = {"year": year, "table_changed": True}
+            return True
         state = {"erzrf_top": {"last_run": "previous"}}
-        with patch.object(ec, "wait_for_download", side_effect=wait):
+        with patch.object(ec, "wait_for_download", side_effect=wait), \
+                patch.object(ec, "_switch_year_filter", side_effect=switch):
             result = ec.fetch_top(state)
         self.assertEqual(len(result.files), 0)
         self.assertFalse(result.complete)
-        self.assertEqual(len(result.missing_files), 22)
+        self.assertEqual(len(result.missing_files), len(ec._top_export_plan()) + len(ec.REGIONS))
         self.assertEqual(len(calls), 2)
         self.assertNotEqual(calls[0], calls[1])
         self.assertEqual(state["erzrf_top"]["last_run"], "previous")
@@ -595,11 +664,15 @@ class CollectorContract(unittest.TestCase):
                 patch.object(ec, "_collect_top_n_developers", return_value=developers):
             result = ec.fetch_top(state)
         self.assertTrue(result.complete)
-        self.assertEqual(len(result.files), 22)
-        self.assertEqual(len(list(ec.DOWNLOAD_DIR.glob("*.xlsx.provenance.json"))), 20)
+        expected_exports = len(ec._top_export_plan())
+        expected_files = expected_exports + len(ec.REGIONS)
+        self.assertEqual(len(result.files), expected_files)
+        self.assertEqual(
+            len(list(ec.DOWNLOAD_DIR.glob("*.xlsx.provenance.json"))), expected_exports
+        )
         self.assertTrue(state["erzrf_top_attempt"]["complete"])
-        self.assertEqual(len(state["erzrf_top"]["files"]), 22)
-        self.assertEqual(len(set(driver.destinations)), 20)
+        self.assertEqual(len(state["erzrf_top"]["files"]), expected_files)
+        self.assertEqual(len(set(driver.destinations)), expected_exports)
         self.assertTrue(driver.closed)
 
     def test_run_rejects_partial_json_only_empty_and_error_results(self):

@@ -785,7 +785,7 @@ def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) ->
 # Прочие сортировки (obyem_stroitelstva / nakopl_vvod / potreb_kachestva /
 # skorost) показывают НЕ годовой срез — год для них не применим.
 PER_YEAR_SORTINGS = {"obyem_vvoda"}
-PER_YEAR_RANGE = list(range(2022, 2027))  # 2022..2026 включительно
+PER_YEAR_RANGE = list(range(2022, datetime.now().year + 1))
 
 
 @dataclass(frozen=True)
@@ -823,9 +823,19 @@ class TopExportError(ValueError):
 
 
 def _top_export_plan() -> list[TopExport]:
-    return [TopExport(region["key"], sorting["key"], year)
-            for region in REGIONS for sorting in SORTINGS
-            for year in [None, *(PER_YEAR_RANGE if sorting["key"] in PER_YEAR_SORTINGS else [])]]
+    plan = []
+    for region in REGIONS:
+        for sorting in SORTINGS:
+            # The annual rating's default/current page is just the currently
+            # selected year. Downloading it once without an explicit filter and
+            # then again as 2026 is redundant. More importantly, ERZ can return
+            # an export from stale server-side filter state immediately after
+            # navigation. Every annual export therefore follows an observed
+            # year switch; the latest explicit year is also used as "current"
+            # by DataAccess.
+            years = PER_YEAR_RANGE if sorting["key"] in PER_YEAR_SORTINGS else [None]
+            plan.extend(TopExport(region["key"], sorting["key"], year) for year in years)
+    return plan
 
 
 def _read_top_selection(driver) -> dict:
@@ -1025,7 +1035,7 @@ def _download_top_export(driver, request: TopExport, date_str: str,
 def _publish_top_batch(staged_files: list[Path], destination: Path, rollback_dir: Path) -> list[Path]:
     """Publish one complete TOP snapshot and restore prior files on an error.
 
-    ``staged_files`` contains the 20 Excel files and two developer JSON files.
+    ``staged_files`` contains every planned Excel file and two developer JSON files.
     Excel provenance sidecars live beside them and are committed in the same
     transaction.  Nothing becomes discoverable by ETL until collection of the
     entire required set has succeeded.

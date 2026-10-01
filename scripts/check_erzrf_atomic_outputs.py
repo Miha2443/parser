@@ -32,7 +32,8 @@ def _write_valid_workbook(path: Path, version: int) -> None:
 
 def _write_top_workbook(path: Path, area: int) -> None:
     pd.DataFrame([{"Место": 1, "Наименование, регион": "Fixture developer",
-                   "Строится, м²": area}]).to_excel(path, index=False)
+                   "Строится, м²": area, "С переносом срока, м²": 0,
+                   "Уточнение срока, мес.": 0}]).to_excel(path, index=False)
 
 
 def test_card_content_probe() -> None:

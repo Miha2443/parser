@@ -27,12 +27,11 @@ import erzrf_checker as ec  # noqa: E402
 def fixture_frame(kind: str) -> pd.DataFrame:
     row = {"Место": 1, "Наименование, регион": "Fixture developer, регион"}
     if kind == "obyem_stroitelstva":
-        row["Строится, м²"] = 125
+        row.update({"Строится, м²": 125, "С переносом срока, м²": 25,
+                    "Уточнение срока, мес.": 1.5})
     elif kind in {"obyem_vvoda", "nakopl_vvod"}:
-        row["Введено, м²"] = 250
-        if kind == "nakopl_vvod":
-            row["С переносом срока, м²"] = 50
-            row["Уточнение срока, мес."] = 1.25
+        row.update({"Введено, м²": 250, "С переносом срока, м²": 50,
+                    "Уточнение срока, мес.": 1.25})
     elif kind == "potreb_kachestva":
         row.update({"Строится, м²": 500, "Средняя оценка": 79.84,
                     "ЖК/ПТ, всего в расчете": 15})
@@ -197,18 +196,29 @@ class CollectorContract(unittest.TestCase):
                 report = ec._excel_contract(self.workbook(kind), kind)
                 self.assertEqual(report["rows"], 1)
 
-    def test_accumulated_input_requires_both_current_deadline_columns(self):
-        for missing in ("С переносом срока, м²", "Уточнение срока, мес."):
-            frame = fixture_frame("nakopl_vvod").drop(columns=[missing])
-            with self.subTest(missing=missing), self.assertRaises(ValueError):
-                ec._excel_contract(
-                    self.workbook("nakopl_vvod", frame=frame), "nakopl_vvod"
-                )
+    def test_construction_and_input_schemas_require_both_deadline_columns(self):
+        for kind in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod"):
+            for missing in ("С переносом срока, м²", "Уточнение срока, мес."):
+                frame = fixture_frame(kind).drop(columns=[missing])
+                with self.subTest(kind=kind, missing=missing), self.assertRaises(ValueError):
+                    ec._excel_contract(self.workbook(kind, frame=frame), kind)
+
+    def test_annual_and_accumulated_input_share_schema_but_browser_evidence_differs(self):
+        for actual, requested in (("obyem_vvoda", "nakopl_vvod"),
+                                  ("nakopl_vvod", "obyem_vvoda")):
+            with self.subTest(actual=actual, requested=requested):
+                report = ec._excel_contract(self.workbook(actual), requested)
+                self.assertEqual(report["schema_family"], "commissioned_with_deadlines")
+
+        annual = selection(ec.TopExport("rf", "obyem_vvoda", 2026))
+        accumulated_request = ec.TopExport("rf", "nakopl_vvod")
+        with patch.object(ec, "_read_top_selection", return_value=annual), \
+                self.assertRaises(ec.TopExportError):
+            ec._top_request_evidence(None, accumulated_request, ec.TOP_TYPES)
 
     def test_historical_three_mislabelled_schemas_fail(self):
         cases = [("potreb_kachestva", "nakopl_vvod"), ("skorost", "potreb_kachestva"),
-                 ("nakopl_vvod", "skorost"), ("potreb_kachestva", "obyem_stroitelstva"),
-                 ("obyem_vvoda", "nakopl_vvod"), ("nakopl_vvod", "obyem_vvoda")]
+                 ("nakopl_vvod", "skorost"), ("potreb_kachestva", "obyem_stroitelstva")]
         for actual, requested in cases:
             with self.subTest(actual=actual, requested=requested), self.assertRaises(ValueError):
                 ec._excel_contract(self.workbook(actual), requested)

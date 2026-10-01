@@ -7,12 +7,13 @@ erzrf_checker.py
    комбинации (5 сортировок × 2 региона) кликает кнопку «Скачать TOP в
    Excel». Ожидаемые схемы (исторические имена части файлов были ошибочны;
    исправленное соответствие см. docs/audit/erzrf_collector.md):
-   - «По объёму текущего строительства»     → 15 колонок
-   - «По объёму ввода МКД»                  → 15 колонок
-   - «По накопленному вводу МКД с 2016 года»→ 16 колонок (+ «Ушёл с рынка»)
-   - «По потребительским качествам»          → 14 совсем других колонок
-   - «По скорости строительства»             → 10 совсем других колонок
-   Все 5 — разные наборы, поэтому качаем все.
+   - «По объёму текущего строительства»      → площадь строительства
+   - «По объёму ввода жилья»                 → введённая площадь за год
+   - «По накопленному вводу жилья с 2016 г.» → накопленная введённая площадь
+   - «По потребительским качествам ЖК»        → оценки качества
+   - «По скорости строительства»             → дни на дом
+   Годовой и накопленный ввод имеют общую схему Excel; их различают
+   подтверждённые URL, сортировка и год вокруг конкретного скачивания.
 
 2. **erzrf_cards** — для ТОП-100 застройщиков из последнего
    `top_developers_rf_*.json` DOM-скрейпим карточки на
@@ -38,6 +39,7 @@ import os
 import re
 import sys
 import tempfile
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -215,7 +217,9 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
     if path.suffix.lower() != ".xlsx":
         raise ValueError("TOP export must be XLSX")
     validate_excel_file(path)
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Workbook contains no default style")
+        workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         if len(workbook.worksheets) != 1:
             raise ValueError("expected exactly one TOP worksheet")
@@ -230,8 +234,12 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
         metric = _normalise_label(metric_names[sorting_key])
         if metric not in headers:
             raise ValueError(f"{sorting_key}: missing metric {metric_names[sorting_key]}")
-        # Annual and accumulated exports share the area column. Quality also
-        # contains construction area, so the primary metric alone is insufficient.
+        # ERZ includes the two deadline columns in construction, annual input,
+        # and accumulated input exports. They describe developer delays and are
+        # not, by themselves, evidence of the accumulated-input rating. Annual
+        # and accumulated input therefore share one workbook schema; their exact
+        # identity is established by the verified URL and selected sorting before
+        # and after the download.
         transfer_marker = any(
             header.startswith("с переносом срока") for header in headers
         )
@@ -241,16 +249,13 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
         markers = {
             "quality": "средняя оценка" in headers,
             "speed": "скорость строительства, дней/дом" in headers,
-            # The current accumulated-input export is identified by the two
-            # deadline columns visible in the ERZ table. Older validation used
-            # a removed «Ушел с рынка» column and rejected valid 2026 files.
-            "accumulated": transfer_marker and clarification_marker,
+            "deadline_columns": transfer_marker and clarification_marker,
             "commissioned": "введено, м²" in headers,
             "construction": "строится, м²" in headers,
         }
         expected = {
-            "obyem_stroitelstva": (False, False, False, False, True),
-            "obyem_vvoda": (False, False, False, True, False),
+            "obyem_stroitelstva": (False, False, True, False, True),
+            "obyem_vvoda": (False, False, True, True, False),
             "nakopl_vvod": (False, False, True, True, False),
             "potreb_kachestva": (True, False, False, False, True),
             "skorost": (False, True, False, False, False),
@@ -285,7 +290,13 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             count += 1
         if not count:
             raise ValueError("TOP export contains no developer rows")
-        return {"rows": count, "columns": headers, "metric": metric_names[sorting_key]}
+        schema_family = (
+            "commissioned_with_deadlines"
+            if sorting_key in {"obyem_vvoda", "nakopl_vvod"}
+            else sorting_key
+        )
+        return {"rows": count, "columns": headers, "metric": metric_names[sorting_key],
+                "schema_family": schema_family}
     finally:
         workbook.close()
 

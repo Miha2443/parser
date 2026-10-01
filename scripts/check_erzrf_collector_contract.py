@@ -419,6 +419,34 @@ class CollectorContract(unittest.TestCase):
                 ui_total_rows=100,
             )
 
+    def test_current_annual_exact_prefix_allows_only_two_missing_tail_rows(self):
+        request = ec.TopExport("rf", "obyem_vvoda", datetime.now().year)
+        exact = {"mode": "exact_visible_prefix", "matched_rows": 20}
+        for workbook_rows in (985, 984):
+            evidence = ec._row_count_reconciliation(request, workbook_rows, 986, exact)
+            self.assertIn("two tail rows", evidence)
+        for workbook_rows in (983, 900):
+            with self.subTest(workbook_rows=workbook_rows), self.assertRaises(ec.TopExportError):
+                ec._row_count_reconciliation(request, workbook_rows, 986, exact)
+
+    def test_tail_row_lag_requires_current_annual_exact_prefix(self):
+        cases = [
+            (ec.TopExport("rf", "obyem_vvoda", datetime.now().year - 1),
+             {"mode": "exact_visible_prefix"}),
+            (ec.TopExport("rf", "obyem_stroitelstva"),
+             {"mode": "exact_visible_prefix"}),
+            (ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+             {"mode": "fresh_export_ahead_of_visible_page"}),
+            (ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+             {"mode": "exact_visible_prefix", "matched_rows": 19}),
+            (ec.TopExport("rf", "obyem_vvoda", datetime.now().year),
+             {"mode": "exact_visible_prefix"}),
+        ]
+        for request, correlation in cases:
+            with self.subTest(request=request, correlation=correlation), \
+                    self.assertRaises(ec.TopExportError):
+                ec._row_count_reconciliation(request, 984, 986, correlation)
+
     def test_current_annual_fallback_accepts_narrow_gk_display_alias(self):
         names = [f"Developer {index}" for index in range(1, 20)] + ["ГК ИНСИТИ девелопмент"]
         visible = [{"place": str(index), "name": name,

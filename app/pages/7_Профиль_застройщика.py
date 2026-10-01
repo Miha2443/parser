@@ -721,6 +721,21 @@ def _render_kvart_section(total_shtuk: float, area_th: float,
             "Площадь, тыс. м²": ar if ar else None,
         })
     df_table = pd.DataFrame(rows)
+    chart_rows = df_table.dropna(subset=["Доля, %"]).copy()
+    if not chart_rows.empty:
+        rooms_fig = go.Figure(go.Pie(
+            labels=chart_rows["Тип"], values=chart_rows["Доля, %"], hole=.58,
+            marker=dict(colors=CAT_COLORS[:len(chart_rows)]), sort=False,
+            textinfo="label+percent", textposition="inside",
+            hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+        ))
+        rooms_fig.update_layout(height=360, showlegend=False, margin=dict(l=12, r=12, t=20, b=20))
+        style_plotly(rooms_fig, height=360)
+        st.plotly_chart(rooms_fig, use_container_width=True, key=f"profile_rooms_{region_label}")
+        chart_data_expander(
+            rooms_fig, chart_rows, name=f"profile_rooms_{region_label}",
+            key=f"profile_rooms_data_{region_label}",
+        )
     st.dataframe(
         df_table, hide_index=True, use_container_width=True,
         column_config={
@@ -1040,6 +1055,30 @@ with r3c2:
     render_delay_card("Перенос ввода в регионах РФ за 2026",
                       regiony_2026_value, subs)
 
+delay_chart = pd.DataFrame([
+    ("Текущее строительство", perenos_stroy_msk, regiony_stroy_value),
+    ("Ввод 2022–2025", perenos_msk_2225, regiony_2225_value),
+    ("Ввод 2026", perenos_vvod_msk_2026, regiony_2026_value),
+], columns=["Период", "Москва, м²", "Регионы РФ, м²"])
+delay_long = delay_chart.melt(id_vars="Период", var_name="Территория", value_name="Перенесено, м²")
+delay_long["Перенесено, м²"] = pd.to_numeric(delay_long["Перенесено, м²"], errors="coerce")
+delay_long = delay_long.dropna(subset=["Перенесено, м²"])
+if not delay_long.empty and delay_long["Перенесено, м²"].gt(0).any():
+    delay_fig = go.Figure()
+    for territory, color in [("Москва, м²", COLORS["red"]), ("Регионы РФ, м²", COLORS["blue"])]:
+        part = delay_long[delay_long["Территория"].eq(territory)]
+        delay_fig.add_bar(
+            x=part["Период"], y=part["Перенесено, м²"] / 1000,
+            name=territory.replace(", м²", ""), marker_color=color,
+            text=[ru_num(value / 1000, 1) for value in part["Перенесено, м²"]],
+            textposition="outside", hovertemplate="%{x}: %{y:.1f} тыс. м²<extra></extra>",
+        )
+    delay_fig.update_layout(barmode="group", height=390, yaxis_title="тыс. м²", xaxis_title="",
+                            legend=dict(orientation="h", y=-.18), margin=dict(l=45, r=25, t=25, b=70))
+    style_plotly(delay_fig, height=390)
+    st.plotly_chart(delay_fig, use_container_width=True, key="profile_delays")
+    chart_data_expander(delay_fig, delay_chart, name="profile_delays", key="profile_delays_data")
+
 # === Кредитные лимиты и наполнение Эскроу ===
 st.markdown("### Кредитные лимиты и наполнение Эскроу")
 if escrow.empty:
@@ -1093,6 +1132,21 @@ else:
             ec[3].metric("Выручка от продаж", fmt_mlrd(vyruchka))
             ec[4].metric("Покрытие займов выручкой",
                          f"{pokrytie:.0f}%" if pokrytie else "—")
+            finance_chart = pd.DataFrame({
+                "Показатель": ["Объём займов", "Остаток выплат", "Выручка от продаж"],
+                "млрд ₽": [objem / 1e9, ostatok / 1e9, vyruchka / 1e9],
+            })
+            finance_fig = go.Figure(go.Bar(
+                x=finance_chart["Показатель"], y=finance_chart["млрд ₽"],
+                marker_color=[COLORS["blue"], COLORS["red"], COLORS["green"]],
+                text=[ru_num(value, 1) for value in finance_chart["млрд ₽"]], textposition="outside",
+                hovertemplate="%{x}: %{y:.1f} млрд ₽<extra></extra>",
+            ))
+            finance_fig.update_layout(height=360, yaxis_title="млрд ₽", xaxis_title="",
+                                      margin=dict(l=45, r=25, t=25, b=55), showlegend=False)
+            style_plotly(finance_fig, height=360)
+            st.plotly_chart(finance_fig, use_container_width=True, key="profile_escrow")
+            chart_data_expander(finance_fig, finance_chart, name="profile_escrow", key="profile_escrow_data")
             if date_escrow:
                 st.caption(f"Дата документа: **{date_escrow}**")
 

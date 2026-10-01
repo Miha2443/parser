@@ -175,6 +175,22 @@ class CollectorContract(unittest.TestCase):
                 with self.assertRaises(ec.TopExportError):
                     ec._top_request_evidence(None, request, ec.TOP_TYPES)
 
+    def test_duplicate_synchronised_region_controls_are_accepted(self):
+        request = ec.TopExport("msk", "obyem_stroitelstva")
+        current = selection(request)
+        duplicate = copy.deepcopy(current["selects"][1])
+        duplicate["id"] = "region-copy"
+        current["selects"].append(duplicate)
+        with patch.object(ec, "_read_top_selection", return_value=current):
+            evidence = ec._top_request_evidence(None, request, ec.TOP_TYPES)
+        self.assertEqual(evidence["region_control_ids"], ["region", "region-copy"])
+
+        current["selects"][-1]["value"] = "0"
+        current["selects"][-1]["selected_text"] = "РФ"
+        with patch.object(ec, "_read_top_selection", return_value=current), \
+                self.assertRaises(ec.TopExportError):
+            ec._top_request_evidence(None, request, ec.TOP_TYPES)
+
     def test_all_five_real_workbook_signatures_pass(self):
         for kind in ec.TOP_TYPES:
             with self.subTest(kind=kind):

@@ -876,8 +876,9 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
     region_controls = [item for item in selection.get("selects", [])
                        if {"0", "143443001"}.issubset(
                            {str(option.get("value")) for option in item.get("options", [])})]
-    if (len(region_controls) != 1
-            or str(region_controls[0].get("value")) != wanted_query["regionKey"][0]):
+    wanted_region = wanted_query["regionKey"][0]
+    if (not region_controls
+            or any(str(item.get("value")) != wanted_region for item in region_controls)):
         raise TopExportError("selected region is missing, ambiguous or incorrect")
     selected_year = None
     if request.sorting_key in PER_YEAR_SORTINGS:
@@ -894,6 +895,7 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             "sorting": request.sorting_key, "top_type": top_types[request.sorting_key],
             "selected_sorting": control["selected_text"], "region": request.region_key,
             "selected_region": region_controls[0].get("selected_text", ""),
+            "region_control_ids": [item.get("id", "") for item in region_controls],
             "requested_year": request.year, "selected_year": selected_year,
             "expected_rows": totals[0]}
 

@@ -102,7 +102,7 @@ class CollectorContract(unittest.TestCase):
         self.stack.enter_context(patch.object(ec, "_read_top_selection", side_effect=lambda d: selection(d.request)))
         self.stack.enter_context(patch.object(ec, "_click_download_excel", return_value={"clicked": True}))
         self.stack.enter_context(patch.object(ec, "_scrape_developers_from_table", return_value=[
-            {"name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+            {"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
              "cells": ["1", "Fixture developer", "125"]},
         ]))
 
@@ -247,6 +247,17 @@ class CollectorContract(unittest.TestCase):
             with self.subTest(column=column, value=value), self.assertRaises(ValueError):
                 ec._excel_contract(self.workbook("obyem_stroitelstva", frame=bad), "obyem_stroitelstva")
 
+    def test_rank_sequence_must_be_continuous_unique_and_ordered(self):
+        good = pd.concat([fixture_frame("obyem_stroitelstva")] * 3, ignore_index=True)
+        good["Наименование, регион"] = ["A, регион", "B, регион", "C, регион"]
+        for ranks in ([1, 3, 4], [1, 2, 2], [2, 1, 3]):
+            bad = good.copy()
+            bad["Место"] = ranks
+            with self.subTest(ranks=ranks), self.assertRaises(ValueError):
+                ec._excel_contract(
+                    self.workbook("obyem_stroitelstva", frame=bad), "obyem_stroitelstva"
+                )
+
     def test_success_publishes_semantic_xlsx_and_provenance(self):
         driver = FakeDriver()
         self.browser_stubs(driver)
@@ -289,6 +300,54 @@ class CollectorContract(unittest.TestCase):
                 patch.object(ec, "wait_for_download", side_effect=wait), self.assertRaises(ec.TopExportError):
             self.download(driver)
         self.assertFalse(ec.DOWNLOAD_DIR.exists())
+
+    def test_workbook_larger_than_ui_count_is_accepted_with_provenance(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        frame = pd.concat([fixture_frame("obyem_stroitelstva")] * 2, ignore_index=True)
+        frame["Место"] = [1, 2]
+        frame["Наименование, регион"] = ["Fixture developer, регион", "B, регион"]
+
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            frame.to_excel(path, index=False)
+            return path
+
+        with patch.object(ec, "wait_for_download", side_effect=wait):
+            target = self.download(driver)
+        evidence = json.loads(
+            target.with_suffix(".xlsx.provenance.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(evidence["ui_developer_count"], 1)
+        self.assertEqual(evidence["workbook_developer_count"], 2)
+        self.assertEqual(evidence["row_count_discrepancy"], 1)
+        self.assertTrue(evidence["workbook"]["rank_sequence_complete"])
+
+    def test_workbook_not_matching_visible_ranking_is_rejected(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        frame = fixture_frame("obyem_stroitelstva")
+        frame["Наименование, регион"] = "Another developer, регион"
+
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            frame.to_excel(path, index=False)
+            return path
+
+        with patch.object(ec, "wait_for_download", side_effect=wait), \
+                self.assertRaises(ec.TopExportError):
+            self.download(driver)
+        self.assertFalse(ec.DOWNLOAD_DIR.exists())
+
+    def test_partial_visible_table_cannot_correlate_a_full_page(self):
+        visible = [{"place": "1", "name": "Fixture developer"}]
+        preview = [{"rank": index, "name": f"Developer {index}"}
+                   for index in range(1, 21)]
+        preview[0]["name"] = "Fixture developer, регион"
+        with self.assertRaises(ec.TopExportError):
+            ec._assert_visible_prefix_matches_workbook(
+                visible, {"row_preview": preview}, required_rows=20
+            )
 
     def test_late_file_outside_current_attempt_is_rejected(self):
         self.browser_stubs(FakeDriver())
@@ -385,13 +444,137 @@ class CollectorContract(unittest.TestCase):
         state = {"erzrf_top": {"last_run": "previous"}}
         with patch.object(ec, "wait_for_download", side_effect=wait):
             result = ec.fetch_top(state)
-        self.assertEqual(len(result.files), 1)
+        self.assertEqual(len(result.files), 0)
         self.assertFalse(result.complete)
-        self.assertEqual(len(result.missing_files), 21)
+        self.assertEqual(len(result.missing_files), 22)
         self.assertEqual(len(calls), 2)
         self.assertNotEqual(calls[0], calls[1])
         self.assertEqual(state["erzrf_top"]["last_run"], "previous")
+        self.assertFalse(any(ec.DOWNLOAD_DIR.iterdir()))
         self.assertTrue(driver.closed)
+
+    def test_batch_publish_rolls_back_replaced_and_new_artifacts(self):
+        batch = self.base / "batch"
+        destination = self.base / "published"
+        batch.mkdir()
+        destination.mkdir()
+        excel = batch / "a.xlsx"
+        sidecar = batch / "a.xlsx.provenance.json"
+        payload = batch / "b.json"
+        excel.write_bytes(b"new-excel")
+        sidecar.write_text("{}", encoding="utf-8")
+        payload.write_text("{}", encoding="utf-8")
+        (destination / "a.xlsx").write_bytes(b"old-excel")
+        original_replace = Path.replace
+
+        def fail_on_last(source, target):
+            if source == payload:
+                raise OSError("fixture publish failure")
+            return original_replace(source, target)
+
+        with patch.object(Path, "replace", fail_on_last), self.assertRaises(OSError):
+            ec._publish_top_batch(
+                [excel, payload], destination, self.base / "rollback"
+            )
+        self.assertEqual((destination / "a.xlsx").read_bytes(), b"old-excel")
+        self.assertFalse((destination / sidecar.name).exists())
+        self.assertFalse((destination / payload.name).exists())
+
+    def test_batch_publish_rolls_back_keyboard_interrupt(self):
+        batch = self.base / "batch-interrupt"
+        destination = self.base / "published-interrupt"
+        batch.mkdir()
+        destination.mkdir()
+        excel = batch / "a.xlsx"
+        sidecar = batch / "a.xlsx.provenance.json"
+        payload = batch / "b.json"
+        excel.write_bytes(b"new-excel")
+        sidecar.write_text("{}", encoding="utf-8")
+        payload.write_text("{}", encoding="utf-8")
+        (destination / "a.xlsx").write_bytes(b"old-excel")
+        original_replace = Path.replace
+
+        def interrupt_on_last(source, target):
+            if source == payload:
+                original_replace(source, target)
+                raise KeyboardInterrupt
+            return original_replace(source, target)
+
+        with patch.object(Path, "replace", interrupt_on_last), self.assertRaises(KeyboardInterrupt):
+            ec._publish_top_batch([excel, payload], destination, self.base / "rollback-interrupt")
+        self.assertEqual((destination / "a.xlsx").read_bytes(), b"old-excel")
+        self.assertFalse((destination / sidecar.name).exists())
+        self.assertFalse((destination / payload.name).exists())
+
+    def test_batch_restores_backup_when_interrupted_after_backup_move(self):
+        batch = self.base / "batch-backup-interrupt"
+        destination = self.base / "published-backup-interrupt"
+        batch.mkdir()
+        destination.mkdir()
+        excel = batch / "a.xlsx"
+        sidecar = batch / "a.xlsx.provenance.json"
+        payload = batch / "b.json"
+        excel.write_bytes(b"new-excel")
+        sidecar.write_text("{}", encoding="utf-8")
+        payload.write_text("{}", encoding="utf-8")
+        old_excel = destination / "a.xlsx"
+        old_excel.write_bytes(b"old-excel")
+        original_replace = Path.replace
+
+        def interrupt_after_backup(source, target):
+            result = original_replace(source, target)
+            if source == old_excel:
+                raise KeyboardInterrupt
+            return result
+
+        with patch.object(Path, "replace", interrupt_after_backup), \
+                self.assertRaises(KeyboardInterrupt):
+            ec._publish_top_batch(
+                [excel, payload], destination, self.base / "rollback-backup-interrupt"
+            )
+        self.assertEqual(old_excel.read_bytes(), b"old-excel")
+        self.assertTrue(excel.exists())
+
+    def test_failed_restore_preserves_old_file_in_durable_recovery(self):
+        batch = self.base / "batch-restore-failure"
+        destination = self.base / "published-restore-failure"
+        recovery = self.base / "durable-recovery"
+        batch.mkdir()
+        destination.mkdir()
+        excel = batch / "a.xlsx"
+        sidecar = batch / "a.xlsx.provenance.json"
+        payload = batch / "b.json"
+        excel.write_bytes(b"new-excel")
+        sidecar.write_text("{}", encoding="utf-8")
+        payload.write_text("{}", encoding="utf-8")
+        (destination / "a.xlsx").write_bytes(b"old-excel")
+        original_replace = Path.replace
+
+        def fail_publish_and_restore(source, target):
+            if source == payload:
+                raise OSError("fixture publish failure")
+            if source == recovery / "a.xlsx":
+                raise OSError("fixture restore failure")
+            return original_replace(source, target)
+
+        with patch.object(Path, "replace", fail_publish_and_restore), \
+                self.assertRaisesRegex(ec.TopExportError, "recovery files preserved"):
+            ec._publish_top_batch([excel, payload], destination, recovery)
+        self.assertEqual((recovery / "a.xlsx").read_bytes(), b"old-excel")
+        self.assertFalse((destination / "a.xlsx").exists())
+
+    def test_batch_rejects_unexpected_artifact_before_publication(self):
+        batch = self.base / "batch-stray"
+        destination = self.base / "published-stray"
+        batch.mkdir()
+        excel = batch / "a.xlsx"
+        sidecar = batch / "a.xlsx.provenance.json"
+        payload = batch / "b.json"
+        for path in (excel, sidecar, payload, batch / "stray.tmp"):
+            path.write_bytes(b"fixture")
+        with self.assertRaises(ec.TopExportError):
+            ec._publish_top_batch([excel, payload], destination, self.base / "rollback-stray")
+        self.assertFalse(destination.exists())
 
     def test_complete_fixture_collection_advances_success_state(self):
         driver = FakeDriver()
@@ -413,6 +596,7 @@ class CollectorContract(unittest.TestCase):
             result = ec.fetch_top(state)
         self.assertTrue(result.complete)
         self.assertEqual(len(result.files), 22)
+        self.assertEqual(len(list(ec.DOWNLOAD_DIR.glob("*.xlsx.provenance.json"))), 20)
         self.assertTrue(state["erzrf_top_attempt"]["complete"])
         self.assertEqual(len(state["erzrf_top"]["files"]), 22)
         self.assertEqual(len(set(driver.destinations)), 20)

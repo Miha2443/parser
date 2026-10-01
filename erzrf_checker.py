@@ -37,8 +37,10 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
+import uuid
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -268,6 +270,8 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             raise ValueError("speed export has no three-year ДДУ column")
         metric_col, rank_col = headers.index(metric), headers.index("место")
         count = 0
+        ranks: list[int] = []
+        row_preview: list[dict] = []
         for excel_row, row in enumerate(rows, 2):
             if all(value is None for value in row):
                 continue
@@ -287,15 +291,31 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
                     raise ValueError(f"row {excel_row}: invalid range {headers[column]}")
                 if integer and not number.is_integer():
                     raise ValueError(f"row {excel_row}: invalid rank")
+                if integer:
+                    ranks.append(int(number))
+            if len(row_preview) < 25:
+                row_preview.append({
+                    "rank": ranks[-1],
+                    "name": re.sub(r"\s+", " ", name).strip(),
+                })
             count += 1
         if not count:
             raise ValueError("TOP export contains no developer rows")
+        # A complete ERZ "full list" is intrinsically numbered 1..N.  This is
+        # stronger evidence than the pagination counter on the HTML page: ERZ
+        # can expose a smaller UI count than the authenticated Excel export.
+        # Reject duplicate, missing and out-of-order ranks before publication.
+        if ranks != list(range(1, count + 1)):
+            raise ValueError("TOP ranks must be a unique continuous sequence 1..N")
         schema_family = (
             "commissioned_with_deadlines"
             if sorting_key in {"obyem_vvoda", "nakopl_vvod"}
             else sorting_key
         )
         return {"rows": count, "columns": headers, "metric": metric_names[sorting_key],
+                "rank_first": ranks[0], "rank_last": ranks[-1],
+                "rank_sequence_complete": True,
+                "row_preview": row_preview,
                 "schema_family": schema_family}
     finally:
         workbook.close()
@@ -862,11 +882,42 @@ def _year_control(selection: dict) -> dict:
     return controls[0]
 
 
-def _top_table_digest(driver) -> str:
+def _top_table_snapshot(driver) -> tuple[list[dict], str]:
     rows = _scrape_developers_from_table(driver)
     if not rows or not all(row.get("name") and row.get("card_url") and row.get("cells") for row in rows):
         raise TopExportError("cannot establish nonempty developer table contents")
-    return hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return rows, digest
+
+
+def _top_table_digest(driver) -> str:
+    return _top_table_snapshot(driver)[1]
+
+
+def _assert_visible_prefix_matches_workbook(
+        visible_rows: list[dict], contract: dict, required_rows: int) -> None:
+    """Bind the downloaded workbook to the ranking visible before its click."""
+    preview = contract.get("row_preview") or []
+    if required_rows <= 0 or len(visible_rows) < required_rows:
+        raise TopExportError("visible table has too few rows for request correlation")
+    if len(preview) < required_rows:
+        raise TopExportError("workbook has no sufficient row preview for request correlation")
+    for index, visible in enumerate(visible_rows[:required_rows]):
+        place_match = re.match(r"\s*(\d+)", str(visible.get("place", "")))
+        if not place_match:
+            raise TopExportError("visible table rank cannot be parsed")
+        workbook = preview[index]
+        if int(place_match.group(1)) != workbook.get("rank"):
+            raise TopExportError("workbook ranking differs from the visible table")
+        visible_name = _normalise_label(visible.get("name", ""))
+        workbook_name = _normalise_label(workbook.get("name", ""))
+        if not visible_name or not (
+            workbook_name == visible_name
+            or workbook_name.startswith(visible_name + ",")
+        ):
+            raise TopExportError("workbook developers differ from the visible table")
 
 
 def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
@@ -912,13 +963,14 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
 
 
 def _download_top_export(driver, request: TopExport, date_str: str,
-                         staging: Path, top_types: dict) -> Path:
+                         staging: Path, top_types: dict,
+                         output_dir: Path | None = None) -> Path:
     """A private attempt directory plus session abort prevents late-file reuse."""
     evidence = _top_request_evidence(driver, request, top_types)
     year_evidence = getattr(driver, "_erzrf_year_evidence", None)
     if request.year is not None and (not year_evidence or year_evidence.get("year") != request.year):
         raise TopExportError("explicit year has no observed selection/render acknowledgement")
-    table_digest = _top_table_digest(driver)
+    visible_rows, table_digest = _top_table_snapshot(driver)
     attempt = staging / request.filename(date_str).removesuffix(".xlsx")
     attempt.mkdir()  # Never reuse a previous attempt directory.
     driver.execute_cdp_cmd("Browser.setDownloadBehavior", {
@@ -941,21 +993,100 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     # Run the semantic contract before publication; keep failures private until
     # the session closes and the staging directory is cleaned up.
     contract = _excel_contract(source, request.sorting_key)
-    if contract["rows"] != evidence["expected_rows"]:
-        raise TopExportError(f"incomplete full-list export: {contract['rows']} / {evidence['expected_rows']} rows")
-    evidence.update({"schema_version": 1, "received_at": datetime.now().isoformat(timespec="seconds"),
+    ui_rows = evidence.pop("expected_rows")
+    _assert_visible_prefix_matches_workbook(
+        visible_rows, contract, required_rows=min(20, ui_rows)
+    )
+    if contract["rows"] < ui_rows:
+        raise TopExportError(
+            f"full-list export has fewer rows than the page: {contract['rows']} / {ui_rows}"
+        )
+    evidence.update({
+        "ui_developer_count": ui_rows,
+        "workbook_developer_count": contract["rows"],
+        "row_count_discrepancy": contract["rows"] - ui_rows,
+        "completeness_evidence": "continuous unique workbook ranks 1..N; workbook rows >= UI count",
+    })
+    evidence.update({"schema_version": 2, "received_at": datetime.now().isoformat(timespec="seconds"),
                      "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                      "workbook": contract,
                      "visible_table_sha256": table_digest,
                      "year_selection_evidence": year_evidence,
                      "period_verified": False,
                      "period_evidence": "selected_year is a UI selection, not an independently verified response period"})
-    target = DOWNLOAD_DIR / request.filename(date_str)
+    target = (DOWNLOAD_DIR if output_dir is None else output_dir) / request.filename(date_str)
     target.parent.mkdir(parents=True, exist_ok=True)
     source.replace(target)
     _write_json_atomic(target.with_suffix(".xlsx.provenance.json"), evidence)
-    print(f"       ✅ {target.name} ({contract['rows']} rows)")
+    print(f"       ✓ проверен и подготовлен {target.name} ({contract['rows']} rows)")
     return target
+
+
+def _publish_top_batch(staged_files: list[Path], destination: Path, rollback_dir: Path) -> list[Path]:
+    """Publish one complete TOP snapshot and restore prior files on an error.
+
+    ``staged_files`` contains the 20 Excel files and two developer JSON files.
+    Excel provenance sidecars live beside them and are committed in the same
+    transaction.  Nothing becomes discoverable by ETL until collection of the
+    entire required set has succeeded.
+    """
+    staged_names = {path.name for path in staged_files}
+    if len(staged_names) != len(staged_files) or any(not path.is_file() for path in staged_files):
+        raise TopExportError("staged TOP batch is missing or contains duplicate primary files")
+    batch_dir = staged_files[0].parent if staged_files else None
+    if batch_dir is None or any(path.parent != batch_dir for path in staged_files):
+        raise TopExportError("staged TOP batch spans multiple directories")
+    artifacts = sorted(path for path in batch_dir.iterdir() if path.is_file())
+    sidecars = {path.name for path in artifacts if path.name.endswith(".xlsx.provenance.json")}
+    expected_sidecars = {f"{name}.provenance.json" for name in staged_names if name.endswith(".xlsx")}
+    if sidecars != expected_sidecars:
+        raise TopExportError("staged TOP batch has incomplete provenance sidecars")
+    allowed_artifacts = staged_names | expected_sidecars
+    if {path.name for path in artifacts} != allowed_artifacts:
+        raise TopExportError("staged TOP batch contains unexpected artifacts")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    rollback_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        for source in artifacts:
+            target = destination / source.name
+            if target.exists():
+                backup = rollback_dir / source.name
+                target.replace(backup)
+            source.replace(target)
+    except BaseException:
+        rollback_errors = []
+        # Reconstruct what happened from the filesystem instead of relying on
+        # Python-side lists: an interrupt may arrive after os.replace succeeds
+        # but before the next bytecode can update a journal.
+        for source in reversed(artifacts):
+            target = destination / source.name
+            backup = rollback_dir / source.name
+            try:
+                if backup.exists():
+                    target.unlink(missing_ok=True)
+                    backup.replace(target)
+                elif not source.exists() and target.exists():
+                    # No prior target existed and this staged artifact moved.
+                    target.unlink()
+            except OSError as exc:
+                rollback_errors.append(f"rollback {target.name}: {exc}")
+        if rollback_errors:
+            raise TopExportError(
+                "TOP batch publish failed and rollback was incomplete; "
+                f"recovery files preserved at {rollback_dir}: "
+                + "; ".join(rollback_errors)
+            )
+        try:
+            rollback_dir.rmdir()
+        except OSError:
+            pass
+        raise
+    try:
+        shutil.rmtree(rollback_dir)
+    except OSError as exc:
+        print(f"  WARNING: old TOP backups remain at {rollback_dir}: {exc}")
+    return [destination / path.name for path in staged_files]
 
 
 def _switch_year_filter(driver, year: int) -> bool:
@@ -1017,6 +1148,8 @@ def fetch_top(state: dict) -> TopFetchResult:
     # as the final destination. Close Chrome before removing any attempt files.
     with tempfile.TemporaryDirectory(prefix=".erzrf-top-", dir=DOWNLOAD_DIR.parent) as tmp:
         staging = Path(tmp)
+        batch = staging / "validated-batch"
+        batch.mkdir()
         try:
             driver = create_chrome(download_dir=staging, headless=HEADLESS)
             driver.set_page_load_timeout(PAGE_TIMEOUT)
@@ -1035,17 +1168,32 @@ def fetch_top(state: dict) -> TopFetchResult:
                     raise TopExportError("TOP content did not load")
                 if request.year is not None and not _switch_year_filter(driver, request.year):
                     raise TopExportError(f"year {request.year} could not be selected")
-                result.files.append(_download_top_export(driver, request, date_str, staging, top_types))
+                _download_top_export(
+                    driver, request, date_str, staging, top_types, output_dir=batch
+                )
             for region in REGIONS:
                 developers = _collect_top_n_developers(driver, region, n=TOP_N_DEVELOPERS)
                 urls = {dev.get("card_url") for dev in developers if dev.get("card_url")}
                 if len(developers) != TOP_N_DEVELOPERS or len(urls) != TOP_N_DEVELOPERS:
                     raise TopExportError(f"incomplete TOP-{TOP_N_DEVELOPERS} developers for {region['key']}")
-                target = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
+                target = batch / f"top_developers_{region['key']}_{date_str}.json"
                 _write_json_atomic(target, {"region": region["key"],
                                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
                                            "developers": developers})
-                result.files.append(target)
+            # End the browser session before making the validated snapshot
+            # visible. A late Chrome write can then only affect staging.
+            try:
+                driver.quit()
+            except WebDriverException as exc:
+                raise TopExportError(f"browser cleanup failed before publication: {exc}") from exc
+            driver = None
+            staged_files = [batch / name for name in sorted(required)]
+            recovery_dir = (
+                DOWNLOAD_DIR.parent / f".erzrf-top-recovery-{uuid.uuid4().hex}"
+            )
+            result.files = _publish_top_batch(staged_files, DOWNLOAD_DIR, recovery_dir)
+            print(f"  ✅ Опубликован полный пакет TOP: {len(result.files)} основных файлов "
+                  f"и {len(plan)} provenance-файлов")
         except Exception as exc:  # An uncertain download must end this session.
             result.error = f"{type(exc).__name__}: {exc}"
             print(f"  ERROR TOP: {result.error}")

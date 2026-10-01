@@ -56,6 +56,44 @@ def _excel_sheet_names(path: Path) -> list[str]:
     with pd.ExcelFile(path) as workbook:
         return list(workbook.sheet_names)
 
+
+def _load_static_vvod_rs(path: Path) -> dict[str, pd.DataFrame]:
+    """Read approved 2011–2025 Moscow annual input/permit controls."""
+    empty = {
+        "input": pd.DataFrame(columns=["year", "kind", "value_million_m2"]),
+        "permits": pd.DataFrame(columns=["year", "kind", "value_thousand_m2"]),
+    }
+    if not path.is_file():
+        return empty
+    try:
+        frame = pd.read_excel(path, sheet_name=0, header=None)
+    except (OSError, ValueError):
+        return empty
+    rows: list[dict] = []
+    for year_col, permit_col, input_col, kind in (
+        (0, 1, 2, "housing"),
+        (4, 5, 6, "nonresidential"),
+    ):
+        for row_index in range(1, len(frame)):
+            year = pd.to_numeric(frame.iat[row_index, year_col], errors="coerce")
+            permits = pd.to_numeric(frame.iat[row_index, permit_col], errors="coerce")
+            input_value = pd.to_numeric(frame.iat[row_index, input_col], errors="coerce")
+            if pd.isna(year) or not 2011 <= int(year) <= 2025:
+                continue
+            rows.append({
+                "year": int(year),
+                "kind": kind,
+                "value_thousand_m2": float(permits) if pd.notna(permits) else float("nan"),
+                "value_million_m2": float(input_value) / 1000 if pd.notna(input_value) else float("nan"),
+            })
+    if not rows:
+        return empty
+    data = pd.DataFrame(rows)
+    return {
+        "input": data[["year", "kind", "value_million_m2"]].dropna(subset=["value_million_m2"]),
+        "permits": data[["year", "kind", "value_thousand_m2"]].dropna(subset=["value_thousand_m2"]),
+    }
+
 MONTH_NAMES_RU = [
     "январь", "февраль", "март", "апрель", "май", "июнь",
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
@@ -735,6 +773,10 @@ class DataAccess:
                 self._raw_files(self.CONSTRUCTION_OPERATIONAL_PATHS,
                                 ["construction_operational_*.json"])
                 + self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
+                + self._raw_files(
+                    [self._vvod_dir()] if self._vvod_dir() is not None else [],
+                    ["static_vvod_rs_*.xlsx"],
+                )
             )
         if mart == "vvod_static":
             # These loaders intentionally choose the first existing VVOD root.
@@ -1580,6 +1622,15 @@ class DataAccess:
             out["permit_annual"] = pd.DataFrame(annual_rows).drop_duplicates(
                 ["year", "kind"], keep="last"
             )
+        static_base = self._vvod_dir()
+        static_controls = _load_static_vvod_rs(
+            static_base / "static_vvod_rs_2011_2025.xlsx"
+            if static_base is not None else Path()
+        )["permits"]
+        if not static_controls.empty:
+            out["permit_annual"] = pd.concat(
+                [out["permit_annual"], static_controls], ignore_index=True
+            ).drop_duplicates(["year", "kind"], keep="last")
         return out
 
 
@@ -1799,6 +1850,36 @@ class DataAccess:
                         "пром": [_to_float(df.iat[i, 3]) for i in rows3],
                         "гостиницы": [_to_float(df.iat[i, 4]) for i in rows3],
                     })
+
+        # Exact annual Moscow controls supplied by the dashboard owner replace
+        # the rounded housing and standalone non-residential series.
+        static_controls = _load_static_vvod_rs(base / "static_vvod_rs_2011_2025.xlsx")["input"]
+        if not static_controls.empty:
+            housing = static_controls[static_controls["kind"].eq("housing")][
+                ["year", "value_million_m2"]
+            ].rename(columns={"value_million_m2": "жильё"})
+            nonres = static_controls[static_controls["kind"].eq("nonresidential")][
+                ["year", "value_million_m2"]
+            ].rename(columns={"value_million_m2": "нежильё"})
+            if out["msk_total"].empty:
+                out["msk_total"] = housing.copy()
+            else:
+                out["msk_total"] = (
+                    out["msk_total"].drop(columns=["жильё"], errors="ignore")
+                    .merge(housing, on="year", how="outer")
+                )
+            if out["msk_nonres"].empty:
+                out["msk_nonres"] = nonres.assign(нежилые_в_жилье=0.0)
+            else:
+                out["msk_nonres"] = (
+                    out["msk_nonres"].drop(columns=["нежильё", "общая"], errors="ignore")
+                    .merge(nonres, on="year", how="outer")
+                )
+            inside = pd.to_numeric(
+                out["msk_nonres"].get("нежилые_в_жилье", 0), errors="coerce"
+            ).fillna(0)
+            standalone = pd.to_numeric(out["msk_nonres"]["нежильё"], errors="coerce")
+            out["msk_nonres"]["общая"] = standalone + inside
 
         if stroi_path.exists():
             df = pd.read_excel(stroi_path, sheet_name=0, header=None)

@@ -72,6 +72,7 @@ def nonres_ytd_table(
     month: int,
     *,
     exclude_mkd: bool,
+    period_from_year: int | None = None,
 ) -> pd.DataFrame:
     prepared = _prepared_monitoring(rv)
     rows = []
@@ -86,6 +87,8 @@ def nonres_ytd_table(
             value = _sum(selected, "category_нежилое_отдельное")
             if not exclude_mkd:
                 value += _sum(selected, "category_нежилое_в_жилом")
+        if period_from_year is not None and year < period_from_year:
+            value = math.nan
         rows.append({
             "Год": year,
             "За год, млн м²": float(annual_values.get(year, math.nan)),

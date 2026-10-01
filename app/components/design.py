@@ -8,35 +8,6 @@ import plotly.io as pio
 import streamlit as st
 
 
-DARK_COLORS = {
-    "bg": "#0C141D",
-    "bg_2": "#101923",
-    "panel": "#1A2634",
-    "panel_2": "#212F40",
-    "stroke": "#50657A",
-    "text": "#E8EEF4",
-    "muted": "#8BA0B5",
-    "red": "#E84C4C",
-    "red_soft": "rgba(232,76,76,.9)",
-    "gray_bar": "#94A9BC",
-    "navy_bar": "#3B566F",
-    "blue": "#3B566F",
-    "blue_2": "#4B6D8A",
-    "navy": "#17222E",
-    "teal": "#6FB3D2",
-    "cyan": "#53A6C9",
-    "green": "#2FBF71",
-    "green_2": "#A4C866",
-    "amber": "#D39B46",
-    "ink": "#E8EEF4",
-    "line": "#50657A",
-    "surface": "#1A2634",
-    "surface_2": "#212F40",
-    "sidebar": "#1A2634",
-    "neutral": "#C6D4E0",
-    "red_tint": "rgba(232,76,76,.16)",
-}
-
 LIGHT_COLORS = {
     "bg": "#F4F7FA",
     "bg_2": "#FFFFFF",
@@ -66,8 +37,6 @@ LIGHT_COLORS = {
     "red_tint": "rgba(198,40,40,.12)",
 }
 
-# The dictionary is mutated in place so modules that imported COLORS keep a
-# live reference when the user changes the theme.
 COLORS = LIGHT_COLORS.copy()
 
 SERIES = [
@@ -82,41 +51,26 @@ SERIES = [
 ]
 
 FONT_STACK = "Montserrat, Segoe UI, Roboto, Arial, sans-serif"
-THEME_DEFAULT_VERSION = "20261001-light"
-
 if not hasattr(st, "_ma_native_dataframe"):
     st._ma_native_dataframe = st.dataframe
 _NATIVE_DATAFRAME = st._ma_native_dataframe
 
 
-def _active_theme() -> str:
-    return str(st.session_state.get("dashboard_theme", "light"))
-
-
-def _activate_palette(theme: str) -> None:
-    palette = LIGHT_COLORS if theme == "light" else DARK_COLORS
+def _activate_palette() -> None:
     COLORS.clear()
-    COLORS.update(palette)
+    COLORS.update(LIGHT_COLORS)
     SERIES[:] = [
         COLORS["red"], COLORS["blue"], COLORS["teal"], COLORS["green"],
         COLORS["amber"], COLORS["gray_bar"], COLORS["blue_2"], COLORS["green_2"],
     ]
 
 
-def theme_selector() -> None:
-    """Render the global light/dark selector in the shared sidebar."""
-    if st.session_state.get("dashboard_theme_default_version") != THEME_DEFAULT_VERSION:
-        st.session_state["dashboard_theme"] = "light"
-        st.session_state["dashboard_theme_choice"] = "Светлая"
-        st.session_state["dashboard_theme_default_version"] = THEME_DEFAULT_VERSION
-    choice = st.radio(
-        "Тема сайта",
-        ["Тёмная", "Светлая"],
-        index=None,
-        horizontal=True,
-        key="dashboard_theme_choice",
+def moscow_first(values) -> list:
+    """Return region choices with Moscow first and stable source order after it."""
+    return sorted(
+        list(values),
+        key=lambda value: 0 if "моск" in str(value).casefold() or str(value) == "msk" else 1,
     )
-    st.session_state["dashboard_theme"] = "light" if choice == "Светлая" else "dark"
 
 
 def _display_value(value) -> str:
@@ -183,16 +137,13 @@ def _light_dataframe(data, *, hide_index: bool | None = None, height=None, **_kw
 
 
 def dataframe(data=None, *args, **kwargs):
-    """Theme-aware replacement for st.dataframe used by dashboard pages."""
-    if _active_theme() == "light":
-        return _light_dataframe(data, **kwargs)
-    return _NATIVE_DATAFRAME(data, *args, **kwargs)
+    """Light-theme replacement for st.dataframe used by dashboard pages."""
+    return _light_dataframe(data, **kwargs)
 
 
 def _register_plotly_template() -> None:
-    light = _active_theme() == "light"
-    grid = "rgba(100,116,139,.26)" if light else "rgba(43,61,80,.72)"
-    zero = "rgba(100,116,139,.48)" if light else "rgba(43,61,80,.9)"
+    grid = "rgba(100,116,139,.26)"
+    zero = "rgba(100,116,139,.48)"
     pio.templates["moscow_business"] = {
         "layout": {
             "font": {"family": FONT_STACK, "color": COLORS["text"]},
@@ -236,15 +187,14 @@ def _register_plotly_template() -> None:
 
 def apply_theme() -> None:
     """Apply global CSS and Plotly defaults for all dashboard pages."""
-    _activate_palette(_active_theme())
+    _activate_palette()
     _register_plotly_template()
-    st.dataframe = dataframe if _active_theme() == "light" else _NATIVE_DATAFRAME
-    light = _active_theme() == "light"
-    page_header_bg = "#FFFFFF" if light else "linear-gradient(120deg, #16222f 0%, #1c2c3d 56%, #233b52 100%)"
-    brand_header_bg = "#FFFFFF" if light else "linear-gradient(120deg, rgba(35,54,72,.96), rgba(24,38,52,.96))"
-    header_text = COLORS["text"] if light else "#FFFFFF"
-    header_muted = COLORS["muted"] if light else "#AFC0CF"
-    brand_divider = COLORS["stroke"] if light else "rgba(255,255,255,.28)"
+    st.dataframe = dataframe
+    page_header_bg = "#FFFFFF"
+    brand_header_bg = "#FFFFFF"
+    header_text = COLORS["text"]
+    header_muted = COLORS["muted"]
+    brand_divider = COLORS["stroke"]
     st.markdown(
         f"""
         <style>
@@ -1084,10 +1034,9 @@ def page_header(title: str, subtitle: str | None = None, eyebrow: str = "Ана�
 
 def style_plotly(fig, *, height: int | None = None):
     """Apply final chart polish to a Plotly figure."""
-    light = _active_theme() == "light"
     has_title = bool(fig.layout.title and fig.layout.title.text)
-    grid = "rgba(100,116,139,.26)" if light else "rgba(43,61,80,.72)"
-    zero = "rgba(100,116,139,.48)" if light else "rgba(43,61,80,.9)"
+    grid = "rgba(100,116,139,.26)"
+    zero = "rgba(100,116,139,.48)"
     existing_margin = fig.layout.margin.to_plotly_json() if fig.layout.margin else {}
     margin = {"l": 54, "r": 28, "t": 56, "b": 70}
     margin.update({k: v for k, v in existing_margin.items() if v is not None})

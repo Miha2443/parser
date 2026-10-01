@@ -40,6 +40,11 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from pipeline.dev_name_utils import normalize_developer_name
 from pipeline.file_utils import validate_excel_file, write_bytes_atomic
+from pipeline.monitoring_changes import (
+    append_change_event,
+    compare_monitoring_snapshots,
+    snapshot_monitoring,
+)
 from pipeline.state_utils import load_json_state, write_json_atomic
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -77,6 +82,7 @@ HEADLESS = os.environ.get("HEADLESS", "1") != "0"  # default headless
 
 REPORT_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
 MONITORING_FILE_RE = re.compile(r"^monitoring_2_0_(\d{8})\.xlsx$")
+MONITORING_CHANGES_LOG = Path("data/processed/monitoring_2_0_changes.jsonl")
 
 # Русские месяцы → номер (для строк типа «3 июня 2026 года»)
 RUS_MONTHS = {
@@ -335,6 +341,9 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
     target = DOWNLOAD_DIR / f"monitoring_2_0_{date_str}.xlsx"
     content_sha256 = _sha256_bytes(r.content)
     state_entry = state.get("monitoring_2_0") or {}
+    existing_monitoring = sorted(DOWNLOAD_DIR.glob("monitoring_2_0_*.xlsx"))
+    previous_file = max(existing_monitoring, key=lambda path: path.stat().st_mtime) \
+        if existing_monitoring else None
     unchanged = (
         not _nashdom_force_enabled()
         and isinstance(state_entry, dict)
@@ -345,6 +354,14 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
             size_bytes=len(r.content),
         )
     )
+    previous_snapshot = None
+    previous_sha256 = ""
+    if not unchanged and previous_file is not None:
+        try:
+            previous_snapshot = snapshot_monitoring(previous_file)
+            previous_sha256 = _sha256_bytes(previous_file.read_bytes())
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ⚠️  Не удалось прочитать предыдущий Мониторинг 2.0 для журнала: {exc}")
     try:
         # State metadata alone must not bless a corrupt/externally replaced file.
         unchanged = unchanged and _sha256_bytes(target.read_bytes()) == content_sha256
@@ -369,6 +386,25 @@ def fetch_monitoring_2_0(state: dict) -> tuple[list[Path], bool]:
 
     size_kb = len(r.content) / 1024
     print(f"  ✅ {target.name} ({size_kb:,.0f} KB)")
+
+    if previous_snapshot is not None and previous_file is not None:
+        try:
+            event = compare_monitoring_snapshots(
+                previous_snapshot,
+                snapshot_monitoring(target),
+                previous_file=previous_file.name,
+                current_file=target.name,
+                previous_sha256=previous_sha256,
+                current_sha256=content_sha256,
+            )
+            saved = append_change_event(MONITORING_CHANGES_LOG, event)
+            print(
+                "  📝 Изменения строк Мониторинга 2.0: "
+                f"добавлено {event['added_count']}, удалено {event['removed_count']}"
+                + (" (записано в журнал)" if saved else "")
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ⚠️  Не удалось сформировать журнал строк Мониторинга 2.0: {exc}")
 
     _record_monitoring_state(
         state,

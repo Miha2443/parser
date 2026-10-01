@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.design import COLORS, apply_theme, moscow_first, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
@@ -214,10 +214,11 @@ def main() -> None:
     with c1:
         period = st.radio("Период", options=["Год", "Квартал", "Месяц"], index=2)
     with c2:
+        region_options = moscow_first(df["region"].unique())
         regions = st.multiselect(
             "Регионы",
-            options=sorted(df["region"].unique()),
-            default=sorted(df["region"].unique()),
+            options=region_options,
+            default=region_options[:1],
         )
 
     if not regions:

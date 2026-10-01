@@ -10,6 +10,7 @@ from app.audit import (
     last_run_summary,
     last_success_per_indicator,
     load_realty_update_status,
+    load_monitoring_changes,
     load_runs,
     realty_marts_status,
     realty_update_status_summary,
@@ -134,6 +135,44 @@ def main() -> None:
             st.caption("Repair: " + ", ".join(map(str, marts_repair_selected)))
         if failures:
             st.error("Ошибки источников: " + ", ".join(map(str, failures)))
+
+    st.divider()
+
+    # ─── Изменения строк Мониторинга 2.0 ─────────────────────────
+    st.subheader("Изменения Мониторинга 2.0")
+    monitoring_changes = load_monitoring_changes()
+    if monitoring_changes.empty:
+        st.caption("Добавления и удаления строк пока не зафиксированы. История начнёт заполняться со следующей новой выгрузки.")
+    else:
+        monitoring_changes = monitoring_changes.sort_values("detected_at", ascending=False)
+        latest_event = monitoring_changes.iloc[0]["event_id"]
+        latest = monitoring_changes[monitoring_changes["event_id"].eq(latest_event)]
+        latest_date = pd.to_datetime(latest["detected_at"], errors="coerce").max()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Дата сравнения", latest_date.strftime("%d.%m.%Y %H:%M") if not pd.isna(latest_date) else "—")
+        c2.metric("Добавлено строк", int(latest["action"].eq("Добавлено").sum()))
+        c3.metric("Удалено строк", int(latest["action"].eq("Удалено").sum()))
+        monitoring_period = st.selectbox(
+            "Период истории Мониторинга 2.0",
+            options=[7, 30, 90],
+            index=1,
+            format_func=lambda days: f"{days} дней",
+            key="monitoring_changes_period",
+        )
+        since_monitoring = datetime.now() - timedelta(days=monitoring_period)
+        shown_changes = monitoring_changes[
+            monitoring_changes["detected_at"].ge(since_monitoring)
+        ].copy()
+        shown_changes["Дата"] = shown_changes["detected_at"].dt.strftime("%d.%m.%Y %H:%M")
+        shown_changes = shown_changes.rename(columns={
+            "action": "Изменение", "sheet": "Лист", "uin": "УИН",
+            "document": "РВ/РС", "object": "Объект", "address": "Адрес",
+        })
+        st.dataframe(
+            shown_changes[["Дата", "Изменение", "Лист", "УИН", "РВ/РС", "Объект", "Адрес"]],
+            width="stretch",
+            hide_index=True,
+        )
 
     st.divider()
 

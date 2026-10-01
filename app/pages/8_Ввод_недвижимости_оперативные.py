@@ -21,7 +21,7 @@ MONTH_LABELS = {
 }
 
 
-def fmt(value: float, digits: int = 1) -> str:
+def fmt(value: float, digits: int = 2) -> str:
     if value is None or pd.isna(value):
         return "—"
     return f"{value:.{digits}f}".replace(".", ",")
@@ -36,13 +36,13 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
         marker_color=COLORS["red"], width=.72,
         text=[fmt(v, 2) if pd.notna(v) else "" for v in data["За выбранный период, млн м²"]],
         textposition="inside", textfont=dict(color="white"),
-        hovertemplate="<b>%{x}</b><br>За период: %{y:.3f} млн м²<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>За период: %{y:.2f} млн м²<extra></extra>",
     ))
     remainder = (data["За год, млн м²"] - data["За выбранный период, млн м²"]).clip(lower=0).fillna(0)
     fig.add_trace(go.Bar(
         x=data["Год"], y=remainder, name="Остаток до итога года",
         marker_color="#C9D4DA", width=.72,
-        hovertemplate="<b>%{x}</b><br>Остаток до годового итога: %{y:.3f} млн м²<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>Остаток до годового итога: %{y:.2f} млн м²<extra></extra>",
     ))
     totals = data["За год, млн м²"].where(
         data["За год, млн м²"].notna(), data["За выбранный период, млн м²"]
@@ -72,9 +72,9 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
 
 def render_table(table: pd.DataFrame, name: str, key: str) -> None:
     shown = table.copy()
-    shown["За год, млн м²"] = shown["За год, млн м²"].map(lambda v: round(v, 3) if pd.notna(v) else None)
+    shown["За год, млн м²"] = shown["За год, млн м²"].map(lambda v: round(v, 2) if pd.notna(v) else None)
     shown["За выбранный период, млн м²"] = shown["За выбранный период, млн м²"].map(
-        lambda v: round(v, 3) if pd.notna(v) else None
+        lambda v: round(v, 2) if pd.notna(v) else None
     )
     shown["Изменение к аналогичному периоду, %"] = shown["Изменение к аналогичному периоду, %"].map(
         lambda v: round(v, 1) if pd.notna(v) else None
@@ -82,7 +82,10 @@ def render_table(table: pd.DataFrame, name: str, key: str) -> None:
     shown["Изменение полного года, %"] = shown["Изменение полного года, %"].map(
         lambda v: round(v, 1) if pd.notna(v) else None
     )
-    st.dataframe(shown, hide_index=True, use_container_width=True, height=300)
+    displayed = shown.copy()
+    for column in ("За год, млн м²", "За выбранный период, млн м²"):
+        displayed[column] = displayed[column].map(lambda value: fmt(value, 2))
+    st.dataframe(displayed, hide_index=True, use_container_width=True, height=300)
     table_download_buttons(shown, name=name, key_prefix=key)
 
 
@@ -120,7 +123,7 @@ period_label = MONTH_LABELS[month]
 
 st.subheader("1. Ввод жилья")
 housing = housing_ytd_table(vvod["msk_total"], rv, history["housing_monthly"], month)
-housing = housing[housing["Год"] >= 2022].reset_index(drop=True)
+housing = housing[housing["Год"] >= 2011].reset_index(drop=True)
 housing_fig = period_chart(housing, "Ввод жилой площади", period_label, "housing_operational")
 st.plotly_chart(housing_fig, use_container_width=True, key="housing_operational")
 with st.expander("Скачать график", expanded=False):
@@ -131,18 +134,18 @@ render_table(housing, f"vvod_zhilya_{period_label}", "housing_table")
 st.subheader("2. Ввод нежилой недвижимости")
 nonres_mode = st.radio(
     "Состав показателя",
-    ["Всего нежилья", "Без нежилых помещений на первых этажах МКД"],
+    ["Всё нежильё", "Без нежилых помещений в жилых объектах"],
     horizontal=True,
 )
 exclude_mkd = nonres_mode.startswith("Без")
 st.caption(
-    "Помесячный фактический ввод нежилья доступен в реестре РВ с 2017 года. "
-    "Для более ранних лет показан годовой итог; накопленные значения не подменяются данными о выдаче разрешений."
+    "Нежильё в жилье — нежилые помещения на первых этажах жилых объектов. "
+    "За 2011–2021 годы показан только годовой итог; накопленные месячные значения начинаются с 2022 года."
 )
 nonres = nonres_ytd_table(
-    vvod["msk_nonres"], rv, month, exclude_mkd=exclude_mkd
+    vvod["msk_nonres"], rv, month, exclude_mkd=exclude_mkd, period_from_year=2022
 )
-nonres = nonres[nonres["Год"] >= 2022].reset_index(drop=True)
+nonres = nonres[nonres["Год"] >= 2011].reset_index(drop=True)
 nonres_fig = period_chart(nonres, f"Ввод нежилой недвижимости · {nonres_mode.lower()}", period_label, "nonres_operational")
 st.plotly_chart(nonres_fig, use_container_width=True, key="nonres_operational")
 with st.expander("Скачать график", expanded=False):
@@ -205,5 +208,5 @@ with st.expander("Исходные файлы и даты скачивания",
     st.write("Мониторинг 2.0:", history.get("source_file") or "источник указан в витрине")
     if history.get("source_date"):
         st.write("Дата файла:", history["source_date"])
-    st.write("Исторические годовые значения: книга ввода недвижимости.")
+    st.write("Исторические годовые значения: static_vvod_rs_2011_2025.xlsx.")
     st.write("Исторические помесячные значения: лист «Данные с 2011 года» файла «Мониторинг 2.0».")

@@ -48,7 +48,10 @@ if data["developers"].empty:
 page_header("Квартирография — по девелоперу")
 
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
-available = [r for r in data["regions_available"] if r in region_map]
+available = sorted(
+    [r for r in data["regions_available"] if r in region_map],
+    key=lambda value: 0 if value == "msk" else 1,
+)
 if not available:
     st.error("В данных нет регионов rf/msk")
     st.stop()

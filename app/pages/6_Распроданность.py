@@ -69,7 +69,10 @@ page_header("Распроданность и стройготовность жи
 
 # === Шапка: фильтры ===
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
-available_regions = [r for r in data["regions_available"] if r in region_map]
+available_regions = sorted(
+    [r for r in data["regions_available"] if r in region_map],
+    key=lambda value: 0 if value == "msk" else 1,
+)
 
 cols_top = st.columns([2, 5, 2])
 with cols_top[0]:

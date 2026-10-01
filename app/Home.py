@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from app.components.design import apply_theme, theme_selector
+from app.components.design import apply_theme
 
 
 st.set_page_config(
@@ -51,7 +51,5 @@ with st.sidebar:
     with st.expander("Сервис", expanded=False):
         st.page_link("pages/8_Отправка_в_TDM.py", label="Отправка в TDM", icon="📤")
         st.page_link("pages/99_Обновления.py", label="Журнал обновлений", icon="🕘")
-    theme_selector()
-
 apply_theme()
 navigation.run()

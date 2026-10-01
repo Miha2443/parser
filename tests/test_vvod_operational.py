@@ -50,6 +50,14 @@ class OperationalVvodChecks(unittest.TestCase):
         self.assertAlmostEqual(total.loc[2026, "За выбранный период, млн м²"], .00006)
         self.assertAlmostEqual(excluded.loc[2026, "За выбранный период, млн м²"], .00004)
 
+    def test_nonres_can_keep_annual_history_before_monthly_cutoff(self):
+        annual = pd.DataFrame({"year": [2011, 2022], "нежильё": [3.553, 2.742], "общая": [3.653, 4.042]})
+        result = nonres_ytd_table(
+            annual, _rv(), 8, exclude_mkd=False, period_from_year=2022
+        ).set_index("Год")
+        self.assertAlmostEqual(result.loc[2011, "За год, млн м²"], 3.653)
+        self.assertTrue(pd.isna(result.loc[2011, "За выбранный период, млн м²"]))
+
 
     def test_quarter_tree_balances_total_and_branches(self):
         tree = quarter_tree(_rv(), 2026, 1)

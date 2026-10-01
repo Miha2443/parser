@@ -92,7 +92,7 @@ def _two_region_chart(
         return
 
     regions = st.multiselect(
-        "Регионы", options=[MSK, RF], default=[MSK, RF],
+        "Регионы", options=[MSK, RF], default=[MSK],
         key=f"{key}_regions", label_visibility="collapsed",
     )
     keep = ([msk_label] if MSK in regions else []) + ([rf_label] if RF in regions else [])

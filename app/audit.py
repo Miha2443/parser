@@ -20,6 +20,7 @@ logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.E
 
 REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
 REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
+MONITORING_CHANGES_LOG = PROJECT_ROOT / "data" / "processed" / "monitoring_2_0_changes.jsonl"
 REALTY_UPDATE_STATUSES = {"running", "success", "failed", "interrupted"}
 REALTY_RUNNING_STALE_MIN = 360
 REALTY_SOURCE_LABELS = [
@@ -98,6 +99,39 @@ def load_realty_update_status() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def load_monitoring_changes() -> pd.DataFrame:
+    """Load row additions/removals captured between Monitoring 2.0 exports."""
+    columns = [
+        "event_id", "detected_at", "action", "sheet", "uin", "document",
+        "object", "address", "previous_file", "current_file",
+    ]
+    if not MONITORING_CHANGES_LOG.is_file():
+        return pd.DataFrame(columns=columns)
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = MONITORING_CHANGES_LOG.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return pd.DataFrame(columns=columns)
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        common = {
+            "event_id": event.get("event_id", ""),
+            "detected_at": pd.to_datetime(event.get("detected_at"), errors="coerce"),
+            "previous_file": event.get("previous_file", ""),
+            "current_file": event.get("current_file", ""),
+        }
+        for field, action in (("added", "Добавлено"), ("removed", "Удалено")):
+            for item in event.get(field) or []:
+                if isinstance(item, dict):
+                    rows.append({**common, "action": action, **item})
+    return pd.DataFrame(rows, columns=columns)
 
 
 def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:

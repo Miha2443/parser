@@ -174,24 +174,6 @@ compare_df = pd.DataFrame({
     "4+ комн, %": top10["доля_4+комн_%_num"],
 })
 
-compare_chart = compare_df.sort_values("Площадь, тыс. м²").copy()
-compare_chart["Цвет"] = compare_chart["Девелопер"].eq(sel_dev).map({True: "Выбранный", False: "Топ-10"})
-compare_fig = px.bar(
-    compare_chart, x="Площадь, тыс. м²", y="Девелопер", orientation="h", color="Цвет",
-    color_discrete_map={"Выбранный": COLORS["red"], "Топ-10": COLORS["blue"]},
-    text="Площадь, тыс. м²",
-)
-compare_fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside",
-                          hovertemplate="%{y}: %{x:,.0f} тыс. м²<extra></extra>")
-compare_fig.update_layout(height=460, xaxis_title="тыс. м²", yaxis_title="",
-                          legend=dict(orientation="h", y=-.14), margin=dict(l=20, r=65, t=20, b=65))
-style_plotly(compare_fig, height=460)
-st.plotly_chart(compare_fig, use_container_width=True, key="developer_top10_compare")
-chart_data_expander(
-    compare_fig, compare_df[["Девелопер", "Место", "Площадь, тыс. м²"]],
-    name=f"developer_top10_{sel_reg}", key="developer_top10_compare_data",
-)
-
 # Подсветка выбранной строки
 def highlight_selected(row):
     return ["background-color: #EAF2F8" if row["Девелопер"] == sel_dev else "" for _ in row]

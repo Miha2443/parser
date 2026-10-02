@@ -86,24 +86,6 @@ with b1_left:
             "Площадь, тыс. м²": df["площадь_тыс_м²_num"].apply(lambda v: ru_num(v)),
         })
         st.dataframe(df_show, hide_index=True, use_container_width=True)
-        room_df = df[~df["тип"].astype(str).str.casefold().eq("все квартиры")].copy()
-        room_df = room_df[pd.to_numeric(room_df["количество_шт_num"], errors="coerce").fillna(0).gt(0)]
-        if not room_df.empty:
-            room_fig = px.pie(
-                room_df, names="тип", values="количество_шт_num", hole=.58,
-                color_discrete_sequence=[COLOR_1K, COLOR_2K, COLOR_3K, COLOR_4K],
-            )
-            room_fig.update_traces(textposition="inside", textinfo="label+percent",
-                                   hovertemplate="%{label}: %{value:,.0f} квартир<extra></extra>")
-            room_fig.update_layout(height=350, showlegend=False, margin=dict(l=10, r=10, t=20, b=20))
-            style_plotly(room_fig, height=350)
-            st.plotly_chart(room_fig, use_container_width=True, key=f"room_types_{sel}")
-            chart_data_expander(
-                room_fig, room_df[["тип", "количество_шт_num", "площадь_тыс_м²_num"]].rename(columns={
-                    "тип": "Тип квартир", "количество_шт_num": "Количество квартир, шт.",
-                    "площадь_тыс_м²_num": "Площадь, тыс. м²",
-                }), name=f"kvart_room_types_{sel}", key=f"kvart_room_types_{sel}",
-            )
 
 with b1_right:
     st.subheader("Распределение квартир по площади, м²")
@@ -142,23 +124,6 @@ def render_top_table(df: pd.DataFrame, name_label: str, top_n: int = 50):
         st.info("Нет данных")
         return
     df_sorted = df.sort_values("площадь_тыс_м²_num", ascending=False).head(top_n)
-    chart_df = df_sorted.head(10).sort_values("площадь_тыс_м²_num")
-    top_fig = px.bar(
-        chart_df, x="площадь_тыс_м²_num", y="наименование", orientation="h",
-        text="площадь_тыс_м²_num", color_discrete_sequence=[COLORS["blue"]],
-    )
-    top_fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside",
-                          hovertemplate="%{y}: %{x:,.0f} тыс. м²<extra></extra>")
-    top_fig.update_layout(height=390, xaxis_title="тыс. м²", yaxis_title="", showlegend=False,
-                          margin=dict(l=10, r=55, t=10, b=45))
-    style_plotly(top_fig, height=390)
-    st.plotly_chart(top_fig, use_container_width=True, key=f"top_{name_label}_{sel}")
-    chart_data_expander(
-        top_fig,
-        chart_df[["наименование", "площадь_тыс_м²_num"]].rename(columns={
-            "наименование": name_label, "площадь_тыс_м²_num": "Площадь, тыс. м²",
-        }), name=f"top_{name_label.lower()}_{sel}", key=f"top_{name_label}_{sel}_data",
-    )
     # st.dataframe с column_config для прогресс-баров
     df_show = pd.DataFrame({
         name_label: df_sorted["наименование"],

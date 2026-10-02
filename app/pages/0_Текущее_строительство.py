@@ -72,28 +72,6 @@ with area_cols[0]:
 with area_cols[1]:
     metric_card("млн м² общей площади", f"{fmt(in_millions(total_value))} млн")
 
-if total_value is not None and pd.notna(total_value) and float(total_value) > 0:
-    living_part = max(float(living_value or 0), 0)
-    other_part = max(float(total_value) - living_part, 0)
-    area_chart = pd.DataFrame({
-        "Состав": ["Жилая площадь", "Остальная площадь"],
-        "млн м²": [living_part / 1000, other_part / 1000],
-    })
-    area_fig = go.Figure()
-    for _, item in area_chart.iterrows():
-        area_fig.add_bar(
-            y=["Общая площадь"], x=[item["млн м²"]], orientation="h",
-            name=item["Состав"], text=[fmt(item["млн м²"])], textposition="inside",
-            marker_color=COLORS["red"] if item["Состав"] == "Жилая площадь" else COLORS["neutral"],
-            hovertemplate=f"{item['Состав']}: %{{x:.2f}} млн м²<extra></extra>",
-        )
-    area_fig.update_layout(barmode="stack", height=210, xaxis_title="млн м²", yaxis_title="",
-                           legend=dict(orientation="h", y=-.35), margin=dict(l=20, r=20, t=15, b=65))
-    style_plotly(area_fig, height=210)
-    st.plotly_chart(area_fig, use_container_width=True, key=f"construction_area_{region}")
-    chart_data_expander(area_fig, area_chart, name=f"construction_area_{region}",
-                        key=f"construction_area_data_{region}")
-
 periods = rasprod.get("periods_by_region", {}).get(region, [])
 rasprod_period = f"{MONTHS[periods[-1][1]]} {periods[-1][0]}" if periods else ""
 st.subheader(f"2. Распроданность и стройготовность{f' · {rasprod_period}' if rasprod_period else ''}")
@@ -109,44 +87,6 @@ for column, (needle, label) in zip(kpi_cols, [
     value = row.get("значение_num") if row is not None else None
     with column:
         metric_card(label, f"{fmt(value, 0)}%" if value is not None else "—")
-
-kpi = rasprod.get("kpi", pd.DataFrame())
-metric_names = {
-    "распроданность": "Распроданность",
-    "стройготовность": "Стройготовность",
-    "отношение распроданности к стройготовности": "Отношение Р/С",
-}
-if not kpi.empty:
-    dynamics = kpi[kpi["region_key"].eq(region)].copy()
-    dynamics["metric_key"] = dynamics["название"].astype(str).str.strip().str.casefold()
-    dynamics = dynamics[dynamics["metric_key"].isin(metric_names)].copy()
-    dynamics["Показатель"] = dynamics["metric_key"].map(metric_names)
-    dynamics["Период"] = pd.to_datetime(
-        dict(year=pd.to_numeric(dynamics["year"], errors="coerce"),
-             month=pd.to_numeric(dynamics["month"], errors="coerce"), day=1),
-        errors="coerce",
-    )
-    dynamics["Значение, %"] = pd.to_numeric(dynamics["значение_num"], errors="coerce")
-    dynamics = dynamics.dropna(subset=["Период", "Значение, %"]).sort_values("Период")
-    if not dynamics.empty:
-        dynamics_fig = go.Figure()
-        for label, color in zip(metric_names.values(), [COLORS["red"], COLORS["green"], COLORS["blue"]]):
-            series = dynamics[dynamics["Показатель"].eq(label)]
-            if not series.empty:
-                dynamics_fig.add_scatter(
-                    x=series["Период"], y=series["Значение, %"], name=label,
-                    mode="lines+markers", line=dict(width=3, color=color),
-                    hovertemplate=f"{label}: %{{y:.0f}}%<br>%{{x|%m.%Y}}<extra></extra>",
-                )
-        dynamics_fig.update_layout(height=380, yaxis_title="%", xaxis_title="",
-                                   legend=dict(orientation="h", y=-.2), margin=dict(l=45, r=25, t=25, b=70))
-        style_plotly(dynamics_fig, height=380)
-        st.plotly_chart(dynamics_fig, use_container_width=True, key=f"readiness_dynamics_{region}")
-        chart_data_expander(
-            dynamics_fig,
-            dynamics[["Период", "Показатель", "Значение, %"]],
-            name=f"readiness_dynamics_{region}", key=f"readiness_dynamics_data_{region}",
-        )
 
 st.subheader("3. Реализация квартир")
 sales = operational.get("sales", pd.DataFrame())

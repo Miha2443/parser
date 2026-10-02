@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.design import COLORS, apply_theme, page_header, style_plotly
-from app.components.export import chart_data_expander, chart_download_button, table_download_buttons
+from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import load_monitoring_2_0, load_monitoring_operational_history, load_vvod_static
 from app.vvod_operational import housing_ytd_table, nonres_ytd_table, quarter_tree
 
@@ -163,57 +163,6 @@ with qcol2:
 with qcol3:
     tree_mode = st.radio("Расчёт периода", ["За квартал", "С начала года"], horizontal=True, key="tree_mode")
 tree = quarter_tree(rv, tree_year, quarter, cumulative=tree_mode == "С начала года")
-
-# The reference layout is a tree, not a loose collection of KPI values.  The
-# treemap uses only non-overlapping components, so its areas add up correctly.
-housing_remainder = max(
-    float(tree["housing_objects"] or 0)
-    - float(tree["residential_area"] or 0)
-    - float(tree["nonres_in_housing"] or 0),
-    0,
-)
-nonres_known = sum(float(tree[key] or 0) for key in ("offices", "hotels", "industrial", "social", "other"))
-nonres_remainder = max(float(tree["nonres_objects"] or 0) - nonres_known, 0)
-tree_nodes = [
-    ("total", "Всего", "", float(tree["total"] or 0)),
-    ("housing", "Жилые объекты", "total", float(tree["housing_objects"] or 0)),
-    ("standalone_nonres", "Отдельно стоящее нежильё", "total", float(tree["nonres_objects"] or 0)),
-    ("residential", "Жилая площадь", "housing", float(tree["residential_area"] or 0)),
-    ("nonres_in_housing", "Нежильё в жилых объектах", "housing", float(tree["nonres_in_housing"] or 0)),
-    ("housing_other", "МОП и прочая площадь", "housing", housing_remainder),
-    ("mkd", "Квартиры в МКД", "residential", float(tree["mkd_residential"] or 0)),
-    ("izhs", "ИЖС", "residential", float(tree["izhs"] or 0)),
-    ("offices", "Офисы", "standalone_nonres", float(tree["offices"] or 0)),
-    ("hotels", "Гостиницы и апарт-отели", "standalone_nonres", float(tree["hotels"] or 0)),
-    ("industrial", "Промышленные объекты", "standalone_nonres", float(tree["industrial"] or 0)),
-    ("social", "Социальные объекты", "standalone_nonres", float(tree["social"] or 0)),
-    ("other", "Прочее", "standalone_nonres", float(tree["other"] or 0)),
-    ("nonres_unclassified", "Без детализации", "standalone_nonres", nonres_remainder),
-]
-tree_nodes = [node for node in tree_nodes if node[3] > 0 or node[0] == "total"]
-tree_fig = go.Figure(go.Treemap(
-    ids=[node[0] for node in tree_nodes],
-    labels=[node[1] for node in tree_nodes],
-    parents=[node[2] for node in tree_nodes],
-    values=[node[3] for node in tree_nodes],
-    branchvalues="total",
-    texttemplate="<b>%{label}</b><br>%{value:.2f} млн м²",
-    hovertemplate="%{label}: %{value:.2f} млн м²<extra></extra>",
-    marker=dict(colors=[
-        COLORS["navy"], COLORS["red"], COLORS["blue"], COLORS["green"],
-        COLORS["cyan"], COLORS["neutral"], COLORS["green"], COLORS["cyan"],
-        COLORS["blue"], COLORS["green"], COLORS["red"], COLORS["cyan"],
-        COLORS["neutral"], "#D9E1E5",
-    ][:len(tree_nodes)]),
-))
-tree_fig.update_layout(margin=dict(l=8, r=8, t=28, b=8), height=500)
-style_plotly(tree_fig, height=500)
-st.plotly_chart(tree_fig, use_container_width=True, key="quarter_structure_tree")
-tree_chart_data = pd.DataFrame(tree_nodes, columns=["Код", "Показатель", "Родитель", "млн м²"])
-chart_data_expander(
-    tree_fig, tree_chart_data.drop(columns="Код"),
-    name=f"struktura_vvoda_{tree_year}_q{quarter}", key="quarter_structure_tree_data",
-)
 
 st.metric("Всего введено недвижимости", f"{fmt(tree['total'])} млн м²")
 left, right = st.columns(2)

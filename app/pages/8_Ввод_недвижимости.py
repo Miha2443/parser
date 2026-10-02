@@ -461,6 +461,10 @@ emiss_region = "Москва" if is_msk else "РФ"
 b2_1 = _emiss_annual_for_region(emiss_periods, emiss_region)
 if b2_1.empty:
     b2_1 = vvod["msk_residential"].copy() if is_msk else emiss.copy()
+# ИЖС до 2015 года в этом ряду не показываем: сопоставимый подтверждённый
+# ряд начинается с 2015 года.
+if not b2_1.empty and {"year", "ИЖС"}.issubset(b2_1.columns):
+    b2_1.loc[pd.to_numeric(b2_1["year"], errors="coerce").lt(2015), "ИЖС"] = 0.0
 if is_msk:
     mkd26 = monitoring_by_year(
         rv,

@@ -155,9 +155,12 @@ else:
     table["С начала года, тыс. м²"] = table["Год"].map(ytd)
     table = table[table["Год"].ge(2011)].reset_index(drop=True)
     table["Изменение, %"] = table["С начала года, тыс. м²"].pct_change() * 100
-    remainder = (table["За год, тыс. м²"] - table["С начала года, тыс. м²"]).clip(lower=0)
+    period_values = table["С начала года, тыс. м²"].fillna(0)
+    # Historical annual totals do not always have a matching monthly series.
+    # Draw them as full grey columns instead of showing labels over empty space.
+    remainder = (table["За год, тыс. м²"] - period_values).clip(lower=0).fillna(0)
     fig = go.Figure()
-    fig.add_bar(x=table["Год"].astype(str), y=table["С начала года, тыс. м²"],
+    fig.add_bar(x=table["Год"].astype(str), y=period_values,
                 name=MONTH_YTD[month].capitalize(), marker_color=COLORS["red"],
                 text=[fmt(value, 0) for value in table["С начала года, тыс. м²"]], textposition="inside")
     fig.add_bar(x=table["Год"].astype(str), y=remainder, name="Остаток до итога года", marker_color="#C9D4DA")

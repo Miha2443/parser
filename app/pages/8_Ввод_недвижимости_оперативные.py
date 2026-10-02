@@ -31,14 +31,18 @@ def period_chart(table: pd.DataFrame, title: str, period_label: str, key: str) -
     data = table[table[["За год, млн м²", "За выбранный период, млн м²"]].notna().any(axis=1)].copy()
     data["Год"] = data["Год"].astype(int).astype(str)
     fig = go.Figure()
+    period_values = data["За выбранный период, млн м²"].fillna(0)
     fig.add_trace(go.Bar(
-        x=data["Год"], y=data["За выбранный период, млн м²"], name=period_label.capitalize(),
+        x=data["Год"], y=period_values, name=period_label.capitalize(),
         marker_color=COLORS["red"], width=.72,
         text=[fmt(v, 2) if pd.notna(v) else "" for v in data["За выбранный период, млн м²"]],
         textposition="inside", textfont=dict(color="white"),
         hovertemplate="<b>%{x}</b><br>За период: %{y:.2f} млн м²<extra></extra>",
     ))
-    remainder = (data["За год, млн м²"] - data["За выбранный период, млн м²"]).clip(lower=0).fillna(0)
+    # For years without monthly history the whole annual value is the grey
+    # column. Previously NaN subtraction turned it into zero, leaving only a
+    # floating total label with no bar.
+    remainder = (data["За год, млн м²"] - period_values).clip(lower=0).fillna(0)
     fig.add_trace(go.Bar(
         x=data["Год"], y=remainder, name="Остаток до итога года",
         marker_color="#C9D4DA", width=.72,

@@ -65,6 +65,14 @@ def main() -> int:
              "construction permit annual controls are empty")
     permits = construction["permits"]
     annual = construction["permit_annual"]
+    for kind in ("housing", "nonresidential"):
+        history = permits[permits["kind"].eq(kind) & permits["year"].between(2011, 2025)]
+        coverage = history.groupby("year")["month"].nunique()
+        missing_years = [year for year in range(2011, 2026) if coverage.get(year, 0) != 12]
+        _require(
+            not missing_years,
+            f"{kind} permit monthly history is incomplete: {missing_years}",
+        )
     housing_2011 = annual[annual["year"].eq(2011) & annual["kind"].eq("housing")]
     _require(len(housing_2011) == 1 and abs(housing_2011.iloc[0]["value_thousand_m2"] - 2972) < 0.1,
              "2011 housing permit annual control is wrong")
@@ -73,6 +81,19 @@ def main() -> int:
     ]["value_thousand_m2"].sum()
     _require(abs(ytd_2011 - 1086.24) < 0.2,
              "2011 housing permit Jan-Aug history is wrong")
+
+    commissioning = _load(da.load_monitoring_operational_history)
+    housing_monthly = commissioning.get("housing_monthly", [])
+    _require(len(housing_monthly) > 0, "housing commissioning monthly history is empty")
+    housing_coverage = housing_monthly.groupby("year")["month"].nunique()
+    missing_housing_years = [
+        year for year in range(2011, 2026) if housing_coverage.get(year, 0) != 12
+    ]
+    _require(
+        not missing_housing_years,
+        "housing commissioning monthly history is incomplete: "
+        + ", ".join(map(str, missing_housing_years)),
+    )
 
     erz_top = _load(da.load_erzrf_top)
     _require(bool(erz_top.get("obyem_stroitelstva")), "erzrf top construction data is empty")

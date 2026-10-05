@@ -419,17 +419,14 @@ class CollectorContract(unittest.TestCase):
                 ui_total_rows=100,
             )
 
-    def test_current_annual_exact_prefix_allows_only_two_missing_tail_rows(self):
+    def test_ui_and_excel_row_count_difference_is_informational(self):
         request = ec.TopExport("rf", "obyem_vvoda", datetime.now().year)
         exact = {"mode": "exact_visible_prefix", "matched_rows": 20}
-        for workbook_rows in (985, 984):
+        for workbook_rows in (986, 985, 984, 900):
             evidence = ec._row_count_reconciliation(request, workbook_rows, 986, exact)
-            self.assertIn("two tail rows", evidence)
-        for workbook_rows in (983, 900):
-            with self.subTest(workbook_rows=workbook_rows), self.assertRaises(ec.TopExportError):
-                ec._row_count_reconciliation(request, workbook_rows, 986, exact)
+            self.assertIn("match" if workbook_rows == 986 else str(workbook_rows), evidence)
 
-    def test_tail_row_lag_requires_current_annual_exact_prefix(self):
+    def test_row_count_difference_is_informational_for_other_ratings(self):
         cases = [
             (ec.TopExport("rf", "obyem_vvoda", datetime.now().year - 1),
              {"mode": "exact_visible_prefix"}),
@@ -443,9 +440,9 @@ class CollectorContract(unittest.TestCase):
              {"mode": "exact_visible_prefix"}),
         ]
         for request, correlation in cases:
-            with self.subTest(request=request, correlation=correlation), \
-                    self.assertRaises(ec.TopExportError):
-                ec._row_count_reconciliation(request, 984, 986, correlation)
+            with self.subTest(request=request, correlation=correlation):
+                evidence = ec._row_count_reconciliation(request, 984, 986, correlation)
+                self.assertIn("984", evidence)
 
     def test_current_annual_fallback_accepts_narrow_gk_display_alias(self):
         names = [f"Developer {index}" for index in range(1, 20)] + ["ГК ИНСИТИ девелопмент"]

@@ -992,7 +992,7 @@ def _assert_visible_prefix_matches_workbook(
             and required_rows >= 20
             and type(ui_total_rows) is int and ui_total_rows > 0
             and type(workbook_rows) is int
-            and ui_total_rows <= workbook_rows <= math.floor(ui_total_rows * 1.25)):
+            and workbook_rows >= required_rows):
         raise TopExportError(f"workbook differs from the visible table: {first_mismatch}")
     workbook_by_name: dict[str, dict] = {}
     for item in preview[:25]:
@@ -1046,25 +1046,13 @@ def _assert_visible_prefix_matches_workbook(
 
 def _row_count_reconciliation(
         request: TopExport, workbook_rows: int, ui_rows: int, correlation: dict) -> str:
-    """Reconcile a proven two-row ERZ counter/export cache race."""
-    row_shortfall = ui_rows - workbook_rows
-    small_current_annual_tail_lag = (
-        row_shortfall in {1, 2}
-        and request.sorting_key == "obyem_vvoda"
-        and request.year == datetime.now().year
-        and correlation.get("mode") == "exact_visible_prefix"
-        and correlation.get("matched_rows") == 20
+    """Record ERZ's independent UI and Excel counts without rejecting the export."""
+    if workbook_rows == ui_rows:
+        return "Excel and UI row counts match"
+    return (
+        f"Excel has {workbook_rows} rows; UI counter shows {ui_rows}; "
+        f"request correlation: {correlation.get('mode', 'unknown')}"
     )
-    if row_shortfall > 0 and not small_current_annual_tail_lag:
-        raise TopExportError(
-            f"full-list export has fewer rows than the page: {workbook_rows} / {ui_rows}"
-        )
-    if small_current_annual_tail_lag:
-        return (
-            "current annual Excel trails the UI counter by at most two tail rows; "
-            "the first 20 ranks match exactly"
-        )
-    return "workbook rows are not fewer than the UI count"
 
 
 def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:

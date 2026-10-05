@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 
 from pipeline.parsers import nashdom_rasprodannost as parser  # noqa: E402
 from pipeline.parsers.common import DATA_COLUMNS  # noqa: E402
-from nashdom_checker import _rasprod_region_url  # noqa: E402
+from nashdom_checker import _rasprod_region_url, _suspect_rasprod_history_keys  # noqa: E402
 
 
 def _require(condition: bool, message: str) -> None:
@@ -23,6 +23,26 @@ def _require(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    flat_history = [
+        {
+            "region_key": "msk", "year": 2026, "month_num": month,
+            "kpi": [
+                {"название": name, "значение": str(value)}
+                for name, value in (
+                    ("Объем жилищного строительства", 16327),
+                    ("Распроданность", 47), ("Стройготовность", 50),
+                    ("Отношение", 94),
+                )
+            ],
+        }
+        for month in (1, 2, 3, 4)
+    ]
+    flat_history.append({**flat_history[-1], "month_num": 5,
+                         "kpi": [{**row, "значение": "95"} for row in flat_history[-1]["kpi"]]})
+    _require(_suspect_rasprod_history_keys(flat_history) == {
+        ("msk", 2026, month) for month in (1, 2, 3, 4)
+    }, "repeated historical KPI values must be redownloaded")
+
     base_url = "https://example.test/report?repYear=2026&repMonth=8&foCd=all&regionCd=all"
     msk_url = _rasprod_region_url(base_url, "Город Москва")
     msk_query = parse_qs(urlsplit(msk_url).query)

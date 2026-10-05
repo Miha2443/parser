@@ -2907,11 +2907,20 @@ def _click_month_by_index(driver, idx: int) -> bool:
     ))
 
 
+def _rasprod_content_signature(driver) -> tuple[str, ...]:
+    """Values rendered for the selected period, independent of the date picker."""
+    return tuple(_get_rasprod_kpi_value(driver, title) for title in (
+        "Объем жилищного строительства", "Распроданность",
+        "Отношение", "Стройготовность",
+    ))
+
+
 def _switch_period(driver, year: int, month_idx: int) -> bool:
     """Открывает календарь, навигирует к (year, month_idx), кликает месяц,
     ждёт смены периода. Возвращает True если переключение прошло.
     """
     baseline = _get_rasprod_current_period(driver)
+    baseline_content = _rasprod_content_signature(driver)
     expected_period = f"{['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'][month_idx]} {year}"
 
     if baseline == expected_period:
@@ -2940,11 +2949,17 @@ def _switch_period(driver, year: int, month_idx: int) -> bool:
         WebDriverWait(driver, 20).until(
             lambda d: _get_rasprod_current_period(d) == expected_period
         )
-        selenium_sleep(2)  # данные дорендериться
+        # The picker changes before the report data. Verify that the KPIs
+        # actually belong to a newly rendered period before saving them.
+        WebDriverWait(driver, 45).until(
+            lambda d: (values := _rasprod_content_signature(d))
+            and all(values) and values != baseline_content
+        )
+        selenium_sleep(1)
         return True
     except TimeoutException:
         actual = _get_rasprod_current_period(driver)
-        print(f"       ⚠️  период не сменился: ждали «{expected_period}», текущий «{actual}»")
+        print(f"       ⚠️  данные периода не обновились: ждали «{expected_period}», текущий «{actual}»")
         return False
 
 
@@ -3005,6 +3020,43 @@ def _rasprod_entry_key(entry: dict) -> tuple[str, int, int] | None:
     return region_key, year, month
 
 
+def _rasprod_kpi_signature(entry: dict) -> tuple[str, ...] | None:
+    values = {
+        str(row.get("название", "")).strip(): str(row.get("значение", "")).strip()
+        for row in entry.get("kpi", []) if isinstance(row, dict)
+    }
+    signature = tuple(sorted(f"{name}={value}" for name, value in values.items() if value))
+    return signature if len(signature) >= 4 else None
+
+
+def _suspect_rasprod_history_keys(entries: list[dict]) -> set[tuple[str, int, int]]:
+    """Reject long flat runs caused by saving a stale report under new dates."""
+    by_region: dict[str, list[tuple[int, tuple[str, int, int], tuple[str, ...] | None]]] = {}
+    for entry in entries:
+        key = _rasprod_entry_key(entry)
+        if key is not None:
+            by_region.setdefault(key[0], []).append(
+                (key[1] * 12 + key[2], key, _rasprod_kpi_signature(entry))
+            )
+    suspect: set[tuple[str, int, int]] = set()
+    for rows in by_region.values():
+        rows.sort()
+        run: list[tuple[str, int, int]] = []
+        previous_month = -1
+        previous_signature = None
+        for month, key, signature in rows:
+            if signature and month == previous_month + 1 and signature == previous_signature:
+                run.append(key)
+            else:
+                if len(run) >= 3:
+                    suspect.update(run)
+                run = [key]
+            previous_month, previous_signature = month, signature
+        if len(run) >= 3:
+            suspect.update(run)
+    return suspect
+
+
 def _load_rasprod_history() -> tuple[list[dict], Path | None]:
     """Возвращает свежую сохраненную JSON-историю rasprodannost."""
     candidates = sorted(
@@ -3048,33 +3100,73 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     full_history = os.environ.get("RASPROD_FULL_HISTORY", "0").lower() in {
         "1", "true", "yes", "on",
     }
+    checkpoint_json = DOWNLOAD_DIR / (
+        "._rasprodannost_full_progress.json" if full_history
+        else "._rasprodannost_progress.json"
+    )
     history_data: list[dict] = []
     history_keys: set[tuple[str, int, int]] = set()
     if full_history:
         print("     · режим: полный обход истории")
+        if checkpoint_json.exists():
+            try:
+                progress = json.loads(checkpoint_json.read_text(encoding="utf-8"))
+                if isinstance(progress, list):
+                    history_data = [row for row in progress if isinstance(row, dict)]
+                    print(f"     · восстановлен полный обход: {len(history_data)} записей")
+            except (OSError, json.JSONDecodeError):
+                pass
     else:
         history_data, history_path = _load_rasprod_history()
-        history_keys = {
-            key for row in history_data
-            if (key := _rasprod_entry_key(row)) is not None
-        }
+        if checkpoint_json.exists():
+            try:
+                progress = json.loads(checkpoint_json.read_text(encoding="utf-8"))
+                if isinstance(progress, list):
+                    merged = {
+                        key: row for row in history_data
+                        if (key := _rasprod_entry_key(row)) is not None
+                    }
+                    merged.update({
+                        key: row for row in progress if isinstance(row, dict)
+                        if (key := _rasprod_entry_key(row)) is not None
+                    })
+                    history_data = list(merged.values())
+                    print(f"     · восстановлен прогресс: {len(progress)} записей")
+            except (OSError, json.JSONDecodeError):
+                pass
         if history_data:
             print(
-                f"     · режим: incremental, база {history_path.name} "
+                f"     · режим: incremental, база {history_path.name if history_path else 'checkpoint'} "
                 f"({len(history_data)} записей)"
             )
         else:
             print("     · режим: incremental, истории нет → полный первый обход")
+    suspect_keys = _suspect_rasprod_history_keys(history_data)
+    if suspect_keys:
+        history_data = [
+            row for row in history_data
+            if _rasprod_entry_key(row) not in suspect_keys
+        ]
+        print(f"     ⚠️  удалены повторённые значения за {len(suspect_keys)} месяцев; периоды будут скачаны заново")
+    history_keys = {
+        key for row in history_data
+        if (key := _rasprod_entry_key(row)) is not None
+    }
 
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
     all_data: list[dict] = list(history_data)
     refreshed_regions: set[str] = set()
+    expected_keys: set[tuple[str, int, int]] = set()
     new_files: list[Path] = []
+    complete = False
 
-    def flush():
+    def flush(*, final: bool = False):
         if not all_data:
             return
-        _write_json_atomic(target_json, all_data)
+        if not final:
+            _write_json_atomic(checkpoint_json, all_data)
+            print(f"     💾 прогресс распроданности ({len(all_data)} записей)")
+            return
         try:
             import pandas as pd
         except ImportError:
@@ -3087,7 +3179,8 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             "Населённые пункты по численности": "by_population",
             "Класс недвижимости": "by_class",
         }
-        with pd.ExcelWriter(target_xlsx, engine="openpyxl") as writer:
+        temp_xlsx = DOWNLOAD_DIR / f"._rasprodannost_{date_str}.partial.xlsx"
+        with pd.ExcelWriter(temp_xlsx, engine="openpyxl") as writer:
             # KPI лист: каждая строка = (region × период × KPI) + колонки по годам прогноза
             kpi_rows = []
             for d in all_data:
@@ -3127,6 +3220,8 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             for section, rows in tables_combined.items():
                 sname = sheet_name_map.get(section, section[:30])
                 pd.DataFrame(rows).to_excel(writer, sheet_name=sname, index=False)
+        os.replace(temp_xlsx, target_xlsx)
+        _write_json_atomic(target_json, all_data)
         if target_xlsx not in new_files:
             new_files.append(target_xlsx)
         if target_json not in new_files:
@@ -3171,6 +3266,9 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                 # Перечислим все доступные периоды (year, month_idx)
                 periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
                 print(f"       · доступных периодов: {len(periods)}")
+                expected_keys.update(
+                    (region["key"], year, m_idx + 1) for year, m_idx in periods
+                )
                 # Самый свежий период — для него отдельно листаем таблицу
                 # «Девелоперы» виртуальным скроллом, чтобы собрать всех (а не
                 # только видимый топ).
@@ -3178,23 +3276,14 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
 
                 periods_to_scrape = periods
                 if history_keys:
-                    refresh_keys: set[tuple[str, int, int]] = set()
                     periods_to_scrape = []
                     for year, m_idx in periods:
                         key = (region["key"], year, m_idx + 1)
                         if key not in history_keys or (latest_period and (year, m_idx) == latest_period):
                             periods_to_scrape.append((year, m_idx))
-                            refresh_keys.add(key)
                     skipped = len(periods) - len(periods_to_scrape)
                     if skipped:
                         print(f"       · incremental: пропускаю уже сохранённых периодов: {skipped}")
-                    if refresh_keys:
-                        all_data = [
-                            row for row in all_data
-                            if _rasprod_entry_key(row) not in refresh_keys
-                        ]
-                        history_keys.difference_update(refresh_keys)
-
                 for period_i, (year, m_idx) in enumerate(periods_to_scrape, 1):
                     month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
                                   "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][m_idx]
@@ -3223,36 +3312,48 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                         f"          KPI={len(data.get('kpi') or [])}, "
                         f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
                     )
-                    if data.get("kpi"):
-                        refreshed_regions.add(region["key"])
+                    if not data.get("kpi"):
+                        print("          ⚠️  KPI отсутствуют, период пропущен")
+                        continue
+                    refreshed_regions.add(region["key"])
+                    key = (region["key"], year, m_idx + 1)
+                    all_data = [row for row in all_data if _rasprod_entry_key(row) != key]
                     all_data.append(data)
-                    # flush раз в 5 периодов: каждый flush пересобирает
-                    # весь xlsx с нуля из all_data (77+ периодов × 6 sections
-                    # × 2500 строк) — это пик памяти, на МСК-40 кончалась
-                    # RAM (MemoryError). После каждого flush явно зовём
-                    # gc.collect() чтобы pandas/openpyxl-промежуточные
-                    # объекты освободились немедленно.
+                    # Сохраняем JSON-прогресс для продолжения после таймаута.
+                    # XLSX публикуется только после проверки всей истории.
                     if len(all_data) % 5 == 0:
                         flush()
-                        import gc
-                        gc.collect()
             except Exception as exc:  # noqa: BLE001
                 print(f"     ❌ ошибка {region['key']}: {type(exc).__name__}: {exc}")
                 flush()
-            # Финальный flush в конце региона — гарантированно сохраняем
-            # все периоды, даже если их < 5 после последнего инкремента.
+            # В конце региона сохраняем последние периоды в checkpoint.
             flush()
-            import gc
-            gc.collect()
 
-        latest_entry = _latest_rasprod_entry(all_data)
-        state["rasprodannost"] = {
-            "report_period": latest_entry.get("report_period", ""),
-            "filename": target_xlsx.name,
-            "regions": sorted(refreshed_regions),
-            "complete": refreshed_regions == {r["key"] for r in RASPROD_REGIONS},
-            "has_content": bool(all_data),
+        found_keys = {
+            key for row in all_data
+            if (key := _rasprod_entry_key(row)) is not None
         }
+        missing_keys = expected_keys - found_keys
+        suspect_keys = _suspect_rasprod_history_keys(all_data)
+        complete = (
+            bool(expected_keys) and not missing_keys and not suspect_keys
+            and refreshed_regions == {r["key"] for r in RASPROD_REGIONS}
+        )
+        if missing_keys:
+            print(f"  ❌ rasprodannost: отсутствуют {len(missing_keys)} периодов истории")
+        if suspect_keys:
+            print(f"  ❌ rasprodannost: повторяются KPI за {len(suspect_keys)} месяцев")
+        if complete:
+            flush(final=True)
+            checkpoint_json.unlink(missing_ok=True)
+            latest_entry = _latest_rasprod_entry(all_data)
+            state["rasprodannost"] = {
+                "report_period": latest_entry.get("report_period", ""),
+                "filename": target_xlsx.name,
+                "regions": sorted(refreshed_regions),
+                "complete": True,
+                "has_content": True,
+            }
     except KeyboardInterrupt:
         print("\n  ⚠️  прерывание — сохраняю собранное")
         flush()
@@ -3265,10 +3366,12 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             driver.quit()
         except Exception:  # noqa: BLE001
             pass
-    complete = refreshed_regions == {r["key"] for r in RASPROD_REGIONS}
     if not complete:
         missing = sorted({r["key"] for r in RASPROD_REGIONS} - refreshed_regions)
-        print(f"  ❌ rasprodannost: не обновлены регионы: {', '.join(missing)}")
+        if missing:
+            print(f"  ❌ rasprodannost: не обновлены регионы: {', '.join(missing)}")
+        else:
+            print("  ❌ rasprodannost: история неполная; опубликованный файл сохранён без изменений")
     else:
         print(f"  ✅ rasprodannost: обновлены регионы: {', '.join(sorted(refreshed_regions))}")
     return new_files, complete

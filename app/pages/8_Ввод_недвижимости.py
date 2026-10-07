@@ -38,7 +38,7 @@ apply_theme()
 C_ZH = COLORS["green"]       # жильё / МКД
 C_NZH = "#7B8794"            # нежильё
 C_IZHS = COLORS["amber"]     # ИЖС
-C_NEBUDG = COLORS["purple"]  # небюджет
+C_NEBUDG = "#6743A7"        # небюджет; не зависит от версии общей палитры
 C_BUDG = COLORS["blue"]      # бюджет
 C_NZH_IN = COLORS["teal"]    # нежилые в жилье
 C_MOP = COLORS["amber"]      # МОП

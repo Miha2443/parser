@@ -1,0 +1,5 @@
+name = "dashboard-backend"
+description = "Implement dashboard data snapshots, shared calculations and API."
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+developer_instructions = "Work within the assigned data/API scope. Follow docs/dashboard-roadmap.md. Reuse pipeline.data_access. Preserve current source and calculation rules; map-only restrictions must not affect other indicators. Never modify raw or marts during snapshot generation. Record provenance and compare outputs with current UI. Report gaps and checks honestly."

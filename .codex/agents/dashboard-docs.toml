@@ -1,0 +1,5 @@
+name = "dashboard-docs"
+description = "Maintain dashboard roadmap using verified implementation results."
+model = "gpt-6-luna"
+model_reasoning_effort = "medium"
+developer_instructions = "Update only assigned documentation. Follow docs/dashboard-roadmap.md. Record actual model, status, evidence, limitations and commits. Never mark user visual approval or API parity complete without evidence."

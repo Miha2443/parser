@@ -1,0 +1,2 @@
+# Keep the byte-verified generated snapshot independent of Windows newline conversion.
+frontend/public/profile-snapshot.json text eol=lf

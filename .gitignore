@@ -5,6 +5,10 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
 
 # Streamlit/Plotly артефакты
 .streamlit/secrets.toml

@@ -17,6 +17,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import (
     load_monitoring_2_0,
     load_erzrf_top,
@@ -24,19 +26,22 @@ from app.data_access import (
     load_rasprodannost,
     load_kvartirografia,
     load_escrow_manual,
+    latest_raw_source_date,
+    latest_realty_mart_source_date,
     _normalize_developer_name as norm,
 )
 
 st.set_page_config(page_title="Профиль застройщика — Аналитика Москвы", layout="wide")
+apply_theme()
 
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
 CAT_LABELS = ["Жилое", "МОП", "Нежилье в жилье", "Нежилое отдельное"]
-CAT_COLORS = ["#8BC540", "#A8DC74", "#4EC3E0", "#7A8386"]
+CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["blue"], COLORS["red"]]
 CAT_COL_PREFIX = "category_"
 
-ERZRF_COLOR = "#1f4e79"
-DELAY_COLOR = "#c8102e"
+ERZRF_COLOR = COLORS["blue"]
+DELAY_COLOR = COLORS["red"]
 
 
 def ru_num(value, digits=0):
@@ -60,7 +65,7 @@ def categorize_sum(df: pd.DataFrame) -> dict:
 
 
 def render_donut(values: dict, title: str = "", subtitle: str = "",
-                 colors: list[str] | None = None):
+                 colors: list[str] | None = None, key_prefix: str = "structure"):
     """Donut с цветными сегментами + значение в центре."""
     total = sum(values.values())
     if total <= 0:
@@ -75,6 +80,7 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
         marker=dict(colors=seg_colors),
         text=seg_texts,
         textinfo="text",
+        textposition="inside",
         textfont=dict(size=11),
         hovertemplate="<b>%{label}</b><br>%{percent}<br>%{value:,.0f} м²<extra></extra>",
         sort=False,
@@ -82,15 +88,22 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
     ))
     fig.update_layout(
         title=dict(text=title, x=0.5, font=dict(size=13)),
-        height=290,
-        margin=dict(l=10, r=10, t=40, b=10),
+        height=270,
+        margin=dict(l=18, r=18, t=46, b=24),
         annotations=[
             dict(text=f"<b>{ru_num(total/1000, 0)}</b><br>тыс. м²",
                  x=0.5, y=0.5, showarrow=False, font=dict(size=12)),
         ],
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True, key=f"donut_{title}")
+    style_plotly(fig, height=270)
+    st.plotly_chart(fig, use_container_width=True, key=f"donut_{key_prefix}_{title}")
+    chart_data_expander(
+        fig,
+        pd.DataFrame([{"Категория": label, "Площадь, м²": value} for label, value in values.items()]),
+        name=f"developer_{key_prefix}_{title}",
+        key=f"donut_data_{key_prefix}_{title}",
+    )
     if subtitle:
         st.caption(subtitle)
 
@@ -104,26 +117,16 @@ kvart = load_kvartirografia()
 escrow = load_escrow_manual()
 
 
-# Даты файлов источников (mtime) для подписей
-def _mtime_for(*patterns: str) -> str:
-    """Возвращает дату последней модификации первого найденного файла."""
-    from datetime import datetime as _dt
-    from pathlib import Path as _P
-    base = _P("/home/user/parser/data/raw/realty")
-    for pat in patterns:
-        files = list(base.rglob(pat))
-        if files:
-            latest = max(files, key=lambda p: p.stat().st_mtime)
-            return _dt.fromtimestamp(latest.stat().st_mtime).strftime("%d.%m.%Y")
-    return ""
+def _source_date(mart_name: str, *fallback_patterns: str) -> str:
+    return latest_realty_mart_source_date(mart_name) or latest_raw_source_date(*fallback_patterns)
 
 
-date_monitoring = _mtime_for("monitoring_2_0_*.xlsx")
-date_kvart = _mtime_for("kvartirografia_*.xlsx", "kvartirografia_*.json")
-date_erzrf_top = _mtime_for("top_obyem_stroitelstva_rf_*.xlsx")
-date_erzrf_cards = _mtime_for("cards_*.xlsx")
-date_rasprod = _mtime_for("rasprodannost_*.xlsx")
-date_escrow = _mtime_for("Наполняемость*.xlsx", "наполняемость*.xlsx", "*эскроу*.xlsx")
+date_monitoring = _source_date("monitoring_2_0", "monitoring_2_0_*.xlsx")
+date_kvart = _source_date("kvartirografia", "kvartirografia_*.xlsx", "kvartirografia_*.json")
+date_erzrf_top = _source_date("erzrf_top", "top_obyem_stroitelstva_rf_*.xlsx")
+date_erzrf_cards = _source_date("erzrf_cards", "cards_*.xlsx")
+date_rasprod = _source_date("rasprodannost", "rasprodannost_*.xlsx")
+date_escrow = _source_date("escrow_manual", "Наполняемость*.xlsx", "наполняемость*.xlsx", "*эскроу*.xlsx")
 
 # === Собираем все имена застройщиков ===
 # Селектор показывает ТОЛЬКО имена из monitoring (главный источник).
@@ -159,7 +162,7 @@ def _build_ordered_devs(mon_names: list[str]) -> list[str]:
 
 ordered_devs = _build_ordered_devs(mon_devs)
 
-st.title("Профиль застройщика")
+page_header("Профиль застройщика")
 # Подпись с датами всех источников
 src_dates = []
 if date_monitoring: src_dates.append(f"Мониторинг 2.0 — **{date_monitoring}**")
@@ -168,9 +171,6 @@ if date_erzrf_cards: src_dates.append(f"ERZRF карточки — **{date_erzrf
 if date_kvart: src_dates.append(f"Квартирография — **{date_kvart}**")
 if date_rasprod: src_dates.append(f"Распроданность — **{date_rasprod}**")
 if date_escrow: src_dates.append(f"Эскроу — **{date_escrow}**")
-if src_dates:
-    st.caption("Даты выгрузки источников: " + " · ".join(src_dates))
-
 cols_top = st.columns([3, 2])
 with cols_top[0]:
     sel_canon = st.selectbox(
@@ -182,6 +182,7 @@ with cols_top[0]:
              f"Данные подтягиваются из 5 источников по нормализованному имени.",
     )
 sel_key = norm(sel_canon)
+st.sidebar.info(f"Выбран застройщик: {sel_canon}")
 
 # Хелпер: найти строки в DataFrame по нормализованному имени застройщика
 def find_dev_rows(df: pd.DataFrame, name_col: str, key: str) -> pd.DataFrame:
@@ -234,30 +235,56 @@ with cols_top[1]:
             return str(p)
 
     rating_html = f"""
-    <div style='padding-top:18px;font-size:13px;color:#444;line-height:1.5;'>
+    <div style='padding-top:18px;font-size:13px;color:{COLORS["text"]};line-height:1.5;'>
       <div style='font-size:11px;text-transform:uppercase;letter-spacing:0.5px;
-                  color:#888;margin-bottom:4px;'>Рейтинги ЕРЗ</div>
+                  color:{COLORS["muted"]};margin-bottom:4px;'>Рейтинги ЕРЗ</div>
+      <div class='ma-table-scroll' role='region' aria-label='Рейтинги ЕРЗ: РФ и Москва' tabindex='0'>
       <table style='border-collapse:collapse;font-size:13px;'>
         <tr>
-          <th style='text-align:left;padding:2px 12px 2px 0;color:#666;font-weight:500;'></th>
-          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>РФ</th>
-          <th style='text-align:center;padding:2px 10px;color:#666;font-weight:500;'>Москва</th>
+          <th style='text-align:left;padding:2px 12px 2px 0;color:{COLORS["muted"]};font-weight:500;'></th>
+          <th style='text-align:center;padding:2px 10px;color:{COLORS["muted"]};font-weight:500;'>РФ</th>
+          <th style='text-align:center;padding:2px 10px;color:{COLORS["muted"]};font-weight:500;'>Москва</th>
         </tr>
         <tr>
-          <td style='padding:2px 12px 2px 0;'>По вводу жилья с 2016&nbsp;г.</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_rf)}</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(vv_msk)}</td>
+          <td style='padding:2px 12px 2px 0;'>По накопленному вводу жилья</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(vv_msk)}</td>
         </tr>
         <tr>
           <td style='padding:2px 12px 2px 0;'>По объёму текущего строительства</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_rf)}</td>
-          <td style='text-align:center;padding:2px 10px;font-weight:700;color:#1f4e79;'>{fmt_place(str_msk)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_rf)}</td>
+          <td style='text-align:center;padding:2px 10px;font-weight:700;color:{ERZRF_COLOR};'>{fmt_place(str_msk)}</td>
         </tr>
       </table>
-      {f"<div style='margin-top:6px;color:#666;'>Оценка ЕРЗ: <b style='color:#1f4e79;'>{erz_rating}</b></div>" if erz_rating else ""}
+      </div>
+      {f"<div style='margin-top:6px;color:{COLORS['muted']};'>Оценка ЕРЗ: <b style='color:{ERZRF_COLOR};'>{erz_rating}</b></div>" if erz_rating else ""}
     </div>
     """
     st.markdown(rating_html, unsafe_allow_html=True)
+    nakopl_quality = erzrf_top.get("nakopl_vvod_quality", {}).get("regions", {})
+    unavailable = {
+        label: nakopl_quality.get(region, {}).get("reason", "missing")
+        for region, label in (("rf", "РФ"), ("msk", "Москва"))
+        if nakopl_quality.get(region, {}).get("status") == "unavailable"
+    }
+    if unavailable:
+        invalid = [label for label, reason in unavailable.items()
+                   if reason == "invalid_commissioned_table"]
+        missing = [label for label, reason in unavailable.items()
+                   if reason != "invalid_commissioned_table"]
+        details = []
+        if invalid:
+            details.append(
+                "для " + ", ".join(invalid)
+                + " файл содержит другую таблицу ЕРЗ (нет колонки «Введено, м²»)"
+            )
+        if missing:
+            details.append("для " + ", ".join(missing) + " файл не найден")
+        st.warning(
+            "Нет подтверждённых данных по накопленному вводу ЕРЗ: "
+            + "; ".join(details)
+            + ". Запусти обновление ЕРЗ — старые неверно подписанные файлы не используются."
+        )
 
 
 # === Данные ===
@@ -317,78 +344,49 @@ def get_cards_row() -> pd.Series | None:
 cards_row = get_cards_row()
 
 
-def other_regions_for_year(year: int) -> str:
-    """% «в других регионах за год».
-
-    Логика разная для прошлого vs текущего года:
-
-    Текущий год (year == last_year_int): используем top_obyem_vvoda
-      (это «введено за послед.12 мес» в ERZRF — самое свежее число
-      для текущего года). РФ−МСК даёт точное «в других регионах».
-      Пример ПИК 2026: 492 − 421 = 71 тыс. (14%) — совпадает с ERZRF.
-
-    Прошлый год: cards.Сдано_YYYY (РФ-уровень) минус
-      monitoring.category_жилое (только Жилая площадь, без МОП —
-      методика ERZRF для конкретного года).
-      Пример ПИК 2025: 1 678 − 773 = 905 тыс. (54%).
-    """
-    # === Текущий год — top_obyem_vvoda ===
-    if year == last_year_int:
-        rf_val = erzrf_value("obyem_vvoda", "rf", "Введено")
-        msk_val = erzrf_value("obyem_vvoda", "msk", "Введено")
-        if rf_val and rf_val > 0:
-            other = max(rf_val - (msk_val or 0), 0)
-            pct = other / rf_val * 100
-            return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
-        return "—"
-
-    # === Прошлый год — cards.Сдано (РФ) − monitoring category_жилое (МСК) ===
-    if cards_row is None:
-        return "—"
-    rf_val = float(cards_row.get(f"Сдано_{year}_м²_num") or 0)
-    if rf_val <= 0:
-        return "—"
-    msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
-    msk_val = float(msk_rv["category_жилое"].sum()) if not msk_rv.empty else 0.0
-    other = max(rf_val - msk_val, 0)
-    pct = other / rf_val * 100
-    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+def housing_comparison(years: list[int]) -> dict[str, float] | None:
+    """Сравнение жилой площади Москвы и РФ за одинаковые календарные годы."""
+    if cards_row is None or rv_dev.empty or not years:
+        return None
+    moscow = 0.0
+    russia = 0.0
+    for year in years:
+        rf_value = pd.to_numeric(cards_row.get(f"Сдано_{year}_м²_num"), errors="coerce")
+        msk_rows = rv_dev[pd.to_numeric(rv_dev["Год ввода по Мосстату"], errors="coerce").eq(year)]
+        if pd.isna(rf_value) or rf_value <= 0 or msk_rows.empty:
+            return None
+        msk_value = pd.to_numeric(msk_rows["category_жилое"], errors="coerce").fillna(0).sum()
+        if msk_value < 0 or msk_value > rf_value:
+            return None
+        russia += float(rf_value)
+        moscow += float(msk_value)
+    return {"Москва": moscow, "Другие регионы РФ": russia - moscow}
 
 
-def other_regions_total() -> str:
-    """% в других регионах = (cards.Сдано_РФ за все годы − category_жилое МСК) / РФ.
-
-    По требованию пользователя — Москва считается ТОЛЬКО как Жилая
-    площадь (без МОП и нежилого), РФ — общий ввод из ERZ карточки.
-    Единая методика «только жильё» — сопоставимо с ERZ для каждого года.
-    """
-    rf_val: float | None = None
-    if cards_row is not None:
-        s = 0.0
-        for y in range(2016, (last_year_int or 2026) + 1):
-            s += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
-        if s > 0:
-            rf_val = s
-    if rf_val is None:
-        rf_val = erzrf_value("obyem_vvoda", "rf")
-    if rf_val is None or rf_val <= 0:
-        return "—"
-    # Москва: только жилое (методика ERZ)
-    msk_val = float(rv_dev["category_жилое"].sum()) if not rv_dev.empty else 0.0
-    other = max(rf_val - msk_val, 0)
-    pct = other / rf_val * 100
-    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+st.markdown("### Ввод жилой площади: Москва и другие регионы РФ")
+comparison_years = sorted(pd.to_numeric(rv_dev.get("Год ввода по Мосстату"), errors="coerce").dropna().astype(int).unique()) if not rv_dev.empty else []
+comparison_years = [year for year in comparison_years if year >= 2016 and housing_comparison([year]) is not None]
+for column, (years, title) in zip(st.columns(3), [
+    (comparison_years, f"Ввод за {comparison_years[0]}–{comparison_years[-1]} гг." if comparison_years else "Ввод с 2016 г."),
+    ([prev_year_int] if prev_year_int else [], f"Ввод за {prev_year_int} г."),
+    ([last_year_int] if last_year_int else [], f"Ввод за {last_year_int} г."),
+]):
+    with column:
+        comparison = housing_comparison(years)
+        if comparison:
+            render_donut(comparison, title, colors=[COLORS["green"], COLORS["blue"]], key_prefix="housing")
+        else:
+            st.info(f"Нет сопоставимых данных: {title}")
 
 
 # === 3 donut диаграммы ===
 st.markdown("### Структура ввода по типу площади (Москва)")
 
 # Легенда цветов для 4 категорий (общая для всех 3 донатов)
-legend_html = "<div style='text-align:center;margin-bottom:8px;font-size:13px;'>" + \
-    " &nbsp; ".join(
-        f"<span style='display:inline-block;width:11px;height:11px;"
-        f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
-        f"<span style='vertical-align:middle;'>{lbl}</span>"
+legend_html = "<div class='ma-chart-legend'>" + \
+    "".join(
+        f"<span class='ma-chart-legend-item'><span class='ma-chart-legend-swatch' "
+        f"aria-hidden='true' style='background:{c};'></span><span>{lbl}</span></span>"
         for lbl, c in zip(CAT_LABELS, CAT_COLORS)
     ) + "</div>"
 st.markdown(legend_html, unsafe_allow_html=True)
@@ -399,21 +397,18 @@ with pie_cols[0]:
     render_donut(
         categorize_sum(rv_dev),
         "Ввод с 2016 г.",
-        f"В других регионах: {other_regions_total()}",
     )
 
 with pie_cols[1]:
     render_donut(
         categorize_sum(prev_rv) if not prev_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {prev_year_int} г." if prev_year_int else "Ввод за пред. год",
-        f"В других регионах: {other_regions_for_year(prev_year_int) if prev_year_int else '—'}",
     )
 
 with pie_cols[2]:
     render_donut(
         categorize_sum(last_rv) if not last_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {last_year_int} г." if last_year_int else "Ввод за последний год",
-        f"В других регионах: {other_regions_for_year(last_year_int) if last_year_int else '—'}",
     )
 
 
@@ -458,7 +453,7 @@ else:
             <div style='padding-top:20px;'>
               <div style='font-size:22px;font-weight:700;line-height:1.2;'>
                 Ввод недвижимости</div>
-              <div style='color:#666;font-size:14px;margin:6px 0 16px 0;'>
+              <div style='color:{COLORS["muted"]};font-size:14px;margin:6px 0 16px 0;'>
                 за {y_min}–{y_max} гг.:</div>
               {lines}
               <div style='font-size:18px;font-weight:800;margin-top:14px;'>
@@ -502,7 +497,7 @@ else:
             x=by_year_chart["Год ввода по Мосстату"], y=totals,
             mode="text", text=[ru_num(v) if v > 0 else "" for v in totals],
             textposition="top center",
-            textfont=dict(size=12, color="#333"),
+            textfont=dict(size=12, color=COLORS["ink"]),
             showlegend=False, hoverinfo="skip",
         ))
         y_top = totals.max() * 1.15 if not totals.empty and totals.max() > 0 else 1
@@ -526,7 +521,13 @@ else:
             bargap=0.25,
             legend=dict(orientation="h", y=-0.15),
         )
+        style_plotly(fig, height=330)
         st.plotly_chart(fig, use_container_width=True, key="dynamics_bar")
+        export = by_year_chart[["Год ввода по Мосстату"] + [f"{CAT_COL_PREFIX}{k}" for k in CAT_KEYS]].copy()
+        export.columns = ["Год"] + CAT_LABELS
+        chart_data_expander(
+            fig, export, name="developer_commissioning", key="developer_commissioning"
+        )
 
 
 # === В строительстве (donut слева) + Распроданность/стройготовность (справа) ===
@@ -544,7 +545,7 @@ with left:
         "Нежилое": raw_cats.get("Нежилое отдельное", 0),
     }
     # Цвета: зелёный (жилое) / жёлто-оранжевый (МОП) / серый (нежилое)
-    colors_3 = ["#8BC540", "#F4A261", "#7A8386"]
+    colors_3 = [COLORS["green"], COLORS["amber"], "#7B8794"]
     render_donut(
         cats_3,
         "В строительстве (Москва)",
@@ -552,11 +553,10 @@ with left:
         colors=colors_3,
     )
     # Легенда цветов для 3 категорий «В строительстве»
-    legend_3 = "<div style='text-align:center;font-size:13px;'>" + \
-        " &nbsp; ".join(
-            f"<span style='display:inline-block;width:11px;height:11px;"
-            f"background:{c};vertical-align:middle;margin-right:4px;border-radius:2px;'></span>"
-            f"<span style='vertical-align:middle;'>{lbl}</span>"
+    legend_3 = "<div class='ma-chart-legend'>" + \
+        "".join(
+            f"<span class='ma-chart-legend-item'><span class='ma-chart-legend-swatch' "
+            f"aria-hidden='true' style='background:{c};'></span><span>{lbl}</span></span>"
             for lbl, c in zip(cats_3.keys(), colors_3)
         ) + "</div>"
     st.markdown(legend_3, unsafe_allow_html=True)
@@ -566,15 +566,17 @@ with right:
     rasprod_dev_df = rasprod.get("developers")
     if rasprod_dev_df is not None and not rasprod_dev_df.empty and "наименование" in rasprod_dev_df.columns:
         all_rows = find_dev_rows(rasprod_dev_df, "наименование", sel_key)
-        latest_period = rasprod.get("latest_period")
-        if latest_period and not all_rows.empty:
-            ly, lm = latest_period
-            all_rows = all_rows[(all_rows["year"] == ly) & (all_rows["month"] == lm)]
         if not all_rows.empty:
-            row_rf = all_rows[all_rows["region_key"] == "rf"]
-            row_msk = all_rows[all_rows["region_key"] == "msk"]
-            r_rf = row_rf.iloc[0] if not row_rf.empty else None
-            r_msk = row_msk.iloc[0] if not row_msk.empty else None
+            def latest_region_row(region_key: str):
+                rows = all_rows[all_rows["region_key"] == region_key].copy()
+                if rows.empty:
+                    return None, None
+                rows = rows.sort_values(["year", "month"], ascending=False)
+                row = rows.iloc[0]
+                return row, (int(row["year"]), int(row["month"]))
+
+            r_rf, period_rf = latest_region_row("rf")
+            r_msk, period_msk = latest_region_row("msk")
 
             def find_num(r, predicate) -> str:
                 if r is None:
@@ -605,28 +607,34 @@ with right:
                 v_msk = find_num(r_msk, pred)
                 v_rf = find_num(r_rf, pred)
                 rows_html += (
-                    "<tr style='border-top:1px solid #eee;'>"
-                    f"<td style='padding:8px 0;color:#444;'>{label}</td>"
+                    f"<tr style='border-top:1px solid {COLORS['stroke']};'>"
+                    f"<td style='padding:8px 0;color:{COLORS['text']};'>{label}</td>"
                     "<td style='text-align:right;padding:8px 8px;"
-                    f"font-weight:700;font-size:18px;color:#222;'>{v_msk}</td>"
+                    f"font-weight:700;font-size:18px;color:{COLORS['text']};'>{v_msk}</td>"
                     "<td style='text-align:right;padding:8px 0;"
-                    f"font-weight:700;font-size:18px;color:#666;'>{v_rf}</td>"
+                    f"font-weight:700;font-size:18px;color:{COLORS['muted']};'>{v_rf}</td>"
                     "</tr>"
                 )
             html = (
+                "<div class='ma-table-scroll' role='region' "
+                "aria-label='Распроданность и стройготовность: Москва и РФ' tabindex='0'>"
                 "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
                 "<tr>"
-                "<th style='text-align:left;padding:6px 0;color:#888;font-weight:500;'></th>"
-                "<th style='text-align:right;padding:6px 8px;color:#888;font-weight:500;'>Москва</th>"
-                "<th style='text-align:right;padding:6px 0;color:#888;font-weight:500;'>РФ</th>"
+                f"<th style='text-align:left;padding:6px 0;color:{COLORS['muted']};font-weight:500;'></th>"
+                f"<th style='text-align:right;padding:6px 8px;color:{COLORS['muted']};font-weight:500;'>Москва</th>"
+                f"<th style='text-align:right;padding:6px 0;color:{COLORS['muted']};font-weight:500;'>РФ</th>"
                 "</tr>"
                 f"{rows_html}"
-                "</table>"
+                "</table></div>"
             )
             st.markdown(html, unsafe_allow_html=True)
-            period_str = f"{lm:02d}.{ly}" if latest_period else ""
-            if period_str:
-                st.caption(f"На {period_str}")
+            period_parts = []
+            if period_msk:
+                period_parts.append(f"Москва — {period_msk[1]:02d}.{period_msk[0]}")
+            if period_rf:
+                period_parts.append(f"РФ — {period_rf[1]:02d}.{period_rf[0]}")
+            if period_parts:
+                st.caption("Период: " + "; ".join(period_parts))
         else:
             st.info("Застройщик не найден в распроданности")
     else:
@@ -788,20 +796,20 @@ def render_delay_card(title: str, value: float | None,
     for label, v in sub_lines:
         if v:
             parts.append(
-                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"<div style='color:{COLORS['muted']};font-size:13px;margin-bottom:6px;'>"
                 f"<span style='font-weight:600;color:{DELAY_COLOR};'>{v}</span> "
                 f"{label}</div>"
             )
         else:
             parts.append(
-                f"<div style='color:#555;font-size:13px;margin-bottom:6px;'>"
+                f"<div style='color:{COLORS['muted']};font-size:13px;margin-bottom:6px;'>"
                 f"{label}</div>"
             )
     subs_html = "".join(parts)
     st.markdown(
-        "<div style='padding:18px;border:1px solid #e5e5e5;border-radius:8px;"
-        "background:#fafafa;height:100%;'>"
-        "<div style='color:#888;font-size:11px;text-transform:uppercase;"
+        f"<div style='padding:18px;border:1px solid {COLORS['line']};border-radius:14px;"
+        f"background:{COLORS['panel']};height:100%;box-shadow:none;'>"
+        f"<div style='color:{COLORS['muted']};font-size:11px;text-transform:uppercase;"
         f"letter-spacing:0.5px;margin-bottom:8px;'>{title}</div>"
         f"<div style='font-size:34px;font-weight:700;color:{DELAY_COLOR};"
         f"line-height:1;margin-bottom:14px;'>{val_str}</div>"
@@ -1060,7 +1068,7 @@ else:
 
 
 # === Список объектов ===
-with st.expander("📋 Список введённых объектов (Реестр РВ)"):
+with st.expander("Список введённых объектов (Реестр РВ)"):
     if rv_dev.empty:
         st.info("Нет данных")
     else:
@@ -1095,3 +1103,9 @@ with st.expander("Все объекты с разрешением на стро�
                 ["Статус объекта", "Общая площадь"], ascending=[True, False]),
             hide_index=True, use_container_width=True, height=300,
         )
+
+with st.expander("Исходные файлы и даты скачивания", expanded=False):
+    if src_dates:
+        st.markdown("\n".join(f"- {item}" for item in src_dates))
+    else:
+        st.caption("Даты источников не определены.")

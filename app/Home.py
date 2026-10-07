@@ -1,103 +1,57 @@
-"""Главная страница дашборда."""
+"""Единая точка входа и навигация дашборда."""
 from __future__ import annotations
-
-from datetime import datetime
-from pathlib import Path
 
 import streamlit as st
 
-from app.audit import latest_data_badge
-from app.data_access import latest_loaded_at, load_ipc, load_salary
+from app.components.design import apply_theme
+
 
 st.set_page_config(
-    page_title="Аналитика Москвы — дашборд",
-    page_icon="📊",
+    page_title="Аналитика Москвы",
+    page_icon="▦",
     layout="wide",
 )
 
-# === Сайдбар: свежесть данных + ручная перезагрузка ===
+pages = [
+    st.Page("dashboard_home.py", title="Главная", icon="🏠", default=True),
+    st.Page("pages/0_Текущее_строительство.py", title="Оперативные данные", icon="🏗️"),
+    st.Page("pages/4_Квартирография.py", title="Квартирография", icon="🏙️"),
+    st.Page("pages/6_Распроданность.py", title="Распроданность", icon="📊"),
+    st.Page("pages/9_Карта_объектов.py", title="Карта объектов", icon="🗺️"),
+    st.Page("pages/8_Ввод_недвижимости_оперативные.py", title="Оперативный ввод", icon="⏱️"),
+    st.Page("pages/8_Ввод_недвижимости.py", title="Годовой ввод", icon="🏘️"),
+    st.Page("pages/8_Ввод_линейных_объектов.py", title="Линейные объекты", icon="🛣️"),
+    st.Page("pages/7_Профиль_застройщика.py", title="Профиль", icon="👤"),
+    st.Page("pages/5_Квартирография_по_девелоперу.py", title="Квартирография по застройщику", icon="🏢"),
+    st.Page("pages/3_ВРП_и_ВВП.py", title="ВВП и ВРП", icon="📈"),
+    st.Page("pages/2_ИПЦ.py", title="ИПЦ", icon="🧮"),
+    st.Page("pages/1_Заработная_плата.py", title="Заработная плата", icon="💰"),
+    st.Page("pages/8_Отправка_в_TDM.py", title="Отправка в TDM", icon="📤"),
+    st.Page("pages/99_Обновления.py", title="Журнал обновлений", icon="🕘"),
+]
+
+navigation = st.navigation(pages, position="hidden")
 with st.sidebar:
-    st.markdown("### 🔄 Свежесть данных")
-    realty = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
-    src_freshness = []
-    for name, pattern in [
-        ("Мониторинг 2.0", "nashdom/monitoring_2_0_*.xlsx"),
-        ("Квартирография", "nashdom/kvartirografia_*.xlsx"),
-        ("Распроданность", "nashdom/rasprodannost_*.xlsx"),
-        ("ERZRF топ", "erzrf/top_obyem_stroitelstva_rf_*.xlsx"),
-        ("ERZRF карточки", "erzrf/cards/cards_*.xlsx"),
-        ("Эскроу", "escrow_manual/*.xlsx"),
-    ]:
-        files = list(realty.glob(pattern))
-        files = [f for f in files if "_archive" not in f.parts]
-        if not files:
-            src_freshness.append(f"❌ {name}: нет файла")
-            continue
-        latest = max(files, key=lambda p: p.stat().st_mtime)
-        mtime = datetime.fromtimestamp(latest.stat().st_mtime)
-        days = (datetime.now() - mtime).days
-        icon = "🟢" if days <= 1 else "🟡" if days <= 7 else "🟠" if days <= 30 else "🔴"
-        src_freshness.append(f"{icon} {name}: {mtime.strftime('%d.%m.%Y')} ({days}д.)")
-    st.markdown("\n".join(f"- {s}" for s in src_freshness))
-
-    st.markdown("---")
-    if st.button("♻️ Перезагрузить кеш", use_container_width=True,
-                 help="Сбросить кеш данных (полезно после обновления выгрузок)"):
-        st.cache_data.clear()
-        st.success("Кеш сброшен")
-        st.rerun()
-
-st.title("📊 Аналитика Москвы")
-badge = latest_data_badge()
-st.caption(
-    ("Тестовая версия дашборда — разделы «Занятость и заработная плата» и «Цены».")
-    + (f" · {badge}" if badge else "")
-)
-
-salary = load_salary()
-ipc = load_ipc()
-
-st.markdown("### Доступные показатели")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    with st.container(border=True):
-        st.markdown("#### Заработная плата")
-        st.write("Среднемесячная номинальная начисленная заработная плата работающих в экономике.")
-        st.write(
-            f"**Регионы:** {', '.join(sorted(salary['region'].unique())) if not salary.empty else '—'}"
-        )
-        st.write(
-            f"**Отрасли:** {', '.join(sorted(salary['view'].unique())) if not salary.empty else '—'}"
-        )
-        st.write(f"**Обновлено:** {latest_loaded_at(salary)}")
-        st.page_link("pages/1_Заработная_плата.py", label="Открыть раздел →")
-
-with col2:
-    with st.container(border=True):
-        st.markdown("#### ИПЦ")
-        st.write("Индексы потребительских цен на товары и услуги.")
-        st.write(
-            f"**Регионы:** {', '.join(sorted(ipc['region'].unique())) if not ipc.empty else '—'}"
-        )
-        st.write(f"**Обновлено:** {latest_loaded_at(ipc)}")
-        st.page_link("pages/2_ИПЦ.py", label="Открыть раздел →")
-
-with col3:
-    with st.container(border=True):
-        st.markdown("#### ВРП и ВВП")
-        st.write("ВВП России, ВРП Москвы и валовая добавленная стоимость по отраслям.")
-        st.page_link("pages/3_ВРП_и_ВВП.py", label="Открыть раздел →")
-
-st.markdown("---")
-st.page_link("pages/99_Обновления.py", label="🔄 Журнал обновлений ETL")
-st.markdown("---")
-st.markdown(
-    """
-**Как пользоваться**
-1. Выберите раздел в боковом меню или по ссылке выше.
-2. Внутри раздела переключатель **Год / Квартал / Месяц** меняет тип графика и таблицы.
-3. Для месяца и квартала можно выбрать конкретные периоды через `+`-меню.
-4. Данные и графики экспортируются кнопками под таблицами.
-"""
-)
+    st.page_link("dashboard_home.py", label="Главная", icon="🏠")
+    with st.expander("Рынок недвижимости", expanded=True):
+        st.markdown("**Текущее строительство**")
+        st.page_link("pages/0_Текущее_строительство.py", label="Оперативные данные", icon="🏗️")
+        st.page_link("pages/4_Квартирография.py", label="Квартирография", icon="🏙️")
+        st.page_link("pages/9_Карта_объектов.py", label="Карта объектов", icon="🗺️")
+        st.page_link("pages/6_Распроданность.py", label="Распроданность", icon="📊")
+        st.markdown("**Ввод недвижимости**")
+        st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные", icon="⏱️")
+        st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные", icon="🏘️")
+        st.page_link("pages/8_Ввод_линейных_объектов.py", label="Линейные объекты", icon="🛣️")
+        st.markdown("**Профиль застройщика**")
+        st.page_link("pages/7_Профиль_застройщика.py", label="Профиль", icon="👤")
+        st.page_link("pages/5_Квартирография_по_девелоперу.py", label="Квартирография по застройщику", icon="🏢")
+    with st.expander("Мосстат / Росстат", expanded=True):
+        st.page_link("pages/3_ВРП_и_ВВП.py", label="ВВП и ВРП", icon="📈")
+        st.page_link("pages/2_ИПЦ.py", label="ИПЦ", icon="🧮")
+        st.page_link("pages/1_Заработная_плата.py", label="Заработная плата", icon="💰")
+    with st.expander("Сервис", expanded=False):
+        st.page_link("pages/8_Отправка_в_TDM.py", label="Отправка в TDM", icon="📤")
+        st.page_link("pages/99_Обновления.py", label="Журнал обновлений", icon="🕘")
+apply_theme()
+navigation.run()

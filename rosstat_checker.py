@@ -24,7 +24,6 @@ State хранится в `state/rosstat_state.json` (отдельно от feds
 """
 from __future__ import annotations
 
-import json
 import re
 import time
 from datetime import datetime
@@ -34,6 +33,9 @@ from urllib.parse import unquote, urljoin
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+
+from pipeline.file_utils import stream_response_atomic, validate_excel_file
+from pipeline.state_utils import load_json_state, write_json_atomic
 
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
 # стандартном trust store Python. Поскольку мы GET-им только публичные
@@ -74,16 +76,11 @@ USER_AGENT = (
 
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_state(STATE_FILE, label="rosstat")
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    write_json_atomic(STATE_FILE, state)
 
 
 def _new_session() -> requests.Session:
@@ -312,15 +309,11 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
             verify=VERIFY_SSL,
         )
         resp.raise_for_status()
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+        stream_response_atomic(resp, save_path, validate=validate_excel_file)
         size_kb = save_path.stat().st_size // 1024
         print(f"  ✅ Сохранён: {save_path.name} ({size_kb} КБ)")
         return True
-    except requests.RequestException as exc:
+    except (requests.RequestException, OSError, ValueError) as exc:
         print(f"  ❌ Ошибка скачивания: {exc}")
         return False
 

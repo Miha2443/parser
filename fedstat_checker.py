@@ -13,21 +13,42 @@ fedstat_checker.py
 """
 
 import atexit
+import base64
+import hashlib
+import html
+from html.parser import HTMLParser
 import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 import requests
+import pandas as pd
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+from pipeline.file_utils import stream_response_atomic, validate_excel_file, write_bytes_atomic
+from pipeline.selenium_utils import wait_for_download
+from pipeline.state_utils import load_json_state, write_json_atomic
+from pipeline.download_provenance import record_successful_download
+
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
 
 
 # ─────────────────────────────────────────────
@@ -75,7 +96,8 @@ INDICATORS = {
 
     "58089": "Индекс физического объема инвестиций в основной капитал с 2017 г. (оперативные данные) (процент)",
 
-    "34118": "Введено в действие общей площади жилых домов (оперативные данные) (тысяча квадратных метров общей площади)",
+    "34118_часть1": "Введено в действие общей площади жилых домов часть1 (2015-2022)",
+    "34118_часть2": "Введено в действие общей площади жилых домов часть2 (с 2023)",
 
     "33575": "Введено в действие общей площади жилых домов, построенных населением (оперативные данные) (тысяча квадратных метров общей площади)",
 
@@ -94,27 +116,96 @@ INDICATORS = {
 
 }
 
+# Default collection scope, audited against dashboard pages AND direct Excel
+# loaders in pipeline/data_access.py. INDICATORS above remains the full catalog
+# for deliberate --only / FEDSTAT_ONLY_IDS requests. Add an entry here only
+# when its data has a dashboard consumer; see docs/fedstat_dashboard_scope.md.
+# Keep the heavy 34118 exports last so salary and IPC are checked first.
+DEFAULT_INDICATOR_USAGE = {
+    "43246": "1_Заработная_плата.py: load_salary, история по 2016 г.",
+    "57824": "1_Заработная_плата.py: load_salary, с 2017 г.",
+    "31074_часть1": "2_ИПЦ.py: load_ipc, история 2011–2018",
+    "31074_часть2": "2_ИПЦ.py: load_ipc, с 2019 г.",
+    "34118_часть1": "8_Ввод_недвижимости.py: load_emiss_34118 / periods, 2015–2022",
+    "34118_часть2": "8_Ввод_недвижимости.py: load_emiss_34118 / periods, с 2023 г.",
+}
+
 DOWNLOAD_DIR = Path("downloads")
 STATE_FILE = Path("fedstat_state.json")
-PAGE_TIMEOUT = 30
+RUN_CHECKPOINT_FILE = Path("state/fedstat_run_checkpoint.json")
+PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
+PAGE_LOAD_TOTAL_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_TOTAL_TIMEOUT", "120"))
+PAGE_LOAD_ATTEMPT_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_ATTEMPT_TIMEOUT", "20"))
+DIRECT_DOWNLOAD_ON_DATE_FAILURE = (
+    os.environ.get("FEDSTAT_DIRECT_DOWNLOAD_ON_DATE_FAILURE", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
+DIRECT_FALLBACK_IDS = {
+    item.strip()
+    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824,34118").split(",")
+    if item.strip()
+}
+BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))
+BROWSER_FETCH_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_FETCH_TIMEOUT", "180"))
+FEDSTAT_34118_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_SIZE", "1")))
+FEDSTAT_34118_YEAR_CHUNK_SIZE = max(1, int(os.environ.get("FEDSTAT_34118_YEAR_CHUNK_SIZE", "99")))
+FEDSTAT_34118_CHUNK_RETRIES = max(1, int(os.environ.get("FEDSTAT_34118_CHUNK_RETRIES", "2")))
+FEDSTAT_34118_CHUNK_RETRY_SLEEP = max(0.0, float(os.environ.get("FEDSTAT_34118_CHUNK_RETRY_SLEEP", "2")))
+FEDSTAT_34118_RESUME_DIR = Path(os.environ.get(
+    "FEDSTAT_34118_RESUME_DIR", "downloads/.fedstat_resume"
+))
+FEDSTAT_USER_AGENT = os.environ.get(
+    "FEDSTAT_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+)
+FEDSTAT_BROWSER_BINARY = os.environ.get("FEDSTAT_BROWSER_BINARY", "").strip()
+FEDSTAT_CHROMEDRIVER_PATH = os.environ.get("FEDSTAT_CHROMEDRIVER_PATH", "").strip()
 
 # ─────────────────────────────────────────────
 
 
 def load_state():
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_state(STATE_FILE, label="fedstat")
 
 
 def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    write_json_atomic(STATE_FILE, state)
 
 
-def create_driver():
+def _load_run_checkpoint(run_id: str | None) -> dict:
+    """Load completion receipts shared by retries of one update_realty run."""
+    if not run_id:
+        return {"run_id": "", "completed": {}}
+    checkpoint = load_json_state(RUN_CHECKPOINT_FILE, label="fedstat run")
+    if checkpoint.get("run_id") != run_id:
+        return {"run_id": run_id, "completed": {}}
+    if not isinstance(checkpoint.get("completed"), dict):
+        checkpoint["completed"] = {}
+    return checkpoint
+
+
+def _mark_run_completed(checkpoint: dict, indicator_id: str, remote_date: str | None) -> None:
+    """Persist one indicator immediately so a watchdog cannot lose its success."""
+    run_id = checkpoint.get("run_id")
+    if not run_id:
+        return
+    checkpoint.setdefault("completed", {})[indicator_id] = {
+        "remote_date": remote_date,
+        "completed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    write_json_atomic(RUN_CHECKPOINT_FILE, checkpoint)
+
+
+def create_driver(download_dir: Path | None = None):
     options = Options()
+    if FEDSTAT_BROWSER_BINARY:
+        binary_path = Path(FEDSTAT_BROWSER_BINARY)
+        if binary_path.exists():
+            options.binary_location = str(binary_path)
+            print(f"  🛠  browser binary: {binary_path}", flush=True)
+        else:
+            print(f"  ⚠️  FEDSTAT_BROWSER_BINARY не найден: {binary_path}", flush=True)
 
     # Уникальный профиль на инстанс. update_realty.py гоняет fedstat
     # параллельно с rasprod/kvart/erz-top — без своего user-data-dir
@@ -125,14 +216,14 @@ def create_driver():
     atexit.register(shutil.rmtree, profile_dir, ignore_errors=True)
     options.add_argument(f"--user-data-dir={profile_dir}")
 
-    # HEADLESS_MODE=new → новый headless (быстрее, но в Chrome 149 ломает
-    # тяжёлый React-DOM fedstat с `appendChild on null`). По умолчанию
-    # `=old` — старый headless надёжен, разница в скорости несущественна
-    # для 29 индикаторов.
+    # HEADLESS_MODE=new → новый headless; =off → видимый Chrome для
+    # диагностики блокировок Fedstat; по умолчанию =old.
     mode = os.environ.get("HEADLESS_MODE", "old").lower()
     if mode == "new":
         options.add_argument("--headless=new")
         print("  🛠  headless=new (HEADLESS_MODE=new)", flush=True)
+    elif mode in {"off", "false", "0", "visible"}:
+        print("  🛠  headless=off (visible Chrome)", flush=True)
     else:
         options.add_argument("--headless")
         print("  🛠  headless=old (HEADLESS_MODE=old, default)", flush=True)
@@ -145,11 +236,46 @@ def create_driver():
     options.add_argument("--disable-features=Translate")
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--lang=ru-RU")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-    driver = webdriver.Chrome(options=options)
+    options.add_argument(f"user-agent={FEDSTAT_USER_AGENT}")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    if download_dir is not None:
+        download_dir = Path(download_dir).resolve()
+        download_dir.mkdir(parents=True, exist_ok=True)
+        options.add_experimental_option(
+            "prefs",
+            {
+                "download.default_directory": str(download_dir),
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True,
+                "profile.default_content_setting_values.automatic_downloads": 1,
+            },
+        )
+    service = None
+    if FEDSTAT_CHROMEDRIVER_PATH:
+        driver_path = Path(FEDSTAT_CHROMEDRIVER_PATH)
+        if driver_path.exists():
+            service = Service(str(driver_path))
+            print(f"  🛠  chromedriver: {driver_path}", flush=True)
+        else:
+            print(f"  ⚠️  FEDSTAT_CHROMEDRIVER_PATH не найден: {driver_path}", flush=True)
+    driver = webdriver.Chrome(service=service, options=options) if service else webdriver.Chrome(options=options)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru']});
+                """
+            },
+        )
+    except Exception:
+        pass
+    if download_dir is not None:
+        _set_driver_download_dir(driver, download_dir)
     _orig_quit = driver.quit
     def _quit_and_cleanup():
         try:
@@ -158,6 +284,18 @@ def create_driver():
             shutil.rmtree(profile_dir, ignore_errors=True)
     driver.quit = _quit_and_cleanup  # type: ignore[method-assign]
     return driver
+
+
+def _set_driver_download_dir(driver, download_dir: Path) -> None:
+    download_dir = Path(download_dir).resolve()
+    download_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": str(download_dir)},
+        )
+    except Exception:
+        pass
 
 
 def close_popup(driver):
@@ -212,31 +350,36 @@ def get_last_update_date(driver, indicator_id):
     url = f"https://www.fedstat.ru/indicator/{real_id}"
     print(f"  🌐 Открываю: {url}")
 
-    # Повторные попытки загрузки страницы до 5 минут суммарно
-    MAX_TOTAL_WAIT = 300  # 5 минут
-    ATTEMPT_TIMEOUT = 30  # каждая попытка — 30 сек
     start_time = time.time()
     loaded = False
 
-    while time.time() - start_time < MAX_TOTAL_WAIT:
+    while time.time() - start_time < PAGE_LOAD_TOTAL_TIMEOUT:
         try:
-            driver.set_page_load_timeout(ATTEMPT_TIMEOUT)
+            driver.set_page_load_timeout(PAGE_LOAD_ATTEMPT_TIMEOUT)
             driver.get(url)
             loaded = True
             break
         except Exception:
             elapsed = int(time.time() - start_time)
-            print(f"  ⏳ Не загрузилось за {ATTEMPT_TIMEOUT}с (всего {elapsed}с), повторяю...")
+            print(f"  ⏳ Не загрузилось за {PAGE_LOAD_ATTEMPT_TIMEOUT}с (всего {elapsed}с), повторяю...")
             try:
                 driver.execute_script("window.stop();")
             except Exception:
                 pass
 
     if not loaded:
-        print(f"  ⚠️  Страница не загрузилась за 5 минут, пропускаю")
+        print(f"  ⚠️  Страница не загрузилась за {PAGE_LOAD_TOTAL_TIMEOUT}с, пропускаю")
         return None
 
     wait = WebDriverWait(driver, PAGE_TIMEOUT)
+    page_text = ""
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text.strip()
+    except Exception:
+        pass
+    if "forbidden" in page_text.lower():
+        print(f"  ❌ Fedstat отклонил страницу: {' '.join(page_text.split())[:240]}")
+        return None
 
     # Ретраи на flaky-ошибки: appendChild (Chrome 148 JS-инициализация
     # fedstat) и element click intercepted (всплывающее модальное окно
@@ -332,7 +475,968 @@ def _parse_remote_date_to_yyyymmdd(s: str | None) -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
-def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
+def _compact_html_preview(text: str, limit: int = 300) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text[:limit]
+
+
+def _raise_if_html_response(response: requests.Response) -> None:
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    if "html" in content_type or content_type.startswith("text/"):
+        preview = _compact_html_preview(response.text)
+        raise ValueError(f"Fedstat вернул HTML вместо Excel: {preview}")
+
+
+def _looks_like_excel_bytes(content: bytes) -> bool:
+    return (
+        content.startswith(b"PK\x03\x04")
+        or content.startswith(b"PK\x05\x06")
+        or content.startswith(b"PK\x07\x08")
+        or content.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
+    )
+
+
+def _looks_like_xml_bytes(content: bytes) -> bool:
+    head = content[:200].lstrip().lower()
+    return head.startswith(b"<?xml") or head.startswith(b"<")
+
+
+class _ExportTokenParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.depth = 0
+        self.entries = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "div" and (self.depth or attrs.get("id") == "downloadTokenHolder"):
+            self.depth += 1
+        if self.depth and tag == "input" and attrs.get("type") == "hidden":
+            self.entries.append((attrs.get("name"), attrs.get("value")))
+
+    def handle_endtag(self, tag):
+        if tag == "div" and self.depth:
+            self.depth -= 1
+
+
+def _export_post_with_token(session, driver, real_id: str, post_data, *, refresh=False):
+    """Use the ordinary download form's CSRF token and its matching session.
+
+    Current FGrid.downloadFile posts title + savePreview fields and these hidden
+    fields to downloadData.do. data.do is the table/preview endpoint, not export.
+    Never log token values, cookies, or complete request payloads.
+    """
+    page_url = f"https://www.fedstat.ru/indicator/{real_id}"
+    if driver is not None:
+        current = urlsplit(driver.current_url or "")
+        if refresh or current.hostname != "www.fedstat.ru" or current.path != f"/indicator/{real_id}":
+            driver.get(page_url)
+        entries = driver.execute_script("""
+            return Array.from(document.querySelectorAll('#downloadTokenHolder input[type="hidden"]'))
+                .map(input => [input.name, input.value]);
+        """)
+        for cookie in driver.get_cookies():
+            session.cookies.set(cookie.get("name"), cookie.get("value"),
+                                domain=cookie.get("domain"), path=cookie.get("path", "/"))
+    else:
+        response = session.get(page_url, timeout=30)
+        try:
+            response.raise_for_status()
+            parser = _ExportTokenParser()
+            parser.feed(response.text)
+            entries = parser.entries
+        finally:
+            response.close()
+    values = dict(entries or [])
+    token_name = values.get("struts.token.name")
+    if not isinstance(token_name, str) or not token_name or not values.get(token_name):
+        raise ValueError("Fedstat: не удалось прочитать CSRF-поля формы экспорта")
+    clean = [(key, value) for key, value in post_data
+             if key not in {"struts.token.name", token_name}]
+    return clean + [("struts.token.name", token_name), (token_name, values[token_name])]
+
+
+def _to_float(v) -> float:
+    try:
+        if v is None or pd.isna(v):
+            return float("nan")
+    except TypeError:
+        if v is None:
+            return float("nan")
+    s = str(v).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+    if not s:
+        return float("nan")
+    try:
+        return float(s)
+    except ValueError:
+        return float("nan")
+
+
+def _xml_local_name(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _strip_field_prefix(field_id: str, value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = str(value)
+    prefix = f"{field_id}_"
+    if value.startswith(prefix):
+        return value[len(prefix):]
+    return value
+
+
+def _sdmx_code_labels(root: ET.Element) -> dict[str, dict[str, str]]:
+    labels: dict[str, dict[str, str]] = {}
+    for elem in root.iter():
+        if _xml_local_name(elem.tag) not in {"CodeList", "Codelist"}:
+            continue
+        field_id = elem.attrib.get("id")
+        if not field_id:
+            continue
+        field_labels: dict[str, str] = {}
+        for child in elem:
+            if _xml_local_name(child.tag) != "Code":
+                continue
+            value = _strip_field_prefix(field_id, child.attrib.get("value") or child.attrib.get("id"))
+            if not value:
+                continue
+            texts = [
+                (node.text or "").strip()
+                for node in child.iter()
+                if _xml_local_name(node.tag) in {"Name", "Description"} and (node.text or "").strip()
+            ]
+            field_labels[value] = texts[0] if texts else value
+        if field_labels:
+            labels[field_id] = field_labels
+    return labels
+
+
+def _sdmx_attr(elem: ET.Element, *names: str) -> str | None:
+    lowered = {name.lower() for name in names}
+    for key, value in elem.attrib.items():
+        if _xml_local_name(key).lower() in lowered:
+            return value
+    return None
+
+
+def _record_obs_value(record: dict[str, str]) -> str | None:
+    for key in ("ObsValue", "OBS_VALUE", "obsValue", "value"):
+        value = record.get(key)
+        if value not in {"", None}:
+            return str(value)
+    return None
+
+
+def _sdmx_records(content: bytes) -> tuple[list[dict[str, str]], dict[str, dict[str, str]]]:
+    root = ET.fromstring(content)
+    labels = _sdmx_code_labels(root)
+    records: list[dict[str, str]] = []
+
+    def read_values(parent: ET.Element) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for node in parent.iter():
+            if _xml_local_name(node.tag) != "Value":
+                continue
+            key = _sdmx_attr(node, "id", "concept")
+            value = _sdmx_attr(node, "value")
+            if key and value:
+                out[key] = value
+        return out
+
+    for series in root.iter():
+        if _xml_local_name(series.tag) != "Series":
+            continue
+        series_values: dict[str, str] = {}
+        for child in series:
+            if _xml_local_name(child.tag) in {"SeriesKey", "Attributes"}:
+                series_values.update(read_values(child))
+        for obs in series:
+            if _xml_local_name(obs.tag) != "Obs":
+                continue
+            record = dict(series_values)
+            for key, value in obs.attrib.items():
+                record[_xml_local_name(key)] = value
+            for child in obs:
+                child_name = _xml_local_name(child.tag)
+                if child_name == "ObsDimension":
+                    key = _sdmx_attr(child, "id", "concept") or "TIME_PERIOD"
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record[key] = value
+                elif child_name == "ObsValue":
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record["ObsValue"] = value
+                elif child_name in {"Attributes", "Value"}:
+                    record.update(read_values(child))
+            if _record_obs_value(record) is not None:
+                records.append(record)
+
+    # Some SDMX writers emit flat Obs elements without a Series wrapper.
+    if not records:
+        for obs in root.iter():
+            if _xml_local_name(obs.tag) != "Obs":
+                continue
+            record = {_xml_local_name(k): v for k, v in obs.attrib.items()}
+            for child in obs:
+                if _xml_local_name(child.tag) == "Value":
+                    key = _sdmx_attr(child, "id", "concept")
+                    value = _sdmx_attr(child, "value")
+                    if key and value:
+                        record[key] = value
+                elif _xml_local_name(child.tag) == "ObsValue":
+                    value = _sdmx_attr(child, "value")
+                    if value:
+                        record["ObsValue"] = value
+            if _record_obs_value(record) is not None:
+                records.append(record)
+    return records, labels
+
+
+def _label_from_sdmx(labels: dict[str, dict[str, str]], field_id: str, value_id: str) -> str:
+    value_id = _strip_field_prefix(field_id, value_id) or value_id
+    fallback_labels = {
+        ("57831", "1688487"): "Российская Федерация",
+        ("57831", "1688506"): "Москва",
+        ("57831", "1849012"): "Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        ("58389", "1754554"): "Жилые дома,построенные населением",
+        ("58389", "1754555"): "Жилые дома",
+        ("58389", "1754556"): "Жилые здания многоквартирные",
+        ("33560", "1540222"): "январь",
+        ("33560", "1540224"): "февраль",
+        ("33560", "1540226"): "январь-февраль",
+        ("33560", "1540227"): "март",
+        ("33560", "1540228"): "январь-март",
+        ("33560", "1540229"): "апрель",
+        ("33560", "1540230"): "январь-апрель",
+        ("33560", "1540233"): "май",
+        ("33560", "1540234"): "январь-май",
+        ("33560", "1540235"): "июнь",
+        ("33560", "1540236"): "январь-июнь",
+        ("33560", "1540272"): "II квартал",
+        ("33560", "1540273"): "июль",
+        ("33560", "1540276"): "январь-июль",
+        ("33560", "1540282"): "август",
+        ("33560", "1540283"): "январь-август",
+        ("33560", "1540284"): "сентябрь",
+        ("33560", "1540285"): "январь-сентябрь",
+        ("33560", "1540286"): "III квартал",
+        ("33560", "1540287"): "октябрь",
+        ("33560", "1540288"): "январь-октябрь",
+        ("33560", "1540289"): "ноябрь",
+        ("33560", "1540290"): "январь-ноябрь",
+        ("33560", "1540291"): "декабрь",
+        ("33560", "1540292"): "январь-декабрь",
+        ("33560", "1540293"): "IV квартал",
+        ("33560", "1540294"): "I квартал",
+    }
+    return labels.get(field_id, {}).get(value_id) or fallback_labels.get((field_id, value_id), value_id)
+
+
+def _record_value(record: dict[str, str], field_id: str) -> str | None:
+    candidates = (field_id, f"s_{field_id}", f"{field_id}_code")
+    for candidate in candidates:
+        if candidate in record and record[candidate] not in {"", None}:
+            return str(record[candidate])
+    for key, value in record.items():
+        if str(key).split("-", 1)[0] == field_id and value not in {"", None}:
+            return str(value)
+    return None
+
+
+def _sdmx_34118_to_excel(content: bytes, payload_template: dict, save_path: Path) -> Path | None:
+    records, labels = _sdmx_records(content)
+    if not records:
+        return None
+    selected = list(payload_template.get("selectedFilterIds", []))
+    years = [item.split("_", 1)[1] for item in selected if _is_34118_year_filter(item)]
+    periods = [item.split("_", 1)[1] for item in selected if _is_34118_period_filter(item)]
+    regions = [item.split("_", 1)[1] for item in selected if str(item).startswith("57831_")]
+    categories = [item.split("_", 1)[1] for item in selected if str(item).startswith("58389_")]
+    if not years or not periods or not regions or not categories:
+        return None
+
+    value_by_key: dict[tuple[str, str, str, str], float] = {}
+    for record in records:
+        year = _strip_field_prefix("3", _record_value(record, "3") or _record_value(record, "TIME_PERIOD"))
+        if year and re.fullmatch(r"\d{4}-.+", year):
+            year = year[:4]
+        period = _strip_field_prefix("33560", _record_value(record, "33560")) or (
+            periods[0] if len(periods) == 1 else None
+        )
+        region = _strip_field_prefix("57831", _record_value(record, "57831"))
+        category = _strip_field_prefix("58389", _record_value(record, "58389"))
+        raw_value = _record_obs_value(record)
+        if not (year and period and region and category and raw_value is not None):
+            continue
+        value = _to_float(raw_value)
+        if pd.isna(value):
+            continue
+        value_by_key[(str(region), str(category), str(year), str(period))] = value
+
+    if not value_by_key:
+        return None
+
+    columns = [(year, period) for year in years for period in periods]
+    rows: list[list[object]] = [
+        [payload_template.get("title", "")] + [None] * (len(columns) + 1),
+        [None] * (len(columns) + 2),
+        [None, None] + [int(year) if str(year).isdigit() else year for year, _ in columns],
+        [None, None] + [_label_from_sdmx(labels, "33560", period) for _, period in columns],
+    ]
+    for region in regions:
+        for category in categories:
+            row = [
+                _label_from_sdmx(labels, "57831", region),
+                _label_from_sdmx(labels, "58389", category),
+            ]
+            row.extend(value_by_key.get((region, category, year, period), "") for year, period in columns)
+            rows.append(row)
+
+    if len(rows) <= 4:
+        return None
+    final_path = save_path.with_suffix(".xlsx")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_name(f"{final_path.stem}.tmp{final_path.suffix}")
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            pd.DataFrame(rows).to_excel(writer, sheet_name="Данные", header=False, index=False)
+        validate_excel_file(tmp_path)
+        tmp_path.replace(final_path)
+        return final_path
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _post_data_with_format(post_data: list[tuple[str, str]], data_format: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    replaced = False
+    for key, value in post_data:
+        if key == "format":
+            out.append((key, data_format))
+            replaced = True
+        else:
+            out.append((key, value))
+    if not replaced:
+        out.insert(0, ("format", data_format))
+    return out
+
+
+def _download_34118_sdmx_as_excel(
+    indicator_id: str,
+    session: requests.Session,
+    post_data: list[tuple[str, str]],
+    headers: dict[str, str],
+    payload_template: dict,
+    save_path: Path,
+    driver=None,
+) -> Path | None:
+    url = "https://www.fedstat.ru/indicator/downloadData.do?format=sdmx"
+    sdmx_headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() != "content-type"
+    }
+    sdmx_headers["Content-Type"] = "application/x-www-form-urlencoded"
+    sdmx_headers["Accept"] = "text/xml,application/xml,*/*"
+    sdmx_post_data = _post_data_with_format(post_data, "sdmx")
+
+    try:
+        sdmx_post_data = _export_post_with_token(
+            session, driver, str(payload_template["id"]), sdmx_post_data, refresh=True)
+        response = session.post(url, data=sdmx_post_data, headers=sdmx_headers, timeout=120)
+        response.raise_for_status()
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        content = response.content
+        if "html" in content_type or content[:200].lstrip().lower().startswith(b"<html"):
+            preview = _compact_html_preview(response.text)
+            print(f"  ⚠️  SDMX тоже вернул HTML: {preview}")
+            raise ValueError("SDMX returned HTML")
+        if not _looks_like_xml_bytes(content):
+            print(f"  ⚠️  SDMX ответ не похож на XML ({content_type}, {len(content)} байт)")
+            raise ValueError("SDMX response is not XML")
+        out = _sdmx_34118_to_excel(content, payload_template, save_path)
+        if out is not None:
+            if not _validate_34118_file(indicator_id, out, payload_template):
+                raise ValueError("SDMX file did not pass 34118 year validation")
+            print(f"  ✅ Сохранён через SDMX fallback: {out}")
+            return out
+        raise ValueError("SDMX XML did not contain 34118 rows")
+    except (requests.RequestException, OSError, ValueError, ET.ParseError) as exc:
+        print(f"  ⚠️  SDMX fallback не сработал: {exc}")
+
+    if driver is None or "fedstat.ru" not in (driver.current_url or ""):
+        return None
+    try:
+        driver.set_script_timeout(BROWSER_FETCH_TIMEOUT)
+    except Exception:
+        pass
+    try:
+        sdmx_post_data = _export_post_with_token(
+            session, driver, str(payload_template["id"]), sdmx_post_data, refresh=True)
+        entries = [[str(k), str(v)] for k, v in sdmx_post_data]
+        result = driver.execute_async_script(
+            """
+            const done = arguments[arguments.length - 1];
+            const [action, entries] = arguments;
+            const body = new URLSearchParams();
+            for (const [name, value] of entries) body.append(name, value);
+            fetch(action, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'Accept': 'text/xml,application/xml,*/*'
+                },
+                body
+            }).then(async response => {
+                const contentType = response.headers.get('content-type') || '';
+                const buffer = await response.arrayBuffer();
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                const chunk = 0x8000;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                }
+                let text = '';
+                if (contentType.toLowerCase().includes('html') || contentType.toLowerCase().startsWith('text/')) {
+                    text = new TextDecoder('utf-8').decode(bytes.slice(0, 1000));
+                }
+                done({
+                    ok: response.ok,
+                    status: response.status,
+                    contentType,
+                    bodyBase64: btoa(binary),
+                    text
+                });
+            }).catch(error => done({error: String(error)}));
+            """,
+            url,
+            entries,
+        )
+        if not result or not result.get("bodyBase64"):
+            if result and result.get("error"):
+                print(f"  ⚠️  Browser SDMX fetch не сработал: {result.get('error')}")
+            return None
+        content = base64.b64decode(result["bodyBase64"])
+        content_type = str(result.get("contentType") or "").lower()
+        if "html" in content_type or content[:200].lstrip().lower().startswith(b"<html"):
+            preview = _compact_html_preview(result.get("text") or content[:1000].decode("utf-8", "replace"))
+            print(f"  ⚠️  Browser SDMX fetch вернул HTML ({result.get('status')}): {preview}")
+            return None
+        if not _looks_like_xml_bytes(content):
+            print(f"  ⚠️  Browser SDMX ответ не похож на XML ({content_type}, {len(content)} байт)")
+            return None
+        out = _sdmx_34118_to_excel(content, payload_template, save_path)
+        if out is not None:
+            if not _validate_34118_file(indicator_id, out, payload_template):
+                return None
+            print(f"  ✅ Сохранён через Browser SDMX fallback: {out}")
+        return out
+    except Exception as exc:
+        print(f"  ⚠️  Browser SDMX fallback не сработал: {exc}")
+        return None
+
+
+def _wait_for_browser_download(driver, save_dir: Path, before: set[Path]) -> Path | None:
+    """Stop promptly on an explicit HTTP error page after form navigation."""
+    deadline = time.monotonic() + BROWSER_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        downloaded = wait_for_download(
+            save_dir, before_snapshot=before,
+            timeout=min(5, max(0, deadline - time.monotonic())),
+        )
+        if downloaded is not None:
+            return downloaded
+        try:
+            title = str(driver.title or "")
+            if re.match(r"^\s*(?:403|404|500|502|503|504)\b", title):
+                print(f"  ⚠️  Browser form POST: {title[:160]}")
+                return None
+        except Exception:
+            pass
+    return None
+
+
+def _download_excel_via_browser(driver, url: str, post_data: list[tuple[str, str]],
+                                save_dir: Path, save_path: Path) -> Path | None:
+    """Submit Fedstat Excel POST through Chrome when direct requests are blocked."""
+    if driver is None:
+        return None
+    save_dir.mkdir(parents=True, exist_ok=True)
+    _set_driver_download_dir(driver, save_dir)
+    before = {p.resolve() for p in save_dir.glob("*") if p.is_file()}
+    form_path = None
+    try:
+        entries = [[str(k), str(v)] for k, v in post_data]
+        if "fedstat.ru" not in (driver.current_url or ""):
+            real_id = next(
+                (value.split("_", 1)[1] for key, value in post_data
+                 if key == "selectedFilterIds" and str(value).startswith("0_")),
+                "",
+            )
+            if real_id:
+                driver.get(f"https://www.fedstat.ru/indicator/{real_id}")
+                time.sleep(2)
+                close_popup(driver)
+
+        if "fedstat.ru" in (driver.current_url or ""):
+            try:
+                driver.set_script_timeout(BROWSER_FETCH_TIMEOUT)
+            except Exception:
+                pass
+            try:
+                result = driver.execute_async_script(
+                    """
+                    const done = arguments[arguments.length - 1];
+                    const [action, entries] = arguments;
+                    const body = new URLSearchParams();
+                    for (const [name, value] of entries) body.append(name, value);
+                    fetch(action, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                            'Accept': 'application/vnd.ms-excel,application/octet-stream,*/*'
+                        },
+                        body
+                    }).then(async response => {
+                        const contentType = response.headers.get('content-type') || '';
+                        const buffer = await response.arrayBuffer();
+                        const bytes = new Uint8Array(buffer);
+                        let binary = '';
+                        const chunk = 0x8000;
+                        for (let i = 0; i < bytes.length; i += chunk) {
+                            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                        }
+                        let text = '';
+                        if (contentType.toLowerCase().includes('html') || contentType.toLowerCase().startsWith('text/')) {
+                            text = new TextDecoder('utf-8').decode(bytes.slice(0, 1000));
+                        }
+                        done({
+                            ok: response.ok,
+                            status: response.status,
+                            contentType,
+                            length: bytes.length,
+                            bodyBase64: btoa(binary),
+                            text
+                        });
+                    }).catch(error => done({error: String(error)}));
+                    """,
+                    url,
+                    entries,
+                )
+                if result and result.get("bodyBase64"):
+                    content_type = str(result.get("contentType") or "").lower()
+                    status = result.get("status")
+                    body = base64.b64decode(result["bodyBase64"])
+                    if result.get("ok") and _looks_like_excel_bytes(body):
+                        write_bytes_atomic(save_path, body, validate=validate_excel_file)
+                        return save_path
+                    if "html" in content_type or content_type.startswith("text/"):
+                        preview = _compact_html_preview(result.get("text") or body[:1000].decode("utf-8", "replace"))
+                        print(f"  ⚠️  Browser fetch вернул HTML ({status}): {preview}")
+                    else:
+                        print(f"  ⚠️  Browser fetch не вернул Excel (HTTP {status}, {len(body)} байт)")
+                    # A fetch is not a navigation/download request. Continue to
+                    # the site's ordinary form POST after HTML/error responses.
+                elif result and result.get("error"):
+                    print(f"  ⚠️  Browser fetch не сработал: {result.get('error')}")
+            except Exception as exc:
+                print(f"  ⚠️  Browser fetch не сработал: {exc}")
+
+        # Submit from fedstat.ru itself. A local file:// form can lose SameSite
+        # cookies on cross-site POST and Fedstat responds with 403/no download.
+        # Struts tokens may be single-use: reload the public indicator before
+        # another request instead of replaying the token used by fetch.
+        real_id = next((str(value) for key, value in post_data if key == "id"), "")
+        if real_id:
+            with requests.Session() as token_session:
+                post_data = _export_post_with_token(
+                    token_session, driver, real_id, post_data, refresh=True)
+            entries = [[str(k), str(v)] for k, v in post_data]
+        if "fedstat.ru" in (driver.current_url or ""):
+            driver.execute_script(
+                """
+                const [action, entries] = arguments;
+                const old = document.getElementById('codex-fedstat-download');
+                if (old) old.remove();
+                const form = document.createElement('form');
+                form.id = 'codex-fedstat-download';
+                form.method = 'post';
+                form.action = action;
+                form.style.display = 'none';
+                for (const [name, value] of entries) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    input.value = value;
+                    form.appendChild(input);
+                }
+                document.body.appendChild(form);
+                form.submit();
+                """,
+                url,
+                entries,
+            )
+        else:
+            inputs = "\n".join(
+                f'<input type="hidden" name="{html.escape(str(k), quote=True)}" '
+                f'value="{html.escape(str(v), quote=True)}">'
+                for k, v in post_data
+            )
+            form_html = (
+                "<!doctype html><meta charset=\"utf-8\">"
+                f"<form id=\"fedstat\" method=\"post\" action=\"{html.escape(url, quote=True)}\">"
+                f"{inputs}</form>"
+                "<script>document.getElementById('fedstat').submit();</script>"
+            )
+            with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
+                                             encoding="utf-8") as fh:
+                fh.write(form_html)
+                form_path = Path(fh.name)
+            driver.get(form_path.as_uri())
+
+        downloaded = _wait_for_browser_download(driver, save_dir, before)
+        if downloaded is None:
+            try:
+                page_text = driver.find_element(By.TAG_NAME, "body").text
+            except Exception:
+                page_text = ""
+            if page_text:
+                text = " ".join(page_text.split())
+                markers = (
+                    "слишком большой объем выборки",
+                    "результат обработки запроса",
+                    "ошибка",
+                    "forbidden",
+                )
+                if any(marker in text.lower() for marker in markers):
+                    print(f"  ⚠️  Fedstat ответил страницей: {text[:240]}")
+            print(f"  ⚠️  Browser POST не вернул Excel (лимит ожидания {BROWSER_POST_TIMEOUT}с)")
+            return None
+        validate_excel_file(downloaded)
+        if downloaded.resolve() != save_path.resolve():
+            if save_path.exists():
+                save_path.unlink()
+            shutil.move(str(downloaded), str(save_path))
+        return save_path
+    except Exception as exc:
+        print(f"  ❌ Browser POST fallback не сработал: {exc}")
+        return None
+    finally:
+        if form_path is not None:
+            try:
+                form_path.unlink()
+            except OSError:
+                pass
+
+
+def _should_direct_fallback(indicator_id: str) -> bool:
+    real_id = indicator_id.split("_")[0]
+    return "*" in DIRECT_FALLBACK_IDS or indicator_id in DIRECT_FALLBACK_IDS or real_id in DIRECT_FALLBACK_IDS
+
+
+def _payload_34118_part(indicator_id: str) -> dict:
+    """Compact EMISS 34118 export in the same layout as emiss_34118_base.xls.
+
+    The full site layout is too large and returns an HTML warning instead of xls.
+    Keep 0/30611 as hidden filters so the first two columns remain region/category,
+    which is what the dashboard parser expects.
+    """
+    is_part1 = indicator_id.endswith("часть1")
+    years = range(2015, 2023) if is_part1 else range(2023, 2027)
+    suffix = "часть1_2015_2022" if is_part1 else "часть2_2023_2026"
+    period_ids = [
+        "33560_1540222", "33560_1540224", "33560_1540226", "33560_1540227",
+        "33560_1540228", "33560_1540229", "33560_1540230", "33560_1540233",
+        "33560_1540234", "33560_1540235", "33560_1540236", "33560_1540272",
+        "33560_1540273", "33560_1540276", "33560_1540282", "33560_1540283",
+        "33560_1540284", "33560_1540285", "33560_1540286", "33560_1540287",
+        "33560_1540288", "33560_1540289", "33560_1540290", "33560_1540291",
+        "33560_1540292", "33560_1540293", "33560_1540294",
+    ]
+    region_ids = [
+        "57831_1688487",  # Российская Федерация
+        "57831_1688506",  # Москва
+        "57831_1849012",  # РФ без новых субъектов
+    ]
+    category_ids = [
+        "58389_1754554",  # Жилые дома, построенные населением / ИЖС
+        "58389_1754555",  # Жилые дома
+        "58389_1754556",  # Жилые здания многоквартирные
+    ]
+    return {
+        "title": "Введено в действие общей площади жилых домов (оперативные данные)",
+        "filename_title": (
+            f"34118_{suffix}_Введено в действие общей площади жилых домов "
+            "(оперативные данные)"
+        ),
+        "id": "34118",
+        "lineObjectIds": ["57831", "58389"],
+        "columnObjectIds": ["3", "33560"],
+        "selectedFilterIds": (
+            ["0_34118"]
+            + [f"3_{year}" for year in years]
+            + ["30611_950292"]
+            + period_ids
+            + region_ids
+            + category_ids
+        ),
+        "filterObjectIds": ["0", "30611"],
+    }
+
+
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    return [values[i:i + size] for i in range(0, len(values), size)]
+
+
+def _is_34118_year_filter(value: str) -> bool:
+    return bool(re.fullmatch(r"3_20\d{2}", str(value)))
+
+
+def _is_34118_period_filter(value: str) -> bool:
+    return str(value).startswith("33560_")
+
+
+def _subset_34118_filters(selected: list[str], years: list[str], periods: list[str]) -> list[str]:
+    year_set = set(years)
+    period_set = set(periods)
+    out: list[str] = []
+    for item in selected:
+        if _is_34118_year_filter(item):
+            if item in year_set:
+                out.append(item)
+        elif _is_34118_period_filter(item):
+            if item in period_set:
+                out.append(item)
+        else:
+            out.append(item)
+    return out
+
+
+def _parse_only_ids(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    out: list[str] = []
+    for item in re.split(r"[,;\s]+", raw):
+        item = item.strip()
+        if not item:
+            continue
+        if item in {"34118", "31074"}:
+            out.extend([f"{item}_часть1", f"{item}_часть2"])
+        else:
+            out.append(item)
+    return out or None
+
+
+def _read_fedstat_data_sheet(path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_excel(path, sheet_name="Данные", header=None)
+    except Exception:
+        return pd.read_excel(path, sheet_name=0, header=None)
+
+
+def _merge_fedstat_excel_chunks(paths: list[Path], save_path: Path) -> Path | None:
+    frames = []
+    for path in paths:
+        try:
+            df = _read_fedstat_data_sheet(path)
+        except Exception as exc:
+            print(f"  ⚠️  Не смог прочитать chunk {path.name}: {exc}")
+            return None
+        if df.shape[1] < 3:
+            print(f"  ⚠️  В chunk {path.name} слишком мало колонок")
+            return None
+        frames.append(df)
+    if not frames:
+        return None
+
+    base = frames[0].iloc[:, :2].copy()
+    out = pd.concat([base] + [df.iloc[:, 2:].reset_index(drop=True) for df in frames], axis=1)
+    final_path = save_path.with_suffix(".xlsx")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_name(f"{final_path.stem}.tmp{final_path.suffix}")
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            out.to_excel(writer, sheet_name="Данные", header=False, index=False)
+        validate_excel_file(tmp_path)
+        tmp_path.replace(final_path)
+        return final_path
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _validate_34118_file(indicator_id: str, path: Path, payload_template: dict | None = None) -> bool:
+    try:
+        df = _read_fedstat_data_sheet(path)
+    except Exception as exc:
+        print(f"  ⚠️  Не смог проверить 34118 файл {path.name}: {exc}")
+        return False
+    selected = list((payload_template or {}).get("selectedFilterIds", []))
+    expected_years = {
+        int(item.split("_", 1)[1])
+        for item in selected
+        if _is_34118_year_filter(item)
+    }
+    if not expected_years:
+        expected_years = (
+            set(range(2015, 2023))
+            if indicator_id.endswith("часть1")
+            else set(range(2023, 2027))
+        )
+    found_years: set[int] = set()
+    for i in range(min(6, len(df))):
+        for j in range(df.shape[1]):
+            value = df.iat[i, j]
+            try:
+                year = int(float(value))
+            except (TypeError, ValueError):
+                continue
+            if 2000 <= year <= 2100:
+                found_years.add(year)
+    missing = sorted(expected_years - found_years)
+    if missing:
+        print(f"  ⚠️  В 34118 {path.name} не нашёл годы: {', '.join(map(str, missing))}")
+        return False
+    years_label = (
+        f"{min(expected_years)}-{max(expected_years)}"
+        if len(expected_years) > 1
+        else str(next(iter(expected_years)))
+    )
+    print(f"  ✅ Проверил 34118 файл: годы {years_label} на месте")
+    return True
+
+
+def _download_34118_period_chunks(
+    indicator_id: str,
+    payload_template: dict,
+    save_dir: Path,
+    save_path: Path,
+    *,
+    remote_date: str | None,
+    driver=None,
+    period_chunk_size: int | None = None,
+    year_chunk_size: int | None = None,
+) -> Path | None:
+    selected = list(payload_template.get("selectedFilterIds", []))
+    year_ids = [x for x in selected if _is_34118_year_filter(x)]
+    period_ids = [x for x in selected if _is_34118_period_filter(x)]
+    period_chunk_size = period_chunk_size or FEDSTAT_34118_CHUNK_SIZE
+    year_chunk_size = year_chunk_size or FEDSTAT_34118_YEAR_CHUNK_SIZE
+    if len(period_ids) <= period_chunk_size and len(year_ids) <= year_chunk_size:
+        return None
+
+    # Keep a stable chunk plan across process retries. Switching from the
+    # normal all-years-per-period plan to year-by-year after one transient 503
+    # multiplies 27 requests into 108 and prevents reuse by payload hash.
+    attempts = [(period_chunk_size, year_chunk_size)]
+
+    for period_size, year_size in attempts:
+        period_chunks = _chunked(period_ids, period_size)
+        year_chunks = _chunked(year_ids, year_size)
+        jobs = [(years, periods) for years in year_chunks for periods in period_chunks]
+        print(
+            f"  -> Делю 34118 на {len(jobs)} маленьких запросов "
+            f"(лет до {year_size}, периодов до {period_size})"
+        )
+
+        resume_spec = {
+            "indicator_id": indicator_id,
+            "remote_date": remote_date,
+            "period_size": period_size,
+            "year_size": year_size,
+            "payload": payload_template,
+        }
+        resume_key = hashlib.sha256(
+            json.dumps(resume_spec, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        tmp_dir = FEDSTAT_34118_RESUME_DIR / indicator_id / resume_key
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(tmp_dir / "manifest.json", resume_spec)
+        chunk_paths: list[Path] = []
+        failed = False
+        reused = 0
+        for idx, (year_chunk, period_chunk) in enumerate(jobs, start=1):
+            chunk_payload = {
+                key: (list(value) if isinstance(value, list) else value)
+                for key, value in payload_template.items()
+            }
+            chunk_payload["selectedFilterIds"] = _subset_34118_filters(
+                selected, year_chunk, period_chunk
+            )
+            chunk_payload["filename_title"] = (
+                f"{payload_template.get('filename_title', payload_template['title'])}_chunk{idx:03d}"
+            )
+            chunk_path = tmp_dir / f"34118_{indicator_id}_chunk{idx:03d}.xls"
+            if chunk_path.is_file():
+                try:
+                    validate_excel_file(chunk_path)
+                    if _validate_34118_file(indicator_id, chunk_path, chunk_payload):
+                        chunk_paths.append(chunk_path)
+                        reused += 1
+                        continue
+                except (OSError, ValueError):
+                    pass
+                try:
+                    chunk_path.unlink()
+                except OSError:
+                    pass
+            downloaded = None
+            for retry in range(1, FEDSTAT_34118_CHUNK_RETRIES + 1):
+                if retry > 1:
+                    print(
+                        f"  -> Повторяю chunk {idx}/{len(jobs)} "
+                        f"(попытка {retry}/{FEDSTAT_34118_CHUNK_RETRIES})"
+                    )
+                    if FEDSTAT_34118_CHUNK_RETRY_SLEEP:
+                        time.sleep(FEDSTAT_34118_CHUNK_RETRY_SLEEP)
+                downloaded = download_excel(
+                    indicator_id,
+                    tmp_dir,
+                    remote_date=remote_date,
+                    driver=driver,
+                    payload_template_override=chunk_payload,
+                    save_path_override=chunk_path,
+                    allow_34118_chunks=False,
+                    fast_fail=True,
+                )
+                if downloaded is not None:
+                    break
+            if downloaded is None:
+                print(f"  ⚠️  Chunk {idx}/{len(jobs)} не скачался")
+                failed = True
+                break
+            chunk_paths.append(downloaded)
+        if reused:
+            print(f"  ♻️  Продолжаю 34118: использую готовые chunks {reused}/{len(jobs)}")
+
+        if failed:
+            return None
+
+        merged = _merge_fedstat_excel_chunks(chunk_paths, save_path)
+        if merged is not None:
+            if not _validate_34118_file(indicator_id, merged, payload_template):
+                return None
+            print(f"  ✅ Собрал 34118 из chunks: {merged}")
+            return merged
+    return None
+
+
+@record_successful_download
+def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
+                   driver=None, payload_template_override: dict | None = None,
+                   save_path_override: Path | None = None,
+                   allow_34118_chunks: bool = True, fast_fail: bool = False):
     PAYLOADS = {
         # Введено в действие общей площади жилых домов (оперативные данные).
         # Параметры — из data/raw/realty/vvod/34118_filter.txt (экспорт ЕМИСС).
@@ -1124,115 +2228,291 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None):
         },
     }
 
-    payload_template = PAYLOADS.get(indicator_id)
+    payload_template = payload_template_override or (
+        _payload_34118_part(indicator_id)
+        if indicator_id in {"34118_часть1", "34118_часть2"}
+        else PAYLOADS.get(indicator_id)
+    )
     if payload_template is None:
         print(f"  ⚠️  Нет payload для индикатора {indicator_id}")
         return None
 
-    post_data = []
+    post_data = [
+        ("format", "excel"),
+        ("id", payload_template["id"]),
+        ("title", payload_template["title"]),
+    ]
     for key, value in payload_template.items():
+        if key in {"filename_title", "id", "title"}:
+            continue
+        post_key = key
         if isinstance(value, list):
             for v in value:
-                post_data.append((key, v))
+                post_data.append((post_key, v))
         else:
-            post_data.append((key, value))
+            post_data.append((post_key, value))
 
-    url = "https://www.fedstat.ru/indicator/data.do?format=excel"
+    url = "https://www.fedstat.ru/indicator/downloadData.do?format=excel"
     real_id = indicator_id.split("_")[0]
+    user_agent = None
+    if driver is not None:
+        try:
+            user_agent = driver.execute_script("return navigator.userAgent")
+        except Exception:
+            user_agent = None
+    if not user_agent:
+        user_agent = FEDSTAT_USER_AGENT
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Referer": f"https://www.fedstat.ru/indicator/{real_id}",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": user_agent,
     }
+    file_title = payload_template.get("filename_title", payload_template["title"])
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", file_title)
+    safe_title = safe_title[:80]
+    # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
+    # (а не сегодняшняя). Так файл сразу говорит когда контент
+    # реально обновлён.
+    date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
+    filename = f"{date_in_name}_{safe_title}.xls"
+    save_path = save_path_override or (save_dir / filename)
+    can_chunk_34118 = (
+        allow_34118_chunks
+        and payload_template_override is None
+        and indicator_id in {"34118_часть1", "34118_часть2"}
+    )
+    tried_34118_chunks = False
 
+    session: requests.Session | None = None
     try:
         print(f"  ⬇️  Скачиваю Excel...")
-        response = requests.post(url, data=post_data, headers=headers, timeout=120, stream=True)
-        response.raise_for_status()
+        session = requests.Session()
+        try:
+            post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
+        except Exception as exc:
+            print(f"  ❌ Не удалось подготовить форму экспорта ({type(exc).__name__})")
+            return None
+        print(f"  -> multipart POST {url} (CSRF-поля получены из формы)")
+        last_error: Exception | None = None
+        multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+        try:
+            multipart = [(key, (None, str(value))) for key, value in post_data]
+            response = session.post(
+                url, files=multipart, headers=multipart_headers,
+                timeout=60 if fast_fail else 120,
+            )
+            response.raise_for_status()
+            _raise_if_html_response(response)
+            write_bytes_atomic(save_path, response.content, validate=validate_excel_file)
+        except (requests.RequestException, OSError, ValueError) as exc:
+            last_error = exc
+            try:
+                response.close()  # type: ignore[name-defined]
+            except Exception:
+                pass
+            print(f"  ⚠️  multipart POST не дал Excel: {exc}")
+            if fast_fail:
+                raise last_error
+            print("  -> Пробую urlencoded POST...")
+            try:
+                post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
+                response = session.post(url, data=post_data, headers=headers, timeout=120, stream=True)
+                response.raise_for_status()
+                _raise_if_html_response(response)
+                stream_response_atomic(response, save_path, validate=validate_excel_file)
+            except (requests.RequestException, OSError, ValueError) as exc2:
+                last_error = exc2
+                raise last_error
 
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", payload_template["title"])
-        safe_title = safe_title[:80]
-        # Дата в имени = дата ОБНОВЛЕНИЯ ДАННЫХ с сайта fedstat
-        # (а не сегодняшняя). Так файл сразу говорит когда контент
-        # реально обновлён.
-        date_in_name = _parse_remote_date_to_yyyymmdd(remote_date)
-        filename = f"{date_in_name}_{safe_title}.xls"
-        save_path = save_dir / filename
-
-        with open(save_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        if indicator_id in {"34118_часть1", "34118_часть2"}:
+            if not _validate_34118_file(indicator_id, save_path, payload_template):
+                save_path.unlink(missing_ok=True)
+                raise ValueError("полный экспорт 34118 не прошёл проверку годов")
 
         print(f"  ✅ Сохранён: {save_path}")
         return save_path
 
-    except requests.RequestException as e:
+    except (requests.RequestException, OSError, ValueError) as e:
         print(f"  ❌ Ошибка при скачивании: {e}")
+        if can_chunk_34118 and not tried_34118_chunks:
+            tried_34118_chunks = True
+            print("  -> Полный экспорт 34118 не сработал, пробую chunks")
+            chunk_path = _download_34118_period_chunks(
+                indicator_id,
+                payload_template,
+                save_dir,
+                save_path,
+                remote_date=remote_date,
+                driver=driver,
+            )
+            if chunk_path is not None:
+                return chunk_path
+        if not fast_fail and indicator_id in {"34118_часть1", "34118_часть2"} and session is not None:
+            print("  -> Пробую SDMX fallback для 34118...")
+            sdmx_path = _download_34118_sdmx_as_excel(
+                indicator_id,
+                session,
+                post_data,
+                headers,
+                payload_template,
+                save_path,
+                driver=driver,
+            )
+            if sdmx_path is not None:
+                return sdmx_path
+        if not fast_fail and driver is not None:
+            print("  -> Пробую скачать через browser POST...")
+            try:
+                post_data = _export_post_with_token(session, driver, real_id, post_data, refresh=True)
+            except Exception as exc:
+                print(f"  ❌ Не удалось обновить форму экспорта ({type(exc).__name__})")
+                return None
+            browser_path = _download_excel_via_browser(
+                driver, url, post_data, save_dir, save_path
+            )
+            if browser_path is not None:
+                print(f"  ✅ Сохранён через browser POST: {browser_path}")
+                return browser_path
         return None
 
 
-def run(force: bool = False):
-    """force=True — игнорируем state, перекачиваем все индикаторы."""
+def run(force: bool = False, only_ids: list[str] | None = None):
+    """Update dashboard sources, or an explicit selection from the full catalog.
+
+    force bypasses date comparison, never the default scope or prior state.
+    """
+    selected_ids = only_ids or list(DEFAULT_INDICATOR_USAGE)
+    missing = [indicator_id for indicator_id in selected_ids if indicator_id not in INDICATORS]
+    if missing:
+        selection = "--only/FEDSTAT_ONLY_IDS" if only_ids else "DEFAULT_INDICATOR_USAGE"
+        print(f"⚠️  Неизвестные indicator id в {selection}: {', '.join(missing)}")
+        return [], False
+    indicators_to_run = {indicator_id: INDICATORS[indicator_id] for indicator_id in selected_ids}
+    if not indicators_to_run:
+        print("⚠️  Нет известных индикаторов в выбранном наборе Fedstat")
+        return [], False
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    state = load_state() if not force else {}
+    # Force bypasses the date comparison; it must never erase prior success
+    # dates when an export fails or when only a subset was requested.
+    state = load_state()
+    state_persisted = False
+    run_checkpoint = _load_run_checkpoint(os.environ.get("FEDSTAT_RUN_ID"))
     downloaded_files = []
+    checked_ok = 0
+    downloaded_without_date = []
+    skipped_indicators = []
+    failed_downloads = []
 
     print(f"\n{'='*60}")
     print(f"Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Индикаторов: {len(INDICATORS)}")
+    print(f"Индикаторов: {len(indicators_to_run)}/{len(INDICATORS)}")
+    active = [src for src in DEFAULT_INDICATOR_USAGE if src in INDICATORS]
+    disabled = [src for src in INDICATORS if src not in DEFAULT_INDICATOR_USAGE]
+    print(f"Дашборд — активны по умолчанию ({len(active)}): {', '.join(active)}")
+    print(f"Отключены по умолчанию ({len(disabled)}): {', '.join(disabled)}")
+    if only_ids:
+        print(f"Фильтр: {', '.join(indicators_to_run)}")
+    else:
+        print("Режим: только источники текущих визуализаций; --force не расширяет набор")
     print(f"{'='*60}\n")
 
-    driver = create_driver()
+    driver = create_driver(download_dir=DOWNLOAD_DIR)
 
     try:
-        for indicator_id, name in INDICATORS.items():
+        for indicator_id, name in indicators_to_run.items():
             print(f"📊 [{indicator_id}] {name[:55]}")
+
+            if indicator_id in run_checkpoint.get("completed", {}):
+                print("  ♻️  Уже завершён в этом прогоне; пропускаю после retry\n")
+                checked_ok += 1
+                continue
 
             remote_date = get_last_update_date(driver, indicator_id)
 
             if remote_date is None:
-                print("  ⚠️  Пропускаю — не удалось получить дату\n")
+                print("  ⚠️  Не удалось получить дату со страницы")
+                if DIRECT_DOWNLOAD_ON_DATE_FAILURE and _should_direct_fallback(indicator_id):
+                    print("  -> Пробую скачать Excel напрямую без даты паспорта...")
+                    saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
+                                                remote_date=None,
+                                                driver=driver)
+                    if saved_path:
+                        downloaded_files.append(saved_path)
+                        downloaded_without_date.append(indicator_id)
+                        checked_ok += 1
+                        _mark_run_completed(run_checkpoint, indicator_id, None)
+                        print("  ✅ Скачано напрямую; state по дате не обновляю\n")
+                        continue
+                elif DIRECT_DOWNLOAD_ON_DATE_FAILURE:
+                    print("  ℹ️  Direct fallback выключен для этого индикатора")
+                skipped_indicators.append(indicator_id)
+                print("  ⚠️  Пропускаю — не удалось получить дату и скачать напрямую\n")
                 continue
 
+            checked_ok += 1
             saved_date = state.get(indicator_id)
 
-            if saved_date is None:
+            if force:
+                print(f"  🔄 Принудительная загрузка. Дата: {remote_date}")
+            elif saved_date is None:
                 print(f"  ℹ️  Первая загрузка. Дата: {remote_date}")
             elif remote_date != saved_date:
                 print(f"  🔄 Обновился! Было: {saved_date} → Стало: {remote_date}")
             else:
                 print(f"  ✔️  Без изменений ({remote_date})\n")
+                _mark_run_completed(run_checkpoint, indicator_id, remote_date)
                 continue
 
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
-                                        remote_date=remote_date)
+                                        remote_date=remote_date,
+                                        driver=driver)
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date
+                # Persist every completed indicator. A watchdog must not erase
+                # progress made before a later heavy export.
+                save_state(state)
+                state_persisted = True
+                _mark_run_completed(run_checkpoint, indicator_id, remote_date)
+            else:
+                failed_downloads.append(indicator_id)
             print()
 
     finally:
         driver.quit()
 
-    save_state(state)
+    if not state_persisted:
+        save_state(state)
 
     print(f"\n{'='*60}")
     print(f"Итог: скачано файлов — {len(downloaded_files)}")
+    print(f"Проверено индикаторов — {checked_ok}/{len(indicators_to_run)}")
+    if downloaded_without_date:
+        print(f"Скачано напрямую без даты — {len(downloaded_without_date)}: {', '.join(downloaded_without_date)}")
+    if failed_downloads:
+        print(f"Обновились, но не скачались — {len(failed_downloads)}: {', '.join(failed_downloads)}")
+    if skipped_indicators:
+        print(f"Пропущено без даты — {len(skipped_indicators)}: {', '.join(skipped_indicators)}")
     for f in downloaded_files:
         print(f"  • {f}")
     print(f"{'='*60}\n")
 
-    ok = len(downloaded_files) > 0
+    ok = checked_ok > 0 and not failed_downloads and not skipped_indicators
+    if not ok:
+        print("⚠️  Запуск завершён с ошибками: проверьте строки выше.\n")
     return downloaded_files, ok
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    force = "--force" in args
+    only_arg = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--only=")), None)
+    only_ids = _parse_only_ids(only_arg or os.environ.get("FEDSTAT_ONLY_IDS"))
+    files, ok = run(force=force, only_ids=only_ids)
+    # exit 2 при любой незавершённой проверке/загрузке. Полностью проверенные
+    # данные без изменений (или успешный direct fallback) — штатный успех.
+    return 0 if ok else 2
+
+
 if __name__ == "__main__":
-    import sys
-    force = "--force" in sys.argv
-    files, ok = run(force=force)
-    # exit 2 если ничего не скачано — даёт update_realty.py сигнал
-    # «парсер провалился» и поднимает retry с задержкой.
-    sys.exit(0 if (ok and files) else 2)
+    sys.exit(main())

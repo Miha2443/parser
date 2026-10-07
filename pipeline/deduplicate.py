@@ -22,12 +22,20 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 REALTY_ROOT = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
 ARCHIVE_ROOT = REALTY_ROOT / "_archive"
 
 DATE_RE = re.compile(r"[_-]?(\d{8}|\d{4}-\d{2}-\d{2})(?=\.|$)")
+_SHA256_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
+
+
+class VersionIndex(NamedTuple):
+    active: dict[str, list[Path]]
+    archive: dict[str, list[Path]]
 
 
 def _family_key(path: Path) -> str:
@@ -39,15 +47,100 @@ def _family_key(path: Path) -> str:
 
 
 def _file_sha256(path: Path) -> str:
+    stat = path.stat()
+    cache_key = str(path.resolve())
+    stat_key = (
+        int(stat.st_size),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(getattr(stat, "st_ctime_ns", int(stat.st_ctime * 1_000_000_000))),
+    )
+    cached = _SHA256_CACHE.get(cache_key)
+    if cached and cached[0] == stat_key:
+        return cached[1]
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    _SHA256_CACHE[cache_key] = (stat_key, digest)
+    return digest
 
 
-def find_archive_versions(family: str) -> list[Path]:
+def _prune_sha256_cache() -> None:
+    stale = [path for path in _SHA256_CACHE if not Path(path).exists()]
+    for path in stale:
+        _SHA256_CACHE.pop(path, None)
+
+
+def _sorted_by_mtime_desc(paths: list[Path]) -> list[Path]:
+    return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def _matches_prefix(path: Path, file_prefixes: Sequence[str] | None) -> bool:
+    return not file_prefixes or any(path.name.startswith(prefix) for prefix in file_prefixes)
+
+
+def _archive_roots_for_active(active_roots: Sequence[Path]) -> list[Path]:
+    if not ARCHIVE_ROOT.exists():
+        return []
+    if not active_roots:
+        return [ARCHIVE_ROOT]
+
+    realty_root = REALTY_ROOT.resolve()
+    archive_roots: list[Path] = []
+    for active_root in active_roots:
+        try:
+            rel = active_root.resolve().relative_to(realty_root)
+        except ValueError:
+            continue
+        for date_dir in ARCHIVE_ROOT.iterdir():
+            if not date_dir.is_dir():
+                continue
+            archive_root = date_dir / rel
+            if archive_root.exists():
+                archive_roots.append(archive_root)
+    return archive_roots
+
+
+def build_version_index(
+    *,
+    active_roots: Sequence[Path] | None = None,
+    file_prefixes: Sequence[str] | None = None,
+) -> VersionIndex:
+    """Scan realty raw files once for batch deduplication."""
+    active: dict[str, list[Path]] = {}
+    archive: dict[str, list[Path]] = {}
+    active_scan_roots = list(active_roots) if active_roots is not None else [REALTY_ROOT]
+
+    for root in active_scan_roots:
+        if not root.exists():
+            continue
+        for f in root.rglob("*"):
+            if not f.is_file() or "_archive" in f.parts:
+                continue
+            if not _matches_prefix(f, file_prefixes):
+                continue
+            active.setdefault(_family_key(f), []).append(f)
+
+    for root in _archive_roots_for_active(active_scan_roots):
+        for f in root.rglob("*"):
+            if not f.is_file():
+                continue
+            if not _matches_prefix(f, file_prefixes):
+                continue
+            archive.setdefault(_family_key(f), []).append(f)
+
+    for paths in active.values():
+        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for paths in archive.values():
+        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return VersionIndex(active=active, archive=archive)
+
+
+def find_archive_versions(family: str, *, index: VersionIndex | None = None) -> list[Path]:
     """Все файлы того же семейства в архиве (отсортированы по mtime)."""
+    if index is not None:
+        return list(index.archive.get(family, []))
     if not ARCHIVE_ROOT.exists():
         return []
     matches = []
@@ -56,12 +149,21 @@ def find_archive_versions(family: str) -> list[Path]:
             continue
         if _family_key(f) == family:
             matches.append(f)
-    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return matches
+    return _sorted_by_mtime_desc(matches)
 
 
-def find_active_siblings(family: str, exclude: Path | None = None) -> list[Path]:
+def find_active_siblings(
+    family: str,
+    exclude: Path | None = None,
+    *,
+    index: VersionIndex | None = None,
+) -> list[Path]:
     """Файлы того же семейства в активной папке (для проверки рядом-лежащих)."""
+    if index is not None:
+        return [
+            f for f in index.active.get(family, [])
+            if exclude is None or f != exclude
+        ]
     if not REALTY_ROOT.exists():
         return []
     matches = []
@@ -74,11 +176,10 @@ def find_active_siblings(family: str, exclude: Path | None = None) -> list[Path]
             continue
         if _family_key(f) == family:
             matches.append(f)
-    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return matches
+    return _sorted_by_mtime_desc(matches)
 
 
-def is_duplicate_of_latest(new_file: Path) -> Path | None:
+def is_duplicate_of_latest(new_file: Path, *, index: VersionIndex | None = None) -> Path | None:
     """Сравнивает new_file с самым свежим файлом того же семейства.
 
     Семейство = имя без даты + расширение. Проверяет ВНЕ активной папки
@@ -92,9 +193,9 @@ def is_duplicate_of_latest(new_file: Path) -> Path | None:
     family = _family_key(new_file)
 
     # 1) Проверяем активные «соседи» того же семейства
-    candidates = find_active_siblings(family, exclude=new_file)
+    candidates = find_active_siblings(family, exclude=new_file, index=index)
     # 2) Затем — последний из архива
-    candidates.extend(find_archive_versions(family))
+    candidates.extend(find_archive_versions(family, index=index))
 
     if not candidates:
         return None
@@ -114,8 +215,12 @@ def is_duplicate_of_latest(new_file: Path) -> Path | None:
     return None
 
 
-def deduplicate(new_file: Path, *,
-                log_prefix: str = "       ") -> tuple[Path | None, bool]:
+def deduplicate(
+    new_file: Path,
+    *,
+    log_prefix: str = "       ",
+    index: VersionIndex | None = None,
+) -> tuple[Path | None, bool]:
     """Если new_file — дубль предыдущей версии, удаляет и возвращает старый.
 
     Возвращает (path, is_update):
@@ -125,12 +230,13 @@ def deduplicate(new_file: Path, *,
     """
     if not new_file.is_file():
         return None, False
-    dup = is_duplicate_of_latest(new_file)
+    dup = is_duplicate_of_latest(new_file, index=index)
     if dup is not None:
         try:
             new_file.unlink()
         except OSError:
             pass
+        _prune_sha256_cache()
         print(f"{log_prefix}↩️  без изменений (дубль {dup.name}) — удалён {new_file.name}")
         return dup, False
     print(f"{log_prefix}✨ новые данные: {new_file.name}")

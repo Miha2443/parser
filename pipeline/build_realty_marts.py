@@ -1,0 +1,392 @@
+"""Build fast realty marts for Streamlit pages from raw Excel/JSON files.
+
+The realty dashboard pages historically read large raw files directly from
+``data/raw/realty``. This script materializes the same structures returned by
+``pipeline.data_access`` into ``data/marts/realty/*.pkl`` so the UI can start and
+switch pages without reparsing heavy workbooks.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+import pandas as pd
+from pipeline import paths
+from pipeline.data_access import DataAccess, DataContext
+
+ROOT = paths.ROOT
+MART_DIR = ROOT / "data" / "marts" / "realty"
+MANIFEST = MART_DIR / "manifest.json"
+TEMP_DOWNLOAD_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
+
+@dataclass(frozen=True)
+class MartSpec:
+    name: str
+    loader_name: str
+    raw_files: Callable[[Any], list[Path]]
+
+
+def _prepare_imports() -> DataAccess:
+    """Explicit raw context; importing/building never changes caller environment."""
+    return DataAccess(DataContext(ROOT, downloads=paths.DOWNLOADS_DIR, use_marts=False))
+
+
+def _row_count(value: Any) -> int | None:
+    if isinstance(value, pd.DataFrame):
+        return len(value)
+    if isinstance(value, dict):
+        counts = [_row_count(v) for v in value.values()]
+        counts = [c for c in counts if c is not None]
+        return sum(counts) if counts else None
+    return None
+
+
+def _shape_summary(value: Any) -> Any:
+    if isinstance(value, pd.DataFrame):
+        return {"type": "dataframe", "rows": len(value), "cols": len(value.columns)}
+    if isinstance(value, dict):
+        out: dict[str, Any] = {
+            "type": "dict",
+            "keys": sorted(map(str, value.keys())),
+        }
+        rows = _row_count(value)
+        if rows is not None:
+            out["rows"] = rows
+        frames = {
+            str(k): {"rows": len(v), "cols": len(v.columns)}
+            for k, v in value.items()
+            if isinstance(v, pd.DataFrame)
+        }
+        if frames:
+            out["frames"] = frames
+        nested_rows = {
+            str(k): rows
+            for k, v in value.items()
+            if isinstance(v, dict) and (rows := _row_count(v)) is not None
+        }
+        if nested_rows:
+            out["nested_rows"] = nested_rows
+        lists = {
+            str(k): {"items": len(v)}
+            for k, v in value.items()
+            if isinstance(v, list)
+        }
+        if lists:
+            out["lists"] = lists
+        return out
+    return {"type": type(value).__name__}
+
+
+def _source_summary(files: list[Path]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for path in sorted(files):
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        out.append({
+            "path": path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix(),
+            "size_bytes": st.st_size,
+            "mtime_ns": st.st_mtime_ns,
+            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+        })
+    return out
+
+
+def _pickle_load_error(path: Path) -> str | None:
+    try:
+        pd.read_pickle(path)
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+def _write_pickle_atomic(value: Any, target: Path) -> None:
+    tmp = target.with_name(f"{target.name}.tmp")
+    try:
+        pd.to_pickle(value, tmp)
+        error = _pickle_load_error(tmp)
+        if error:
+            raise RuntimeError(f"temporary pickle is unreadable: {error}")
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _write_json_atomic(value: Any, target: Path) -> None:
+    tmp = target.with_name(f"{target.name}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        json.loads(tmp.read_text(encoding="utf-8"))
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _load_existing_marts_for_partial_build() -> dict[str, Any] | None:
+    if not MANIFEST.exists():
+        # Bootstrap only the explicitly requested marts. An existing malformed
+        # manifest still fails below, so unrelated entries are never discarded.
+        return {}
+    try:
+        existing = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: cannot read existing manifest for --only build: {exc}")
+        return None
+    marts = existing.get("marts") if isinstance(existing, dict) else None
+    if not isinstance(marts, dict) or not marts:
+        print("ERROR: existing manifest has no marts; run full build first")
+        return None
+    existing_built_at = existing.get("built_at")
+    if existing_built_at:
+        for info in marts.values():
+            if isinstance(info, dict) and "built_at" not in info:
+                info["built_at"] = existing_built_at
+    return dict(marts)
+
+
+def _tmp_files() -> list[Path]:
+    raw = ROOT / "data" / "raw" / "realty"
+    if not raw.exists():
+        return []
+    return sorted(
+        p for p in raw.rglob("*")
+        if p.is_file() and p.suffix.lower() in TEMP_DOWNLOAD_SUFFIXES
+    )
+
+
+def check_manifest(*, strict: bool = False) -> int:
+    """Validate mart manifest/files without rebuilding anything."""
+    da = _prepare_imports()
+    specs = {spec.name: spec for spec in _specs(da)}
+    failures = 0
+    warnings = 0
+    tmp = _tmp_files()
+    if tmp:
+        print("WARNING: raw realty contains temporary download files:")
+        for path in tmp:
+            print(f"  - {path.relative_to(ROOT)}")
+        if strict:
+            failures += 1
+
+    if not MANIFEST.exists():
+        print(f"ERROR: missing {MANIFEST.relative_to(ROOT)}")
+        return 1
+
+    try:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: cannot read manifest: {exc}")
+        return 1
+
+    marts = manifest.get("marts") if isinstance(manifest, dict) else {}
+    if not isinstance(marts, dict) or not marts:
+        print("ERROR: manifest has no marts")
+        return 1
+
+    expected_names = set(specs)
+    actual_names = set(map(str, marts))
+    missing = sorted(expected_names - actual_names)
+    unknown = sorted(actual_names - expected_names)
+    if missing:
+        print(f"ERROR: manifest missing mart(s): {', '.join(missing)}")
+        failures += len(missing)
+    if unknown:
+        print(f"WARNING: manifest has unknown mart(s): {', '.join(unknown)}")
+        warnings += len(unknown)
+
+    print(f"checking {len(marts)} realty marts ...")
+    manifest_built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
+    for name, info in sorted(marts.items()):
+        if not isinstance(info, dict):
+            print(f"  ERROR {name}: invalid manifest entry")
+            failures += 1
+            continue
+        if info.get("error"):
+            print(f"  ERROR {name}: {info['error']}")
+            failures += 1
+            continue
+        mart_file = ROOT / str(info.get("file", ""))
+        if not mart_file.is_file():
+            print(f"  ERROR {name}: missing {mart_file.relative_to(ROOT)}")
+            failures += 1
+            continue
+        pickle_error = _pickle_load_error(mart_file)
+        if pickle_error:
+            print(f"  ERROR {name}: unreadable {mart_file.relative_to(ROOT)} ({pickle_error})")
+            failures += 1
+            continue
+
+        built_at = pd.to_datetime(info.get("built_at"), errors="coerce")
+        if pd.isna(built_at):
+            built_at = manifest_built_at
+
+        latest_source = None
+        missing_sources = 0
+        spec = specs.get(str(name))
+        if spec is not None:
+            current_sources = spec.raw_files(da)
+            for path in current_sources:
+                try:
+                    ts = pd.to_datetime(
+                        datetime.fromtimestamp(path.stat().st_mtime),
+                        errors="coerce",
+                    )
+                except OSError:
+                    continue
+                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                    latest_source = ts
+        else:
+            for source in info.get("sources") or []:
+                if not isinstance(source, dict) or not source.get("path"):
+                    continue
+                path = ROOT / str(source["path"])
+                if not path.exists():
+                    missing_sources += 1
+                    continue
+                ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+                if not pd.isna(ts) and (latest_source is None or ts > latest_source):
+                    latest_source = ts
+        if missing_sources:
+            print(f"  WARN  {name}: missing sources listed in manifest: {missing_sources}")
+            warnings += 1
+        if latest_source is not None and not pd.isna(built_at) and latest_source > built_at:
+            print(
+                f"  ERROR {name}: stale "
+                f"(source {latest_source}, mart {built_at})"
+            )
+            failures += 1
+            continue
+        print(f"  ok    {name}: {mart_file.relative_to(ROOT)}")
+
+    if failures:
+        print(f"check failed: {failures} error(s), {warnings} warning(s)")
+        return 1
+    print(f"check ok: {len(marts)} marts, {warnings} warning(s)")
+    return 0
+
+
+def _specs(da) -> list[MartSpec]:
+    names = ("kvartirografia", "monitoring_2_0", "construction_operational",
+             "erzrf_top", "erzrf_cards", "escrow_manual", "rasprodannost",
+             "vvod_static", "emiss_34118")
+    return [MartSpec(name, f"load_{name}", lambda access, name=name: access.source_files(name))
+            for name in names]
+
+
+def build(*, strict: bool = False, only: set[str] | None = None) -> int:
+    da = _prepare_imports()
+    specs = _specs(da)
+    MART_DIR.mkdir(parents=True, exist_ok=True)
+
+    known_names = {spec.name for spec in specs}
+    if only:
+        unknown = sorted(only - known_names)
+        if unknown:
+            print(f"ERROR: unknown realty mart(s): {', '.join(unknown)}")
+            print(f"Known marts: {', '.join(sorted(known_names))}")
+            return 2
+
+    tmp = _tmp_files()
+    if tmp:
+        print("WARNING: raw realty contains temporary download files:")
+        for path in tmp:
+            print(f"  - {path.relative_to(ROOT)}")
+        if strict:
+            return 2
+
+    existing_marts: dict[str, Any] = {}
+    if only:
+        existing = _load_existing_marts_for_partial_build()
+        if existing is None:
+            return 2
+        existing_marts = existing
+
+    manifest: dict[str, Any] = {
+        "built_at": datetime.now().isoformat(timespec="seconds"),
+        "marts": dict(existing_marts),
+        "warnings": {
+            "tmp_files": [str(p.relative_to(ROOT)).replace("\\", "/") for p in tmp],
+        },
+    }
+
+    failures = 0
+    for spec in specs:
+        if only and spec.name not in only:
+            continue
+        started = time.time()
+        print(f"building {spec.name} ...", flush=True)
+        try:
+            loader = getattr(da, spec.loader_name)
+            with contextlib.redirect_stderr(io.StringIO()):
+                value = loader()
+            target = MART_DIR / f"{spec.name}.pkl"
+            _write_pickle_atomic(value, target)
+            raw_files = spec.raw_files(da)
+            manifest["marts"][spec.name] = {
+                "file": str(target.relative_to(ROOT)).replace("\\", "/"),
+                "built_at": datetime.now().isoformat(timespec="seconds"),
+                "duration_sec": round(time.time() - started, 2),
+                "summary": _shape_summary(value),
+                "sources": _source_summary(raw_files),
+            }
+            rows = _row_count(value)
+            suffix = f" rows={rows}" if rows is not None else ""
+            print(f"  ok -> {target.relative_to(ROOT)}{suffix}")
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            manifest["marts"][spec.name] = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "built_at": datetime.now().isoformat(timespec="seconds"),
+                "duration_sec": round(time.time() - started, 2),
+            }
+            print(f"  ERROR: {type(exc).__name__}: {exc}")
+
+    _write_json_atomic(manifest, MANIFEST)
+    print(f"manifest -> {MANIFEST.relative_to(ROOT)}")
+    return 1 if failures else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail when raw temporary download files are present",
+    )
+    parser.add_argument(
+        "--only",
+        nargs="*",
+        help="optional mart names to rebuild",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="validate manifest and mart freshness without rebuilding",
+    )
+    args = parser.parse_args()
+    if args.check:
+        return check_manifest(strict=args.strict)
+    return build(strict=args.strict, only=set(args.only or []) or None)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

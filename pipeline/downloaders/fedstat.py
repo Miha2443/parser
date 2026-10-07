@@ -18,6 +18,7 @@ from pathlib import Path
 
 from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
+from pipeline.downloaders.local_files import list_local_files
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
@@ -27,16 +28,7 @@ def _find_local(patterns: list[str]) -> list[Path]:
     выгрузка + новая объединённая) парсер должен видеть оба источника. Дубликаты
     схлопываются `drop_duplicates` в оркестраторе.
     """
-    seen: set[Path] = set()
-    out: list[Path] = []
-    for pat in patterns:
-        for p in sorted(DOWNLOADS_DIR.glob(pat)):
-            r = p.resolve()
-            if r in seen:
-                continue
-            seen.add(r)
-            out.append(p)
-    return out
+    return list_local_files(DOWNLOADS_DIR, patterns)
 
 
 def _archive_old(patterns: list[str], keep: list[Path]) -> None:
@@ -75,29 +67,48 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     fc.STATE_FILE = ROOT / "fedstat_state.json"
 
     state = fc.load_state()
-    driver = fc.create_driver()
+    driver = fc.create_driver(download_dir=DOWNLOADS_DIR)
     new_files: list[Path] = []
     prev_date = ""
     new_date = ""
+    failures: list[str] = []
+    unchanged = False
+    state_persisted = False
     try:
         for src_id in indicator.source_ids:
             remote_date = fc.get_last_update_date(driver, src_id)
             if remote_date is None:
+                failures.append(f"{src_id}: не удалось получить дату обновления")
                 continue
             saved_date = state.get(src_id)
             prev_date = prev_date or (saved_date or "")
             new_date = remote_date
             if saved_date == remote_date:
+                unchanged = True
                 continue
-            saved_path = fc.download_excel(src_id, DOWNLOADS_DIR)
+            saved_path = fc.download_excel(
+                src_id, DOWNLOADS_DIR, remote_date=remote_date, driver=driver
+            )
             if saved_path:
                 new_files.append(Path(saved_path))
                 state[src_id] = remote_date
+                fc.save_state(state)
+                state_persisted = True
+            else:
+                failures.append(f"{src_id}: обновился, но не скачался")
     finally:
         driver.quit()
-        fc.save_state(state)
+        if not state_persisted:
+            fc.save_state(state)
 
-    if new_files:
+    # Оркестратор записывает исключение как stage=download, а не «без изменений».
+    # Успешные загрузки остаются в state; старые файлы при неполном запуске сохраняем.
+    if failures:
+        raise RuntimeError("Fedstat: " + "; ".join(failures))
+
+    # Паттерны общие для нескольких source_ids: при частичном обновлении нельзя
+    # архивировать файлы неизменившихся источников вместе со старыми версиями.
+    if new_files and not unchanged:
         _archive_old(list(indicator.file_patterns), keep=new_files)
 
     return {

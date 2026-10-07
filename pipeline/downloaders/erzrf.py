@@ -19,24 +19,23 @@ from pathlib import Path
 
 from pipeline.paths import DATA_RAW, ROOT, STATE_DIR
 from pipeline.registry import Indicator
+from pipeline.downloaders.local_files import list_local_files
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
-    seen: set[Path] = set()
-    out: list[Path] = []
-    for pat in patterns:
-        for p in sorted(DATA_RAW.glob(pat)):
-            r = p.resolve()
-            if r in seen:
-                continue
-            seen.add(r)
-            out.append(p)
-    return out
+    return list_local_files(DATA_RAW, patterns)
 
 
 # Чтобы fetch_top не запускался дважды (для top_rf и top_msk),
 # трекаем уже отработанные источники в рамках одного процесса.
 _RAN_KEYS: set[str] = set()
+
+
+def _run_erzrf(ec, key: str) -> list[Path]:
+    files, ok = ec.run(only=[key])
+    if not ok:
+        raise RuntimeError(f"erzrf source failed: {key}")
+    return list(files)
 
 
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:
@@ -60,11 +59,11 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
 
     # top_rf и top_msk оба запускают fetch_top (он обходит обе REGIONS внутри).
     if (wanted & {"top_rf", "top_msk"}) and "top" not in _RAN_KEYS:
-        new_files.extend(ec.run(only=["top"]))
+        new_files.extend(_run_erzrf(ec, "top"))
         _RAN_KEYS.add("top")
 
     if "cards" in wanted and "cards" not in _RAN_KEYS:
-        new_files.extend(ec.run(only=["cards"]))
+        new_files.extend(_run_erzrf(ec, "cards"))
         _RAN_KEYS.add("cards")
 
     state = ec.load_state()

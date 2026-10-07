@@ -11,7 +11,10 @@ REM    setup.bat --no-start       skip launching site at the end
 REM ============================================================
 
 setlocal enabledelayedexpansion
-cd /d %~dp0
+cd /d "%~dp0"
+
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
 
 set DO_SCRAPE=1
 set DO_SCHEDULER=1
@@ -34,17 +37,30 @@ echo.
 
 REM --- Step 1: Python ---
 echo [1/8] Python check...
+set PY=
 where py >nul 2>nul
-if errorlevel 1 (
+if not errorlevel 1 (
+    for %%V in (3.13 3.12 3.11 3.10) do (
+        if not defined PY (
+            py -%%V -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
+            if not errorlevel 1 set "PY=py -%%V"
+        )
+    )
+    if not defined PY set "PY=py"
+) else (
     where python >nul 2>nul
     if errorlevel 1 goto no_python
-    set PY=python
-) else (
-    set PY=py
+    set "PY=python"
 )
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
 if errorlevel 1 goto old_python
 %PY% --version
+%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if errorlevel 1 (
+    echo [WARN] Python is newer than the versions tested by this project.
+    echo        If dependency installation is unstable, install Python 3.12 or 3.13
+    echo        and rerun setup.bat. The script will prefer it automatically.
+)
 echo.
 goto step2
 
@@ -95,10 +111,29 @@ echo.
 
 REM --- Step 4: dependencies ---
 echo [4/8] Installing dependencies [2-5 min]...
-"%VENV_PY%" -m pip install --upgrade pip --quiet
-"%VENV_PY%" -m pip install -r requirements.txt
+"%VENV_PY%" -m pip install --upgrade pip --quiet --retries 5 --timeout 60
 if errorlevel 1 (
+    echo [WARN] pip upgrade failed; continuing with the bundled pip.
+)
+set DEPS_OK=0
+for /l %%A in (1,1,3) do (
+    echo Installing requirements attempt %%A/3...
+    "%VENV_PY%" -m pip install --prefer-binary --retries 5 --timeout 60 -r requirements.txt
+    if not errorlevel 1 (
+        set DEPS_OK=1
+        goto deps_done
+    )
+    echo [WARN] Dependency install attempt %%A failed.
+    if not "%%A"=="3" (
+        echo        Clearing pip cache before retry...
+        "%VENV_PY%" -m pip cache purge >nul 2>nul
+    )
+)
+:deps_done
+if not "!DEPS_OK!"=="1" (
     echo [ERROR] Failed to install dependencies
+    echo         This is usually a network/PyPI cache issue. Try rerunning setup.bat.
+    echo         If Python is 3.14+, install Python 3.12 or 3.13 and rerun setup.bat.
     pause
     exit /b 1
 )
@@ -135,13 +170,39 @@ if !DO_SCRAPE!==1 (
     echo This takes 40-60 min. You can minimize the window.
     echo.
     "%VENV_PY%" scripts\update_realty.py
+    if errorlevel 1 (
+        echo [ERROR] First data scrape failed
+        pause
+        exit /b 1
+    )
     echo.
 ) else (
     echo [6/8] First scrape skipped --no-scrape
     echo        Rebuilding processed pickles from existing downloads/...
     "%VENV_PY%" pipeline\orchestrator.py --skip-download
+    if errorlevel 1 (
+        echo [ERROR] Rebuilding processed pickles failed
+        pause
+        exit /b 1
+    )
+    echo        Rebuilding realty marts from existing data/raw/realty/...
+    "%VENV_PY%" -m pipeline.build_realty_marts --strict
+    if errorlevel 1 (
+        echo [ERROR] Rebuilding realty marts failed
+        pause
+        exit /b 1
+    )
     echo.
 )
+
+echo        Validating dashboard data...
+call scripts\validate_realty_dashboard.bat
+if errorlevel 1 (
+    echo [ERROR] Dashboard validation failed
+    pause
+    exit /b 1
+)
+echo.
 
 REM --- Step 7: Task Scheduler ---
 if !DO_SCHEDULER!==1 (
@@ -152,10 +213,20 @@ if !DO_SCHEDULER!==1 (
         echo        Registering per-user task. It only fires while you are logged in.
         echo.
         call scripts\register_scheduler_user.bat
+        if errorlevel 1 (
+            echo [ERROR] Per-user Task Scheduler registration failed
+            pause
+            exit /b 1
+        )
         echo.
         echo For robust task run as admin:  scripts\register_scheduler.bat
     ) else (
         call scripts\register_scheduler.bat
+        if errorlevel 1 (
+            echo [ERROR] Task Scheduler registration failed
+            pause
+            exit /b 1
+        )
     )
 ) else (
     echo [7/8] Task Scheduler skipped --no-scheduler

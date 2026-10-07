@@ -1,0 +1,118 @@
+"""Fast smoke-checks for realty dashboard data loaders.
+
+This validates that the current app loaders can read the materialized marts
+and return non-empty structures for the heavy dashboard pages. It does not
+start Streamlit, Selenium, or download anything.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import contextlib
+import io
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
+logging.disable(logging.CRITICAL)
+
+from app import data_access as da  # noqa: E402
+from app.audit import realty_marts_status  # noqa: E402
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def _load(fn):
+    with contextlib.redirect_stderr(io.StringIO()):
+        return fn()
+
+
+def main() -> int:
+    marts = _load(realty_marts_status)
+    _require(not marts.empty, "realty marts manifest is empty or missing")
+    bad = marts[marts["status"].isin(["error", "stale"])]
+    _require(bad.empty, "bad realty marts: " + ", ".join(bad["mart"].astype(str)))
+
+    monitoring = _load(da.load_monitoring_2_0)
+    _require(len(monitoring.get("rv", [])) > 0, "monitoring rv is empty")
+    _require(len(monitoring.get("oks", [])) > 0, "monitoring oks is empty")
+
+    kvart = _load(da.load_kvartirografia)
+    _require(len(kvart.get("developers", [])) > 0, "kvartirografia developers is empty")
+
+    rasprod = _load(da.load_rasprodannost)
+    _require(len(rasprod.get("periods") or []) > 0, "rasprodannost periods is empty")
+    _require(len(rasprod.get("developers", [])) > 0, "rasprodannost developers is empty")
+
+    construction = _load(da.load_construction_operational)
+    _require(len(construction.get("construction", [])) == 4,
+             "current construction RF/Moscow areas are incomplete")
+    _require(len(construction.get("sales", [])) == 2,
+             "apartment sales RF/Moscow snapshots are incomplete")
+    _require(len(construction.get("permits", [])) > 0,
+             "construction permit history is empty")
+    _require(len(construction.get("permit_annual", [])) > 0,
+             "construction permit annual controls are empty")
+    permits = construction["permits"]
+    annual = construction["permit_annual"]
+    for kind in ("housing", "nonresidential"):
+        history = permits[permits["kind"].eq(kind) & permits["year"].between(2011, 2025)]
+        coverage = history.groupby("year")["month"].nunique()
+        missing_years = [year for year in range(2011, 2026) if coverage.get(year, 0) != 12]
+        _require(
+            not missing_years,
+            f"{kind} permit monthly history is incomplete: {missing_years}",
+        )
+    housing_2011 = annual[annual["year"].eq(2011) & annual["kind"].eq("housing")]
+    _require(len(housing_2011) == 1 and abs(housing_2011.iloc[0]["value_thousand_m2"] - 2972) < 0.1,
+             "2011 housing permit annual control is wrong")
+    ytd_2011 = permits[
+        permits["year"].eq(2011) & permits["kind"].eq("housing") & permits["month"].le(8)
+    ]["value_thousand_m2"].sum()
+    _require(abs(ytd_2011 - 1086.24) < 0.2,
+             "2011 housing permit Jan-Aug history is wrong")
+
+    commissioning = _load(da.load_monitoring_operational_history)
+    housing_monthly = commissioning.get("housing_monthly", [])
+    _require(len(housing_monthly) > 0, "housing commissioning monthly history is empty")
+    housing_coverage = housing_monthly.groupby("year")["month"].nunique()
+    missing_housing_years = [
+        year for year in range(2011, 2026) if housing_coverage.get(year, 0) != 12
+    ]
+    _require(
+        not missing_housing_years,
+        "housing commissioning monthly history is incomplete: "
+        + ", ".join(map(str, missing_housing_years)),
+    )
+
+    erz_top = _load(da.load_erzrf_top)
+    _require(bool(erz_top.get("obyem_stroitelstva")), "erzrf top construction data is empty")
+
+    cards = _load(da.load_erzrf_cards)
+    _require(len(cards) > 0, "erzrf cards are empty")
+
+    print("realty marts smoke: ok")
+    print(
+        "rows:",
+        f"monitoring.rv={len(monitoring.get('rv', []))}",
+        f"kvart.developers={len(kvart.get('developers', []))}",
+        f"rasprod.developers={len(rasprod.get('developers', []))}",
+        f"construction.permits={len(construction.get('permits', []))}",
+        f"erz.cards={len(cards)}",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    with contextlib.redirect_stderr(io.StringIO()):
+        raise SystemExit(main())

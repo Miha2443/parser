@@ -5,20 +5,22 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, moscow_first, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
     QUARTER_NAMES_RU,
     format_thousands,
-    latest_loaded_at,
+    dataset_download_summary, show_dataset_sources,
     load_salary,
     month_label,
     quarter_label,
 )
 
 st.set_page_config(page_title="Заработная плата — Аналитика Москвы", layout="wide")
+apply_theme()
 
-INDUSTRY_COLORS = {"Строительство": "#c8102e", "Всего": "#1f4e79"}
+INDUSTRY_COLORS = {"Строительство": COLORS["red"], "Всего": COLORS["blue"]}
 
 
 def aggregate_year(df: pd.DataFrame) -> pd.DataFrame:
@@ -82,25 +84,22 @@ def render_year_view(df: pd.DataFrame, region: str, views: list[str]) -> None:
         yaxis_title="руб.",
         legend_title="",
         margin=dict(t=60, b=40),
-        height=480,
+        height=390,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(fig, name=f"zp_year_{region}", key="zp_year_png")
-
-    pivot = (
-        annual.pivot_table(index="view", columns="year", values="value", aggfunc="first")
-        .reindex(views)
-    )
-    pivot.columns = [str(int(c)) for c in pivot.columns]
-    st.dataframe(
-        pivot.style.format("{:,.1f}", na_rep="—"),
-        width="stretch",
-    )
-    table_download_buttons(
-        annual.drop(columns=["_label"]).rename(columns={"value": "значение_руб"}),
-        name=f"zp_year_{region}",
-        key_prefix="zp_year",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name=f"zp_year_{region}", key="zp_year_png")
+        pivot = (
+            annual.pivot_table(index="view", columns="year", values="value", aggfunc="first")
+            .reindex(views)
+        )
+        pivot.columns = [str(int(c)) for c in pivot.columns]
+        st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            annual.drop(columns=["_label"]).rename(columns={"value": "значение_руб"}),
+            name=f"zp_year_{region}", key_prefix="zp_year",
+        )
 
 
 def _timeseries_chart(
@@ -143,7 +142,7 @@ def _timeseries_chart(
         yaxis_title=yaxis_title,
         legend_title="",
         margin=dict(t=60, b=80),
-        height=520,
+        height=390,
     )
     return fig
 
@@ -180,24 +179,23 @@ def render_quarter_view(df: pd.DataFrame, region: str, views: list[str], ytd: bo
         yaxis_title="руб.",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(
-        fig, name=f"zp_quarter_{region}_{'ytd' if ytd else 'mean'}", key="zp_q_png"
-    )
-
-    # таблица: строки = период (хронологически), столбцы = отрасль
-    pivot = quarters.pivot_table(
-        index="period", columns="view", values="value", aggfunc="first"
-    )
-    pivot = pivot.reindex(quarters.sort_values("_period_sort")["period"].unique())
-    st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
-    table_download_buttons(
-        quarters[["year", "quarter", "period", "view", "region", "value"]].rename(
-            columns={"value": "значение_руб", "period": "период"}
-        ),
-        name=f"zp_quarter_{region}",
-        key_prefix="zp_quarter",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(
+            fig, name=f"zp_quarter_{region}_{'ytd' if ytd else 'mean'}", key="zp_q_png"
+        )
+        pivot = quarters.pivot_table(
+            index="period", columns="view", values="value", aggfunc="first"
+        )
+        pivot = pivot.reindex(quarters.sort_values("_period_sort")["period"].unique())
+        st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            quarters[["year", "quarter", "period", "view", "region", "value"]].rename(
+                columns={"value": "значение_руб", "period": "период"}
+            ),
+            name=f"zp_quarter_{region}", key_prefix="zp_quarter",
+        )
 
 
 def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool) -> None:
@@ -232,27 +230,26 @@ def render_month_view(df: pd.DataFrame, region: str, views: list[str], ytd: bool
         yaxis_title="руб.",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(
-        fig, name=f"zp_month_{region}_{'ytd' if ytd else 'm'}", key="zp_m_png"
-    )
-
-    pivot = monthly.pivot_table(
-        index="period", columns="view", values="value", aggfunc="first"
-    )
-    pivot = pivot.reindex(monthly.sort_values("_period_sort")["period"].unique())
-    st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
-    table_download_buttons(
-        monthly[["year", "month", "period", "view", "region", "value"]].rename(
-            columns={"value": "значение_руб", "period": "период"}
-        ),
-        name=f"zp_month_{region}",
-        key_prefix="zp_month",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(
+            fig, name=f"zp_month_{region}_{'ytd' if ytd else 'm'}", key="zp_m_png"
+        )
+        pivot = monthly.pivot_table(
+            index="period", columns="view", values="value", aggfunc="first"
+        )
+        pivot = pivot.reindex(monthly.sort_values("_period_sort")["period"].unique())
+        st.dataframe(pivot.style.format("{:,.1f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            monthly[["year", "month", "period", "view", "region", "value"]].rename(
+                columns={"value": "значение_руб", "period": "период"}
+            ),
+            name=f"zp_month_{region}", key_prefix="zp_month",
+        )
 
 
 def main() -> None:
-    st.title("Среднемесячная заработная плата")
     df = load_salary()
     if df.empty:
         st.warning(
@@ -261,17 +258,18 @@ def main() -> None:
         )
         return
 
-    st.caption(f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 57824")
-
+    page_header(
+        "Среднемесячная заработная плата",
+        dataset_download_summary(df),
+    )
     top = st.container()
     with top:
         c1, c2, c3 = st.columns([1.2, 1.2, 1.6])
         with c1:
-            region_options = sorted(df["region"].unique())
-            default_idx = region_options.index("Москва") if "Москва" in region_options else 0
-            region = st.radio("Регион", options=region_options, index=default_idx)
+            region_options = moscow_first(df["region"].unique())
+            region = st.radio("Регион", options=region_options, index=0)
         with c2:
-            period = st.radio("Период", options=["Год", "Квартал", "Месяц"])
+            period = st.radio("Период", options=["Год", "Квартал", "Месяц"], index=2)
         with c3:
             views = st.multiselect(
                 "Отрасль",
@@ -300,6 +298,9 @@ def main() -> None:
         render_quarter_view(df, region=region, views=views, ytd=ytd)
     else:
         render_month_view(df, region=region, views=views, ytd=ytd)
+
+    st.divider()
+    show_dataset_sources(df)
 
 
 main()

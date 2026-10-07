@@ -5,13 +5,15 @@ erzrf_checker.py
 
 1. **erzrf_top** — `https://erzrf.ru/top-zastroyshchikov/`. Для каждой
    комбинации (5 сортировок × 2 региона) кликает кнопку «Скачать TOP в
-   Excel». Получено по факту (Шаг 0 fixtures, 03.06.2026):
-   - «По объёму текущего строительства»     → 15 колонок
-   - «По объёму ввода МКД»                  → 15 колонок
-   - «По накопленному вводу МКД с 2016 года»→ 16 колонок (+ «Ушёл с рынка»)
-   - «По потребительским качествам»          → 14 совсем других колонок
-   - «По скорости строительства»             → 10 совсем других колонок
-   Все 5 — разные наборы, поэтому качаем все.
+   Excel». Ожидаемые схемы (исторические имена части файлов были ошибочны;
+   исправленное соответствие см. docs/audit/erzrf_collector.md):
+   - «По объёму текущего строительства»      → площадь строительства
+   - «По объёму ввода жилья»                 → введённая площадь за год
+   - «По накопленному вводу жилья с 2016 г.» → накопленная введённая площадь
+   - «По потребительским качествам ЖК»        → оценки качества
+   - «По скорости строительства»             → дни на дом
+   Годовой и накопленный ввод имеют общую схему Excel; их различают
+   подтверждённые URL, сортировка и год вокруг конкретного скачивания.
 
 2. **erzrf_cards** — для ТОП-100 застройщиков из последнего
    `top_developers_rf_*.json` DOM-скрейпим карточки на
@@ -29,14 +31,23 @@ State в `state/erzrf_state.json`. Запуск:
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import sys
-import time
+import tempfile
+import uuid
+import warnings
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import parse_qs, urlparse
+from zipfile import BadZipFile
 
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -48,7 +59,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from pipeline.selenium_utils import create_chrome, wait_for_download
+from pipeline.file_utils import validate_excel_file
+from pipeline.selenium_utils import create_chrome, selenium_sleep, wait_for_download
+from pipeline.state_utils import load_json_state, write_json_atomic
 
 
 # ─────────────────────────────────────────────
@@ -58,14 +71,15 @@ from pipeline.selenium_utils import create_chrome, wait_for_download
 BASE = "https://erzrf.ru"
 TOP_URL = f"{BASE}/top-zastroyshchikov"
 
-# topType — URL-параметр erzrf для выбора сортировки (увидено в URL
-# 03.06.2026: `?regionKey=0&topType=0&date=260601`).
+# Values have public-source evidence (28.09.2026).
+# The complete mapping is checked against the site's sorting select every run;
+# historical values 2/3/4 were wrong. See docs/audit/erzrf_collector.md.
 TOP_TYPES = {
     "obyem_stroitelstva":  0,   # По объёму текущего строительства (default)
     "obyem_vvoda":         1,   # По объёму ввода
-    "nakopl_vvod":         2,   # По накопленному вводу
-    "potreb_kachestva":    3,   # По потребительским качествам
-    "skorost":             4,   # По скорости строительства
+    "nakopl_vvod":         4,   # По накопленному вводу с 2016 года
+    "potreb_kachestva":    2,   # По потребительским качествам
+    "skorost":             3,   # По скорости строительства
 }
 
 # Все 5 сортировок (по факту дают разные наборы колонок).
@@ -96,8 +110,18 @@ REGIONS = [
 ]
 
 
-def _build_top_url(region: dict, sorting_key: str) -> str:
-    top_type = TOP_TYPES.get(sorting_key, 0)
+def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None) -> str:
+    known_sortings = {item["key"] for item in SORTINGS}
+    if sorting_key not in known_sortings:
+        raise ValueError(f"unknown TOP sorting: {sorting_key}")
+    if region not in REGIONS:
+        raise ValueError(f"unknown TOP region: {region.get('key')}")
+    mapping = TOP_TYPES if top_types is None else top_types
+    if sorting_key not in mapping or type(mapping[sorting_key]) is not int:
+        raise ValueError(f"unverified topType for sorting: {sorting_key}")
+    top_type = mapping[sorting_key]
+    if top_type < 0:
+        raise ValueError("topType must be nonnegative")
     return (
         f"{BASE}/top-zastroyshchikov/{region['path']}"
         f"?topType={top_type}&{region['extra_query']}"
@@ -121,16 +145,211 @@ SLUG_RE = re.compile(r"/zastroyschiki/([^?#]+?)/?(?:[?#]|$)")
 
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_state(STATE_FILE, label="erzrf")
 
 
 def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    _write_json_atomic(STATE_FILE, state)
+
+
+def _write_json_atomic(path: Path, payload) -> None:
+    write_json_atomic(path, payload)
+
+
+def _write_excel_atomic(path: Path, write_func) -> None:
+    tmp = path.with_name(f"{path.stem}.tmp{path.suffix}")
+    try:
+        write_func(tmp)
+        import pandas as pd
+
+        with pd.ExcelFile(tmp, engine="openpyxl") as workbook:
+            if not workbook.sheet_names:
+                raise RuntimeError("temporary workbook has no sheets")
+        tmp.replace(path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _normalise_label(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold().replace("ё", "е")
+
+
+TOP_LABEL_ALIASES = {
+    "obyem_stroitelstva": {"По объёму текущего строительства"},
+    "obyem_vvoda": {"По объёму ввода", "По объёму ввода МКД", "По объёму ввода жилья"},
+    "nakopl_vvod": {
+        "По накопленному вводу", "По накопленному вводу МКД",
+        "По накопленному вводу МКД с 2016 года", "По накопленному вводу жилья",
+        "По накопленному вводу с 2016 года",
+        "По накопленному вводу жилья (с 2016 г.)",
+    },
+    "potreb_kachestva": {
+        "По потребительским качествам", "По потребительским качествам жилья",
+        "По потребительским качествам ЖК",
+    },
+    "skorost": {"По скорости строительства", "По скорости строительства жилья"},
+}
+
+
+def _sorting_from_label(label: str) -> str | None:
+    normalised = _normalise_label(label)
+    matches = [key for key, labels in TOP_LABEL_ALIASES.items()
+               if normalised in {_normalise_label(text) for text in labels}]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _excel_contract(path: Path, sorting_key: str) -> dict:
+    """Validate actual XLSX cells, not the browser name or ZIP signature."""
+    from openpyxl import load_workbook
+
+    metric_names = {
+        "obyem_stroitelstva": "Строится, м²",
+        "obyem_vvoda": "Введено, м²",
+        "nakopl_vvod": "Введено, м²",
+        "potreb_kachestva": "Средняя оценка",
+        "skorost": "Скорость строительства, дней/дом",
+    }
+    if sorting_key not in metric_names:
+        raise ValueError(f"unknown TOP sorting: {sorting_key}")
+    if path.suffix.lower() != ".xlsx":
+        raise ValueError("TOP export must be XLSX")
+    validate_excel_file(path)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Workbook contains no default style")
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if len(workbook.worksheets) != 1:
+            raise ValueError("expected exactly one TOP worksheet")
+        rows = workbook.worksheets[0].iter_rows(values_only=True)
+        headers = [_normalise_label(value) for value in next(rows, ())]
+        if not headers or "" in headers or len(set(headers)) != len(headers):
+            raise ValueError("missing, blank or duplicate TOP headers")
+        name_headers = {"наименование", "наименование, регион"}
+        name_columns = [i for i, header in enumerate(headers) if header in name_headers]
+        if len(name_columns) != 1 or "место" not in headers:
+            raise ValueError("TOP name/rank columns missing or ambiguous")
+        metric = _normalise_label(metric_names[sorting_key])
+        if metric not in headers:
+            raise ValueError(f"{sorting_key}: missing metric {metric_names[sorting_key]}")
+        # ERZ includes the two deadline columns in construction, annual input,
+        # and accumulated input exports. They describe developer delays and are
+        # not, by themselves, evidence of the accumulated-input rating. Annual
+        # and accumulated input therefore share one workbook schema; their exact
+        # identity is established by the verified URL and selected sorting before
+        # and after the download.
+        transfer_marker = any(
+            header.startswith("с переносом срока") for header in headers
+        )
+        clarification_marker = any(
+            header.startswith("уточнение срока") for header in headers
+        )
+        markers = {
+            "quality": "средняя оценка" in headers,
+            "speed": "скорость строительства, дней/дом" in headers,
+            "deadline_columns": transfer_marker and clarification_marker,
+            "commissioned": "введено, м²" in headers,
+            "construction": "строится, м²" in headers,
+        }
+        expected = {
+            "obyem_stroitelstva": (False, False, True, False, True),
+            "obyem_vvoda": (False, False, True, True, False),
+            "nakopl_vvod": (False, False, True, True, False),
+            "potreb_kachestva": (True, False, False, False, True),
+            "skorost": (False, True, False, False, False),
+        }[sorting_key]
+        if tuple(markers.values()) != expected:
+            raise ValueError(f"{sorting_key}: conflicting export schema {markers}")
+        if sorting_key == "potreb_kachestva" and "жк/пт, всего в расчете" not in headers:
+            raise ValueError("quality export has no ЖК/ПТ calculation column")
+        if sorting_key == "skorost" and "введено мкд по дду за 3 года" not in headers:
+            raise ValueError("speed export has no three-year ДДУ column")
+        metric_col, rank_col = headers.index(metric), headers.index("место")
+        count = 0
+        ranks: list[int] = []
+        metric_values: list[float] = []
+        row_preview: list[dict] = []
+        for excel_row, row in enumerate(rows, 2):
+            if all(value is None for value in row):
+                continue
+            name = row[name_columns[0]]
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"row {excel_row}: missing developer name")
+            metric_number = None
+            for column, positive, integer in ((metric_col, sorting_key == "skorost", False),
+                                             (rank_col, True, True)):
+                value = row[column]
+                if isinstance(value, bool) or value is None:
+                    raise ValueError(f"row {excel_row}: missing/invalid {headers[column]}")
+                try:
+                    number = float(re.sub(r"\s+", "", str(value)).replace(",", "."))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"row {excel_row}: invalid {headers[column]}") from exc
+                if not math.isfinite(number) or number < 0 or (positive and number <= 0):
+                    raise ValueError(f"row {excel_row}: invalid range {headers[column]}")
+                if integer and not number.is_integer():
+                    raise ValueError(f"row {excel_row}: invalid rank")
+                if integer:
+                    ranks.append(int(number))
+                else:
+                    metric_number = number
+            metric_values.append(metric_number)
+            if len(row_preview) < 100:
+                row_preview.append({
+                    "rank": ranks[-1],
+                    "name": re.sub(r"\s+", " ", name).strip(),
+                    "metric": metric_number,
+                })
+            count += 1
+        if not count:
+            raise ValueError("TOP export contains no developer rows")
+        # A complete ERZ "full list" is intrinsically numbered 1..N.  This is
+        # stronger evidence than the pagination counter on the HTML page: ERZ
+        # can expose a smaller UI count than the authenticated Excel export.
+        # Reject duplicate, missing and out-of-order ranks before publication.
+        if ranks != list(range(1, count + 1)):
+            raise ValueError("TOP ranks must be a unique continuous sequence 1..N")
+        if (sorting_key == "obyem_vvoda"
+                and any(left + 1e-9 < right
+                        for left, right in zip(metric_values, metric_values[1:]))):
+            raise ValueError("annual input metric must be non-increasing by rank")
+        schema_family = (
+            "commissioned_with_deadlines"
+            if sorting_key in {"obyem_vvoda", "nakopl_vvod"}
+            else sorting_key
+        )
+        return {"rows": count, "columns": headers, "metric": metric_names[sorting_key],
+                "rank_first": ranks[0], "rank_last": ranks[-1],
+                "rank_sequence_complete": True,
+                "row_preview": row_preview,
+                "schema_family": schema_family}
+    finally:
+        workbook.close()
+
+
+def _validate_downloaded_excel(path: Path, sorting_key: str) -> bool:
+    try:
+        _excel_contract(path, sorting_key)
+        return True
+    except (OSError, ValueError, BadZipFile, KeyError, IndexError) as exc:
+        print(f"       ERROR: invalid downloaded Excel {path.name}: {exc}")
+        return False
+
+
+def _finalize_downloaded_excel(source: Path, target: Path, sorting_key: str) -> bool:
+    if not _validate_downloaded_excel(source, sorting_key):
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        source.replace(target)
+        return True
+    except OSError as exc:
+        print(f"       ERROR: failed to finalize {target.name}: {exc}")
+        return False
 
 
 def _load_credentials() -> dict | None:
@@ -177,7 +396,7 @@ def _ensure_logged_in(driver) -> bool:
         for attempt in range(1, MAX_PAGE_ATTEMPTS + 1):
             try:
                 driver.get(BASE)
-                time.sleep(4)
+                selenium_sleep(4)
                 # Проверяем что страница нормальная (не «temporarily unavailable»)
                 page_text = (driver.execute_script(
                     "return document.body && document.body.innerText || ''"
@@ -185,7 +404,7 @@ def _ensure_logged_in(driver) -> bool:
                 if "temporarily unavailable" in page_text or "the page you are looking for" in page_text:
                     print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: страница "
                           f"temporarily unavailable, ждём 10 сек...")
-                    time.sleep(10)
+                    selenium_sleep(10)
                     continue
                 # Шаг 2: кликнуть кнопку открытия модалки
                 opened = driver.execute_script(
@@ -224,10 +443,10 @@ def _ensure_logged_in(driver) -> bool:
                 # Не нашёл кнопку — пробуем refresh ещё раз
                 print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: кнопка логина "
                       f"не появилась, обновляю страницу...")
-                time.sleep(5)
+                selenium_sleep(5)
             except Exception as e:  # noqa: BLE001
                 print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: {e}, повторяю...")
-                time.sleep(5)
+                selenium_sleep(5)
         if not opened:
             print(f"  ⚠️  Не нашёл кнопку открытия модалки логина "
                   f"за {MAX_PAGE_ATTEMPTS} попыток")
@@ -246,7 +465,7 @@ def _ensure_logged_in(driver) -> bool:
             print("  ⚠️  Модалка логина не появилась")
             _save_debug_snapshot(driver, "login_modal_timeout")
             return False
-        time.sleep(1)
+        selenium_sleep(1)
 
         # Шаг 4: найти поле логина. По скрину placeholder = «Логин или
         # адрес электронной почты», иногда тип input может быть text/email.
@@ -301,7 +520,7 @@ def _ensure_logged_in(driver) -> bool:
         email_input.send_keys(email)
         password_input.clear()
         password_input.send_keys(password)
-        time.sleep(0.5)
+        selenium_sleep(0.5)
 
         # Шаг 5: кликнуть оранжевую кнопку «Войти» В МОДАЛКЕ.
         clicked = driver.execute_script(
@@ -381,7 +600,7 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
     «Весь список» (вся выгрузка ~2900 застройщиков).
     """
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(1)
+    selenium_sleep(1)
 
     return driver.execute_script(
         """
@@ -530,7 +749,7 @@ def _collect_top_n_developers(driver, region: dict, n: int) -> list[dict]:
         url = _build_top_url(region, "obyem_stroitelstva") + f"&page={page_num}"
         print(f"     · страница {page_num}/{pages_needed}: {url}")
         driver.get(url)
-        time.sleep(4)
+        selenium_sleep(4)
         if not _wait_for_top_content(driver):
             print(f"       ⚠️  страница {page_num} не загрузилась")
             _save_debug_snapshot(driver, f"top_{region['key']}_page{page_num}_timeout")
@@ -559,7 +778,7 @@ def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) ->
     last_height = 0
     for _ in range(max_scrolls):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(pause)
+        selenium_sleep(pause)
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
@@ -576,174 +795,559 @@ def _scroll_to_load_all(driver, *, max_scrolls: int = 30, pause: float = 1.0) ->
 # Прочие сортировки (obyem_stroitelstva / nakopl_vvod / potreb_kachestva /
 # skorost) показывают НЕ годовой срез — год для них не применим.
 PER_YEAR_SORTINGS = {"obyem_vvoda"}
-PER_YEAR_RANGE = list(range(2022, 2027))  # 2022..2026 включительно
+PER_YEAR_RANGE = list(range(2022, datetime.now().year + 1))
+
+
+@dataclass(frozen=True)
+class TopExport:
+    region_key: str
+    sorting_key: str
+    year: int | None = None
+
+    @property
+    def region(self) -> dict:
+        return next(region for region in REGIONS if region["key"] == self.region_key)
+
+    def filename(self, date_str: str) -> str:
+        year = f"_{self.year}" if self.year is not None else ""
+        return f"top_{self.sorting_key}_{self.region_key}{year}_{date_str}.xlsx"
+
+
+@dataclass
+class TopFetchResult:
+    required_files: set[str]
+    files: list[Path] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def missing_files(self) -> list[str]:
+        return sorted(self.required_files - {path.name for path in self.files})
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.required_files) and not self.error and not self.missing_files
+
+
+class TopExportError(ValueError):
+    """An uncertain export ends the browser session before another download."""
+
+
+def _top_export_plan() -> list[TopExport]:
+    plan = []
+    for region in REGIONS:
+        for sorting in SORTINGS:
+            # The annual rating's default/current page is just the currently
+            # selected year. Downloading it once without an explicit filter and
+            # then again as 2026 is redundant. More importantly, ERZ can return
+            # an export from stale server-side filter state immediately after
+            # navigation. Every annual export therefore follows an observed
+            # year switch; the latest explicit year is also used as "current"
+            # by DataAccess.
+            years = PER_YEAR_RANGE if sorting["key"] in PER_YEAR_SORTINGS else [None]
+            plan.extend(TopExport(region["key"], sorting["key"], year) for year in years)
+    return plan
+
+
+def _read_top_selection(driver) -> dict:
+    return driver.execute_script(r"""
+        const totals = [...(document.body.innerText || '').matchAll(
+            /из\s+([\d\s\u00a0\u202f]+)\s+застройщик(?:ов|а)?/gi
+        )].map(m => Number(m[1].replace(/\s/g, '')));
+        return {url: location.href, developer_totals: totals,
+            selects: [...document.querySelectorAll('select')].map(s => ({
+            id: s.id, value: s.value,
+            selected_text: s.selectedOptions.length === 1 ? s.selectedOptions[0].textContent.trim() : '',
+            options: [...s.options].map(o => ({value: o.value, text: o.textContent.trim()}))
+        }))};
+    """)
+
+
+def _sorting_control(selection: dict) -> tuple[dict, dict]:
+    candidates = []
+    observed = []
+    for control in selection.get("selects", []):
+        mapping = {}
+        for option in control.get("options", []):
+            key = _sorting_from_label(option.get("text", ""))
+            if key is None:
+                continue
+            value = str(option.get("value", ""))
+            if key in mapping or not re.fullmatch(r"\d+", value):
+                raise TopExportError("ambiguous/non-numeric sorting option")
+            mapping[key] = int(value)
+        if mapping:
+            observed.append({"id": control.get("id", ""), "mapping": mapping})
+        if set(mapping) == {sorting["key"] for sorting in SORTINGS}:
+            if len(set(mapping.values())) != len(mapping):
+                raise TopExportError("duplicate topType values")
+            candidates.append((control, mapping))
+    if len(candidates) != 1:
+        raise TopExportError(
+            "cannot establish one complete sorting selector; "
+            f"candidates={len(candidates)}, observed={observed}"
+        )
+    control, mapping = candidates[0]
+    if mapping != TOP_TYPES:
+        raise TopExportError("source sorting mapping changed; source evidence needs review")
+    return control, mapping
+
+
+def _year_control(selection: dict) -> dict:
+    controls = [item for item in selection.get("selects", [])
+                if len([option for option in item.get("options", [])
+                        if re.fullmatch(r"20\d{2}", str(option.get("value", "")))]) >= 2]
+    if (len(controls) != 1
+            or not re.fullmatch(r"20\d{2}", str(controls[0].get("value", "")))):
+        raise TopExportError("selected annual period is missing or ambiguous")
+    return controls[0]
+
+
+def _top_table_snapshot(driver) -> tuple[list[dict], str]:
+    rows = _scrape_developers_from_table(driver)
+    if not rows or not all(row.get("name") and row.get("card_url") and row.get("cells") for row in rows):
+        raise TopExportError("cannot establish nonempty developer table contents")
+    digest = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return rows, digest
+
+
+def _top_table_digest(driver) -> str:
+    return _top_table_snapshot(driver)[1]
+
+
+def _visible_metric(row: dict) -> float | None:
+    """Read the first rating metric after the developer-name cell."""
+    cells = row.get("cells") or []
+    visible_name = _normalise_label(row.get("name", ""))
+    name_index = None
+    for index, cell in enumerate(cells):
+        cell_name = _normalise_label(cell)
+        if visible_name and (cell_name == visible_name or cell_name.startswith(visible_name + ",")):
+            name_index = index
+            break
+    candidates = cells[name_index + 1:] if name_index is not None else cells[3:]
+    for value in candidates:
+        cleaned = re.sub(r"[^0-9,.-]", "", str(value).replace("\xa0", "").replace(" ", ""))
+        if not cleaned:
+            continue
+        try:
+            number = float(cleaned.replace(",", "."))
+        except ValueError:
+            continue
+        if math.isfinite(number) and number >= 0:
+            return number
+    return None
+
+
+def _developer_correlation_key(value: object) -> str:
+    """Narrow ERZ display-name normalization used only by stale-UI fallback."""
+    name = _normalise_label(value)
+    return re.sub(r"^гк\s+", "", name)
+
+
+def _assert_visible_prefix_matches_workbook(
+        visible_rows: list[dict], contract: dict, required_rows: int,
+        request: TopExport | None = None, ui_total_rows: int | None = None) -> dict:
+    """Bind the export to the UI, allowing a proven fresher current-year export."""
+    preview = contract.get("row_preview") or []
+    if required_rows <= 0 or len(visible_rows) < required_rows:
+        raise TopExportError("visible table has too few rows for request correlation")
+    if len(preview) < required_rows:
+        raise TopExportError("workbook has no sufficient row preview for request correlation")
+    exact = True
+    first_mismatch = None
+    for index, visible in enumerate(visible_rows[:required_rows]):
+        place_match = re.match(r"\s*(\d+)", str(visible.get("place", "")))
+        if not place_match:
+            raise TopExportError("visible table rank cannot be parsed")
+        workbook = preview[index]
+        if int(place_match.group(1)) != workbook.get("rank"):
+            exact = False
+            first_mismatch = f"rank at row {index + 1}"
+            break
+        visible_name = _normalise_label(visible.get("name", ""))
+        workbook_name = _normalise_label(workbook.get("name", ""))
+        if not visible_name or not (
+            workbook_name == visible_name
+            or workbook_name.startswith(visible_name + ",")
+        ):
+            exact = False
+            first_mismatch = (
+                f"developer at row {index + 1}: UI={visible.get('name', '')!r}, "
+                f"XLSX={workbook.get('name', '')!r}"
+            )
+            break
+    if exact:
+        return {"mode": "exact_visible_prefix", "matched_rows": required_rows}
+
+    # ERZ can refresh the generated XLSX before invalidating the visible table
+    # cache.  Accept that narrow case only for the current annual rating and
+    # only when every visible leader appears near the top of the workbook with
+    # a metric that did not move backwards.  This still rejects another year,
+    # another rating and partial/unrelated exports.
+    workbook_rows = contract.get("rows")
+    if not (request and request.sorting_key == "obyem_vvoda"
+            and request.year == datetime.now().year
+            and required_rows >= 20
+            and type(ui_total_rows) is int and ui_total_rows > 0
+            and type(workbook_rows) is int
+            and workbook_rows >= required_rows):
+        raise TopExportError(f"workbook differs from the visible table: {first_mismatch}")
+    workbook_by_name: dict[str, dict] = {}
+    for item in preview[:25]:
+        name = _developer_correlation_key(item.get("name", ""))
+        if name:
+            if name in workbook_by_name:
+                raise TopExportError("ambiguous developer names in workbook correlation window")
+            workbook_by_name[name] = item
+    matches = []
+    strict_increases = 0
+    exact_metric_anchors = 0
+    for visible in visible_rows[:required_rows]:
+        visible_name = _developer_correlation_key(visible.get("name", ""))
+        candidates = [item for name, item in workbook_by_name.items()
+                      if name == visible_name or name.startswith(visible_name + ",")]
+        visible_value = _visible_metric(visible)
+        if len(candidates) != 1 or visible_value is None:
+            raise TopExportError(
+                f"current-year export cannot prove fresher UI correlation: {first_mismatch}"
+            )
+        workbook_value = candidates[0].get("metric")
+        if workbook_value is None or workbook_value + 1e-9 < visible_value:
+            raise TopExportError(
+                f"current-year export metric is older/different for {visible.get('name', '')!r}"
+            )
+        if workbook_value > visible_value + 1e-9:
+            strict_increases += 1
+        else:
+            exact_metric_anchors += 1
+        matches.append({
+            "visible_rank": int(re.match(r"\s*(\d+)", str(visible.get("place", ""))).group(1)),
+            "workbook_rank": candidates[0]["rank"],
+            "name": visible.get("name", ""),
+            "visible_metric": visible_value,
+            "workbook_metric": workbook_value,
+        })
+    if strict_increases == 0 or exact_metric_anchors < 5:
+        raise TopExportError(
+            "reordered current-year export lacks five stable metric anchors and fresher metrics"
+        )
+    return {
+        "mode": "fresh_export_ahead_of_visible_page",
+        "matched_rows": len(matches),
+        "strict_metric_increases": strict_increases,
+        "exact_metric_anchors": exact_metric_anchors,
+        "row_count_ratio": workbook_rows / ui_total_rows,
+        "matches": matches,
+        "first_exact_prefix_mismatch": first_mismatch,
+    }
+
+
+def _row_count_reconciliation(
+        request: TopExport, workbook_rows: int, ui_rows: int, correlation: dict) -> str:
+    """Record ERZ's independent UI and Excel counts without rejecting the export."""
+    if workbook_rows == ui_rows:
+        return "Excel and UI row counts match"
+    return (
+        f"Excel has {workbook_rows} rows; UI counter shows {ui_rows}; "
+        f"request correlation: {correlation.get('mode', 'unknown')}"
+    )
+
+
+def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
+    selection = _read_top_selection(driver)
+    control, observed_mapping = _sorting_control(selection)
+    if observed_mapping != top_types:
+        raise TopExportError("sorting mapping changed during collection")
+    if (_sorting_from_label(control.get("selected_text", "")) != request.sorting_key
+            or str(control.get("value")) != str(top_types[request.sorting_key])):
+        raise TopExportError("selected sorting differs from requested sorting")
+    wanted_url = _build_top_url(request.region, request.sorting_key, top_types)
+    actual, wanted = urlparse(selection.get("url", "")), urlparse(wanted_url)
+    query, wanted_query = parse_qs(actual.query), parse_qs(wanted.query)
+    if ((actual.scheme, actual.netloc, actual.path.rstrip("/"))
+            != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
+            or any(query.get(key) != value for key, value in wanted_query.items())):
+        raise TopExportError("current URL differs from requested region/sorting")
+    region_controls = [item for item in selection.get("selects", [])
+                       if {"0", "143443001"}.issubset(
+                           {str(option.get("value")) for option in item.get("options", [])})]
+    wanted_region = wanted_query["regionKey"][0]
+    if (not region_controls
+            or any(str(item.get("value")) != wanted_region for item in region_controls)):
+        raise TopExportError("selected region is missing, ambiguous or incorrect")
+    selected_year = None
+    if request.sorting_key in PER_YEAR_SORTINGS:
+        selected_year = int(_year_control(selection)["value"])
+        if request.year is not None and selected_year != request.year:
+            raise TopExportError("selected year differs from requested year")
+    elif request.year is not None:
+        raise TopExportError("year cannot be requested for this sorting")
+    totals = selection.get("developer_totals", [])
+    if (not totals or any(type(total) is not int or total <= 0 for total in totals)
+            or len(set(totals)) != 1):
+        raise TopExportError("full-list developer count is missing or ambiguous")
+    return {"requested_url": wanted_url, "observed_url": selection["url"],
+            "sorting": request.sorting_key, "top_type": top_types[request.sorting_key],
+            "selected_sorting": control["selected_text"], "region": request.region_key,
+            "selected_region": region_controls[0].get("selected_text", ""),
+            "region_control_ids": [item.get("id", "") for item in region_controls],
+            "requested_year": request.year, "selected_year": selected_year,
+            "expected_rows": totals[0]}
+
+
+def _download_top_export(driver, request: TopExport, date_str: str,
+                         staging: Path, top_types: dict,
+                         output_dir: Path | None = None) -> Path:
+    """A private attempt directory plus session abort prevents late-file reuse."""
+    evidence = _top_request_evidence(driver, request, top_types)
+    year_evidence = getattr(driver, "_erzrf_year_evidence", None)
+    if request.year is not None and (not year_evidence or year_evidence.get("year") != request.year):
+        raise TopExportError("explicit year has no observed selection/render acknowledgement")
+    visible_rows, table_digest = _top_table_snapshot(driver)
+    attempt = staging / request.filename(date_str).removesuffix(".xlsx")
+    attempt.mkdir()  # Never reuse a previous attempt directory.
+    driver.execute_cdp_cmd("Browser.setDownloadBehavior", {
+        "behavior": "allow", "downloadPath": str(attempt.resolve()),
+    })
+    click_info = _click_download_excel(driver, target_label="Весь список")
+    if not click_info.get("clicked"):
+        raise TopExportError("export button was not found")
+    source = wait_for_download(attempt, before_snapshot=set(), timeout=180)
+    if source is None:
+        raise TopExportError("export timed out; browser session must be closed")
+    candidates = [path for path in attempt.iterdir() if path.is_file()]
+    if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
+            or candidates[0].resolve() != source.resolve()):
+        raise TopExportError("ambiguous or unrelated export download")
+    if _top_request_evidence(driver, request, top_types) != evidence:
+        raise TopExportError("selected request changed while export was downloading")
+    if _top_table_digest(driver) != table_digest:
+        raise TopExportError("table changed while export was downloading")
+    # Run the semantic contract before publication; keep failures private until
+    # the session closes and the staging directory is cleaned up.
+    contract = _excel_contract(source, request.sorting_key)
+    ui_rows = evidence.pop("expected_rows")
+    correlation = _assert_visible_prefix_matches_workbook(
+        visible_rows, contract, required_rows=min(20, ui_rows), request=request,
+        ui_total_rows=ui_rows,
+    )
+    count_reconciliation = _row_count_reconciliation(
+        request, contract["rows"], ui_rows, correlation
+    )
+    evidence.update({
+        "ui_developer_count": ui_rows,
+        "workbook_developer_count": contract["rows"],
+        "row_count_discrepancy": contract["rows"] - ui_rows,
+        "completeness_evidence": "continuous unique workbook ranks 1..N; " + count_reconciliation,
+        "count_reconciliation": count_reconciliation,
+        "request_correlation": correlation,
+    })
+    evidence.update({"schema_version": 3, "received_at": datetime.now().isoformat(timespec="seconds"),
+                     "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                     "workbook": contract,
+                     "visible_table_sha256": table_digest,
+                     "year_selection_evidence": year_evidence,
+                     "period_verified": False,
+                     "period_evidence": "selected_year is a UI selection, not an independently verified response period"})
+    target = (DOWNLOAD_DIR if output_dir is None else output_dir) / request.filename(date_str)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(target)
+    _write_json_atomic(target.with_suffix(".xlsx.provenance.json"), evidence)
+    print(f"       ✓ проверен и подготовлен {target.name} ({contract['rows']} rows)")
+    return target
+
+
+def _publish_top_batch(staged_files: list[Path], destination: Path, rollback_dir: Path) -> list[Path]:
+    """Publish one complete TOP snapshot and restore prior files on an error.
+
+    ``staged_files`` contains every planned Excel file and two developer JSON files.
+    Excel provenance sidecars live beside them and are committed in the same
+    transaction.  Nothing becomes discoverable by ETL until collection of the
+    entire required set has succeeded.
+    """
+    staged_names = {path.name for path in staged_files}
+    if len(staged_names) != len(staged_files) or any(not path.is_file() for path in staged_files):
+        raise TopExportError("staged TOP batch is missing or contains duplicate primary files")
+    batch_dir = staged_files[0].parent if staged_files else None
+    if batch_dir is None or any(path.parent != batch_dir for path in staged_files):
+        raise TopExportError("staged TOP batch spans multiple directories")
+    artifacts = sorted(path for path in batch_dir.iterdir() if path.is_file())
+    sidecars = {path.name for path in artifacts if path.name.endswith(".xlsx.provenance.json")}
+    expected_sidecars = {f"{name}.provenance.json" for name in staged_names if name.endswith(".xlsx")}
+    if sidecars != expected_sidecars:
+        raise TopExportError("staged TOP batch has incomplete provenance sidecars")
+    allowed_artifacts = staged_names | expected_sidecars
+    if {path.name for path in artifacts} != allowed_artifacts:
+        raise TopExportError("staged TOP batch contains unexpected artifacts")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    rollback_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        for source in artifacts:
+            target = destination / source.name
+            if target.exists():
+                backup = rollback_dir / source.name
+                target.replace(backup)
+            source.replace(target)
+    except BaseException:
+        rollback_errors = []
+        # Reconstruct what happened from the filesystem instead of relying on
+        # Python-side lists: an interrupt may arrive after os.replace succeeds
+        # but before the next bytecode can update a journal.
+        for source in reversed(artifacts):
+            target = destination / source.name
+            backup = rollback_dir / source.name
+            try:
+                if backup.exists():
+                    target.unlink(missing_ok=True)
+                    backup.replace(target)
+                elif not source.exists() and target.exists():
+                    # No prior target existed and this staged artifact moved.
+                    target.unlink()
+            except OSError as exc:
+                rollback_errors.append(f"rollback {target.name}: {exc}")
+        if rollback_errors:
+            raise TopExportError(
+                "TOP batch publish failed and rollback was incomplete; "
+                f"recovery files preserved at {rollback_dir}: "
+                + "; ".join(rollback_errors)
+            )
+        try:
+            rollback_dir.rmdir()
+        except OSError:
+            pass
+        raise
+    try:
+        shutil.rmtree(rollback_dir)
+    except OSError as exc:
+        print(f"  WARNING: old TOP backups remain at {rollback_dir}: {exc}")
+    return [destination / path.name for path in staged_files]
 
 
 def _switch_year_filter(driver, year: int) -> bool:
-    """Переключает фильтр года ввода через скрытый <select> (Select2 wrapper).
+    """Require selected year and an observed table change after a year switch.
 
-    HTML (предоставлен пользователем):
-        <select id="select6" class="styleClass select2-hidden-accessible">
-          <option value="2026">2026</option>
-          <option value="2025">2025</option>
-          ...
-        </select>
-
-    Select2 рендерит видимый span, но слушает события change на скрытом
-    select. Меняем value и шлём 'change' с bubbles — Select2 и Angular
-    оба подхватывают.
-
-    Возвращает True если переключение прошло (текущий year == year).
+    A select value alone acknowledges our own assignment, not a site response.
+    Identical/stale table contents therefore fail closed when the year changes.
+    This is render acknowledgement, not independent evidence of the data period.
     """
+    control = _year_control(_read_top_selection(driver))
+    before = _top_table_digest(driver)
     target = str(year)
-    ok = driver.execute_script(
-        """
-        const target = String(arguments[0]).trim();
-        // Ищем select с опциями годов (id='select6' по примеру или
-        // любой select где есть option с нужным value).
-        let sel = document.getElementById('select6');
-        if (!sel) {
-            sel = [...document.querySelectorAll('select')].find(s =>
-                [...s.options].some(o => (o.value || '').trim() === target));
-        }
-        if (!sel) return false;
-        if (sel.value === target) return true;
+    driver._erzrf_year_evidence = None
+    if str(control["value"]) == target:
+        driver._erzrf_year_evidence = {"year": year, "already_selected": True,
+                                      "table_changed": False}
+        return True
+    if not control.get("id"):
+        return False
+    ok = driver.execute_script("""
+        const sel = document.getElementById(arguments[0]);
+        const target = arguments[1];
+        if (!sel || ![...sel.options].some(o => o.value === target)) return false;
         sel.value = target;
         sel.dispatchEvent(new Event('input', {bubbles: true}));
         sel.dispatchEvent(new Event('change', {bubbles: true}));
-        // jQuery trigger если есть (Select2 слушает именно jq-event)
-        if (window.jQuery) {
-            try { window.jQuery(sel).val(target).trigger('change'); }
-            catch(e) {}
-        }
+        if (window.jQuery) window.jQuery(sel).val(target).trigger('change');
         return sel.value === target;
-        """,
-        target,
-    )
+    """, control["id"], target)
     if not ok:
         return False
-    # Ждём пока контент перерисуется (можно по смене таблицы)
-    time.sleep(4)
+
+    def changed_and_selected(browser):
+        if str(_year_control(_read_top_selection(browser))["value"]) != target:
+            return False
+        try:
+            return _top_table_digest(browser) != before
+        except TopExportError:
+            return False
+
+    try:
+        WebDriverWait(driver, 30).until(changed_and_selected)
+    except TimeoutException:
+        return False
+    driver._erzrf_year_evidence = {"year": year, "already_selected": False,
+                                  "table_changed": True}
     return True
 
 
-def fetch_top(state: dict) -> list[Path]:
+def fetch_top(state: dict) -> TopFetchResult:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    new_files: list[Path] = []
-
-    # Одна сессия Chrome на весь обход — кука авторизации сохраняется.
-    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-    try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-
-        if not _ensure_logged_in(driver):
-            print("  ❌ Без авторизации скачивание xlsx невозможно. Пропускаем TOP.")
-            return []
-
-        date_str = datetime.now().strftime("%Y%m%d")
-
-        def _download_current(filename_base: str) -> Path | None:
-            """Кликает «Весь список», ждёт xlsx, переименовывает в target."""
-            before = set(DOWNLOAD_DIR.glob("*"))
-            click_info = _click_download_excel(driver, target_label="Весь список")
-            if not click_info.get("clicked"):
-                print(f"       ⚠️  кнопка «Весь список» не найдена")
-                _save_debug_snapshot(driver, f"{filename_base}_no_button")
-                return None
-            print(
-                f"       клик: [{click_info.get('matched')}] "
-                f"{click_info.get('tag')} «{(click_info.get('text') or '')[:60]}»"
-            )
-            new_file = wait_for_download(
-                DOWNLOAD_DIR, before_snapshot=before, timeout=180
-            )
-            if new_file is None:
-                print(f"       ⚠️  xlsx не появился в папке за 180 сек")
-                _save_debug_snapshot(driver, f"{filename_base}_after_click")
-                return None
-            target = DOWNLOAD_DIR / f"{filename_base}{new_file.suffix}"
-            if target.exists():
-                target.unlink()
-            new_file.rename(target)
-            print(f"       ✅ {target.name}")
-            return target
-
-        for region in REGIONS:
-            print(f"  🌐 регион: {region['key']} ({region['label']})")
-
-            # Шаг A: качаем «Весь список» по всем 5 сортировкам
-            for sorting in SORTINGS:
-                url = _build_top_url(region, sorting["key"])
-                print(f"     ▸ сортировка: {sorting['key']} (topType={TOP_TYPES[sorting['key']]})")
-                print(f"       URL: {url}")
+    date_str = datetime.now().strftime("%Y%m%d")
+    plan = _top_export_plan()
+    required = {request.filename(date_str) for request in plan}
+    required.update(f"top_developers_{region['key']}_{date_str}.json" for region in REGIONS)
+    result = TopFetchResult(required_files=required)
+    driver = None
+    # Staging is outside the discoverable raw/erzrf folder, on the same volume
+    # as the final destination. Close Chrome before removing any attempt files.
+    with tempfile.TemporaryDirectory(prefix=".erzrf-top-", dir=DOWNLOAD_DIR.parent) as tmp:
+        staging = Path(tmp)
+        batch = staging / "validated-batch"
+        batch.mkdir()
+        try:
+            driver = create_chrome(download_dir=staging, headless=HEADLESS)
+            driver.set_page_load_timeout(PAGE_TIMEOUT)
+            if not _ensure_logged_in(driver):
+                raise TopExportError("authorization unavailable; no TOP exports downloaded")
+            driver.get(_build_top_url(REGIONS[0], "obyem_stroitelstva"))
+            if not _wait_for_top_content(driver):
+                raise TopExportError("initial TOP content did not load")
+            _, top_types = _sorting_control(_read_top_selection(driver))
+            for request in plan:
+                url = _build_top_url(request.region, request.sorting_key, top_types)
+                print(f"  TOP {request.region_key}/{request.sorting_key}/{request.year or 'current'}: {url}")
+                driver._erzrf_year_evidence = None
                 driver.get(url)
-                time.sleep(4)
-
                 if not _wait_for_top_content(driver):
-                    print(f"       ⚠️  контент не появился")
-                    _save_debug_snapshot(driver, f"top_{region['key']}_{sorting['key']}_timeout")
-                    continue
-
-                # 1) Скачиваем «текущее» состояние (без явного выбора года —
-                # это последний год по умолчанию)
-                base_name = f"top_{sorting['key']}_{region['key']}_{date_str}"
-                target = _download_current(base_name)
-                if target:
-                    new_files.append(target)
-
-                # 2) Для obyem_vvoda — циклим по годам 2022-2026 и для
-                # каждого скачиваем отдельный xlsx с суффиксом года.
-                if sorting["key"] in PER_YEAR_SORTINGS:
-                    print(f"       ── обход по годам: {PER_YEAR_RANGE}")
-                    for year in PER_YEAR_RANGE:
-                        ok = _switch_year_filter(driver, year)
-                        if not ok:
-                            print(f"          ⚠️  год {year} — не удалось переключить")
-                            continue
-                        # Подождём ещё немного для гарантированного ререндера
-                        if not _wait_for_top_content(driver):
-                            print(f"          ⚠️  год {year} — контент не появился")
-                            continue
-                        year_name = f"top_{sorting['key']}_{region['key']}_{year}_{date_str}"
-                        ytarget = _download_current(year_name)
-                        if ytarget:
-                            new_files.append(ytarget)
-
-            # Шаг B: собираем ТОП-100 застройщиков пагинацией (5 страниц × 20)
-            # — это для fetch_cards (карточки нужны только по ТОП-100).
-            print(f"     ── Сбор ТОП-{TOP_N_DEVELOPERS} застройщиков для карточек:")
-            developers = _collect_top_n_developers(
-                driver, region, n=TOP_N_DEVELOPERS
-            )
-            if developers:
-                dev_file = DOWNLOAD_DIR / f"top_developers_{region['key']}_{date_str}.json"
-                dev_file.write_text(
-                    json.dumps(
-                        {
-                            "region": region["key"],
-                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-                            "developers": developers,
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
+                    raise TopExportError("TOP content did not load")
+                if request.year is not None and not _switch_year_filter(driver, request.year):
+                    raise TopExportError(f"year {request.year} could not be selected")
+                _download_top_export(
+                    driver, request, date_str, staging, top_types, output_dir=batch
                 )
-                print(f"     ✅ {dev_file.name} ({len(developers)} застройщиков)")
-                new_files.append(dev_file)
-            else:
-                print(f"     ⚠️  не удалось собрать ТОП-{TOP_N_DEVELOPERS}")
-    except WebDriverException as exc:
-        print(f"  ❌ {exc}")
-    finally:
-        driver.quit()
-
-    if new_files:
-        state["erzrf_top"] = {
-            "last_run": datetime.now().isoformat(timespec="seconds"),
-            "files": [p.name for p in new_files],
-        }
-    return new_files
+            for region in REGIONS:
+                developers = _collect_top_n_developers(driver, region, n=TOP_N_DEVELOPERS)
+                urls = {dev.get("card_url") for dev in developers if dev.get("card_url")}
+                if len(developers) != TOP_N_DEVELOPERS or len(urls) != TOP_N_DEVELOPERS:
+                    raise TopExportError(f"incomplete TOP-{TOP_N_DEVELOPERS} developers for {region['key']}")
+                target = batch / f"top_developers_{region['key']}_{date_str}.json"
+                _write_json_atomic(target, {"region": region["key"],
+                                           "scraped_at": datetime.now().isoformat(timespec="seconds"),
+                                           "developers": developers})
+            # End the browser session before making the validated snapshot
+            # visible. A late Chrome write can then only affect staging.
+            try:
+                driver.quit()
+            except WebDriverException as exc:
+                raise TopExportError(f"browser cleanup failed before publication: {exc}") from exc
+            driver = None
+            staged_files = [batch / name for name in sorted(required)]
+            recovery_dir = (
+                DOWNLOAD_DIR.parent / f".erzrf-top-recovery-{uuid.uuid4().hex}"
+            )
+            result.files = _publish_top_batch(staged_files, DOWNLOAD_DIR, recovery_dir)
+            print(f"  ✅ Опубликован полный пакет TOP: {len(result.files)} основных файлов "
+                  f"и {len(plan)} provenance-файлов")
+        except Exception as exc:  # An uncertain download must end this session.
+            result.error = f"{type(exc).__name__}: {exc}"
+            print(f"  ERROR TOP: {result.error}")
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except WebDriverException as exc:
+                    result.error = result.error or f"browser cleanup failed: {exc}"
+    attempted_at = datetime.now().isoformat(timespec="seconds")
+    state["erzrf_top_attempt"] = {"attempted_at": attempted_at, "complete": result.complete,
+                                  "required_files": sorted(required),
+                                  "files": [path.name for path in result.files],
+                                  "missing_files": result.missing_files, "error": result.error}
+    if result.complete:
+        state["erzrf_top"] = {"last_run": attempted_at, "files": [path.name for path in result.files]}
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -758,10 +1362,20 @@ def _developer_slug(card_url: str) -> str | None:
 
 def _load_top_developers() -> list[dict]:
     candidates = sorted(DOWNLOAD_DIR.glob("top_developers_rf_*.json"))
-    if not candidates:
-        return []
-    payload = json.loads(candidates[-1].read_text(encoding="utf-8"))
-    return list(payload.get("developers", []))
+    for path in reversed(candidates):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("payload is not an object")
+            developers = payload.get("developers", [])
+            if not isinstance(developers, list):
+                raise ValueError("developers is not a list")
+            if not developers:
+                raise ValueError("developers list is empty")
+            return list(developers)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"  ⚠️  Пропускаю битый top_developers JSON {path.name}: {exc}")
+    return []
 
 
 def _parse_card_html(html: str) -> dict:
@@ -864,6 +1478,27 @@ def _scrape_card(driver) -> dict:
         return {"name": "", "regions_count": "", "regions_as_of": "", "deliveries": {}}
 
 
+def _card_html_has_content(html: str) -> bool:
+    return any(
+        token in html
+        for token in (
+            "app-org-table",
+            "app-org-regions-of-presence",
+            "app-org-table-deadline",
+            "Регионы присутствия",
+            "Сдано",
+        )
+    )
+
+
+def _wait_for_card_content(driver, timeout: int = 8) -> bool:
+    try:
+        WebDriverWait(driver, timeout).until(lambda d: _card_html_has_content(d.page_source))
+        return True
+    except TimeoutException:
+        return False
+
+
 def _parse_construction_table_df(df) -> dict:
     """Устаревший fallback, оставлен на случай нестандартной разметки."""
     return {}
@@ -873,9 +1508,8 @@ def fetch_cards(state: dict) -> list[Path]:
     """Обходит карточки ТОП-застройщиков и собирает один xlsx.
 
     Селекторы и формат вывода верифицированы локально на 20 реальных HTML
-    (см. parse_card_html). Перед обращением к карточке делает sleep 10с —
-    Angular SPA нужно время на отрисовку (без WebDriverWait, который раньше
-    давал ложные таймауты).
+    (см. parse_card_html). После перехода ждём признаков Angular-разметки в
+    page_source; если сайт не успел отрисоваться, добираем короткой паузой.
     """
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     developers = _load_top_developers()
@@ -904,9 +1538,8 @@ def fetch_cards(state: dict) -> list[Path]:
             print(f"     · {place_str:>20}  {name_str[:40]}  →  {slug[:60]}")
             try:
                 driver.get(card_url)
-                # 10 сек на отрисовку Angular SPA. WebDriverWait здесь
-                # давал ложные таймауты при том что данные были в page_source.
-                time.sleep(10)
+                if not _wait_for_card_content(driver):
+                    selenium_sleep(2)
 
                 # Сохраняем HTML первой карточки для аудита
                 if not debug_saved:
@@ -976,12 +1609,15 @@ def fetch_cards(state: dict) -> list[Path]:
             row["scraped_at"] = r.get("scraped_at", "")
             wide_rows.append(row)
 
+        def _write_cards_workbook(path: Path) -> None:
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                if wide_rows:
+                    pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
+                if failed:
+                    pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
+
         target = CARDS_DIR / f"cards_{date_str}.xlsx"
-        with pd.ExcelWriter(target, engine="openpyxl") as writer:
-            if wide_rows:
-                pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
-            if failed:
-                pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
+        _write_excel_atomic(target, _write_cards_workbook)
         print(
             f"     ✅ {target.name} "
             f"(карточек: {len(wide_rows)}, лет: {len(all_years)} {all_years}, "
@@ -1012,22 +1648,25 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     keys = set(only) if only else {"top", "cards"}
+    unknown = sorted(keys - {"top", "cards"})
 
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Запуск: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Источники: {', '.join(sorted(keys))}")
+    print("Контракт TOP: nakopl_vvod=4, potreb_kachestva=2, skorost=3; "
+          "каждый Excel проверяется до публикации")
     print(f"{'='*60}\n")
 
     all_new: list[Path] = []
-    failed = False
+    failed = bool(unknown)
+    for key in unknown:
+        print(f"  ⚠️  Неизвестный ключ: {key}")
     if "top" in keys:
         try:
-            files = fetch_top(state)
-            all_new.extend(files)
+            result = fetch_top(state)
+            all_new.extend(result.files)
             save_state(state)
-            # Если top запускался и ничего не вернул — это неуспех
-            # (без авторизации или сайт лежит).
-            if not files:
+            if not result.complete:
                 failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ top: {exc}")
@@ -1046,12 +1685,19 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
     print(f"\n{'='*60}")
     print(f"erzrf.ru | Итог: новых/обновлённых файлов — {len(all_new)}")
     if failed:
-        print(f"erzrf.ru | ⚠️  Один или несколько источников ничего не скачали")
+        print(f"erzrf.ru | ⚠️  Один или несколько источников завершились неполно")
     print(f"{'='*60}\n")
     return all_new, not failed
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    _files, ok = run(only=args if args else None)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "sources",
+        nargs="*",
+        choices=["top", "cards"],
+        help="Источники для запуска",
+    )
+    args = parser.parse_args()
+    _files, ok = run(only=args.sources if args.sources else None)
     sys.exit(0 if ok else 2)

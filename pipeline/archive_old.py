@@ -31,6 +31,9 @@ DATE_RE = re.compile(r"[_-]?(\d{8}|\d{4}-\d{2}-\d{2})(?=\.|$)")
 
 # Папки источников для обхода (без _archive)
 SOURCE_DIRS = ["nashdom", "erzrf", "erzrf/cards"]
+ARCHIVABLE_SUFFIXES = {".xlsx", ".xls", ".json", ".csv"}
+TEMP_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
+TEMP_NAME_PREFIXES = ("~$",)
 
 
 def family_of(path: Path) -> str:
@@ -44,6 +47,14 @@ def family_of(path: Path) -> str:
     match = DATE_RE.search(stem)
     base = stem[: match.start()].rstrip("_-") if match else stem
     return f"{base}{path.suffix.lower()}"
+
+
+def is_archivable_file(path: Path) -> bool:
+    """Return whether an active raw file can be considered for archiving."""
+    if path.name.startswith(TEMP_NAME_PREFIXES):
+        return False
+    suffix = path.suffix.lower()
+    return suffix in ARCHIVABLE_SUFFIXES and suffix not in TEMP_SUFFIXES
 
 
 def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str, list[Path]]:
@@ -61,7 +72,7 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
     for f in src_dir.iterdir():
         if not f.is_file():
             continue
-        if f.suffix.lower() not in (".xlsx", ".xls", ".json", ".csv"):
+        if not is_archivable_file(f):
             continue
         # Игнорируем файлы без даты в имени (например «Наполняемость счетов.xlsx»
         # — ручная выгрузка, не архивируем)
@@ -72,6 +83,17 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
         fam = family_of(f)
         families.setdefault(fam, []).append(f)
     return families
+
+
+def _unique_archive_dest(dest: Path) -> Path:
+    """Return a non-existing archive destination, preserving the original suffix."""
+    if not dest.exists():
+        return dest
+    for i in range(1, 1000):
+        candidate = dest.with_name(f"{dest.stem}_{i}{dest.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"cannot allocate unique archive path for {dest}")
 
 
 def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
@@ -100,11 +122,16 @@ def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
             dest_dir = ARCHIVE_ROOT / date_tag / source_rel
             dest = dest_dir / old.name
             if dry_run:
-                print(f"  [DRY] {old.relative_to(REALTY_ROOT)} → _archive/{date_tag}/{source_rel}/{old.name}")
+                print(f"  [DRY] {old.relative_to(REALTY_ROOT)} -> _archive/{date_tag}/{source_rel}/{old.name}")
             else:
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(old), str(dest))
-                print(f"  📦 {old.name} → _archive/{date_tag}/{source_rel}/")
+                dest = _unique_archive_dest(dest)
+                try:
+                    shutil.move(str(old), str(dest))
+                except OSError as exc:
+                    print(f"  [WARN] skip locked file: {old.name} ({exc})")
+                    continue
+                print(f"  [ARCHIVE] {old.name} -> _archive/{date_tag}/{source_rel}/")
             moved += 1
     return moved
 
@@ -143,13 +170,13 @@ def main():
         print(f"Префиксы: {', '.join(args.prefixes)}")
     print(f"{'='*60}\n")
     for src in sources:
-        print(f"📂 {src}")
+        print(f"[DIR] {src}")
         n = archive_directory(src, keep=args.keep, dry_run=args.dry_run,
                               prefixes=args.prefixes)
         if n == 0:
-            print(f"   ✓ нечего архивировать")
+            print("   ok: nothing to archive")
         else:
-            print(f"   → перемещено: {n}")
+            print(f"   moved: {n}")
         total += n
     print(f"\n{'='*60}")
     print(f"Итого{' (имитация)' if args.dry_run else ''}: {total} файлов")

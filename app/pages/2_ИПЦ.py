@@ -5,19 +5,21 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, moscow_first, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
 from app.data_access import (
     MONTH_NAMES_RU,
     QUARTER_NAMES_RU,
-    latest_loaded_at,
+    dataset_download_summary, show_dataset_sources,
     load_ipc,
     month_label,
     quarter_label,
 )
 
 st.set_page_config(page_title="ИПЦ — Аналитика Москвы", layout="wide")
+apply_theme()
 
-REGION_COLORS = {"Москва": "#c8102e", "Российская Федерация": "#1f4e79"}
+REGION_COLORS = {"Москва": COLORS["red"], "Российская Федерация": COLORS["blue"]}
 
 PERIOD_TYPE_BY_LABEL = {
     "К предыдущему месяцу": "month_to_month",
@@ -51,19 +53,19 @@ def render_year_view(df: pd.DataFrame, regions: list[str]) -> None:
         yaxis_title="%",
         legend_title="",
         margin=dict(t=60, b=40),
-        height=480,
+        height=390,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(fig, name="ipc_year", key="ipc_year_png")
-
-    pivot = annual.pivot_table(index="region", columns="year", values="value", aggfunc="first")
-    pivot.columns = [str(int(c)) for c in pivot.columns]
-    st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
-    table_download_buttons(
-        annual[["year", "region", "value"]].rename(columns={"value": "ипц_%"}),
-        name="ipc_year",
-        key_prefix="ipc_year",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name="ipc_year", key="ipc_year_png")
+        pivot = annual.pivot_table(index="region", columns="year", values="value", aggfunc="first")
+        pivot.columns = [str(int(c)) for c in pivot.columns]
+        st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            annual[["year", "region", "value"]].rename(columns={"value": "ипц_%"}),
+            name="ipc_year", key_prefix="ipc_year",
+        )
 
 
 def _timeseries_chart(
@@ -102,7 +104,7 @@ def _timeseries_chart(
         yaxis_title="%",
         legend_title="",
         margin=dict(t=60, b=80),
-        height=520,
+        height=390,
     )
     return fig
 
@@ -138,19 +140,19 @@ def render_quarter_view(df: pd.DataFrame, regions: list[str], period_type: str) 
         title=f"ИПЦ по кварталам — {LABEL_BY_PERIOD_TYPE[period_type]}",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(fig, name=f"ipc_quarter_{period_type}", key="ipc_q_png")
-
-    pivot = sub.pivot_table(index="period", columns="region", values="value", aggfunc="first")
-    pivot = pivot.reindex(sub.sort_values("_period_sort")["period"].unique())
-    st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
-    table_download_buttons(
-        sub[["year", "quarter", "period", "region", "value"]].rename(
-            columns={"value": "ипц_%", "period": "период"}
-        ),
-        name=f"ipc_quarter_{period_type}",
-        key_prefix="ipc_quarter",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name=f"ipc_quarter_{period_type}", key="ipc_q_png")
+        pivot = sub.pivot_table(index="period", columns="region", values="value", aggfunc="first")
+        pivot = pivot.reindex(sub.sort_values("_period_sort")["period"].unique())
+        st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            sub[["year", "quarter", "period", "region", "value"]].rename(
+                columns={"value": "ипц_%", "period": "период"}
+            ),
+            name=f"ipc_quarter_{period_type}", key_prefix="ipc_quarter",
+        )
 
 
 def render_month_view(df: pd.DataFrame, regions: list[str], period_type: str) -> None:
@@ -180,43 +182,43 @@ def render_month_view(df: pd.DataFrame, regions: list[str], period_type: str) ->
         title=f"ИПЦ по месяцам — {LABEL_BY_PERIOD_TYPE[period_type]}",
         show_labels=show_labels,
     )
+    style_plotly(fig, height=390)
     st.plotly_chart(fig, width="stretch")
-    chart_download_button(fig, name=f"ipc_month_{period_type}", key="ipc_m_png")
-
-    pivot = sub.pivot_table(index="period", columns="region", values="value", aggfunc="first")
-    pivot = pivot.reindex(sub.sort_values("_period_sort")["period"].unique())
-    st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
-    table_download_buttons(
-        sub[["year", "month", "period", "region", "value"]].rename(
-            columns={"value": "ипц_%", "period": "период"}
-        ),
-        name=f"ipc_month_{period_type}",
-        key_prefix="ipc_month",
-    )
+    with st.expander("Данные графика и скачивание", expanded=False):
+        chart_download_button(fig, name=f"ipc_month_{period_type}", key="ipc_m_png")
+        pivot = sub.pivot_table(index="period", columns="region", values="value", aggfunc="first")
+        pivot = pivot.reindex(sub.sort_values("_period_sort")["period"].unique())
+        st.dataframe(pivot.style.format("{:.2f}", na_rep="—"), width="stretch")
+        table_download_buttons(
+            sub[["year", "month", "period", "region", "value"]].rename(
+                columns={"value": "ипц_%", "period": "период"}
+            ),
+            name=f"ipc_month_{period_type}", key_prefix="ipc_month",
+        )
 
 
 def main() -> None:
-    st.title("Индексы потребительских цен")
     df = load_ipc()
     if df.empty:
         st.warning(
-            "Файлы ИПЦ не найдены в `data/processed/prices_ipc.pkl`. "
+            "Файлы ИПЦ не найдены в `data/processed/ipc.pkl`. "
             "Запустите `py pipeline/run_etl.py`."
         )
         return
 
-    st.caption(
-        f"Обновлено: {latest_loaded_at(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)"
+    page_header(
+        "Индексы потребительских цен",
+        dataset_download_summary(df),
     )
-
     c1, c2 = st.columns([1.2, 2.0])
     with c1:
-        period = st.radio("Период", options=["Год", "Квартал", "Месяц"])
+        period = st.radio("Период", options=["Год", "Квартал", "Месяц"], index=2)
     with c2:
+        region_options = moscow_first(df["region"].unique())
         regions = st.multiselect(
             "Регионы",
-            options=sorted(df["region"].unique()),
-            default=sorted(df["region"].unique()),
+            options=region_options,
+            default=region_options[:1],
         )
 
     if not regions:
@@ -226,20 +228,22 @@ def main() -> None:
     if period == "Год":
         st.divider()
         render_year_view(df, regions=regions)
-        return
+    else:
+        period_type_label = st.radio(
+            "Тип индекса",
+            options=list(PERIOD_TYPE_BY_LABEL.keys()),
+            horizontal=True,
+        )
+        period_type = PERIOD_TYPE_BY_LABEL[period_type_label]
 
-    period_type_label = st.radio(
-        "Тип индекса",
-        options=list(PERIOD_TYPE_BY_LABEL.keys()),
-        horizontal=True,
-    )
-    period_type = PERIOD_TYPE_BY_LABEL[period_type_label]
+        st.divider()
+        if period == "Квартал":
+            render_quarter_view(df, regions=regions, period_type=period_type)
+        else:
+            render_month_view(df, regions=regions, period_type=period_type)
 
     st.divider()
-    if period == "Квартал":
-        render_quarter_view(df, regions=regions, period_type=period_type)
-    else:
-        render_month_view(df, regions=regions, period_type=period_type)
+    show_dataset_sources(df)
 
 
 main()

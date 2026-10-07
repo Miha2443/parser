@@ -1,32 +1,46 @@
-# Аналитика Москвы — дашборд
+# Parser Dashboard
 
-Streamlit-дашборд с данными о строительстве и социально-экономических
-показателях Москвы. Восемь страниц с данными из 7 источников:
+Streamlit-дашборд и ETL-пайплайн для данных по Москве: строительство,
+застройщики, распроданность, квартирография, ввод жилья, зарплата, ИПЦ,
+ВРП/ВВП и служебная отправка файлов в TDM.
 
-| Источник | Что |
+Проект рассчитан на Windows-машину, где по расписанию скачиваются Excel/JSON,
+собираются быстрые витрины `data/marts/realty`, а сайт читает уже готовые
+pickle-файлы вместо тяжелых исходников.
+
+## Что внутри
+
+| Слой | Где | Назначение |
+|---|---|---|
+| Дашборд | `app/` | Streamlit-сайт, страницы аналитики и статусы обновлений |
+| Загрузчики | `*_checker.py`, `pipeline/downloaders/` | Скачивание raw-файлов из источников |
+| Парсеры | `pipeline/parsers/` | Приведение Excel/JSON к единому DataFrame-формату |
+| Оркестратор | `scripts/update_realty.py` | Запуск источников, retries, dedupe, архив, TDM-отчет |
+| Витрины сайта | `pipeline/build_realty_marts.py` | Быстрые pickle-марты для realty-страниц |
+| Проверки | `scripts/check_*.py`, `scripts/validate_realty_dashboard.bat` | Smoke/contract/self-check без ручного кликанья |
+
+## Источники данных
+
+| Источник | Что собираем |
 |---|---|
-| **Мониторинг 2.0** (Google Sheets, ДОМ.РФ) | реестр ОКС + РВ, объекты в строительстве и введённые |
-| **Квартирография** (наш.дом.рф) | агрегаты по комнатности на застройщика и регион |
-| **Распроданность** (наш.дом.рф) | распроданность / стройготовность / отношение Р/С |
-| **ERZRF top** (erzrf.ru) | топы застройщиков по 5 сортировкам × 2 региона |
-| **ERZRF cards** (erzrf.ru) | карточки топ-100 застройщиков, переносы по годам |
-| **Эскроу** (ДОМ.РФ ЕИСЖС) | пообъектный реестр Москвы, кредитная нагрузка |
-| **fedstat / rosstat** | ВРП, ВВП, ИПЦ, зарплата, население и пр. |
+| Мониторинг 2.0, ДОМ.РФ / Google Sheets | Реестр ОКС и РВ, объекты в строительстве и введенные объекты |
+| Квартирография, наш.дом.рф | Комнатность по регионам, девелоперам и объектам |
+| Распроданность, наш.дом.рф | Распроданность, стройготовность, прогнозы и сегменты |
+| ERZRF top | Топы застройщиков по 5 сортировкам для РФ и Москвы |
+| ERZRF cards | Карточки топ-100 застройщиков, переносы и ввод по годам |
+| Эскроу, ДОМ.РФ ЕИСЖС | Ручная пообъектная выгрузка по Москве |
+| Fedstat / Rosstat | Зарплата, ИПЦ, ВРП, ВВП и смежные статпоказатели |
 
-Уведомления о результатах прогонов парсеров — через TDM Bot API (мэрия Москвы).
+## Быстрый старт
 
----
-
-## Быстрый старт на новом компе
-
-### Требования
+Требования:
 
 - Windows 10/11
-- **Python 3.10+** — https://python.org (галочка «Add to PATH»)
-- **Google Chrome** — https://google.com/chrome (для Selenium-парсеров)
-- Доступ к `api.tdm.mos.ru` (для уведомлений, опционально)
+- Python 3.10+; рекомендуемый диапазон для установки зависимостей: 3.10-3.13
+- Google Chrome для Selenium-источников
+- Доступ к `api.tdm.mos.ru`, если нужны TDM-уведомления
 
-### Установка одной командой
+Установка на новом компьютере:
 
 ```cmd
 git clone <repo-url>
@@ -34,139 +48,203 @@ cd parser
 setup.bat
 ```
 
-`setup.bat` пройдёт 8 шагов:
+`setup.bat` делает полный bootstrap:
 
-| | Что | Время |
-|---|---|---:|
-| 1 | Проверка Python ≥ 3.10 | 1с |
-| 2 | Проверка Chrome | 1с |
-| 3 | Создание `.venv` | 30с |
-| 4 | `pip install -r requirements.txt` | 2-5 мин |
-| 5 | `.env` из шаблона | ~1 мин (вписать токены) |
-| 6 | Первичный сбор всех данных | **40-60 мин** |
-| 7 | Регистрация задачи в Task Scheduler на 06:00 | 5с |
-| 8 | Запуск сайта (`http://localhost:8501`) | мгновенно |
+| Шаг | Действие |
+|---:|---|
+| 1 | Проверяет Python |
+| 2 | Проверяет Chrome |
+| 3 | Создает `.venv` |
+| 4 | Ставит зависимости из `requirements.txt` |
+| 5 | Создает `.env` из `.env.example` |
+| 6 | Скачивает данные или пересобирает их из локальных Excel |
+| 7 | Регистрирует ежедневную задачу Windows Task Scheduler |
+| 8 | Запускает сайт |
 
-**От имени администратора** — Task Scheduler регистрируется как системный.
-**Без прав админа** — Task Scheduler регистрируется как per-user
-(сработает только когда юзер залогинен).
-
-### Флаги setup
+Полезные флаги:
 
 ```cmd
-setup.bat --no-scrape       :: не качать данные сразу (быстрый прогон)
-setup.bat --no-scheduler    :: не регистрировать cron
-setup.bat --no-start        :: не запускать сайт в конце
+setup.bat --no-scrape       :: не скачивать данные, собрать из уже лежащих файлов
+setup.bat --no-scheduler    :: не регистрировать расписание
+setup.bat --no-start        :: не запускать сайт после установки
 ```
 
-### Заполнение `.env` (TDM-бот)
+Если актуальные Excel/JSON уже лежат в `data/raw/realty`, можно запускать
+`setup.bat --no-scrape`: он пересоберет processed-данные и realty-марты из
+локальных файлов.
 
-После шага 5 в Блокноте откроется `.env`. Заполни **три переменные**:
+## Ежедневные команды
+
+| Команда | Что делает |
+|---|---|
+| `start.bat` | Запускает сайт на `http://localhost:8501` |
+| `update.bat` | Полный ручной прогон источников, как daily-задача |
+| `update.bat --plan` | Показывает план без скачивания |
+| `update.bat nashdom` | Только источники наш.дом.рф |
+| `update.bat erzrf` | Только ERZRF top/cards |
+| `update.bat stats` | Только Fedstat/Rosstat |
+| `update.bat --force` | Игнорирует state и пытается скачать заново |
+| `update.bat --skip-kvart-per-dev` | Пропускает долгий per-dev обход квартирографии |
+| `update.bat --full-rasprod-history` | Пересобирает всю историю распроданности |
+| `scripts\build_realty_marts.bat` | Пересобирает быстрые realty-витрины |
+| `scripts\build_realty_marts.bat --check` | Проверяет manifest и свежесть mart-файлов |
+| `scripts\validate_realty_dashboard.bat` | Полная локальная проверка проекта |
+| `tdm_test.bat` | Проверяет TDM-бота и выводит доступные группы |
+
+Алиасы источников для точечных запусков:
+
+```cmd
+update.bat monitoring
+update.bat rasprod
+update.bat kvart
+update.bat erz-top
+update.bat erz-cards
+update.bat fedstat
+update.bat rosstat
+```
+
+Fedstat по умолчанию проверяет только 6 источников текущих графиков: зарплату,
+ИПЦ и ввод жилья 34118. Остальные 24 сборщика сохранены и доступны через
+`--only` / `FEDSTAT_ONLY_IDS`; `--force` не расширяет набор.
+[Состав, отключённые показатели и включение позже](docs/fedstat_dashboard_scope.md).
+
+[Возобновление Fedstat после 503 и watchdog](docs/fedstat_resilience.md).
+
+[Навигация, темы и раскрываемые данные](docs/dashboard_navigation_20260930.md).
+
+
+## Данные и витрины
+
+Основные raw-файлы:
+
+```text
+data/raw/realty/
+  nashdom/          monitoring_2_0_*.xlsx, kvartirografia_*.json, rasprodannost_*.xlsx
+  erzrf/            top_*.xlsx, top_developers_*.json, cards/cards_*.xlsx
+  escrow_manual/    ручная выгрузка ДОМ.РФ ЕИСЖС
+  vvod/             статичные справочники ввода жилья
+  _archive/         старые версии, перенесенные после успешного обновления
+```
+
+Быстрые витрины сайта:
+
+```text
+data/marts/realty/
+  manifest.json
+  monitoring_2_0.pkl
+  kvartirografia.pkl
+  rasprodannost.pkl
+  erzrf_top.pkl
+  erzrf_cards.pkl
+  escrow_manual.pkl
+  vvod_static.pkl
+  emiss_34118.pkl
+```
+
+Сайт сначала пытается читать `data/marts/realty/*.pkl`. Если mart отсутствует
+или помечен ошибкой, загрузчики могут откатиться к raw-файлам. Для строгой
+проверки используйте:
+
+```cmd
+scripts\build_realty_marts.bat --check --strict
+scripts\validate_realty_dashboard.bat
+```
+
+## Расписание
+
+`setup.bat` регистрирует задачу `parser_etl_realty` на ежедневный запуск в
+06:00 локального времени.
+
+Что делает daily-прогон:
+
+- запускает источники волнами, где это безопасно;
+- повторяет упавшие источники;
+- пишет machine-readable статус в `data/processed/realty_update_status.json`;
+- удаляет дубликаты по контенту;
+- архивирует старые raw-файлы в `_archive`;
+- пересобирает только затронутые realty-марты;
+- проверяет, что нет незавершенных `.tmp/.crdownload`;
+- отправляет сводку в TDM, если настроен бот.
+
+Per-dev обход квартирографии долгий, поэтому штатно включается по недельному
+режиму через `scripts/update_realty_scheduled.bat`.
+
+## Настройка секретов
+
+### TDM
+
+Скопируйте `.env.example` в `.env` и заполните:
 
 ```ini
-TDM_BOT_TOKEN=BOT-<токен_бота>
-TDM_WORKSPACE_ID=<workspaceId>
-TDM_GROUP_ID=<groupId>
+TDM_BOT_TOKEN=
+TDM_WORKSPACE_ID=
+TDM_GROUP_ID=
 ```
 
-- **`TDM_BOT_TOKEN`** — токен бота. Выдаётся при создании бота в TDM.
-  Имеет формат `BOT-<uuid>-<uuid>-<timestamp>-<uuid>`.
+Чтобы узнать `workspaceId` и `groupId`, добавьте бота в нужный чат и выполните:
 
-- **`TDM_WORKSPACE_ID` и `TDM_GROUP_ID`** — узнаются командой:
-  ```cmd
-  tdm_test.bat
-  ```
-  Перед запуском **добавь бота в нужный чат TDM** и напиши ему что-нибудь.
-  В консоли увидишь:
-  ```
-  Найдено N групп(ы) бота:
-    groupId=3220144879180380  workspaceId=-1  type=GROUP
-      title: «Мой чат»  непрочитано: 1
-  ```
-  Скопируй `groupId` и `workspaceId` в `.env`.
+```cmd
+tdm_test.bat
+```
 
-### Заполнение `config\erzrf.json` (логин ERZRF)
+### ERZRF
 
-Парсер `erzrf.ru` требует авторизации. Скопируй шаблон и впиши **свой логин/пароль**:
+ERZRF требует авторизацию для Excel-выгрузок:
 
 ```cmd
 copy config\erzrf.example.json config\erzrf.json
 notepad config\erzrf.json
 ```
 
-Внутри:
+Формат:
+
 ```json
 {
-  "email": "твой_email@example.com",
-  "password": "твой_пароль_от_erzrf.ru"
+  "email": "you@example.com",
+  "password": "password"
 }
 ```
 
-Файл `config\erzrf.json` в `.gitignore` — секреты не уйдут в репо.
+`config/erzrf.json` не коммитится.
 
-Если этот файл не заполнить, парсер ERZRF будет пропускаться (но
-данные из других источников всё равно соберутся).
+## Проверки качества
 
----
-
-## Команды на каждый день
-
-| Команда | Что делает |
-|---|---|
-| `start.bat` | Запустить сайт (http://localhost:8501) |
-| `update.bat` | Прогон всех парсеров вручную (≈ daily cron в 06:00) |
-| `update.bat fedstat` | Обновить только зарплату/ИПЦ |
-| `update.bat --force` | Игнорировать state, пере-скачать всё |
-| `update.bat --skip-kvart-per-dev` | Без долгого per-dev обхода (~20 мин) |
-| `update.bat --retries 3` | Больше повторов для упавших источников |
-| `tdm_test.bat` | Проверить TDM-бота: список групп + тест |
-
-### Группы источников для `update.bat`
+Главная команда:
 
 ```cmd
-update.bat                          :: всё (7 источников)
-update.bat nashdom                  :: monitoring + rasprod + kvart
-update.bat erzrf                    :: erz-top + erz-cards
-update.bat stats                    :: fedstat + rosstat
-update.bat monitoring fedstat       :: точечно
+scripts\validate_realty_dashboard.bat
 ```
 
----
+Она проверяет:
 
-## Ежедневный режим (Task Scheduler)
+- компиляцию Python-файлов;
+- Windows wrapper-скрипты;
+- атомарные записи JSON/XLSX/pickle/status;
+- контракты downloader-оберток;
+- корректность парсеров nashdom/erzrf;
+- планирование `update_realty.py`;
+- Streamlit runtime smoke для всех страниц;
+- manifest и свежесть `data/marts/realty`;
+- загрузку realty-данных из mart-файлов.
 
-После `setup.bat` зарегистрирована задача `parser_etl_realty` на запуск
-ежедневно в **06:00 локального времени**:
+Быстрые точечные команды:
 
-- Скачивает данные со всех источников
-- Дедупликация: если сайт отдал тот же контент с новой датой — файл удаляется
-- Старые версии переезжают в `data\raw\realty\_archive\<дата>\`
-- **По понедельникам** — долгий per-dev обход квартирографии (~90 мин)
-- В остальные дни — без него (~20 мин)
-- Упавшие источники автоматически повторяются (до 2 раз с паузой 30/60 сек)
-- В TDM приходит сводка с бизнес-темами: «Обновилось: ИПЦ, Квартирография, Мониторинг 2.0»
-
-Сайт автоматически подхватывает свежие данные (кеш TTL 5 минут).
-Кнопка «♻️ Перезагрузить кеш» в сайдбаре — для ручного сброса.
-
----
-
-## Структура папок
-
+```cmd
+python scripts\check_streamlit_pages_smoke.py
+python scripts\check_realty_marts_smoke.py
+python scripts\check_update_realty_plan.py
+python scripts\check_nashdom_contract.py
+python scripts\check_erzrf_atomic_outputs.py
 ```
+
+## Структура проекта
+
+```text
 parser/
-  setup.bat          ← одноразовый setup
-  start.bat          ← запустить сайт
-  update.bat         ← ручное обновление
-  tdm_test.bat       ← тест бота
-  DEPLOY.md          ← подробная инструкция
-
-  .env               ← секреты (не коммитится)
-  .env.example       ← шаблон
-
-  app/               ← Streamlit
-    Home.py          ← главная (со свежестью данных в сайдбаре)
-    data_access.py   ← загрузчики
+  app/
+    Home.py
+    data_access.py
+    audit.py
     pages/
       1_Заработная_плата.py
       2_ИПЦ.py
@@ -174,73 +252,68 @@ parser/
       4_Квартирография.py
       5_Квартирография_по_девелоперу.py
       6_Распроданность.py
-      7_Профиль_застройщика.py    ← главная страница профиля
-      8_Отправка_в_TDM.py          ← отправка файлов в TDM
+      7_Профиль_застройщика.py
+      8_Ввод_недвижимости.py
+      8_Отправка_в_TDM.py
       99_Обновления.py
 
   pipeline/
-    tdm_notify.py    ← клиент TDM Bot API
-    archive_old.py   ← архивация старых выгрузок
-    deduplicate.py   ← дедупликация по контенту
-    selenium_utils.py ← create_chrome + retry_with_refresh
-    parsers/         ← парсеры xls/json в DataFrame
+    downloaders/
+    parsers/
+    build_realty_marts.py
+    deduplicate.py
+    selenium_utils.py
+    tdm_notify.py
 
   scripts/
-    update_realty.py              ← оркестратор всех парсеров
-    update_realty_scheduled.bat   ← runner для cron (грузит .env, venv)
-    register_scheduler.bat        ← регистрация Task Scheduler (admin)
-    register_scheduler_user.bat   ← per-user задача (без admin)
+    update_realty.py
+    validate_realty_dashboard.bat
+    build_realty_marts.bat
+    register_scheduler.bat
+    register_scheduler_user.bat
+    check_*.py
 
-  data/raw/realty/
-    nashdom/         ← monitoring_2_0, rasprodannost, kvartirografia
-    erzrf/           ← top_* + cards/
-    escrow_manual/   ← ручная выгрузка ДОМ.РФ ЕИСЖС
-    _archive/        ← старые версии по датам
+  data/
+    raw/
+    processed/
+    marts/
 
-  downloads/         ← fedstat + rosstat xls
-
-  nashdom_checker.py ← парсер наш.дом.рф (selenium)
-  erzrf_checker.py   ← парсер erzrf.ru (selenium)
-  fedstat_checker.py ← парсер fedstat.ru (selenium)
-  rosstat_checker.py ← парсер rosstat.gov.ru (requests)
+  setup.bat
+  start.bat
+  update.bat
+  tdm_test.bat
 ```
-
----
 
 ## Troubleshooting
 
-**Python не установлен** — поставить https://python.org с галочкой «Add to PATH»
+| Симптом | Что сделать |
+|---|---|
+| Python не найден | Установить Python 3.10+ и включить `Add to PATH` |
+| `pip install` упал с `IncompleteRead` | Это сетевой/PyPI-cache обрыв. Перезапустить `setup.bat`; setup делает 3 попытки и чистит pip cache |
+| Setup выбрал Python 3.14+ | Установить Python 3.12 или 3.13 и перезапустить `setup.bat`; скрипт предпочитает стабильную 3.10-3.13 автоматически |
+| Chrome не найден | Установить Google Chrome |
+| ERZRF не скачивает Excel | Проверить `config\erzrf.json` |
+| TDM не видит группы | Добавить бота в чат, написать сообщение, запустить `tdm_test.bat` |
+| Сайт показывает старые данные | Нажать "Перезагрузить кеш" на главной или перезапустить `start.bat` |
+| Mart stale/error | Запустить `scripts\build_realty_marts.bat --check`, затем обычный build |
+| Остались `.crdownload` / `.tmp` | Дождаться завершения Chrome или удалить только явно незавершенную загрузку |
+| Упал один источник | Запустить `update.bat <alias> --retries 3` |
+| Нужно проверить все перед push | Запустить `scripts\validate_realty_dashboard.bat` |
 
-**Chrome не найден** — поставить https://google.com/chrome
+Логи и статусы:
 
-**TDM `getaddrinfo failed`** — нет доступа к `api.tdm.mos.ru`. Включи
-VPN мэрии или запусти с рабочего ПК
+- `data/processed/etl_*.log`
+- `data/processed/realty_update_status.json`
+- `data/marts/realty/manifest.json`
 
-**Task Scheduler не регистрируется** — `setup.bat` нужно запустить
-от админа, или используется per-user fallback
+## Разработка
 
-**Зарплата/ИПЦ не обновляются** — `update.bat fedstat --force`
-игнорирует state и качает заново
+Правило для изменений: сначала raw/contract/parser smoke, затем полный
+`scripts\validate_realty_dashboard.bat`.
 
-**Кеш Streamlit «застрял»** — в сайдбаре главной нажми «♻️ Перезагрузить кеш»
+Перед изменениями загрузчиков особенно важно проверять:
 
-**Парсер падает на одном источнике** — `--retries 3` или запустить только
-его: `update.bat <alias>` (alias: monitoring, rasprod, kvart, erz-top,
-erz-cards, fedstat, rosstat)
-
-**ERZRF не качает** — нет `config\erzrf.json`. Скопируй
-`config\erzrf.example.json` → `config\erzrf.json`, впиши свой логин/пароль
-от erzrf.ru
-
-**Не вижу TDM groupId** — добавь бота в чат TDM и напиши ему сообщение,
-потом `tdm_test.bat`. Если бот ещё ни в одних чатах, команда выведет
-«пусто»
-
-**Логи прогонов** — `data\processed\etl_<YYYY-MM-DD>.log`
-
----
-
-## Старая инструкция / разработка
-
-Подробности про парсеры, переменные окружения и архитектуру —
-в `DEPLOY.md` и докстрингах модулей.
+- временные файлы скачивания не должны попадать в mart/build;
+- битый новый файл не должен заменять валидный старый;
+- выбор "последнего" файла должен быть привязан к дате в имени, если она есть;
+- сайт должен открываться из mart-файлов без чтения тяжелых Excel на старте.

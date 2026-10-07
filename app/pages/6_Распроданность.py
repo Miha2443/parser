@@ -18,15 +18,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, apply_theme, page_header, style_plotly
+from app.components.export import chart_data_expander
 from app.data_access import load_rasprodannost, MONTH_NAMES_RU, MONTH_SHORT_RU
 
 st.set_page_config(page_title="Распроданность — Аналитика Москвы", layout="wide")
+apply_theme()
 
-# Цветовая палитра наш.дом.рф
-COLOR_VOLUME = "#1f4e79"
-COLOR_SOLD = "#c8102e"
-COLOR_READY = "#8BC540"
-COLOR_RATIO = "#4EC3E0"
+COLOR_VOLUME = COLORS["blue"]
+COLOR_SOLD = COLORS["red"]
+COLOR_READY = COLORS["green"]
+COLOR_RATIO = COLORS["teal"]
 
 KPI_COLORS = {
     "Объем жилищного строительства": COLOR_VOLUME,
@@ -63,15 +65,16 @@ if data["kpi"].empty:
     )
     st.stop()
 
-st.title("Распроданность и стройготовность жилья")
+page_header("Распроданность и стройготовность жилья")
 
 # === Шапка: фильтры ===
 region_map = {"rf": "Российская Федерация", "msk": "Город Москва"}
-available_regions = [r for r in data["regions_available"] if r in region_map]
-periods = data["periods"]
-period_labels = [period_label(y, m) for y, m in periods]
+available_regions = sorted(
+    [r for r in data["regions_available"] if r in region_map],
+    key=lambda value: 0 if value == "msk" else 1,
+)
 
-cols_top = st.columns([2, 5, 2])
+cols_top = st.columns([2, 5])
 with cols_top[0]:
     sel_reg = st.radio(
         "Регион",
@@ -80,6 +83,7 @@ with cols_top[0]:
         horizontal=True,
         key="rasprod_region",
     )
+periods = data.get("periods_by_region", {}).get(sel_reg, [])
 with cols_top[1]:
     if periods:
         # По умолчанию — последний доступный период
@@ -89,19 +93,11 @@ with cols_top[1]:
             options=list(range(len(periods))),
             value=default_idx,
             format_func=lambda i: period_label(*periods[i]),
-            key="rasprod_period",
+            key=f"rasprod_period_{sel_reg}",
         )
         sel_year, sel_month = periods[sel_period_idx]
     else:
         sel_year, sel_month = None, None
-with cols_top[2]:
-    st.markdown(
-        f"<div style='padding-top:30px;color:#7A8386;'>"
-        f"Всего периодов: <b>{len(periods)}</b></div>",
-        unsafe_allow_html=True,
-    )
-
-
 # === 4 KPI карточки ===
 def kpi_for_period(name_substr: str):
     kdf = data["kpi"]
@@ -150,6 +146,10 @@ if not forecast_rows.empty:
         ys = []
         for c in forecast_cols:
             ys.append(_parse_val := row.get(f"{c}_num"))
+        forecast_data.extend(
+            {"Показатель": name, "Год": year, "Значение": value}
+            for year, value in zip(forecast_years, ys)
+        )
         color = KPI_COLORS.get(name.strip(), "#666")
         fig.add_trace(go.Bar(
             x=forecast_years, y=ys, name=name,
@@ -165,7 +165,11 @@ if not forecast_rows.empty:
         xaxis_title="Год",
         legend=dict(orientation="h", y=-0.15),
     )
+    style_plotly(fig, height=310)
     st.plotly_chart(fig, use_container_width=True)
+    chart_data_expander(
+        fig, pd.DataFrame(forecast_data), name="rasprod_forecast", key="rasprod_forecast"
+    )
 
 
 # === Динамика KPI по месяцам с 2020 года ===
@@ -199,7 +203,15 @@ if not time_series.empty:
             hovermode="x unified",
             showlegend=False,
         )
+        style_plotly(fig_vol, height=280)
         st.plotly_chart(fig_vol, use_container_width=True)
+        chart_data_expander(
+            fig_vol,
+            vol_ts[["period", "значение_num"]].rename(
+                columns={"period": "Период", "значение_num": "Объём, тыс. м²"}
+            ),
+            name="rasprod_volume", key="rasprod_volume",
+        )
 
     # График 2: 3 процентных KPI на одной оси
     st.markdown("**Распроданность · Стройготовность · Отношение, %**")
@@ -228,7 +240,15 @@ if not time_series.empty:
         hovermode="x unified",
         legend=dict(orientation="h", y=-0.15),
     )
+    style_plotly(fig_pct, height=320)
     st.plotly_chart(fig_pct, use_container_width=True)
+    chart_data_expander(
+        fig_pct,
+        time_series[["period", "название", "значение_num"]].rename(
+            columns={"period": "Период", "название": "Показатель", "значение_num": "Значение, %"}
+        ),
+        name="rasprod_percent", key="rasprod_percent",
+    )
 
 
 # === 6 таблиц ===

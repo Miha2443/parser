@@ -1,12 +1,36 @@
 """Чтение audit log для UI: группировка по запускам, агрегаты."""
 from __future__ import annotations
 
+import json
+import logging
+import contextlib
+import io
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from pipeline.audit import read_audit
+from pipeline.paths import ROOT as PROJECT_ROOT
+from pipeline.data_access import DataAccess
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
+
+REALTY_MARTS_MANIFEST = PROJECT_ROOT / "data" / "marts" / "realty" / "manifest.json"
+REALTY_UPDATE_STATUS = PROJECT_ROOT / "data" / "processed" / "realty_update_status.json"
+MONITORING_CHANGES_LOG = PROJECT_ROOT / "data" / "processed" / "monitoring_2_0_changes.jsonl"
+REALTY_UPDATE_STATUSES = {"running", "success", "failed", "interrupted"}
+REALTY_RUNNING_STALE_MIN = 360
+REALTY_SOURCE_LABELS = [
+    ("monitoring_2_0", "Мониторинг 2.0"),
+    ("kvartirografia", "Квартирография"),
+    ("rasprodannost", "Распроданность"),
+    ("erzrf_top", "ERZRF топ"),
+    ("erzrf_cards", "ERZRF карточки"),
+    ("escrow_manual", "Эскроу"),
+]
 
 
 def load_runs() -> pd.DataFrame:
@@ -57,15 +81,264 @@ def last_success_per_indicator(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("indicator").reset_index(drop=True)
 
 
+def load_realty_marts_manifest() -> dict[str, Any]:
+    if not REALTY_MARTS_MANIFEST.exists():
+        return {}
+    try:
+        return json.loads(REALTY_MARTS_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def load_realty_update_status() -> dict[str, Any]:
+    """Последний machine-readable статус `scripts/update_realty.py`."""
+    if not REALTY_UPDATE_STATUS.exists():
+        return {}
+    try:
+        data = json.loads(REALTY_UPDATE_STATUS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_monitoring_changes() -> pd.DataFrame:
+    """Load row additions/removals captured between Monitoring 2.0 exports."""
+    columns = [
+        "event_id", "detected_at", "action", "sheet", "uin", "document",
+        "object", "address", "previous_file", "current_file",
+    ]
+    if not MONITORING_CHANGES_LOG.is_file():
+        return pd.DataFrame(columns=columns)
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = MONITORING_CHANGES_LOG.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return pd.DataFrame(columns=columns)
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        common = {
+            "event_id": event.get("event_id", ""),
+            "detected_at": pd.to_datetime(event.get("detected_at"), errors="coerce"),
+            "previous_file": event.get("previous_file", ""),
+            "current_file": event.get("current_file", ""),
+        }
+        for field, action in (("added", "Добавлено"), ("removed", "Удалено")):
+            for item in event.get(field) or []:
+                if isinstance(item, dict):
+                    rows.append({**common, "action": action, **item})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
+    """Normalized dashboard-facing summary for data/processed/realty_update_status.json."""
+    if not status:
+        return {}
+    warnings: list[str] = []
+    run_status = str(status.get("status") or "").lower()
+    updated_at = pd.to_datetime(status.get("updated_at"), errors="coerce")
+    if not run_status:
+        warnings.append("legacy")
+        if pd.isna(updated_at):
+            run_status = "unknown"
+        else:
+            run_status = "failed" if status.get("failures") or status.get("marts_ok") is False else "success"
+    if pd.isna(updated_at):
+        warnings.append("no heartbeat")
+
+    log_file = status.get("log_file")
+    if isinstance(log_file, str) and log_file and not (PROJECT_ROOT / log_file).is_file():
+        warnings.append("log missing")
+    elif log_file is not None and not isinstance(log_file, str):
+        warnings.append("bad log_file")
+
+    heartbeat_age_min = None
+    if not pd.isna(updated_at):
+        heartbeat_age = pd.Timestamp.now(tz=updated_at.tz) - updated_at
+        heartbeat_age_min = heartbeat_age.total_seconds() / 60
+    stale_running = run_status == "running" and (
+        heartbeat_age_min is None or heartbeat_age_min > REALTY_RUNNING_STALE_MIN
+    )
+    label = {
+        "running": "в работе",
+        "success": "успех",
+        "failed": "ошибка",
+        "interrupted": "прерван",
+        "unknown": "нет статуса",
+    }.get(run_status, run_status or "—")
+    if stale_running:
+        label = "возможно завис"
+    return {
+        "status": run_status,
+        "label": label,
+        "warnings": warnings,
+        "stale_running": stale_running,
+        "heartbeat_age_min": heartbeat_age_min,
+        "error": status.get("error") or "",
+    }
+
+
+def _current_realty_sources(mart: str) -> list[Path]:
+    """Use the core source registry for freshness diagnostics, without UI imports."""
+    try:
+        return DataAccess().source_files(mart)
+    except (KeyError, OSError):
+        return []
+
+
+def _latest_manifest_source_mtime(sources: list) -> pd.Timestamp | None:
+    latest = None
+    for source in sources:
+        if isinstance(source, dict):
+            ts = pd.to_datetime(source.get("mtime"), errors="coerce")
+            if not pd.isna(ts) and (latest is None or ts > latest):
+                latest = ts
+    return latest
+
+
+def _latest_current_source_mtime(mart: str) -> pd.Timestamp | None:
+    latest = None
+    for path in _current_realty_sources(mart):
+        try:
+            ts = pd.to_datetime(datetime.fromtimestamp(path.stat().st_mtime), errors="coerce")
+        except OSError:
+            continue
+        if not pd.isna(ts) and (latest is None or ts > latest):
+            latest = ts
+    return latest
+
+
+def realty_marts_status(*, live_check: bool = False) -> pd.DataFrame:
+    """One row per realty mart from data/marts/realty/manifest.json."""
+    manifest = load_realty_marts_manifest()
+    marts = manifest.get("marts") if isinstance(manifest, dict) else {}
+    if not isinstance(marts, dict) or not marts:
+        return pd.DataFrame(columns=[
+            "mart", "status", "rows", "cols", "built_at", "duration_sec",
+            "sources", "latest_source_mtime", "error",
+        ])
+
+    manifest_built_at = pd.to_datetime(manifest.get("built_at"), errors="coerce")
+    rows: list[dict[str, Any]] = []
+    for mart, info in sorted(marts.items()):
+        if not isinstance(info, dict):
+            continue
+        summary = info.get("summary") if isinstance(info.get("summary"), dict) else {}
+        sources = info.get("sources") if isinstance(info.get("sources"), list) else []
+        latest_source = (
+            _latest_current_source_mtime(str(mart))
+            if live_check
+            else _latest_manifest_source_mtime(sources)
+        )
+        if latest_source is None and live_check:
+            latest_source = _latest_manifest_source_mtime(sources)
+
+        row_count = None
+        col_count = None
+        if isinstance(summary.get("rows"), int):
+            row_count = summary.get("rows")
+        if summary.get("type") == "dataframe":
+            row_count = summary.get("rows")
+            col_count = summary.get("cols")
+        elif row_count is None and isinstance(summary.get("frames"), dict):
+            frame_rows = [
+                v.get("rows") for v in summary["frames"].values()
+                if isinstance(v, dict) and isinstance(v.get("rows"), int)
+            ]
+            row_count = sum(frame_rows) if frame_rows else None
+
+        built_at = pd.to_datetime(info.get("built_at"), errors="coerce") \
+            if info.get("built_at") else manifest_built_at
+        if info.get("error"):
+            status = "error"
+        elif (
+            latest_source is not None
+            and not pd.isna(latest_source)
+            and not pd.isna(built_at)
+            and latest_source > built_at
+        ):
+            status = "stale"
+        else:
+            status = "ok"
+
+        rows.append({
+            "mart": mart,
+            "status": status,
+            "rows": row_count,
+            "cols": col_count,
+            "built_at": built_at,
+            "duration_sec": info.get("duration_sec"),
+            "sources": len(sources),
+            "latest_source_mtime": latest_source,
+            "error": info.get("error", ""),
+        })
+    return pd.DataFrame(rows)
+
+
+def realty_source_freshness_lines(
+    marts: pd.DataFrame | None = None,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    """Sidebar freshness lines for key realty sources, using mart manifest metadata."""
+    if marts is None:
+        marts = realty_marts_status()
+    if marts.empty:
+        return []
+
+    now = now or datetime.now()
+    by_mart = {
+        str(row["mart"]): row
+        for _, row in marts.iterrows()
+        if "mart" in row
+    }
+    lines: list[str] = []
+    for mart, label in REALTY_SOURCE_LABELS:
+        row = by_mart.get(mart)
+        if row is None:
+            lines.append(f"{label}: нет файла")
+            continue
+        mtime = pd.to_datetime(row.get("latest_source_mtime"), errors="coerce")
+        if pd.isna(mtime):
+            lines.append(f"{label}: нет файла")
+            continue
+        if getattr(mtime, "tzinfo", None) is not None:
+            mtime = mtime.tz_convert(None)
+        days = max(0, (now - mtime.to_pydatetime()).days)
+        status = "актуально" if days <= 1 else "проверить" if days <= 7 else "устаревает" if days <= 30 else "устарело"
+        lines.append(f"{label}: {mtime.strftime('%d.%m.%Y')} ({days}д., {status})")
+    return lines
+
+
 def latest_data_badge() -> str:
-    """Строка для шапки страниц: «Данные на ДД.ММ.ГГГГ ЧЧ:ММ»."""
+    """Строка для шапки страниц: «Данные сайта на ДД.ММ.ГГГГ ЧЧ:ММ»."""
+    candidates = []
     df = load_runs()
-    if df.empty:
+    if not df.empty:
+        successes = df[(df["status"] == "success") & (df["indicator"] != "_run")]
+        if not successes.empty:
+            candidates.append(successes["ts"].max())
+
+    manifest = load_realty_marts_manifest()
+    if manifest:
+        marts = manifest.get("marts") if isinstance(manifest.get("marts"), dict) else {}
+        mart_dates = [
+            pd.to_datetime(info.get("built_at"), errors="coerce")
+            for info in marts.values()
+            if isinstance(info, dict) and info.get("built_at")
+        ]
+        candidates.extend(mart_dates)
+        if not mart_dates:
+            candidates.append(pd.to_datetime(manifest.get("built_at"), errors="coerce"))
+
+    candidates = [ts for ts in candidates if not pd.isna(ts)]
+    if not candidates:
         return ""
-    successes = df[(df["status"] == "success") & (df["indicator"] != "_run")]
-    if successes.empty:
-        return ""
-    ts = successes["ts"].max()
+    ts = max(candidates)
     if pd.isna(ts):
         return ""
-    return f"Данные на {ts.strftime('%d.%m.%Y %H:%M')}"
+    return f"Данные сайта на {ts.strftime('%d.%m.%Y %H:%M')}"

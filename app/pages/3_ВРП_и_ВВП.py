@@ -19,17 +19,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.components.design import COLORS, SERIES, apply_theme, page_header, style_plotly
 from app.components.export import chart_download_button, table_download_buttons
-from app.data_access import latest_loaded_at, load_national_accounts
+from app.data_access import dataset_download_summary, show_dataset_sources, load_national_accounts
 
 st.set_page_config(page_title="ВРП и ВВП — Аналитика Москвы", layout="wide")
+apply_theme()
 
 MSK = "Москва"
 RF = "Российская Федерация"
-MSK_COLOR = "#c8102e"
-RF_COLOR = "#1f4e79"
-REST_COLOR = "#c8d2dc"
-INDUSTRY_PALETTE = px.colors.qualitative.Dark24
+MSK_COLOR = COLORS["red"]
+RF_COLOR = COLORS["blue"]
+REST_COLOR = COLORS["neutral"]
+INDUSTRY_PALETTE = SERIES
 DEFAULT_INDUSTRY = "Строительство"
 # Разделители для plotly: дробная часть — запятая, разряды — неразрывный пробел.
 RU_SEPARATORS = ", "
@@ -90,7 +92,7 @@ def _two_region_chart(
         return
 
     regions = st.multiselect(
-        "Регионы", options=[MSK, RF], default=[MSK, RF],
+        "Регионы", options=[MSK, RF], default=[MSK],
         key=f"{key}_regions", label_visibility="collapsed",
     )
     keep = ([msk_label] if MSK in regions else []) + ([rf_label] if RF in regions else [])
@@ -123,6 +125,7 @@ def _two_region_chart(
     )
     if title:
         fig.update_layout(title=title)
+    style_plotly(fig, height=280)
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
@@ -192,6 +195,7 @@ def _structure_block(df: pd.DataFrame, *, metric: str, region: str, key: str) ->
         uniformtext_minsize=7, uniformtext_mode="hide",
         separators=RU_SEPARATORS,
     )
+    style_plotly(fig, height=320)
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
@@ -237,6 +241,7 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total
     fig.update_layout(height=340, legend_title="", margin=dict(t=24, b=24),
                       yaxis_title="%", xaxis=dict(tickmode="linear", dtick=1),
                       separators=RU_SEPARATORS)
+    style_plotly(fig, height=310)
     st.plotly_chart(fig, width="stretch")
 
     with st.expander("Данные и выгрузка"):
@@ -253,7 +258,6 @@ def _industry_index_block(df: pd.DataFrame, *, region: str, key: str, show_total
 
 
 def main() -> None:
-    st.title("ВРП и ВВП")
     df = load_national_accounts()
     if df.empty:
         st.warning(
@@ -262,8 +266,10 @@ def main() -> None:
         )
         return
     df = df[df["year"] >= 2011].copy()
-    st.caption(f"Обновлено: {latest_loaded_at(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)")
-
+    page_header(
+        "ВРП и ВВП",
+        f"{dataset_download_summary(df)} · с 2011 г.",
+    )
     st.subheader("1. ВРП Москвы и ВВП России, трлн руб")
     _two_region_chart(
         df, msk_metric="vrp_total", rf_metric="gdp_total",
@@ -316,6 +322,9 @@ def main() -> None:
     with c4:
         show_total6 = st.checkbox("Показывать «Всего по всем отраслям»", value=True, key="b6_show_total")
     _industry_index_block(df, region=region6, key=f"na_block6_{region6}", show_total=show_total6)
+
+    st.divider()
+    show_dataset_sources(df)
 
 
 main()

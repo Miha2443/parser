@@ -1,0 +1,221 @@
+"""Fast self-checks for strict realty mart loading mode."""
+from __future__ import annotations
+
+import os
+import logging
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.ERROR)
+logging.disable(logging.CRITICAL)
+
+from pipeline.data_access import DataAccess, DataContext  # noqa: E402
+from dataclasses import replace
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def _must_raise(fn, exc_type: type[BaseException], label: str) -> None:
+    try:
+        fn()
+    except exc_type:
+        return
+    raise AssertionError(f"{label}: expected {exc_type.__name__}")
+
+
+def _write_manifest(mart_dir: Path, marts: dict) -> None:
+    (mart_dir / "manifest.json").write_text(
+        json.dumps({"marts": marts}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory() as tmp:
+        mart_dir = Path(tmp) / "data/marts/realty"
+        raw_dir = Path(tmp) / "raw"
+        mart_dir.mkdir(parents=True)
+        raw_dir.mkdir()
+        raw_file = raw_dir / "source.xlsx"
+        raw_file.write_bytes(b"raw")
+
+        da = DataAccess(DataContext(Path(tmp), require_marts=True))
+        da.context = replace(da.context, require_marts=True)
+        da.context = replace(da.context, use_marts=True)
+
+        _must_raise(
+            lambda: da._load_realty_mart("missing", []),
+            FileNotFoundError,
+            "missing strict mart",
+        )
+
+        good = mart_dir / "good.pkl"
+        pd.to_pickle({"ok": pd.DataFrame({"x": [1]})}, good)
+        da.context = replace(da.context, require_marts=False)
+        _require(
+            da._load_realty_mart("good", []) is None,
+            "missing manifest should force fallback in normal mode",
+        )
+        (mart_dir / "manifest.json").write_text("{bad-json", encoding="utf-8")
+        _require(
+            da._load_realty_mart("good", []) is None,
+            "bad manifest should force fallback in normal mode",
+        )
+        _write_manifest(mart_dir, {})
+        _require(
+            da._load_realty_mart("good", []) is None,
+            "missing manifest entry should force fallback in normal mode",
+        )
+
+        da.context = replace(da.context, require_marts=True)
+        (mart_dir / "manifest.json").unlink()
+        _must_raise(
+            lambda: da._load_realty_mart("good", []),
+            RuntimeError,
+            "missing strict manifest",
+        )
+        (mart_dir / "manifest.json").write_text("{bad-json", encoding="utf-8")
+        _must_raise(
+            lambda: da._load_realty_mart("good", []),
+            RuntimeError,
+            "bad strict manifest",
+        )
+        _write_manifest(mart_dir, {})
+        _must_raise(
+            lambda: da._load_realty_mart("good", []),
+            RuntimeError,
+            "missing strict manifest entry",
+        )
+        _write_manifest(mart_dir, {"good": {"file": str(good)}})
+        loaded = da._load_realty_mart("good", [])
+        _require("ok" in loaded, "valid mart should load")
+
+        da.context = replace(da.context, require_marts=False)
+        lazy_called = False
+
+        def lazy_raw_files():
+            nonlocal lazy_called
+            lazy_called = True
+            return [raw_file]
+
+        loaded = da._load_realty_mart("good", lazy_raw_files)
+        _require("ok" in loaded, "optional mart should load with lazy raw files")
+        _require(lazy_called, "optional mart must check callable raw sources for freshness")
+        os.utime(raw_file, (good.stat().st_mtime + 10, good.stat().st_mtime + 10))
+        _require(da._load_realty_mart("good", lazy_raw_files) is None, "optional stale callable mart must fall back")
+        da.context = replace(da.context, require_marts=True)
+
+        _write_manifest(mart_dir, {
+            "good": {
+                "file": str(good),
+                "sources": [
+                    {"path": "older.xlsx", "mtime": "2026-07-01T10:00:00"},
+                    {"path": "newer.xlsx", "mtime": "2026-07-03T10:00:00"},
+                ],
+            },
+        })
+        _require(
+            da.latest_realty_mart_source_date("good") == "03.07.2026",
+            "latest mart source date should come from manifest",
+        )
+        _require(da._REALTY_MART_MANIFEST_CACHE, "realty mart manifest should be cached")
+        _write_manifest(mart_dir, {
+            "good": {
+                "file": str(good),
+                "sources": [
+                    {"path": "updated.xlsx", "mtime": "2026-07-04T10:00:00"},
+                ],
+            },
+        })
+        os.utime(mart_dir / "manifest.json", (200, 200))
+        _require(
+            da.latest_realty_mart_source_date("good") == "04.07.2026",
+            "realty mart manifest cache should invalidate when manifest changes",
+        )
+        raw_file = raw_dir / "monitoring_2_0_20260704.xlsx"
+        raw_file.write_bytes(b"raw")
+        os.utime(raw_file, (100, 100))
+        _require(
+            da.latest_raw_source_date("monitoring_2_0_*.xlsx", base=raw_dir) == "01.01.1970",
+            "latest raw source date should use provided base path",
+        )
+
+        stale = mart_dir / "stale.pkl"
+        pd.to_pickle({"stale": pd.DataFrame()}, stale)
+        _write_manifest(mart_dir, {
+            "good": {"file": str(good)},
+            "stale": {"file": str(stale)},
+        })
+        os.utime(stale, (1, 1))
+        _must_raise(
+            lambda: da._load_realty_mart("stale", [raw_file]),
+            RuntimeError,
+            "stale strict mart",
+        )
+        _must_raise(
+            lambda: da._load_realty_mart("stale", lambda: [raw_file]),
+            RuntimeError,
+            "stale strict mart with lazy raw files",
+        )
+
+        bad = mart_dir / "bad.pkl"
+        bad.write_bytes(b"not a pickle")
+        _write_manifest(mart_dir, {
+            "good": {"file": str(good)},
+            "stale": {"file": str(stale)},
+            "bad": {"file": str(bad)},
+        })
+        _must_raise(
+            lambda: da._load_realty_mart("bad", []),
+            RuntimeError,
+            "bad strict mart",
+        )
+
+        error_marked = mart_dir / "error_marked.pkl"
+        pd.to_pickle({"old": pd.DataFrame({"x": [1]})}, error_marked)
+        _write_manifest(mart_dir, {
+            "good": {"file": str(good)},
+            "stale": {"file": str(stale)},
+            "bad": {"file": str(bad)},
+            "error_marked": {
+                "file": str(error_marked),
+                "error": "synthetic",
+            },
+        })
+        _must_raise(
+            lambda: da._load_realty_mart("error_marked", []),
+            RuntimeError,
+            "manifest error strict mart",
+        )
+        da.context = replace(da.context, require_marts=False)
+        _require(
+            da._load_realty_mart("error_marked", []) is None,
+            "manifest error should force fallback in normal mode",
+        )
+        da.context = replace(da.context, require_marts=True)
+
+        da.context = replace(da.context, use_marts=False)
+        _must_raise(
+            lambda: da._load_realty_mart("good", []),
+            RuntimeError,
+            "disabled strict marts",
+        )
+    print("realty mart require checks: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

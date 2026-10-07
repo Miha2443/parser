@@ -6,7 +6,8 @@
 
 Внутри переадресует пути nashdom_checker в `paths.DATA_RAW/realty/nashdom/`
 и `paths.STATE_DIR/nashdom_state.json`, и запускает только ключи из
-`indicator.source_ids` (monitoring_2_0 / rasprodannost / kvartirografia).
+`indicator.source_ids` (monitoring_2_0 / rasprodannost / kvartirografia /
+construction_operational).
 """
 from __future__ import annotations
 
@@ -15,19 +16,11 @@ from pathlib import Path
 
 from pipeline.paths import DATA_RAW, ROOT, STATE_DIR
 from pipeline.registry import Indicator
+from pipeline.downloaders.local_files import list_local_files
 
 
 def _find_local(patterns: list[str]) -> list[Path]:
-    seen: set[Path] = set()
-    out: list[Path] = []
-    for pat in patterns:
-        for p in sorted(DATA_RAW.glob(pat)):
-            r = p.resolve()
-            if r in seen:
-                continue
-            seen.add(r)
-            out.append(p)
-    return out
+    return list_local_files(DATA_RAW, patterns)
 
 
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:
@@ -46,7 +39,11 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     nc.STATE_FILE = STATE_DIR / "nashdom_state.json"
 
     wanted = set(indicator.source_ids)
-    new_files = nc.run(only=wanted)
+    new_files, ok = nc.run(only=wanted)
+    if not ok:
+        raise RuntimeError(
+            "nashdom source failed: " + ", ".join(sorted(wanted))
+        )
 
     state = nc.load_state()
     prev_date = ""

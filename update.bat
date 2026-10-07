@@ -2,14 +2,17 @@
 REM Manual data update. Same as the daily cron does.
 
 setlocal
-cd /d %~dp0
+cd /d "%~dp0"
 
-if not exist .venv\Scripts\python.exe (
-    echo [ERROR] .venv not found. Run setup.bat first.
-    pause
-    exit /b 1
+if exist .venv\Scripts\python.exe (
+    set "PY=.venv\Scripts\python.exe"
+) else (
+    set "PY=python"
 )
 
-.venv\Scripts\python.exe scripts\update_realty.py %*
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
+
+"%PY%" scripts\update_realty.py %*
 
 endlocal

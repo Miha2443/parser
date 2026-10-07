@@ -34,7 +34,7 @@ INDICATOR_SOURCES = {ind.id: ind.source for ind in INDICATORS}
 
 
 def main() -> None:
-    page_header("Журнал обновлений ETL", "Контроль загрузок, realty-витрин и статуса последних прогонов.")
+    page_header("Журнал обновлений ETL")
     df = load_runs()
     if df.empty:
         st.info("Лог `data/processed/etl_audit.jsonl` пуст. Запустите `py pipeline/orchestrator.py`.")
@@ -47,7 +47,7 @@ def main() -> None:
         c3.metric("Без изменений", last.get("skip", 0))
         c4.metric("Ошибок", last.get("error", 0))
         if last.get("duration_sec") is not None:
-            st.caption(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
+            st.write(f"Длительность: {last['duration_sec']} c · run_id={last.get('run_id', '')}")
 
     st.divider()
 
@@ -109,7 +109,7 @@ def main() -> None:
                     parts.append("ожидает: " + ", ".join(map(str, pending_sources)))
                 if heartbeat_age_min is not None:
                     parts.append(f"heartbeat: {heartbeat_age_min:.0f} мин назад")
-                st.caption(" · ".join(parts))
+                st.write(" · ".join(parts))
         elif run_status == "interrupted":
             st.warning("Последний realty-прогон был прерван.")
         elif run_status == "failed":
@@ -119,20 +119,20 @@ def main() -> None:
         except (TypeError, ValueError):
             duration_min = None
         if duration_min is not None:
-            st.caption(
+            st.write(
                 f"Длительность: {duration_min} мин · "
                 f"log={realty_status.get('log_file', '—')}"
             )
         if marts_selected is None:
-            st.caption("Realty-витрины: полный rebuild")
+            st.write("Realty-витрины: полный rebuild")
         elif marts_selected:
-            st.caption("Realty-витрины: " + ", ".join(map(str, marts_selected)))
+            st.write("Realty-витрины: " + ", ".join(map(str, marts_selected)))
         else:
-            st.caption("Realty-витрины: сборка не требовалась")
+            st.write("Realty-витрины: сборка не требовалась")
         if marts_changed_aliases:
-            st.caption("Причина rebuild: " + ", ".join(map(str, marts_changed_aliases)))
+            st.write("Причина rebuild: " + ", ".join(map(str, marts_changed_aliases)))
         if marts_repair_selected:
-            st.caption("Repair: " + ", ".join(map(str, marts_repair_selected)))
+            st.write("Repair: " + ", ".join(map(str, marts_repair_selected)))
         if failures:
             st.error("Ошибки источников: " + ", ".join(map(str, failures)))
 
@@ -142,7 +142,7 @@ def main() -> None:
     st.subheader("Изменения Мониторинга 2.0")
     monitoring_changes = load_monitoring_changes()
     if monitoring_changes.empty:
-        st.caption("Добавления и удаления строк пока не зафиксированы. История начнёт заполняться со следующей новой выгрузки.")
+        st.info("Добавления и удаления строк пока не зафиксированы. История начнёт заполняться со следующей новой выгрузки.")
     else:
         monitoring_changes = monitoring_changes.sort_values("detected_at", ascending=False)
         latest_event = monitoring_changes.iloc[0]["event_id"]
@@ -238,7 +238,7 @@ def main() -> None:
     only_errors = st.checkbox("Только ошибки", value=False)
 
     if df.empty:
-        st.caption("Нет событий за выбранный период.")
+        st.info("Нет событий за выбранный период.")
     else:
         since = datetime.now() - timedelta(days=period_days)
         filt = df[(df["ts"] >= since) & (df["indicator"] != "_run")].copy()
@@ -246,7 +246,7 @@ def main() -> None:
             filt = filt[filt["status"] == "error"]
         filt = filt.sort_values("ts", ascending=False)
         if filt.empty:
-            st.caption("Нет событий за выбранный период.")
+            st.info("Нет событий за выбранный период.")
         else:
             show = pd.DataFrame({
                 "Время": filt["ts"].dt.strftime("%d.%m.%Y %H:%M:%S"),
@@ -274,7 +274,7 @@ def main() -> None:
     else:
         last_entries = df[df["run_id"] == last["run_id"]].to_dict("records")
         st.code(format_summary(last_entries) or "(пусто)", language="markdown")
-    st.caption(
+    st.write(
         "Чтобы реально отправлять — создайте `config/telegram.json` с полями `token` и `chat_id`. "
         "Без файла модуль ничего не шлёт."
     )

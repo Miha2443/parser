@@ -37,7 +37,7 @@ apply_theme()
 # Цвета 4 категорий
 CAT_KEYS = ["жилое", "моп", "нежилое_в_жилом", "нежилое_отдельное"]
 CAT_LABELS = ["Жилое", "МОП", "Нежилье в жилье", "Нежилое отдельное"]
-CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["cyan"], COLORS["red"]]
+CAT_COLORS = [COLORS["green"], COLORS["amber"], COLORS["blue"], COLORS["red"]]
 CAT_COL_PREFIX = "category_"
 
 ERZRF_COLOR = COLORS["blue"]
@@ -65,7 +65,7 @@ def categorize_sum(df: pd.DataFrame) -> dict:
 
 
 def render_donut(values: dict, title: str = "", subtitle: str = "",
-                 colors: list[str] | None = None):
+                 colors: list[str] | None = None, key_prefix: str = "structure"):
     """Donut с цветными сегментами + значение в центре."""
     total = sum(values.values())
     if total <= 0:
@@ -97,12 +97,12 @@ def render_donut(values: dict, title: str = "", subtitle: str = "",
         showlegend=False,
     )
     style_plotly(fig, height=270)
-    st.plotly_chart(fig, use_container_width=True, key=f"donut_{title}")
+    st.plotly_chart(fig, use_container_width=True, key=f"donut_{key_prefix}_{title}")
     chart_data_expander(
         fig,
         pd.DataFrame([{"Категория": label, "Площадь, м²": value} for label, value in values.items()]),
-        name=f"developer_{title}",
-        key=f"donut_data_{title}",
+        name=f"developer_{key_prefix}_{title}",
+        key=f"donut_data_{key_prefix}_{title}",
     )
     if subtitle:
         st.caption(subtitle)
@@ -182,6 +182,7 @@ with cols_top[0]:
              f"Данные подтягиваются из 5 источников по нормализованному имени.",
     )
 sel_key = norm(sel_canon)
+st.sidebar.info(f"Выбран застройщик: {sel_canon}")
 
 # Хелпер: найти строки в DataFrame по нормализованному имени застройщика
 def find_dev_rows(df: pd.DataFrame, name_col: str, key: str) -> pd.DataFrame:
@@ -343,67 +344,39 @@ def get_cards_row() -> pd.Series | None:
 cards_row = get_cards_row()
 
 
-def other_regions_for_year(year: int) -> str:
-    """% «в других регионах за год».
-
-    Логика разная для прошлого vs текущего года:
-
-    Текущий год (year == last_year_int): используем top_obyem_vvoda
-      (это «введено за послед.12 мес» в ERZRF — самое свежее число
-      для текущего года). РФ−МСК даёт точное «в других регионах».
-      Пример ПИК 2026: 492 − 421 = 71 тыс. (14%) — совпадает с ERZRF.
-
-    Прошлый год: cards.Сдано_YYYY (РФ-уровень) минус
-      monitoring.category_жилое (только Жилая площадь, без МОП —
-      методика ERZRF для конкретного года).
-      Пример ПИК 2025: 1 678 − 773 = 905 тыс. (54%).
-    """
-    # === Текущий год — top_obyem_vvoda ===
-    if year == last_year_int:
-        rf_val = erzrf_value("obyem_vvoda", "rf", "Введено")
-        msk_val = erzrf_value("obyem_vvoda", "msk", "Введено")
-        if rf_val and rf_val > 0:
-            other = max(rf_val - (msk_val or 0), 0)
-            pct = other / rf_val * 100
-            return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
-        return "—"
-
-    # === Прошлый год — cards.Сдано (РФ) − monitoring category_жилое (МСК) ===
-    if cards_row is None:
-        return "—"
-    rf_val = float(cards_row.get(f"Сдано_{year}_м²_num") or 0)
-    if rf_val <= 0:
-        return "—"
-    msk_rv = rv_dev[rv_dev.get("Год ввода по Мосстату") == year] if not rv_dev.empty else pd.DataFrame()
-    msk_val = float(msk_rv["category_жилое"].sum()) if not msk_rv.empty else 0.0
-    other = max(rf_val - msk_val, 0)
-    pct = other / rf_val * 100
-    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+def housing_comparison(years: list[int]) -> dict[str, float] | None:
+    """Сравнение жилой площади Москвы и РФ за одинаковые календарные годы."""
+    if cards_row is None or rv_dev.empty or not years:
+        return None
+    moscow = 0.0
+    russia = 0.0
+    for year in years:
+        rf_value = pd.to_numeric(cards_row.get(f"Сдано_{year}_м²_num"), errors="coerce")
+        msk_rows = rv_dev[pd.to_numeric(rv_dev["Год ввода по Мосстату"], errors="coerce").eq(year)]
+        if pd.isna(rf_value) or rf_value <= 0 or msk_rows.empty:
+            return None
+        msk_value = pd.to_numeric(msk_rows["category_жилое"], errors="coerce").fillna(0).sum()
+        if msk_value < 0 or msk_value > rf_value:
+            return None
+        russia += float(rf_value)
+        moscow += float(msk_value)
+    return {"Москва": moscow, "Другие регионы РФ": russia - moscow}
 
 
-def other_regions_total() -> str:
-    """% в других регионах = (cards.Сдано_РФ за все годы − category_жилое МСК) / РФ.
-
-    По требованию пользователя — Москва считается ТОЛЬКО как Жилая
-    площадь (без МОП и нежилого), РФ — общий ввод из ERZ карточки.
-    Единая методика «только жильё» — сопоставимо с ERZ для каждого года.
-    """
-    rf_val: float | None = None
-    if cards_row is not None:
-        s = 0.0
-        for y in range(2016, (last_year_int or 2026) + 1):
-            s += float(cards_row.get(f"Сдано_{y}_м²_num") or 0)
-        if s > 0:
-            rf_val = s
-    if rf_val is None:
-        rf_val = erzrf_value("obyem_vvoda", "rf")
-    if rf_val is None or rf_val <= 0:
-        return "—"
-    # Москва: только жилое (методика ERZ)
-    msk_val = float(rv_dev["category_жилое"].sum()) if not rv_dev.empty else 0.0
-    other = max(rf_val - msk_val, 0)
-    pct = other / rf_val * 100
-    return f"{pct:.0f}% ({ru_num(other/1000)} тыс. м²)"
+st.markdown("### Ввод жилой площади: Москва и другие регионы РФ")
+comparison_years = sorted(pd.to_numeric(rv_dev.get("Год ввода по Мосстату"), errors="coerce").dropna().astype(int).unique()) if not rv_dev.empty else []
+comparison_years = [year for year in comparison_years if year >= 2016 and housing_comparison([year]) is not None]
+for column, (years, title) in zip(st.columns(3), [
+    (comparison_years, f"Ввод за {comparison_years[0]}–{comparison_years[-1]} гг." if comparison_years else "Ввод с 2016 г."),
+    ([prev_year_int] if prev_year_int else [], f"Ввод за {prev_year_int} г."),
+    ([last_year_int] if last_year_int else [], f"Ввод за {last_year_int} г."),
+]):
+    with column:
+        comparison = housing_comparison(years)
+        if comparison:
+            render_donut(comparison, title, colors=[COLORS["green"], COLORS["blue"]], key_prefix="housing")
+        else:
+            st.info(f"Нет сопоставимых данных: {title}")
 
 
 # === 3 donut диаграммы ===
@@ -424,21 +397,18 @@ with pie_cols[0]:
     render_donut(
         categorize_sum(rv_dev),
         "Ввод с 2016 г.",
-        f"В других регионах: {other_regions_total()}",
     )
 
 with pie_cols[1]:
     render_donut(
         categorize_sum(prev_rv) if not prev_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {prev_year_int} г." if prev_year_int else "Ввод за пред. год",
-        f"В других регионах: {other_regions_for_year(prev_year_int) if prev_year_int else '—'}",
     )
 
 with pie_cols[2]:
     render_donut(
         categorize_sum(last_rv) if not last_rv.empty else {lbl: 0 for lbl in CAT_LABELS},
         f"Ввод за {last_year_int} г." if last_year_int else "Ввод за последний год",
-        f"В других регионах: {other_regions_for_year(last_year_int) if last_year_int else '—'}",
     )
 
 

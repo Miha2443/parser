@@ -93,10 +93,7 @@ def render_table(table: pd.DataFrame, name: str, key: str) -> None:
     table_download_buttons(shown, name=name, key_prefix=key)
 
 
-page_header(
-    "Ввод недвижимости · оперативные данные",
-    "Москва. Сопоставление ввода с начала года и структура введённых объектов по данным «Мониторинга 2.0».",
-)
+page_header("Ввод недвижимости · оперативные данные")
 
 vvod = load_vvod_static()
 monitoring = load_monitoring_2_0()
@@ -132,7 +129,6 @@ housing_fig = period_chart(housing, "Ввод жилой площади", period
 st.plotly_chart(housing_fig, use_container_width=True, key="housing_operational")
 with st.expander("Скачать график", expanded=False):
     chart_download_button(housing_fig, name=f"vvod_zhilya_{current_year}_{month:02d}", key="housing_operational_png")
-st.caption("Таблица 1. Жильё: полный год и накопленный ввод за сопоставимый период.")
 render_table(housing, f"vvod_zhilya_{period_label}", "housing_table")
 
 st.subheader("2. Ввод нежилой недвижимости")
@@ -142,10 +138,6 @@ nonres_mode = st.radio(
     horizontal=True,
 )
 exclude_mkd = nonres_mode.startswith("Без")
-st.caption(
-    "Нежильё в жилье — нежилые помещения на первых этажах жилых объектов. "
-    "За 2011–2021 годы показан только годовой итог; накопленные месячные значения начинаются с 2022 года."
-)
 nonres = nonres_ytd_table(
     vvod["msk_nonres"], rv, month, exclude_mkd=exclude_mkd, period_from_year=2022
 )
@@ -154,7 +146,6 @@ nonres_fig = period_chart(nonres, f"Ввод нежилой недвижимос
 st.plotly_chart(nonres_fig, use_container_width=True, key="nonres_operational")
 with st.expander("Скачать график", expanded=False):
     chart_download_button(nonres_fig, name=f"vvod_nezhilya_{current_year}_{month:02d}", key="nonres_operational_png")
-st.caption("Таблица 2. Нежильё: полный год и накопленный ввод за сопоставимый период.")
 render_table(nonres, f"vvod_nezhilya_{period_label}", "nonres_table")
 
 st.subheader("3. Структура ввода за квартал")
@@ -203,10 +194,6 @@ with st.expander("Данные дерева и методика", expanded=False
     ], columns=["Показатель", "млн м²"])
     st.dataframe(tree_table, hide_index=True, use_container_width=True)
     table_download_buttons(tree_table, name=f"struktura_vvoda_{tree_year}_q{quarter}", key_prefix="tree_data")
-    st.caption(
-        "Общая площадь делится по отрасли объекта. Жилая площадь, МОП и нежилые помещения внутри жилых "
-        "объектов берутся из нормализованных полей реестра РВ «Мониторинга 2.0»."
-    )
 
 with st.expander("Исходные файлы и даты скачивания", expanded=False):
     st.write("Мониторинг 2.0:", history.get("source_file") or "источник указан в витрине")

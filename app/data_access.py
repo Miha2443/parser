@@ -117,8 +117,8 @@ def dataset_download_summary(df: pd.DataFrame) -> str:
 
 def show_dataset_sources(df: pd.DataFrame) -> None:
     with st.expander("Исходные файлы и даты скачивания", expanded=False):
-        st.caption("Дата файла — время изменения локального файла, а не подтверждённое скачивание. "
-                   "Период данных указан отдельно для каждого исходника.")
+        st.write("Дата файла — время изменения локального файла, а не подтверждённое скачивание. "
+                 "Период данных указан отдельно для каждого исходника.")
         st.dataframe(dataset_source_provenance(df), hide_index=True, width="stretch")
 
 

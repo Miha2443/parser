@@ -162,7 +162,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-page_header("Карта объектов", "Объекты мониторинга 2.0 с координатами, статусами и фильтрами.")
+page_header("Карта объектов")
 metric_cols = st.columns(3)
 metric_cols[0].metric("Всего", objects_label)
 metric_cols[1].metric("На карте", with_coords_label)
@@ -218,7 +218,7 @@ if only_with_coords:
     data = data[data["has_coords"]]
 
 map_data = data[data["has_coords"]].copy()
-st.caption(
+st.write(
     f"По фильтрам: {ru_num(len(data))} объектов, на карте: {ru_num(len(map_data))}. "
     f"Застройщик: {developer}. Подробности — в таблице объектов ниже."
 )
@@ -377,7 +377,6 @@ table = table.rename(columns={
     "coord_source": "Источник координат",
 })
 with st.expander("Таблица объектов", expanded=False):
-    st.caption("Прокрутите таблицу по горизонтали, чтобы увидеть все столбцы.")
     st.dataframe(
         table,
         hide_index=True,

@@ -28,6 +28,8 @@ LIGHT_COLORS = {
     "green": "#18794E",
     "green_2": "#5B7F19",
     "amber": "#9A6700",
+    "purple": "#6743A7",
+    "orange": "#B85A1B",
     "ink": "#17212B",
     "line": "#C8D2DC",
     "surface": "#FFFFFF",
@@ -42,12 +44,12 @@ COLORS = LIGHT_COLORS.copy()
 SERIES = [
     COLORS["red"],
     COLORS["blue"],
-    COLORS["teal"],
     COLORS["green"],
     COLORS["amber"],
+    COLORS["purple"],
+    COLORS["teal"],
+    COLORS["orange"],
     COLORS["gray_bar"],
-    "#C6D4E0",
-    "#7D91A5",
 ]
 
 FONT_STACK = "Montserrat, Segoe UI, Roboto, Arial, sans-serif"
@@ -60,8 +62,8 @@ def _activate_palette() -> None:
     COLORS.clear()
     COLORS.update(LIGHT_COLORS)
     SERIES[:] = [
-        COLORS["red"], COLORS["blue"], COLORS["teal"], COLORS["green"],
-        COLORS["amber"], COLORS["gray_bar"], COLORS["blue_2"], COLORS["green_2"],
+        COLORS["red"], COLORS["blue"], COLORS["green"], COLORS["amber"],
+        COLORS["purple"], COLORS["teal"], COLORS["orange"], COLORS["gray_bar"],
     ]
 
 

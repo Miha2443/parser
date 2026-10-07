@@ -75,8 +75,6 @@ with area_cols[1]:
 periods = rasprod.get("periods_by_region", {}).get(region, [])
 rasprod_period = f"{MONTHS[periods[-1][1]]} {periods[-1][0]}" if periods else ""
 st.subheader(f"2. Распроданность и стройготовность{f' · {rasprod_period}' if rasprod_period else ''}")
-st.caption("Источник: раздел «Распроданность и стройготовность» на наш.дом.рф; "
-           "показан последний подтверждённый период выбранного региона.")
 kpi_cols = st.columns(3)
 for column, (needle, label) in zip(kpi_cols, [
     ("Распроданность", "Распроданность"), ("Стройготовность", "Стройготовность"),
@@ -95,7 +93,7 @@ if selected_sales.empty:
     st.info("Детальная реализация появится после запуска источника `construction`.")
 else:
     sale = selected_sales.iloc[0]
-    st.caption(f"Данные за {sale.get('report_period', '—')}; площади переведены в млн м².")
+    st.caption(f"Данные за {sale.get('report_period', '—')}.")
     top_cols = st.columns(2)
     with top_cols[0]:
         metric_card("Всего жилой площади", f"{fmt(in_millions(sale.get('total_living_thousand_m2')))} млн м²")
@@ -122,6 +120,7 @@ else:
     extra_cols = st.columns(2)
     with extra_cols[0]:
         st.metric("Стоимость 1 м²", f"{fmt(sale.get('price_per_m2_rub'), 0)} руб.")
+        st.caption("Всего руб./площ.")
     with extra_cols[1]:
         st.metric("Объём привлечённых средств", f"{fmt(sale.get('funds_million_rub'), 0)} млн руб.")
 
@@ -130,10 +129,10 @@ permits = operational.get("permits", pd.DataFrame())
 if permits.empty:
     st.info("Нет данных о выдаче разрешений из «Мониторинга 2.0».")
 else:
-    permit_kind = st.radio("Назначение", ["housing", "nonresidential"], horizontal=True,
-                           format_func=lambda value: "Жильё" if value == "housing" else "Нежильё",
+    permit_kind = st.radio("Назначение", ["total", "housing", "nonresidential"], horizontal=True,
+                           format_func=lambda value: {"total": "Всего", "housing": "Жильё", "nonresidential": "Нежильё"}[value],
                            key="permit_kind")
-    filtered = permits[permits["kind"].eq(permit_kind)].copy()
+    filtered = permits.copy() if permit_kind == "total" else permits[permits["kind"].eq(permit_kind)].copy()
     if filtered.empty:
         st.info("Для выбранного назначения в «Мониторинге 2.0» нет данных.")
         st.stop()
@@ -144,8 +143,8 @@ else:
                          format_func=lambda value: MONTH_YTD[value].capitalize(), key="permit_month")
     monthly_full = filtered.groupby("year")["value_thousand_m2"].sum()
     annual = operational.get("permit_annual", pd.DataFrame())
-    annual = annual[annual["kind"].eq(permit_kind)] if not annual.empty else pd.DataFrame()
-    full = (annual.set_index("year")["value_thousand_m2"]
+    annual = (annual if permit_kind == "total" else annual[annual["kind"].eq(permit_kind)]) if not annual.empty else pd.DataFrame()
+    full = (annual.groupby("year")["value_thousand_m2"].sum()
             if not annual.empty else pd.Series(dtype=float))
     # The current incomplete year is absent from the annual summary.
     full = full.combine_first(monthly_full)

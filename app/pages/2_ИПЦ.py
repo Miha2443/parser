@@ -208,7 +208,7 @@ def main() -> None:
 
     page_header(
         "Индексы потребительских цен",
-        f"{dataset_download_summary(df)} · Источник: fedstat.ru, индикатор 31074 (части 1 и 2)",
+        dataset_download_summary(df),
     )
     c1, c2 = st.columns([1.2, 2.0])
     with c1:

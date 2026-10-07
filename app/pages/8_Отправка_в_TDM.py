@@ -32,7 +32,7 @@ from pipeline.tdm_notify import (  # noqa: E402
 
 st.set_page_config(page_title="Отправка в TDM — Аналитика Москвы", layout="wide")
 apply_theme()
-page_header("Отправка файлов в TDM", "Выбор свежей выгрузки, подпись и отправка файла или текста в TDM.")
+page_header("Отправка файлов в TDM")
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -94,7 +94,7 @@ with st.expander("Статус подключения", expanded=not all_ok):
                             f"тип: {grp_type}\nназв.: «{title}»",
                             language="text",
                         )
-                    st.caption(
+                    st.write(
                         "Скопируй нужный `groupId` и `workspaceId` в .env "
                         "(переменные `TDM_GROUP_ID` и `TDM_WORKSPACE_ID`)."
                     )

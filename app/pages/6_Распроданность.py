@@ -74,7 +74,7 @@ available_regions = sorted(
     key=lambda value: 0 if value == "msk" else 1,
 )
 
-cols_top = st.columns([2, 5, 2])
+cols_top = st.columns([2, 5])
 with cols_top[0]:
     sel_reg = st.radio(
         "Регион",
@@ -98,14 +98,6 @@ with cols_top[1]:
         sel_year, sel_month = periods[sel_period_idx]
     else:
         sel_year, sel_month = None, None
-with cols_top[2]:
-    st.markdown(
-        f"<div style='padding-top:30px;color:{COLORS['muted']};'>"
-        f"Всего периодов: <b>{len(periods)}</b></div>",
-        unsafe_allow_html=True,
-    )
-
-
 # === 4 KPI карточки ===
 def kpi_for_period(name_substr: str):
     kdf = data["kpi"]

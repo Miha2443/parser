@@ -268,7 +268,7 @@ def main() -> None:
     df = df[df["year"] >= 2011].copy()
     page_header(
         "ВРП и ВВП",
-        f"{dataset_download_summary(df)} · с 2011 г. · Источники: Росстат (национальные счета), Мосстат (ВРП)",
+        f"{dataset_download_summary(df)} · с 2011 г.",
     )
     st.subheader("1. ВРП Москвы и ВВП России, трлн руб")
     _two_region_chart(

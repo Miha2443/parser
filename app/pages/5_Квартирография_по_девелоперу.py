@@ -21,8 +21,8 @@ st.set_page_config(page_title="Квартирография — Девелопе
 apply_theme()
 
 COLOR_1K = COLORS["green"]
-COLOR_2K = COLORS["cyan"]
-COLOR_3K = COLORS["neutral"]
+COLOR_2K = COLORS["blue"]
+COLOR_3K = COLORS["amber"]
 COLOR_4K = COLORS["red"]
 ROOM_COLORS = [COLOR_1K, COLOR_2K, COLOR_3K, COLOR_4K]
 
@@ -93,7 +93,7 @@ row = devs[devs["наименование"] == sel_dev].iloc[0]
 
 # === Карточка ===
 st.markdown(f"### {row['наименование']}")
-st.caption(f"Место по объёму строительства в регионе: **{int(row['place'])}** из {len(devs)}")
+st.write(f"Место по объёму строительства в регионе: **{int(row['place'])}** из {len(devs)}")
 
 kpi_cols = st.columns(4)
 kpi_cols[0].metric("Квартиры", f"{ru_num(row['квартиры_тыс_шт_num'], 1)} тыс. шт")
@@ -105,6 +105,18 @@ area = row["площадь_тыс_м²_num"]
 if qty and area and qty > 0:
     avg_area = (area * 1000) / (qty * 1000)  # м² на квартиру
     kpi_cols[2].metric("Ср. площадь квартиры", f"{ru_num(avg_area, 1)} м²")
+    reference_rows = data["apartments"]
+    reference_lines = []
+    for region_key, label in [("msk", "Москва"), ("rf", "РФ")]:
+        reference = reference_rows[reference_rows["region_key"].eq(region_key) & reference_rows["тип"].eq("Все квартиры")]
+        if not reference.empty:
+            item = reference.iloc[0]
+            reference_qty = pd.to_numeric(item["количество_шт_num"], errors="coerce")
+            reference_area = pd.to_numeric(item["площадь_тыс_м²_num"], errors="coerce")
+            if pd.notna(reference_qty) and reference_qty > 0 and pd.notna(reference_area):
+                reference_lines.append(f"{label}: **{ru_num(reference_area * 1000 / reference_qty, 1)} м²**")
+    if reference_lines:
+        kpi_cols[2].markdown("Средняя по всем квартирам — " + " · ".join(reference_lines))
 kpi_cols[3].metric(
     "Доля рынка региона",
     f"{ru_num(row['площадь_тыс_м²_num'] / devs['площадь_тыс_м²_num'].sum() * 100, 2)}%",

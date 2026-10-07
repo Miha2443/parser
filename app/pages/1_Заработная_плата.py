@@ -260,7 +260,7 @@ def main() -> None:
 
     page_header(
         "Среднемесячная заработная плата",
-        f"{dataset_download_summary(df)} · Источник: fedstat.ru, индикатор 57824",
+        dataset_download_summary(df),
     )
     top = st.container()
     with top:

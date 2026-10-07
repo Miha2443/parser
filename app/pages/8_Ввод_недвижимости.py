@@ -3,7 +3,7 @@
 Агрегатная страница (без выбора застройщика). 3 секции:
   1. Ввод недвижимости — жильё + нежильё (Москва из vvod / РФ из Stroi_111).
   2. Жилая недвижимость — ① МКД/ИЖС (Москва vvod / РФ ЕМИСС 34118),
-     ② бюджет/небюджет (monitoring 2.0), ③ реновация (ФОНД РЕНОВАЦИИ).
+     ② бюджет/небюджет (monitoring 2.0), ③ реновация (инвестор для реновации = да).
   3. Нежилая недвижимость — ① нежильё/нежилые-в-жилье (vvod),
      ② бюджет/небюджет (monitoring 2.0), ③ разбивка по отраслям (vvod + прочее).
 
@@ -38,11 +38,16 @@ apply_theme()
 C_ZH = COLORS["green"]       # жильё / МКД
 C_NZH = "#7B8794"            # нежильё
 C_IZHS = COLORS["amber"]     # ИЖС
-C_NEBUDG = COLORS["cyan"]    # небюджет
+C_NEBUDG = COLORS["purple"]  # небюджет
 C_BUDG = COLORS["blue"]      # бюджет
 C_NZH_IN = COLORS["teal"]    # нежилые в жилье
 C_MOP = COLORS["amber"]      # МОП
-BRANCH_COLORS = [COLORS["blue"], COLORS["cyan"], COLORS["green"], COLORS["amber"], "#A8B5C2"]
+BRANCH_COLORS = ["#2459A6", "#18864B", "#A45A00", "#A63876", "#6743A7", "#087E8B", "#B14730", "#5A748A", "#697586"]
+BRANCH_LABELS = {
+    "офисы": "Офисы", "соц": "Социальные объекты", "пром": "Промышленные",
+    "гостиницы": "Гостиницы", "торговля": "Торговля", "транспорт": "Транспорт",
+    "склады": "Склады", "жкх": "ЖКХ",
+}
 
 
 def ru_num(value, digits=1):
@@ -337,29 +342,29 @@ def _monitoring_nonres_branch_row(rv: pd.DataFrame, year: int) -> dict | None:
     area = pd.to_numeric(part["category_нежилое_отдельное"], errors="coerce").fillna(0)
     industries = part["Отрасли"].fillna("").astype(str).str.casefold()
 
-    def sum_if(mask) -> float:
-        return float(area[mask].sum()) / 1e6
+    def matches(*tokens: str):
+        mask = pd.Series(False, index=part.index)
+        for token in tokens:
+            mask |= industries.str.contains(token, regex=False)
+        return mask
 
-    offices = sum_if(industries.str.contains("административно-деловые", regex=False))
-    social = sum_if(
-        industries.str.contains("доу", regex=False)
-        | industries.str.contains("образователь", regex=False)
-        | industries.str.contains("лечебно", regex=False)
-        | industries.str.contains("спортивно", regex=False)
-        | industries.str.contains("культовые", regex=False)
-    )
-    industry = sum_if(
-        industries.str.contains("производ", regex=False)
-        | industries.str.contains("пром", regex=False)
-    )
-    hotels = sum_if(industries.str.contains("гостини", regex=False))
-    return {
-        "year": year,
-        "офисы": offices,
-        "соц": social,
-        "пром": industry,
-        "гостиницы": hotels,
+    masks = {
+        "офисы": matches("административно-деловые"),
+        "соц": matches("доу", "школ", "образователь", "лечебно", "спортивно", "культов", "культурно", "социально"),
+        "пром": matches("производ", "пром"),
+        "гостиницы": matches("гостини"),
+        "торговля": matches("торгов"),
+        "транспорт": matches("транспорт"),
+        "склады": matches("склад"),
+        "жкх": matches("жкх", "коммуналь"),
     }
+    assigned = pd.Series(False, index=part.index)
+    result = {"year": year}
+    for category, mask in masks.items():
+        selected = mask & ~assigned
+        result[category] = float(area[selected].sum()) / 1e6
+        assigned |= selected
+    return result
 
 
 # ── Данные ──
@@ -480,7 +485,6 @@ if is_msk:
         ).drop_duplicates(subset=["year"], keep="last")
 c1, c2 = st.columns([3, 1])
 with c1:
-    st.caption("На странице показаны только годовые значения.")
     render_stacked(b2_1, [("МКД", "МКД", C_ZH), ("ИЖС", "ИЖС", C_IZHS)],
                    year_from=YF, year_to=YT, key="b2_1", height=300)
 with c2:
@@ -521,21 +525,19 @@ if is_msk:
                 f"- Бюджет: {ru_num(_sum_range(b2_2, 'Бюджет', y0, y1))} млн м²")
             st.markdown("")
 
-    # ③ Реновация (ФОНД РЕНОВАЦИИ, Москва), 2017-
+    # ③ Реновация: объект определяется признаком инвестора, а не именем застройщика.
     st.markdown("**③ Ввод по реновации (Москва)**")
     b2_3 = pd.DataFrame(
         [{"year": year, "Реновация": value} for year, value in RENOVATION_VALUES.items()]
     )
-    ren26 = monitoring_by_year(
-        rv,
-        gk="ФОНД РЕНОВАЦИИ",
-        gruppirovka="Жилье",
-        value_col="Жилая площадь",
-        year_from=2026,
-        year_to=2026,
-    )
-    if not ren26.empty:
-        b2_3 = _upsert_year(b2_3, {"year": 2026, "Реновация": float(ren26["value"].iloc[0])})
+    if not rv.empty and {"Год ввода по Мосстату", "Инвестор для Реновации", "Жилая площадь"}.issubset(rv.columns):
+        ren_rows = rv[rv["Инвестор для Реновации"].fillna("").astype(str).str.strip().str.casefold().eq("да")].copy()
+        if not ren_rows.empty:
+            ren_rows["year"] = pd.to_numeric(ren_rows["Год ввода по Мосстату"], errors="coerce")
+            ren_rows["area"] = pd.to_numeric(ren_rows["Жилая площадь"], errors="coerce").fillna(0)
+            for year, part in ren_rows.groupby("year"):
+                if 2022 <= year <= YT:
+                    b2_3 = _upsert_year(b2_3, {"year": int(year), "Реновация": float(part["area"].sum()) / 1e6})
     c1, c2 = st.columns([3, 1])
     with c1:
         render_stacked(b2_3, [("Реновация", "Реновация", C_ZH)],
@@ -552,7 +554,6 @@ if not is_msk:
 # Блок 3. Нежилая недвижимость — годовые значения (всегда Москва)
 # ============================================================
 st.markdown("### Нежилая недвижимость — годовые значения")
-st.caption("Все подграфики ниже — по Москве.")
 
 # ① нежильё + нежилые в жилье (vvod)
 st.markdown("**① Нежильё и нежилые в жилье**")
@@ -603,37 +604,60 @@ with c2:
             f"- Бюджет: {ru_num(_sum_range(b3_2, 'Бюджет', y0, y1))} млн м²")
         st.markdown("")
 
-# ③ Разбивка по отраслям + прочее (vvod)
+# ③ Одинаковый набор отраслей по годам. Старый файл содержит четыре группы;
+# дополнительные группы берём из мониторинга только при полном покрытии года.
 st.markdown("**③ Разбивка по отраслям**")
 br = vvod["msk_nonres_branches"].copy()
-branch26 = _monitoring_nonres_branch_row(rv, 2026)
-if branch26:
-    br = _upsert_year(br, branch26)
+for year in range(2017, 2027):
+    live_branch = _monitoring_nonres_branch_row(rv, year)
+    if not live_branch:
+        continue
+    static_total = b3_1.loc[b3_1["year"].eq(year), "нежильё"]
+    live_total = _monitoring_nonres_row(rv, year)
+    # Неполный исторический реестр нельзя использовать вместо годового итога.
+    if year < 2026 and (static_total.empty or not live_total or
+                        live_total["нежильё"] < float(static_total.iloc[0]) * 0.95):
+        continue
+    br = _upsert_year(br, live_branch)
 if not br.empty:
-    # прочее = общая нежилое (3①) − (офисы+соц+пром+гостиницы)
-    tot = b3_1[["year", "общая"]] if not b3_1.empty else pd.DataFrame()
+    # Отрасли относятся к отдельно стоящему нежилью; помещения в жилье не входят.
+    tot = b3_1[["year", "нежильё"]] if not b3_1.empty else pd.DataFrame()
     br = br.merge(tot, on="year", how="left")
-    branch_cols = ["офисы", "соц", "пром", "гостиницы"]
-    br["прочее"] = (br.get("общая", 0).fillna(0)
-                    - br[branch_cols].sum(axis=1)).clip(lower=0)
-    series3 = [("офисы", "Офисы", BRANCH_COLORS[0]),
-               ("соц", "Соц. объекты", BRANCH_COLORS[1]),
-               ("пром", "Промышленные", BRANCH_COLORS[2]),
-               ("гостиницы", "Гостиницы", BRANCH_COLORS[3]),
-               ("прочее", "Прочее", BRANCH_COLORS[4])]
+    branch_cols = list(BRANCH_LABELS)
+    for col in branch_cols:
+        if col not in br.columns:
+            br[col] = 0.0
+    br[branch_cols] = br[branch_cols].fillna(0)
+    # Выбор фиксирован для всей шкалы: хотя бы в одном году >10% нежилья,
+    # затем дополняем до шести крупнейших групп по доступной детализации.
+    detailed = br[br["year"].ge(2022)]
+    totals_by_branch = detailed[branch_cols].sum().sort_values(ascending=False)
+    yearly_shares = detailed[branch_cols].div(detailed["нежильё"].replace(0, float("nan")), axis=0)
+    over_ten_percent = yearly_shares.gt(0.10).any(axis=0)
+    leading = set(totals_by_branch.head(6).index)
+    selected = [col for col in branch_cols if col in leading or over_ten_percent[col]]
+    selected_sum = br[selected].sum(axis=1)
+    scale = (br["нежильё"].fillna(0) / selected_sum.replace(0, float("nan"))).clip(upper=1).fillna(1)
+    br[selected] = br[selected].mul(scale, axis=0)
+    br["прочее"] = (br["нежильё"].fillna(0) - br[selected].sum(axis=1)).clip(lower=0)
+    series3 = [(col, BRANCH_LABELS[col], BRANCH_COLORS[branch_cols.index(col)]) for col in selected]
+    series3.append(("прочее", "Прочее / без детализации", BRANCH_COLORS[-1]))
     c1, c2 = st.columns([3, 1])
     with c1:
         render_stacked(br, series3, year_from=YF, year_to=YT, key="b3_3", height=300)
     with c2:
         for (y0, y1) in [(2011, 2025), (2011, 2026)]:
-            st.markdown(
-                f"**Σ {y0}-{y1}**\n\n"
-                f"- Офисы: {ru_num(_sum_range(br, 'офисы', y0, y1))} млн м²\n"
-                f"- Соц.: {ru_num(_sum_range(br, 'соц', y0, y1))} млн м²\n"
-                f"- Пром.: {ru_num(_sum_range(br, 'пром', y0, y1))} млн м²\n"
-                f"- Гостиницы: {ru_num(_sum_range(br, 'гостиницы', y0, y1))} млн м²\n"
-                f"- Прочее: {ru_num(_sum_range(br, 'прочее', y0, y1))} млн м²"
+            lines = "\n".join(
+                f"- {BRANCH_LABELS[col]}: {ru_num(_sum_range(br, col, y0, y1))} млн м²"
+                for col in selected
             )
+            st.markdown(f"**Σ {y0}-{y1}**\n\n{lines}\n"
+                        f"- Прочее: {ru_num(_sum_range(br, 'прочее', y0, y1))} млн м²")
             st.markdown("")
+    with st.expander("Как составлена разбивка по отраслям", expanded=False):
+        st.write("Набор отраслей один для всех лет: группы с долей более 10% хотя бы в одном году, "
+                 "плюс крупнейшие группы до минимума шести. Исторический файл содержит только четыре "
+                 "подтверждённые группы. Дополнительные отрасли показываются за годы, где мониторинг 2.0 "
+                 "покрывает не менее 95% годового объёма; в остальных годах их площадь остаётся в «Прочем».")
 else:
     st.info("Нет данных по отраслям нежилой недвижимости.")

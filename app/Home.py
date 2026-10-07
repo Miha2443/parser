@@ -20,6 +20,7 @@ pages = [
     st.Page("pages/9_Карта_объектов.py", title="Карта объектов", icon="🗺️"),
     st.Page("pages/8_Ввод_недвижимости_оперативные.py", title="Оперативный ввод", icon="⏱️"),
     st.Page("pages/8_Ввод_недвижимости.py", title="Годовой ввод", icon="🏘️"),
+    st.Page("pages/8_Ввод_линейных_объектов.py", title="Линейные объекты", icon="🛣️"),
     st.Page("pages/7_Профиль_застройщика.py", title="Профиль", icon="👤"),
     st.Page("pages/5_Квартирография_по_девелоперу.py", title="Квартирография по застройщику", icon="🏢"),
     st.Page("pages/3_ВРП_и_ВВП.py", title="ВВП и ВРП", icon="📈"),
@@ -41,6 +42,7 @@ with st.sidebar:
         st.markdown("**Ввод недвижимости**")
         st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные", icon="⏱️")
         st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные", icon="🏘️")
+        st.page_link("pages/8_Ввод_линейных_объектов.py", label="Линейные объекты", icon="🛣️")
         st.markdown("**Профиль застройщика**")
         st.page_link("pages/7_Профиль_застройщика.py", label="Профиль", icon="👤")
         st.page_link("pages/5_Квартирография_по_девелоперу.py", label="Квартирография по застройщику", icon="🏢")

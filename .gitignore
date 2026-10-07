@@ -17,6 +17,8 @@ data/marts/
 data/raw/_archive/
 data/raw/realty/**/*.tmp
 data/raw/realty/**/*.crdownload
+# Полные отчёты ДСТИ содержат показатели вне дашборда; в Git хранится только срез 1.1–1.4.
+data/raw/realty/linear_objects/*.xlsx
 
 # Состояние парсеров (актуально на машине, где запускается ETL)
 state/

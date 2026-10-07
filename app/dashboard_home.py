@@ -73,6 +73,7 @@ with realty_cols[1]:
         st.markdown("### Ввод недвижимости")
         st.page_link("pages/8_Ввод_недвижимости_оперативные.py", label="Оперативные данные →")
         st.page_link("pages/8_Ввод_недвижимости.py", label="Годовые данные →")
+        st.page_link("pages/8_Ввод_линейных_объектов.py", label="Линейные объекты →")
 with realty_cols[2]:
     with st.container(border=True, height=220):
         st.markdown("### Профиль застройщика")

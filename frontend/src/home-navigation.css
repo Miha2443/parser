@@ -1,0 +1,29 @@
+.home-page .home-market { padding: 6px 0 28px; }
+.home-page .home-market > h2 { margin: 0 0 22px; font-size: 30px; line-height: 1.25; font-weight: 700; }
+.home-page .home-market-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.home-page .home-market-panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 20px; }
+.home-page .home-market-panel h3 { margin: 0 0 16px; font-size: 16px; line-height: 1.4; font-weight: 650; overflow-wrap: anywhere; }
+.home-page .home-market-panel a { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.home-page .home-market-panel a span { min-width: 0; overflow-wrap: anywhere; }
+.home-page .home-market-panel a svg { flex-shrink: 0; color: var(--muted); }
+.home-page .home-market-panel a:hover { color: var(--accent); }
+.home-page .home-support-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 22px; border-top: 1px solid var(--line); }
+.dashboard-navigation .nav-group > .nav-heading { font-size: 16px; font-weight: 700; }
+.dashboard-navigation .nav-subgroup > .nav-heading { font-size: 14px; font-weight: 700; color: var(--text); padding-top: 12px; padding-bottom: 12px; }
+.dashboard-navigation .nav-heading span, .dashboard-navigation .nav-link span { min-width: 0; overflow-wrap: anywhere; }
+.dashboard-navigation .nav-link { font-size: 12px; font-weight: 400; }
+.dashboard-navigation .nav-link.active { font-weight: 650; }
+.annual-commissioning-page .annual-summary-disclosure { margin-top: 12px; border-top: 1px solid var(--line); }
+.annual-commissioning-page .annual-summary-disclosure > summary { padding: 14px 0; font-size: 12px; font-weight: 600; cursor: pointer; }
+.annual-commissioning-page .annual-summary-disclosure .annual-summaries { padding-top: 0; }
+@media (min-width: 961px) {
+  .dashboard-navigation.is-compact nav > .nav-link { justify-content: center; }
+  .dashboard-navigation.is-compact nav > .nav-link span { display: none; }
+}
+@media (max-width: 1100px) {
+  .home-page .home-market-panels { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .home-page .home-support-sections { grid-template-columns: minmax(0, 1fr); }
+  .home-page .home-market-panel { padding: 18px; }
+}

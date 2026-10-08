@@ -3,6 +3,7 @@ import { AlertCircle, ArrowRight, ChevronLeft, ChevronRight, Database, Download,
 import { request } from './data';
 import { date, exportCsv, number } from './format';
 import './services.css';
+import './home-navigation.css';
 
 type Change = (values: Record<string, string | null>, replace?: boolean) => void;
 type Row = Record<string, string | number | boolean | null>;
@@ -25,15 +26,21 @@ function DataTable({ title, rows, columns, filename }: { title: string; rows: Ro
   const pages = Math.max(1, Math.ceil(filtered.length / 20)), current = Math.min(page, pages);
   return <section className="section"><div className="section-heading"><div><h2>{title}</h2><p>{number(rows.length)} строк</p></div><button className="icon-button" title={`Скачать CSV: ${title}`} aria-label={`Скачать CSV: ${title}`} onClick={() => exportCsv([columns.map(([, label]) => label), ...rows.map(row => columns.map(([id]) => row[id] == null ? null : String(row[id])))], filename)}><Download size={17} /></button></div><input className="service-search" type="search" aria-label={`Поиск: ${title}`} placeholder="Поиск" value={search} onChange={e => setSearch(e.target.value)} /><div className="table-wrap"><table><thead><tr>{columns.map(([id, label]) => <th key={id}>{label}</th>)}</tr></thead><tbody>{filtered.slice((current - 1) * 20, current * 20).map((row, i) => <tr key={i}>{columns.map(([id], j) => j === 0 ? <th scope="row" key={id}>{display(row[id])}</th> : <td key={id}>{display(row[id])}</td>)}</tr>)}</tbody></table></div>{!filtered.length && <p className="empty-state">Нет записей.</p>}<div className="pagination"><span>Страница {current} из {pages}</span><button className="icon-button" title="Предыдущая страница" aria-label={`Предыдущая страница: ${title}`} disabled={current <= 1} onClick={() => setPage(current - 1)}><ChevronLeft size={16} /></button><button className="icon-button" title="Следующая страница" aria-label={`Следующая страница: ${title}`} disabled={current >= pages} onClick={() => setPage(current + 1)}><ChevronRight size={16} /></button></div></section>;
 }
+const realtySections = [
+  ['Текущее строительство', [['/construction', 'Оперативные данные'], ['/apartments', 'Квартирография'], ['/map', 'Карта объектов'], ['/sales', 'Распроданность и стройготовность']]],
+  ['Ввод недвижимости', [['/commissioning/operational', 'Оперативный ввод'], ['/commissioning/annual', 'Годовой ввод'], ['/commissioning/linear', 'Линейные объекты']]],
+  ['Профиль застройщика', [['/', 'Профиль'], ['/apartments/developer', 'Квартирография по застройщику']]],
+] as const;
 const sections = [
-  ['Недвижимость', [['/apartments', 'Квартирография'], ['/apartments/developer', 'Квартирография по девелоперу'], ['/', 'Профиль застройщика'], ['/sales', 'Распроданность и стройготовность'], ['/construction', 'Текущее строительство'], ['/commissioning/annual', 'Ввод недвижимости'], ['/commissioning/operational', 'Оперативный ввод'], ['/commissioning/linear', 'Линейные объекты'], ['/map', 'Карта объектов']]],
   ['Экономика', [['/economics/salary', 'Заработная плата'], ['/economics/ipc', 'Индекс потребительских цен'], ['/economics/accounts', 'ВРП, ВВП и ВДС']]],
   ['Сервис', [['/updates', 'Обновления источников'], ['/tdm', 'Отправка в TDM']]],
 ] as const;
 export function Home({ navigate }: { navigate: (path: string) => void }) {
   const { data, error, retry } = useUpdates();
-  return <main className="service-page"><div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА И НЕДВИЖИМОСТЬ</div><h1>Аналитика Москвы</h1></div><button className="icon-button" title="Обновить сводку" aria-label="Обновить сводку" onClick={retry}><RefreshCw size={17} /></button></div>
-    <nav className="home-sections">{sections.map(([title, links]) => <section key={title}><h2>{title}</h2>{links.map(([path, label]) => <a key={path} href={path} onClick={event => { event.preventDefault(); navigate(path); }}><span>{label}</span><ArrowRight size={16} /></a>)}</section>)}</nav>
+  function homeLink(path: string, label: string) { return <a key={path} href={path} onClick={event => { if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate(path); } }}><span>{label}</span><ArrowRight size={16} /></a>; }
+  return <main className="service-page home-page"><div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА И НЕДВИЖИМОСТЬ</div><h1>Аналитика Москвы</h1></div><button className="icon-button" title="Обновить сводку" aria-label="Обновить сводку" onClick={retry}><RefreshCw size={17} /></button></div>
+    <section className="home-market" aria-labelledby="home-market-title"><h2 id="home-market-title">Рынок недвижимости</h2><nav className="home-market-panels" aria-label="Рынок недвижимости">{realtySections.map(([title, links]) => <section className="home-market-panel" key={title} aria-label={title}><h3>{title}</h3>{links.map(([path, label]) => homeLink(path, label))}</section>)}</nav></section>
+    <nav className="home-sections home-support-sections" aria-label="Экономика и сервис">{sections.map(([title, links]) => <section key={title}><h2>{title}</h2>{links.map(([path, label]) => homeLink(path, label))}</section>)}</nav>
     {error || !data ? <State error={error} retry={retry} /> : <><section className="section"><div className="section-heading"><h2>Последнее обновление</h2><Database size={18} /></div><div className="service-metrics"><div><span>Последний ETL-запуск</span><strong>{display(data.lastRun.ts)}</strong></div><div><span>Успешно</span><strong>{display(data.lastRun.success)}</strong></div><div><span>Ошибок</span><strong>{display(data.lastRun.error)}</strong></div><div><span>Обновление недвижимости</span><strong>{data.realtySummary.label || 'Нет статуса'}</strong></div></div></section><DataTable title="Свежесть источников" rows={data.marts} columns={[['mart', 'Витрина'], ['status', 'Статус'], ['latest_source_mtime', 'Свежий исходный файл'], ['built_at', 'Сборка'], ['rows', 'Строк']]} filename="source-freshness.csv" /></>}
     <footer className="page-footer">Аналитика Москвы · API</footer></main>;
 }

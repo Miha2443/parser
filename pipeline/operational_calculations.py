@@ -30,7 +30,8 @@ def catalog(data):
     closed = 12 if pd.notna(date) and date.month == 1 else int(date.month) - 1 if pd.notna(date) else 8
     default = max([m for m in months if m <= closed], default=min(max(months), 8)) if months else 8
     years = sorted(pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").dropna().astype(int).unique(), reverse=True)
-    return {"months": [{"id": int(m), "label": MONTH_LABELS[m - 1]} for m in months or range(1, 13)],
+    # The YTD selector covers historical years, not just the latest RV year.
+    return {"months": [{"id": m, "label": MONTH_LABELS[m - 1]} for m in range(1, 13)],
             "defaultMonth": default, "currentYear": current_year, "years": [int(year) for year in years]}
 
 
@@ -57,11 +58,20 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
                           "totals": records(pd.DataFrame({"value": totals})),
                           "growth": records(pd.DataFrame({"value": visible["Изменение к аналогичному периоду, %"]}))}})
     tree = quarter_tree(rv, year, quarter, cumulative=cumulative)
+    previous_tree = quarter_tree(rv, year - 1, quarter, cumulative=cumulative) if year - 1 in options["years"] else None
+    tree_growth = {key: (value - previous_tree[key]) / previous_tree[key] * 100
+                   if previous_tree is not None and previous_tree[key] != 0 else None
+                   for key, value in tree.items()}
     return {"selection": {"month": month, "year": year, "quarter": quarter, "cumulative": cumulative,
                            "excludeMkd": exclude_mkd}, "periodLabel": MONTH_LABELS[month - 1],
             "currentYear": options["currentYear"], "region": "Москва", "tables": tables, "tree": tree,
+            "treeGrowth": tree_growth,
             "treeRows": [{"id": key, "label": title, "value": tree[key]} for key, title in TREE_LABELS],
             "sourceDetails": {"file": history.get("source_file"), "date": history.get("source_date")},
             "notes": ["Исторические месяцы: лист «Данные с 2011 года» Мониторинга 2.0.",
                       "Исторические годовые значения: static_vvod_rs_2011_2025.xlsx.",
+                      "Выбранный месяц задаёт границу суммирования, не подтверждает полноту месячной истории каждого года.",
+                      "Текущий год: только имеющиеся строки РВ до выбранного месяца; отсутствующие поздние месяцы не прогнозируются.",
+                      "Жильё: исторические месяцы суммируются как загружены; отсутствующая история сохраняется как null, годовые значения её не заменяют.",
+                      "Нежильё: периодные значения рассчитываются по РВ только с 2022 года; до 2022 года они остаются null.",
                       "Структура ввода — Москва, по реестру РВ; отсутствие месячной истории не означает нулевой ввод."]}

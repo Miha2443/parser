@@ -13,6 +13,23 @@ test('annual seven Moscow and two RF charts preserve all years, source zeros, se
 test('construction keeps raw units/nulls, independent periods and Moscow permit scope even for RF', () => {
   const selection = { ...constructionSelection, region: 'rf' }, raw = fixtures.constructionReport(selection), c = readConstructionReport(raw, selection); assert.deepEqual(c.selection, raw.selection); assert.equal(c.metrics[0].value, 15.64321); assert.equal(c.metrics[1].value, null); assert.equal(c.metrics[3].value, 0); assert.equal(c.sales.sales_not_open_pct, null); assert.equal(c.permits.region, 'Москва'); assert.equal(c.permits.unit, 'тыс. м²'); assert.equal(c.permits.rows[0]['С начала года, тыс. м²'], null); assert.equal(c.permits.chart.period[0].value, 0); assert.equal(c.permits.chart.totals.at(-1).value, null); assert.equal(permitChartRows(c.permits)[1].at(-1), null); assert.equal(salesTable(c.sales).rows.length, Object.keys(c.sales).length); assert.equal(tableRows(c.permits).length, 17); const o = permitChartOption(c.permits, 'dark'); assert.equal(o.series[0].data[0], 0); assert.equal(o.tooltip.trigger, 'item'); assert.equal(o.yAxis.name, 'тыс. м²');
 });
+test('renovation and every single visible annual series keep numeric labels above bars, including mobile', () => {
+  const c = readAnnualReport(fixtures.annualReport(), annualSelection).charts[3];
+  assert.equal(c.totals, false);
+  for (const theme of ['light', 'dark']) {
+    const o = annualChartOption(c, theme);
+    assert.equal(o.series[0].label.show, true); assert.equal(o.series[0].label.position, 'top'); assert.equal(o.series[0].labelLayout.hideOverlap, false); assert.equal(o.media[0].option.series[0].label.show, true);
+    assert.equal(o.series[0].label.formatter({ dataIndex: 0 }), '1,1');
+  }
+  const multi = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], visible = multi.series[1], o = annualChartOption(multi, 'light', [visible.name]);
+  assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.media[0].option.series[1].label.show, true); assert.equal(o.series[1].label.formatter({ dataIndex: 0 }), '0,0');
+  visible.points[0].y = null; assert.equal(annualChartOption(multi, 'light', [visible.name]).series[1].label.formatter({ dataIndex: 0 }), '');
+});
+test('annual stack label follows highest visible series and sums only visible segments without changing source data', () => {
+  const c = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], before = structuredClone(c), visible = c.series.slice(0, 2).map(s => s.name), o = annualChartOption(c, 'dark', visible);
+  assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.series[1].label.formatter({ dataIndex: 5 }), '3,7'); assert.ok(o.media[0].option.series.every(s => s.label.show === false)); assert.deepEqual(c, before);
+  assert.ok(annualChartOption(c, 'dark', []).series.every(s => s.label.show === false));
+});
 test('pinned exports contain every selection filter and never table search/page', () => {
   assert.deepEqual(marketParams(constructionSelection), { region: 'msk', permit_kind: 'total', month: '3' }); assert.equal(new URL(marketUrl('annual', annualSelection, 'v +'), 'http://local').searchParams.get('required_version'), 'v +'); const u = new URL(marketUrl('construction', constructionSelection, 'v2'), 'http://local'); assert.equal(u.pathname, '/api/v1/construction/export'); assert.deepEqual([...u.searchParams.keys()], ['region', 'permit_kind', 'month', 'required_version']);
 });

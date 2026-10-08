@@ -41,13 +41,15 @@ test('candidate date evidence is retained without declaring it a selected source
   assert.deepEqual(readSalesData(raw, 'msk', '2026-06').source, raw.source);
   assert.deepEqual(readSalesCatalog({ ...fixture.catalog, source: raw.source }).source, raw.source);
 });
-test('forecast retains shared original axis and unit-aware long CSV; lines do not bridge nulls', () => {
+test('forecast separates area and percentage axes and retains complete unit-aware CSV', () => {
   const chart = fixture.detail().charts[0], option = salesChartOption(chart, 'dark');
-  assert.equal(Array.isArray(option.yAxis), false);
-  assert.equal(option.yAxis.name, '');
+  assert.equal(Array.isArray(option.yAxis), true);
+  assert.deepEqual(option.yAxis.map(axis => axis.name), ['тыс. м²', '%']);
+  assert.equal(option.series[0].yAxisIndex, 0);
+  assert.equal(option.series[1].yAxisIndex, 1);
   assert.equal(option.series[0].data[0], 1000);
   assert.equal(option.series[1].data[0], 80);
-  assert.equal(option.series[0].data[2], null);
+  assert.equal(option.xAxis.data.includes('2028'), false);
   assert.equal(option.tooltip.trigger, 'item');
   const rows = salesChartRows(chart);
   assert.equal(rows.length, 17);

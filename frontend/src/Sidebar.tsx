@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Building2, ChevronDown, ChevronLeft, House, Landmark, Moon, PanelLeftClose, Settings2, Sun, UserRound, X } from 'lucide-react';
 import type { Theme } from './types';
+import './home-navigation.css';
 
 export default function Sidebar({ theme, onTheme, open, onClose, compact, onCompact, path, onNavigate }: { theme: Theme; onTheme: () => void; open: boolean; onClose: () => void; compact: boolean; onCompact: () => void; path: string; onNavigate: (href: string) => void }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
@@ -17,7 +18,7 @@ export default function Sidebar({ theme, onTheme, open, onClose, compact, onComp
   }
   return <>
     {open && <button className="nav-scrim" onClick={onClose} aria-label="Закрыть навигацию" />}
-    <aside className={`sidebar ${open ? 'is-open' : ''} ${compact ? 'is-compact' : ''}`}>
+    <aside className={`sidebar dashboard-navigation ${open ? 'is-open' : ''} ${compact ? 'is-compact' : ''}`}>
       <div className="brand"><div className="brand-mark"><img src="/brand-moscow.svg" alt="" /></div><div className="brand-text"><strong>Аналитика Москвы</strong><span>Недвижимость и экономика</span></div><button className="icon-button mobile-close" onClick={onClose} title="Закрыть навигацию"><X size={18} /></button></div>
       <div className="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <nav aria-label="Разделы аналитики">

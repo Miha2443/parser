@@ -71,9 +71,20 @@ export async function loadMarketCatalog(kind: MarketKind, signal: AbortSignal) {
 export async function loadMarketReport(kind: MarketKind, selection: MarketSelection, signal: AbortSignal) { const v: unknown = await (await request(marketUrl(kind, selection), signal)).json(); return kind === 'annual' ? readAnnualReport(v, selection) : readConstructionReport(v, selection as ConstructionSelection); }
 const escape = (v: string) => v.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const tones = (theme: Theme) => ({ muted: theme === 'light' ? '#606975' : '#b2bac5', line: theme === 'light' ? '#e4e8ed' : '#363a40' });
-export function annualChartOption(c: AnnualChart, theme: Theme): EChartsCoreOption {
-  const t = tones(theme);
-  return { grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true }, tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(c.unit)}` }, xAxis: { type: 'category', data: c.rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } }, yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: (v: number) => number(v, 1) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } }, series: c.series.map((s, i) => ({ type: 'bar', stack: c.id, name: s.name, data: s.points.map(p => p.y), itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: c.totals && i === c.series.length - 1, position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => { const values = c.series.map(s => s.points[p.dataIndex].y); return values.some(v => v === null) ? '' : number(values.reduce<number>((sum, v) => sum + (v ?? 0), 0), 1); } } })), media: [{ query: { maxWidth: 600 }, option: { series: c.series.map(() => ({ label: { show: false } })) } }] };
+export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: string[]): EChartsCoreOption {
+  const t = tones(theme), visible = c.series.filter(s => visibleNames === undefined || visibleNames.includes(s.name)), single = visible.length === 1, topId = visible.at(-1)?.id;
+  const labelled = (id: string) => id === topId && (single || c.totals);
+  return {
+    grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(c.unit)}` },
+    xAxis: { type: 'category', data: c.rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
+    yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: (v: number) => number(v, 1) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
+    series: c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: s.points.map(p => p.y), itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {
+      const values = visible.map(s => s.points[p.dataIndex].y);
+      return values.some(v => v === null) ? '' : number(values.reduce<number>((sum, v) => sum + (v ?? 0), 0), 1);
+    } } })),
+    media: [{ query: { maxWidth: 600 }, option: { series: c.series.map(s => ({ label: { show: single && labelled(s.id) } })) } }],
+  };
 }
 export function permitChartOption(p: ConstructionReport['permits'], theme: Theme): EChartsCoreOption {
   const c = p.chart! , t = tones(theme);

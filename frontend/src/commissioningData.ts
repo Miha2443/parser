@@ -14,7 +14,7 @@ export type LinearCatalog = CommissioningMetadata & { years: { id: string; label
 export type ValuePoint = { value: number | null };
 export type OperationalTable = ReportTable & { chart: { x: string[]; period: ValuePoint[]; remainder: ValuePoint[]; totals: ValuePoint[]; growth: ValuePoint[] } };
 export type StructureRow = { id: string; label: string; value: number | null };
-export type OperationalReport = CommissioningMetadata & { selection: OperationalSelection; currentYear: number; periodLabel: string; region: string; tables: OperationalTable[]; tree: Record<string, number | null>; treeRows: StructureRow[]; sourceDetails: { file: string | null; date: string | null }; notes: string[] };
+export type OperationalReport = CommissioningMetadata & { selection: OperationalSelection; currentYear: number; periodLabel: string; region: string; tables: OperationalTable[]; tree: Record<string, number | null>; treeGrowth?: Record<string, number | null>; treeRows: StructureRow[]; sourceDetails: { file: string | null; date: string | null }; notes: string[] };
 export type LinearRow = { code: string; indicator: string; unit: string; year: number; quarter: number; plan: number | null; fact: number | null; percent: number | null };
 export type LinearReport = CommissioningMetadata & { selection: LinearSelection; summary: LinearRow[]; trend: LinearRow[]; allPeriods: LinearRow[] };
 export type CommissioningCatalog = OperationalCatalog | LinearCatalog;
@@ -70,7 +70,7 @@ export function readOperationalReport(value: unknown, expected: OperationalSelec
   const treeRows = distinct(list(v.treeRows, value => { const r = obj(value); return { id: id(r.id), label: str(r.label), value: num(r.value) }; }), r => r.id);
   if (treeRows.some(row => !Object.hasOwn(tree, row.id) || tree[row.id] !== row.value)) throw invalid();
   const sourceDetails = obj(v.sourceDetails);
-  return { ...metadata(v), selection, currentYear: int(v.currentYear, 1, 9999), periodLabel: str(v.periodLabel), region: str(v.region), tables, tree, treeRows, sourceDetails: { file: nullableStr(sourceDetails.file), date: nullableStr(sourceDetails.date) }, notes: list(v.notes, str) };
+  return { ...metadata(v), selection, currentYear: int(v.currentYear, 1, 9999), periodLabel: str(v.periodLabel), region: str(v.region), tables, tree, ...(v.treeGrowth === undefined ? {} : { treeGrowth: Object.fromEntries(Object.entries(obj(v.treeGrowth)).map(([key, value]) => [key, num(value)])) }), treeRows, sourceDetails: { file: nullableStr(sourceDetails.file), date: nullableStr(sourceDetails.date) }, notes: list(v.notes, str) };
 }
 function linearRow(value: unknown): LinearRow { const r = obj(value); return { code: id(r.code), indicator: str(r.indicator), unit: str(r.unit), year: int(r.year, 1, 9999), quarter: int(r.quarter, 1, 4), plan: num(r.plan), fact: num(r.fact), percent: num(r.percent) }; }
 export function readLinearReport(value: unknown, expected: LinearSelection): LinearReport {

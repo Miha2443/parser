@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, Building2, ChevronLeft, ChevronRight, Database, Download, RefreshCw, Search } from 'lucide-react';
 import { Chart } from './Chart';
 import ApartmentExport from './ApartmentExport';
@@ -8,6 +9,7 @@ import type { ApartmentDetail, ApartmentMetadata, ApartmentOverview, ApartmentRo
 import { distributionOption, roomsOption } from './apartmentCharts';
 import { date, exportCsv, number, percent } from './format';
 import type { Theme } from './types';
+import './visual-polish.css';
 
 type Change = (values: Record<string, string | null>, replace?: boolean) => void;
 function Empty({ text = 'Нет данных.' }: { text?: string }) { return <div className="empty-state"><Database size={20} /><span>{text}</span></div>; }
@@ -15,8 +17,10 @@ function Metric({ label, value, unit, foot, digits = 1 }: { label: string; value
   return <div className="metric"><span className="metric-label">{label}</span><div className="metric-number">{number(value, digits)}<span>{unit}</span></div>{foot && <span className="metric-foot">{foot}</span>}</div>;
 }
 function RoomStrip({ rooms }: { rooms: Room[] }) {
+  const [tooltip, setTooltip] = useState<{ label: string; left: number; top: number } | null>(null);
   const label = roomTypes.map(type => `${type}: ${percent(rooms.find(r => r.type === type)?.sharePercent)}`).join('; ');
-  return <div className="apartment-room-strip" role="img" aria-label={label} title={label}>{roomWidths(rooms).map(r => r.width > 0 && <i key={r.type} style={{ width: `${r.width}%`, background: roomColors[roomTypes.indexOf(r.type)] }} title={`${r.type}: ${percent(r.sharePercent)}`} />)}</div>;
+  function show(element: HTMLElement, label: string) { const box = element.getBoundingClientRect(); setTooltip({ label, left: Math.max(10, Math.min(box.left, window.innerWidth - 190)), top: box.top > 48 ? box.top - 36 : box.bottom + 8 }); }
+  return <div className="apartment-room-strip" role="group" aria-label={label}>{roomWidths(rooms).map(r => r.width > 0 && <i key={r.type} tabIndex={0} role="img" aria-label={`${r.type}: ${percent(r.sharePercent)}`} style={{ width: `${r.width}%`, background: roomColors[roomTypes.indexOf(r.type)] }} onMouseEnter={event => show(event.currentTarget, `${r.type}: ${percent(r.sharePercent)}`)} onMouseLeave={() => setTooltip(null)} onFocus={event => show(event.currentTarget, `${r.type}: ${percent(r.sharePercent)}`)} onBlur={() => setTooltip(null)} />)}{tooltip && createPortal(<div className="room-hover-tooltip" role="tooltip" style={{ left: tooltip.left, top: tooltip.top }}>{tooltip.label}</div>, document.body)}</div>;
 }
 function VolumeTable({ rows, title, scope, params, change, navigate, region, selected }: { rows: ApartmentRow[]; title: string; scope: string; params: URLSearchParams; change: Change; navigate?: (href: string) => void; region: string; selected?: string }) {
   const searchKey = `${scope}Search`, pageKey = `${scope}Page`, sizeKey = `${scope}Size`;
@@ -70,7 +74,7 @@ export default function Apartments({ detail, theme, query, change, navigate }: {
       {profile && <>
         <p className="muted apartment-ranking">Место по объёму строительства в регионе: {number(profile.summary.place)} из {number(profile.summary.totalDevelopers)}</p>
         <div className="kpi-band"><Metric label="Квартиры" value={profile.summary.countThousand} unit="тыс. шт." /><Metric label="Площадь" value={profile.summary.areaThousandM2} unit="тыс. м²" digits={0} /><Metric label="Средняя площадь квартиры" value={profile.summary.averageAreaM2} unit="м²" foot={profile.referenceAverages.map(r => `${catalog?.regions.find(item => item.id === r.region)?.label ?? r.region}: ${number(r.averageAreaM2, 1)} м²`).join(' · ')} /><Metric label="Доля рынка региона" value={profile.summary.marketSharePercent} unit="%" digits={2} foot={`База рынка: ${number(profile.summary.marketBaseAreaThousandM2, 1)} тыс. м²`} /></div>
-        <section className="section"><div className="section-heading"><h2>Структура портфеля по комнатности</h2></div><div className="apartment-rooms-grid"><div>{profile.rooms.some(r => r.sharePercent !== null && r.sharePercent > 0) ? <Chart key={`${profile.region}-${profile.developer.id}`} theme={theme} label="Структура портфеля по комнатности" option={roomsOption(profile.rooms, theme)} height={260} rows={[["Тип", "Доля, %"], ...profile.rooms.map(r => [r.type, r.sharePercent])]} filename={`apartments-${profile.region}-${profile.developer.id}-rooms`} /> : <Empty text="Нет данных по комнатности." />}</div><div><table><thead><tr><th>Тип квартиры</th><th>Доля источника, %</th></tr></thead><tbody>{roomTypes.map((type, i) => <tr key={type}><th scope="row"><span className="apartment-room-label"><i style={{ background: roomColors[i] }} />{type}</span></th><td>{percent(profile.rooms.find(r => r.type === type)?.sharePercent)}</td></tr>)}</tbody></table><RoomStrip rooms={profile.rooms} /></div></div></section>
+<section className="section"><div className="section-heading"><h2>Структура портфеля по комнатности</h2></div><div className="apartment-rooms-grid"><div>{profile.rooms.some(r => r.sharePercent !== null && r.sharePercent > 0) ? <Chart key={`${profile.region}-${profile.developer.id}`} theme={theme} label="Структура портфеля по комнатности" option={roomsOption(profile.rooms, theme)} legendHints={Object.fromEntries(profile.rooms.map(room => [room.type, `${room.type}: ${percent(room.sharePercent)}`]))} height={260} rows={[["Тип", "Доля, %"], ...profile.rooms.map(r => [r.type, r.sharePercent])]} filename={`apartments-${profile.region}-${profile.developer.id}-rooms`} /> : <Empty text="Нет данных по комнатности." />}</div><div><table><thead><tr><th>Тип квартиры</th><th>Доля источника, %</th></tr></thead><tbody>{roomTypes.map((type, i) => <tr key={type}><th scope="row"><span className="apartment-room-label"><i style={{ background: roomColors[i] }} />{type}</span></th><td>{percent(profile.rooms.find(r => r.type === type)?.sharePercent)}</td></tr>)}</tbody></table><RoomStrip rooms={profile.rooms} /></div></div></section>
         <VolumeTable rows={profile.comparison} title="Сравнение с топ-10 девелоперов региона" scope="comparison" params={params} change={change} region={profile.region} selected={profile.developer.id} />
       </>}
     </>}

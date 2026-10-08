@@ -250,6 +250,10 @@ export function economicsChartOption(chart: EconomicsChart, theme: Theme): EChar
   const order = (x: string | number) => orders.get(x) ?? (typeof x === 'number' ? x * 100 : /^\d{4}$/.test(x) ? Number(x) * 100 : 0);
   slots.sort((a, b) => order(a.x) - order(b.x) || a.occurrence - b.occurrence);
   const muted = theme === 'light' ? '#606975' : '#b2bac5', line = theme === 'light' ? '#e4e8ed' : '#363a40';
+  const indexValues = chart.series.flatMap(series => series.points.map(point => point.y)).filter((value): value is number => value !== null);
+  const indexedAxis = chart.unit === '%' && !chart.stack && indexValues.length > 0;
+  const low = indexedAxis ? Math.min(...indexValues) : 0, high = indexedAxis ? Math.max(...indexValues) : 0;
+  const padding = Math.max((high - low) * .15, .2);
   return {
     grid: { left: 6, right: 16, top: 36, bottom: 12, containLabel: true },
     tooltip: { trigger: 'item', confine: true, className: 'economics-tooltip', formatter: (p: { seriesIndex: number; seriesName: string; name: string; value: number | null; dataIndex: number }) => {
@@ -258,7 +262,7 @@ export function economicsChartOption(chart: EconomicsChart, theme: Theme): EChar
     } },
     xAxis: { type: 'category', data: slots.map(p => String(p.x)), boundaryGap: chart.kind === 'bar', axisLine: { show: false }, axisTick: { show: false },
       axisLabel: { color: muted, fontSize: 11, hideOverlap: true, interval: 'auto', alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: chart.unit, nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 11, formatter: (n: number) => number(n, Math.abs(n) < 10 ? 1 : 0) }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
+    yAxis: { type: 'value', name: chart.unit, ...(indexedAxis ? { scale: true, min: Math.floor((low - padding) * 10) / 10, max: Math.ceil((high + padding) * 10) / 10 } : {}), nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 11, formatter: (n: number) => number(n, indexedAxis || Math.abs(n) < 10 ? 1 : 0) }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
     series: chart.series.map((series, i) => ({ name: series.name, type: chart.kind, ...(chart.stack ? { stack: 'structure' } : {}),
       data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null),
       itemStyle: { color: colors.get(series.name) }, lineStyle: { color: colors.get(series.name), width: 2, type: series.id === 'total' ? 'dashed' : 'solid' },

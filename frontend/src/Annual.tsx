@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Database, Download, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { Chart } from './Chart';
+import { getInstanceByDom } from 'echarts/core';
 import { ApiError, request } from './data';
 import { date, exportCsv, number } from './format';
-import { CommissioningEmpty, CommissioningEvidence, CommissioningState, CommissioningTable } from './Operational';
+import { CommissioningEmpty, CommissioningEvidence, CommissioningState } from './Operational';
 import type { CommissioningChange } from './Operational';
 import { annualChartOption, annualSummaryRows, marketParams, marketUrl, tableRows } from './annualConstructionData';
-import type { MarketKind, MarketSelection } from './annualConstructionData';
+import type { AnnualChart, MarketKind, MarketSelection } from './annualConstructionData';
 import { useAnnualConstructionData } from './useAnnualConstructionData';
 import type { Theme } from './types';
+
+function AnnualChartView({ chart, theme, filename }: { chart: AnnualChart; theme: Theme; filename: string }) {
+  const root = useRef<HTMLDivElement>(null), [visible, setVisible] = useState<string[]>();
+  useEffect(() => {
+    const canvas = root.current?.querySelector<HTMLDivElement>('.chart-canvas'), instance = canvas && getInstanceByDom(canvas);
+    if (!instance) return;
+    const onLegend = (event: unknown) => { const { selected } = event as { selected: Record<string, boolean> }; setVisible(chart.series.filter(s => selected[s.name] !== false).map(s => s.name)); };
+    instance.on('legendselectchanged', onLegend);
+    return () => { instance.off('legendselectchanged', onLegend); };
+  }, [chart]);
+  return <div ref={root}><Chart theme={theme} label={chart.title} height={360} option={annualChartOption(chart, theme, visible)} rows={tableRows(chart)} filename={filename} /></div>;
+}
 
 export function MarketExport({ kind, selection, version }: { kind: MarketKind; selection: MarketSelection; version: string }) {
   const active = useRef<AbortController>(), scope = JSON.stringify([kind, selection, version]), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -30,9 +43,8 @@ export default function Annual({ theme, query, change }: { theme: Theme; query: 
     {error || !catalog || selection && !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption="Годовой ввод" /> : !selection ? <CommissioningEmpty text="Нет доступных регионов." /> : data && <><div className="developer-heading commissioning-heading"><div className="developer-name"><h2>{data.region.label}</h2><span className="region-label">2011–2026 · млн м²</span></div><MarketExport kind="annual" selection={selection} version={data.version} /></div>
       {!!data.notes.length && <div className="annual-method-notes">{data.notes.map((n, i) => <p key={i} className="method-note">{n}</p>)}</div>}
       <nav className="section-nav" aria-label="Разделы годового ввода">{data.charts.map(c => <a key={c.id} href={`#annual-${c.id}`}>{c.title}</a>)}</nav>
-      {data.charts.map(c => <section className="section annual-report-section" key={c.id} id={`annual-${c.id}`}><div className="section-heading"><div><h2>{c.title}</h2><p>{data.region.label} · {c.rows.length ? `${String(c.rows[0].year)}–${String(c.rows.at(-1)!.year)}` : 'Нет данных'} · {c.unit}</p></div></div>{c.rows.length && c.series.length ? <Chart key={`${data.version}-${selection.region}-${c.id}`} theme={theme} label={c.title} height={360} option={annualChartOption(c, theme)} rows={tableRows(c)} filename={`annual-${selection.region}-${c.id}`} /> : <CommissioningEmpty />}
-        {!!c.summaries.length && <div className="annual-summaries"><div className="annual-summary-heading"><h3>Итоги периодов</h3><button className="icon-button" title={`Скачать итоги CSV: ${c.title}`} aria-label={`Скачать итоги CSV: ${c.title}`} onClick={() => exportCsv(annualSummaryRows(c), `annual-${selection.region}-${c.id}-totals.csv`)}><Download size={16} /></button></div>{c.summaries.map((s, i) => <div key={i} className="annual-summary-period"><h4>{s.from}–{s.to}</h4><dl>{s.values.map(v => <div key={v.id}><dt>{v.label}</dt><dd>{number(v.value, 1)}<span>{c.unit}</span></dd></div>)}</dl></div>)}</div>}
-        <CommissioningTable table={c} params={params} change={change} scope={`annual${c.id}`} filename={`annual-${selection.region}-${c.id}`} cellText={(v, col) => typeof v === 'number' ? number(v, col === 'year' ? 0 : 1) : v ?? '—'} />
+      {data.charts.map(c => <section className="section annual-report-section" key={c.id} id={`annual-${c.id}`}><div className="section-heading"><div><h2>{c.title}</h2><p>{data.region.label} · {c.rows.length ? `${String(c.rows[0].year)}–${String(c.rows.at(-1)!.year)}` : 'Нет данных'} · {c.unit}</p></div></div>{c.rows.length && c.series.length ? <AnnualChartView key={`${data.version}-${selection.region}-${c.id}`} chart={c} theme={theme} filename={`annual-${selection.region}-${c.id}`} /> : <CommissioningEmpty />}
+        {!!c.summaries.length && <details className="annual-summary-disclosure"><summary>Итоги периодов</summary><div className="annual-summaries"><div className="annual-summary-heading"><h3>Итоги периодов</h3><button className="icon-button" title={`Скачать итоги CSV: ${c.title}`} aria-label={`Скачать итоги CSV: ${c.title}`} onClick={() => exportCsv(annualSummaryRows(c), `annual-${selection.region}-${c.id}-totals.csv`)}><Download size={16} /></button></div>{c.summaries.map((s, i) => <div key={i} className="annual-summary-period"><h4>{s.from}–{s.to}</h4><dl>{s.values.map(v => <div key={v.id}><dt>{v.label}</dt><dd>{number(v.value, 1)}<span>{c.unit}</span></dd></div>)}</dl></div>)}</div></details>}
       </section>)}{!data.charts.length && <CommissioningEmpty />}</>}
     {metadata && <CommissioningEvidence metadata={metadata} anchor="annual-sources" />}<footer className="page-footer"><span>Аналитика Москвы</span><span>Годовой ввод · API</span></footer></main>;
 }

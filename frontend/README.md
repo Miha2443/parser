@@ -384,6 +384,30 @@ override with `DASHBOARD_TEST_URL`. It verifies 14 routes in both themes at
 TDM sends are covered separately with fixtures, not public provider requests
 or real outbound messages.
 
+## Chart Layout And Data Disclosures
+
+The home page groups real-estate navigation into current construction,
+commissioning, and developer profile. Expandable sidebar groups use larger,
+bold headings distinct from page links.
+
+Chart-only controls sit next to their chart. Operational commissioning retains
+independent `housingMonth` and `nonresMonth` URL selections; its quarterly
+structure uses only year, quarter, and cumulative mode. All twelve months are
+selectable, but missing source observations remain missing. Quarterly structure
+and previous-year comparisons use the API values, not presentation examples.
+
+Chart data and segment tables start collapsed. Economics raw/pivot tables share
+the chart's data disclosure rather than duplicating it. CSV retains complete
+source rows. Forecast charts omit only all-null year buckets and separate area
+from percentages; index charts use an observed-range axis without changing data.
+Apartment room strips expose source percentages on hover or keyboard focus.
+
+`node src/design-polish.browser.cjs` checks 48 live layouts across dark/light
+themes and 360/1280/1920 px, independent filters, collapsed data, exports, and
+room-strip tooltips. It defaults to port 5180; set `DASHBOARD_TEST_URL` to change
+the URL. Screenshots and results are in `%TEMP%/dashboard-design-polish`.
+This batch passed 89 frontend unit tests and 105 backend tests.
+
 ## Brand Assets
 
 `public/brand-moscow.svg`, `brand-gk.svg` and `brand-dgp.svg` reuse the existing

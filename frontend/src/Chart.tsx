@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as echarts from 'echarts/core';
 import { BarChart, PieChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, LegendComponent, GraphicComponent, AriaComponent } from 'echarts/components';
@@ -9,7 +9,7 @@ import type { AnnualRow, Areas, CategoryKey, Delay, Theme } from './types';
 
 echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, GraphicComponent, AriaComponent, CanvasRenderer]);
 type ChartOption = echarts.EChartsCoreOption;
-export function Chart({ option, theme, label, rows, filename, height = 310 }: { option: ChartOption; theme: Theme; label: string; rows: (string | number | null)[][]; filename: string; height?: number }) {
+export function Chart({ option, theme, label, rows, filename, height = 310, legendHints = {}, dataContent }: { option: ChartOption; theme: Theme; label: string; rows: (string | number | null)[][]; filename: string; height?: number; legendHints?: Record<string, string>; dataContent?: ReactNode }) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<echarts.ECharts>();
   const [showData, setShowData] = useState(false);
@@ -28,10 +28,10 @@ export function Chart({ option, theme, label, rows, filename, height = 310 }: { 
     instance.current?.setOption({ ...option, legend: { show: false, selected: Object.fromEntries(legendItems.map(item => [item.name, !hidden.includes(item.name)])) }, backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif', color: theme === 'light' ? '#454b54' : '#c3c9d1' }, aria: { enabled: true }, animationDuration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350 }, true);
   }, [option, theme, hidden]);
   return <div className="chart-block">
-    <div className="legend chart-legend">{legendItems.map(item => <button key={item.name} className={hidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(item.name)} title={`${hidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onClick={() => { instance.current?.dispatchAction({ type: 'legendToggleSelect', name: item.name }); setHidden(prev => prev.includes(item.name) ? prev.filter(n => n !== item.name) : [...prev, item.name]); }}><i style={{ background: item.color }} />{item.name}</button>)}</div>
+    <div className="legend chart-legend">{legendItems.map((item, index) => <button key={item.name} className={hidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(item.name)} title={legendHints[item.name] ?? `${hidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onMouseEnter={() => { if (series[0]?.type === 'pie') instance.current?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: index }); }} onMouseLeave={() => instance.current?.dispatchAction({ type: 'hideTip' })} onFocus={() => { if (series[0]?.type === 'pie') instance.current?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: index }); }} onBlur={() => instance.current?.dispatchAction({ type: 'hideTip' })} onClick={() => { instance.current?.dispatchAction({ type: 'legendToggleSelect', name: item.name }); setHidden(prev => prev.includes(item.name) ? prev.filter(n => n !== item.name) : [...prev, item.name]); }}><i style={{ background: item.color }} />{item.name}</button>)}</div>
     <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={label} />
     <div className="chart-data"><button className="data-toggle" onClick={() => setShowData(!showData)} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
-    {showData && <div className="chart-data-panel"><div className="export-actions"><button onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button onClick={() => { const chart = instance.current; if (chart) download(chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: theme === 'light' ? '#ffffff' : '#202225' }), `${filename}.png`); }}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 1) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}
+{showData && <div className="chart-data-panel"><div className="export-actions"><button onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button onClick={() => { const chart = instance.current; if (chart) download(chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: theme === 'light' ? '#ffffff' : '#202225' }), `${filename}.png`); }}><ImageDown size={15} />PNG</button></div>{dataContent ?? <div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 1) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div>}</div>}
   </div>;
 }
 const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');

@@ -90,14 +90,20 @@ function color(name: string, index: number, theme: Theme) {
 const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 type TooltipPoint = { seriesIndex: number; seriesName: string; name: string; value: number | null };
 export function salesChartOption(chart: SalesChart, theme: Theme): EChartsCoreOption {
-  // Retain duplicate occurrences and forecast order; monthly gaps align by date.
+  // Retain duplicate observations, but omit forecast buckets empty in every series.
   const slots: { x: string; occurrence: number }[] = [];
   const indexed = chart.series.map(s => {
     const seen = new Map<string, number>();
     return s.points.map(p => { const occurrence = seen.get(p.x) ?? 0; seen.set(p.x, occurrence + 1); if (!slots.some(slot => slot.x === p.x && slot.occurrence === occurrence)) slots.push({ x: p.x, occurrence }); return { ...p, occurrence }; });
   });
   if (chart.kind === 'line' && slots.every(p => /^\d{4}-(0[1-9]|1[0-2])$/.test(p.x))) slots.sort((a, b) => a.x.localeCompare(b.x) || a.occurrence - b.occurrence);
+  if (chart.id === 'forecast') {
+    for (let i = slots.length - 1; i >= 0; i--) if (!indexed.some(series => series.some(point => point.x === slots[i].x && point.occurrence === slots[i].occurrence && point.y !== null))) slots.splice(i, 1);
+    if (slots.every(slot => /^\d{4}\+?$/.test(slot.x))) slots.sort((a, b) => Number(a.x.replace('+', '')) - Number(b.x.replace('+', '')) || Number(a.x.endsWith('+')) - Number(b.x.endsWith('+')) || a.occurrence - b.occurrence);
+  }
   const muted = theme === 'light' ? '#606975' : '#b2bac5', line = theme === 'light' ? '#e4e8ed' : '#363a40';
+  const dual = chart.id === 'forecast' && chart.series.some(series => series.unit === '%') && chart.series.some(series => series.unit !== '%');
+  const axis = (unit: string) => ({ type: 'value' as const, name: unit, nameTextStyle: { color: muted }, axisLabel: { color: muted, fontSize: 11, formatter: (v: number) => number(v) }, splitLine: { show: unit !== '%' || !dual, lineStyle: { color: line, type: 'dashed' as const } } });
   return {
     grid: { left: 6, right: 12, top: 36, bottom: 12, containLabel: true },
     tooltip: { trigger: chart.kind === 'line' ? 'axis' : 'item', confine: true, className: 'sales-tooltip', formatter: (value: TooltipPoint | TooltipPoint[]) => {
@@ -105,7 +111,7 @@ export function salesChartOption(chart: SalesChart, theme: Theme): EChartsCoreOp
       return points.map(p => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(chart.series[p.seriesIndex].unit)}`).join('<br/>');
     } },
     xAxis: { type: 'category', data: slots.map(p => p.x), boundaryGap: chart.kind === 'bar', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, fontSize: 11, hideOverlap: true, interval: 'auto', alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: chart.unit, nameTextStyle: { color: muted }, axisLabel: { color: muted, fontSize: 11, formatter: (v: number) => number(v) }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
-    series: chart.series.map((s, i) => ({ name: s.name, type: chart.kind, data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null), itemStyle: { color: color(s.name, i, theme) }, lineStyle: { color: color(s.name, i, theme), width: 2 }, symbolSize: 7, showSymbol: true, connectNulls: false, barMaxWidth: 40, emphasis: { focus: 'series' } })),
+    yAxis: dual ? [axis(chart.series.find(series => series.unit !== '%')!.unit), axis('%')] : axis(chart.unit),
+    series: chart.series.map((s, i) => ({ name: s.name, type: chart.kind, ...(dual ? { yAxisIndex: s.unit === '%' ? 1 : 0 } : {}), data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null), itemStyle: { color: color(s.name, i, theme) }, lineStyle: { color: color(s.name, i, theme), width: 2 }, symbolSize: 7, showSymbol: true, connectNulls: false, barMaxWidth: 40, emphasis: { focus: 'series' } })),
   };
 }

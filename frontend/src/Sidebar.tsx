@@ -27,7 +27,7 @@ export default function Sidebar({ theme, onTheme, open, onClose, compact, onComp
       <nav aria-label="Разделы аналитики">
         <a className="nav-heading home-link" href={root} target="_blank" rel="noreferrer" title="Главная · Streamlit"><House size={17} /><span>Главная</span><ArrowUpRight size={13} /></a>
         {group('market', 'Рынок недвижимости', <Building2 size={17} />, <>
-          {group('construction', 'Текущее строительство', null, <><Link title="Оперативные данные" path="0_Текущее_строительство" />{local('Квартирография', '/apartments')}<Link title="Карта объектов" path="9_Карта_объектов" /><Link title="Распроданность" path="6_Распроданность" /></>, true)}
+          {group('construction', 'Текущее строительство', null, <><Link title="Оперативные данные" path="0_Текущее_строительство" />{local('Квартирография', '/apartments')}<Link title="Карта объектов" path="9_Карта_объектов" />{local('Распроданность', '/sales')}</>, true)}
           {group('commissioning', 'Ввод недвижимости', null, <><Link title="Оперативный ввод" path="8_Ввод_недвижимости_оперативные" /><Link title="Годовой ввод" path="8_Ввод_недвижимости" /><Link title="Линейные объекты" path="8_Ввод_линейных_объектов" /></>, true)}
           {group('profile', 'Профиль застройщика', null, <>{local('Профиль', '/', <UserRound size={15} />)}{local('Квартирография по застройщику', '/apartments/developer')}</>, true)}
         </>)}

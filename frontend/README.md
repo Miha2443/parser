@@ -1,11 +1,11 @@
-# Developer Dashboard: Profile And Apartments
+# Developer Dashboard: Profile, Apartments And Sales
 
 Просмотр на текущей машине: http://localhost:5173.
 Утверждённое оформление сохранено; профиль подключён к API и полному экспорту Excel.
 Дорожная карта: `../docs/dashboard-roadmap.md`.
 
 React + TypeScript + Vite, ECharts canvas charts and Lucide controls. API is the
-default data mode. Profile and the two apartment pages run locally in React;
+default data mode. Profile, the two apartment pages and sales run locally in React;
 other pages remain in Streamlit. No backend or data files
 are changed by this frontend.
 
@@ -156,6 +156,56 @@ With `DASHBOARD_CHECK_LIVE=1`, it also checks both live overviews, first/rank-11
 developers in each region, summary values and four actual Excel downloads.
 Screenshots and `checks.json` go to the OS temporary directory
 `dashboard-apartments-checks` (override with `APARTMENTS_OUTPUT`).
+
+## Sales And Readiness
+
+`/sales` reuses the approved shell and always reads `/api/v1/sales/catalog`, then
+`/api/v1/sales?region=...&period=YYYY-MM`. Moscow is the initial region when
+available. Missing or unavailable periods default to the latest available month
+in the selected region; switching region selects that region's latest month.
+The region select, period select and month slider use catalog entries only.
+URL parameters `region`, `period` and `table` restore selection on reload and
+history navigation. Each segment retains its own `sales<API table id>Search`,
+`sales<API table id>Page` and `sales<API table id>Size` parameters. Menu navigation
+restores the complete sales query without importing profile/apartment filters.
+Tabs support arrow keys, Home and End; all table rows are searchable/paginated.
+
+Four KPI values, units and precision come from the API without conversion.
+The forecast retains the legacy shared numeric axis, including mixed series units
+and source category order; it is not normalized or moved to a second axis.
+Monthly volume and percentage charts remain separate. Monthly categories align
+chronologically across uneven series without dropping repeated months; CSV keeps
+original point order. Forecast bars show
+individual tooltips; monthly charts use unified hover so overlapping markers
+cannot hide another series. Tooltip values include the series' own unit.
+Nulls remain missing markers/dashes, and lines never connect across nulls.
+Segment tables preserve raw strings (including percentages and dates), empty
+strings, numbers, nulls, all columns and all rows without reparsing their units.
+
+Table CSV exports every row in the active segment regardless of search/page.
+Each chart exports all original points as period/year, series, unit and value;
+hidden series and null points remain in CSV. PNG reflects the current chart view.
+Excel uses `/api/v1/sales/export?region=...&period=...&required_version=...`, pinned
+to the displayed generation, without table or chart filters. HTTP 409 downloads
+nothing and asks for reload. Scope changes cancel pending Excel downloads.
+Data requests abort stale responses and hide old results immediately. HTTP 404
+refreshes the catalog once per filter pair; version reconciliation is bounded per
+catalog generation, allowing successive generation changes on the same filters.
+Persistent mismatch, schema, HTTP and network errors remain visible with retry;
+there is no demo fallback. Source warnings are visible outside metadata details;
+source dates, generation date, version and candidate paths retain API provenance.
+
+Verification commands: `node --test src/sales.test.mjs` and
+`node src/sales.browser.cjs http://127.0.0.1:5173`. Set `NODE_PATH` as above for
+Playwright and `DASHBOARD_CHECK_LIVE=1` to additionally check both live regions,
+earliest/latest periods, all six full table CSVs and four real Excel downloads.
+The browser script covers fixtures, error/retry, sequential generations on the
+same filter pair, persistent mismatch/404 bounds, stale responses, URL history,
+reload, local navigation, keyboard tabs, exports/409, missing data/dates,
+both themes, every series hover and canvas/overflow at 360–1920 px.
+Screenshots and `checks.json` are saved to `%TEMP%/dashboard-sales-checks`;
+override the directory using `SALES_OUTPUT`. Workbook calculations/parity are
+owned and checked by the backend agent, not claimed by these frontend tests.
 
 ## Brand Assets
 

@@ -8,6 +8,7 @@ import ProfileExport from './ProfileExport';
 import { dataMode, useDashboardData } from './useDashboardData';
 import type { Areas, Sales, Source, Theme } from './types';
 import Apartments from './Apartments';
+import SalesPage from './Sales';
 
 function SourceLine({ sources, ids, note }: { sources: Source[]; ids: string[]; note?: string }) {
   const selected = sources.filter(s => ids.includes(s.id));
@@ -55,12 +56,13 @@ export default function App() {
   }
   const detail = path === '/apartments/developer';
   const apartments = detail || path === '/apartments';
-  const title = apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
+  const sales = path === '/sales';
+  const title = sales ? 'Распроданность и стройготовность' : apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
   return <div className={`app-shell ${compact ? 'compact-shell' : ''}`}>
     <Sidebar theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} path={path} onNavigate={navigate} />
     <div className="workspace">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMenu(true)} title="Открыть навигацию"><Menu size={20} /></button><span>Рынок недвижимости</span><ChevronRight size={13} /><strong>{title}</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div></header>
-      {apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}
+      {sales ? <SalesPage theme={theme} query={query} change={change} /> : apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}
     </div>
   </div>;
 }

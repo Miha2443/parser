@@ -1,30 +1,37 @@
 """Local read-only API for the React dashboard."""
 import logging
+from pickle import UnpicklingError
+from zipfile import BadZipFile
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 
 from backend.profile_service import FilterUnavailable, ProfileService, SourceUnavailable
 from backend.apartments_service import ApartmentsService
+from backend.sales_service import SalesService
 from pipeline.data_access import DataContext
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(service=None, apartments_service=None):
+def create_app(service=None, apartments_service=None, sales_service=None):
     app = FastAPI(title="Moscow dashboard", version="1.0.0")
     service = service or ProfileService(DataContext.from_environment())
     app.state.profile_service = service
     apartments_service = apartments_service or ApartmentsService(DataContext.from_environment())
     app.state.apartments_service = apartments_service
+    sales_service = sales_service or SalesService(DataContext.from_environment())
+    app.state.sales_service = sales_service
 
     def call(function, *args, scope="Profile"):
         try:
             return function(*args)
         except FilterUnavailable as exc:
-            detail = "Developer or region is unavailable" if scope == "Apartments" else "Company or region is unavailable"
+            detail = ("Sales region or period is unavailable" if scope == "Sales" else
+                      "Developer or region is unavailable" if scope == "Apartments" else "Company or region is unavailable")
             raise HTTPException(404, detail) from exc
-        except (SourceUnavailable, OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        except (SourceUnavailable, OSError, ValueError, RuntimeError, KeyError, TypeError,
+                BadZipFile, UnpicklingError, EOFError) as exc:
             logger.exception("%s data unavailable", scope)
             raise HTTPException(503, "Source data is unavailable; check server inputs and retry") from exc
 
@@ -77,6 +84,29 @@ def create_app(service=None, apartments_service=None):
         content = call(export_apartments, payload, scope="Apartments")
         return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": 'attachment; filename="apartments.xlsx"',
+                                 "X-Data-Version": payload["version"]})
+
+    @app.get("/api/v1/sales/catalog")
+    def sales_catalog():
+        return call(sales_service.catalog, scope="Sales")
+
+    @app.get("/api/v1/sales")
+    def sales(region: str | None = Query(default=None, min_length=1, max_length=200),
+              period: str | None = Query(default=None, min_length=1, max_length=200)):
+        return call(sales_service.detail, region, period, scope="Sales")
+
+    @app.get("/api/v1/sales/export")
+    def sales_export(required_version: str = Query(min_length=1, max_length=128),
+                     region: str | None = Query(default=None, min_length=1, max_length=200),
+                     period: str | None = Query(default=None, min_length=1, max_length=200)):
+        from backend.sales_export import export_workbook as export_sales
+        payload = call(sales_service.detail, region, period, scope="Sales")
+        if required_version != payload["version"]:
+            raise HTTPException(409, "Source data changed; refresh the displayed sales before exporting",
+                                headers={"X-Data-Version": payload["version"]})
+        content = call(export_sales, payload, scope="Sales")
+        return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="sales-readiness.xlsx"',
                                  "X-Data-Version": payload["version"]})
 
     @app.middleware("http")

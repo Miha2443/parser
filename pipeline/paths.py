@@ -7,15 +7,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-ROOT = Path(os.environ.get("PARSER_ROOT", Path(__file__).resolve().parent.parent))
+ROOT = Path(os.environ.get("PARSER_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 
-DOWNLOADS_DIR = Path(os.environ.get("PARSER_DOWNLOADS", ROOT / "downloads"))
+DOWNLOADS_DIR = Path(os.environ.get("PARSER_DOWNLOADS", ROOT / "downloads")).resolve()
 DATA_DIR = ROOT / "data"
 DATA_RAW = DATA_DIR / "raw"
 DATA_PROCESSED = DATA_DIR / "processed"
 DATA_ARCHIVE = DATA_RAW / "_archive"
 
-STATE_DIR = Path(os.environ.get("PARSER_STATE", ROOT / "state"))
+STATE_DIR = Path(os.environ.get("PARSER_STATE", ROOT / "state")).resolve()
 CONFIG_DIR = ROOT / "config"
 
 ETL_AUDIT_LOG = DATA_PROCESSED / "etl_audit.jsonl"

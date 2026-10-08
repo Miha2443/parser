@@ -7,6 +7,9 @@ venv/
 .vscode/
 node_modules/
 frontend/dist/
+/data-releases/
+/live
+/.live-next
 frontend/.vite/
 frontend/*.tsbuildinfo
 

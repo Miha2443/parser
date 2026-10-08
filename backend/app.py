@@ -1,4 +1,4 @@
-"""Local read-only API for the React dashboard."""
+"""Local dashboard API: read-only analytics and explicit TDM actions."""
 import logging
 from pickle import UnpicklingError
 from zipfile import BadZipFile
@@ -27,13 +27,31 @@ def create_app(service=None, apartments_service=None, sales_service=None):
         try:
             return function(*args)
         except FilterUnavailable as exc:
-            detail = ("Sales region or period is unavailable" if scope == "Sales" else
-                      "Developer or region is unavailable" if scope == "Apartments" else "Company or region is unavailable")
+            detail = {"Sales": "Sales region or period is unavailable",
+                      "Apartments": "Developer or region is unavailable",
+                      "Profile": "Company or region is unavailable"}.get(scope, f"{scope} filter is unavailable")
             raise HTTPException(404, detail) from exc
         except (SourceUnavailable, OSError, ValueError, RuntimeError, KeyError, TypeError,
                 BadZipFile, UnpicklingError, EOFError) as exc:
             logger.exception("%s data unavailable", scope)
             raise HTTPException(503, "Source data is unavailable; check server inputs and retry") from exc
+
+    from backend.linear_routes import create_router as create_linear_router
+    app.include_router(create_linear_router(DataContext.from_environment(), call))
+    from backend.operational_routes import create_router as create_operational_router
+    app.include_router(create_operational_router(DataContext.from_environment(), call))
+    from backend.construction_routes import create_router as create_construction_router
+    app.include_router(create_construction_router(DataContext.from_environment(), call))
+    from backend.annual_routes import create_router as create_annual_router
+    app.include_router(create_annual_router(DataContext.from_environment(), call))
+    from backend.economics_routes import create_router as create_economics_router
+    app.include_router(create_economics_router(DataContext.from_environment(), call))
+    from backend.map_routes import create_router as create_map_router
+    app.include_router(create_map_router(DataContext.from_environment(), call))
+    from backend.updates_routes import create_router as create_updates_router
+    app.include_router(create_updates_router(DataContext.from_environment(), call))
+    from backend.tdm_routes import create_router as create_tdm_router
+    app.include_router(create_tdm_router(DataContext.from_environment()))
 
     @app.get("/api/v1/health")
     def health():

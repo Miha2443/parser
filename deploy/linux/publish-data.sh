@@ -62,7 +62,7 @@ PARSER_ROOT="$release" PARSER_DOWNLOADS="$release/downloads" \
   .venv/bin/python -m pipeline.build_realty_marts --check --strict
 PARSER_ROOT="$release" PARSER_DOWNLOADS="$release/downloads" \
   PARSER_REQUIRE_REALTY_MARTS=1 .venv/bin/python -c \
-  'from backend.profile_service import ProfileService; from pipeline.data_access import DataContext; assert ProfileService(DataContext.from_environment()).catalog()["developers"]'
+  'from backend.profile_service import ProfileService; from pipeline.data_access import DataContext; assert ProfileService(DataContext.from_environment()).catalog()["controls"]["developers"], "No developers in the candidate release"'
 
 final="$ROOT/data-releases/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 [[ ! -e "$final" ]] || { echo 'Release path already exists' >&2; exit 1; }

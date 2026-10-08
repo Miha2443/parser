@@ -38,6 +38,9 @@ jobs:
         run: docker exec parser-debian12 runuser -u parserdash -- bash /opt/parser-dashboard/deploy/linux/setup.sh
       - name: Check services, browser downloads and data publication
         run: docker exec -e PARSER_DEBIAN_SMOKE=1 parser-debian12 bash /opt/parser-dashboard/deploy/linux/tests/check.sh
+      - name: Probe live Monitoring export (external availability)
+        continue-on-error: true
+        run: docker exec -e PARSER_DEBIAN_SMOKE=1 parser-debian12 runuser -u parserdash -- timeout 180 /opt/parser-dashboard/.venv/bin/python /opt/parser-dashboard/deploy/linux/tests/smoke.py source
       - name: Collect diagnostics
         if: always()
         run: |

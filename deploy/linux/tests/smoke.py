@@ -104,6 +104,22 @@ def browser():
         server.server_close()
 
 
+def source():
+    """Probe one live collector without mixing real records into the fixtures."""
+    import nashdom_checker
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory(prefix="debian-live-source-") as directory:
+        nashdom_checker.DOWNLOAD_DIR = Path(directory)
+        nashdom_checker.MONITORING_CHANGES_LOG = Path(directory) / "changes.jsonl"
+        files, changed = nashdom_checker.fetch_monitoring_2_0({})
+        assert files and changed, "The live Monitoring export could not be downloaded/validated"
+        with pd.ExcelFile(files[0]) as book:
+            counts = {sheet: len(book.parse(sheet)) for sheet in ("Реестр РВ", "Реестр ОКС")}
+        assert all(counts.values()), counts
+        print("Live Monitoring download and validation on Debian succeeded:", counts)
+
+
 def get(path):
     import requests
     response = requests.get("http://127.0.0.1:8080" + path, timeout=10)
@@ -197,5 +213,5 @@ def publication_failure():
 
 if __name__ == "__main__":
     guard()
-    {"browser": browser, "seed": seed, "unit": unit, "api": api, "update": update,
+    {"browser": browser, "source": source, "seed": seed, "unit": unit, "api": api, "update": update,
      "refresh": refresh, "publication_failure": publication_failure}[sys.argv[1]]()

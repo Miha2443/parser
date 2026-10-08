@@ -50,7 +50,7 @@ def _validate_downloaded_parts(log) -> int:
 
 
 def main() -> int:
-    log_dir = ROOT / "_to_delete"
+    log_dir = ROOT / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"fedstat_34118_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 

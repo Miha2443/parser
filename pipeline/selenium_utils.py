@@ -1,8 +1,7 @@
 """Общий Selenium-инструментарий для скачивателей (nashdom, erzrf, …).
 
 Вынесено сюда чтобы три модуля не дублировали одну и ту же инициализацию
-Chrome и логику ожидания файла из download_dir. Образец брался с
-`_to_delete/domrf_mortgage.py:66-84`.
+Chrome и логику ожидания файла из download_dir.
 """
 from __future__ import annotations
 

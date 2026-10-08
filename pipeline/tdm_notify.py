@@ -1,7 +1,5 @@
 """Уведомления через TDM Bot API (мэрия Москвы).
 
-Документация: _to_delete/api.pdf (Bot API, февраль 2026)
-
 URL'ы из официальной доки (раздел 6, пример Python-клиента):
     REST API:    https://api.tdm.mos.ru
     SSE:         https://pusher.tdm.mos.ru

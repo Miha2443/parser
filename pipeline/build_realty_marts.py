@@ -95,7 +95,7 @@ def _source_summary(files: list[Path]) -> list[dict[str, Any]]:
             "path": path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix(),
             "size_bytes": st.st_size,
             "mtime_ns": st.st_mtime_ns,
-            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="microseconds"),
         })
     return out
 
@@ -321,7 +321,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
         existing_marts = existing
 
     manifest: dict[str, Any] = {
-        "built_at": datetime.now().isoformat(timespec="seconds"),
+        "built_at": datetime.now().isoformat(timespec="microseconds"),
         "marts": dict(existing_marts),
         "warnings": {
             "tmp_files": [str(p.relative_to(ROOT)).replace("\\", "/") for p in tmp],
@@ -343,7 +343,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             raw_files = spec.raw_files(da)
             manifest["marts"][spec.name] = {
                 "file": str(target.relative_to(ROOT)).replace("\\", "/"),
-                "built_at": datetime.now().isoformat(timespec="seconds"),
+                "built_at": datetime.now().isoformat(timespec="microseconds"),
                 "duration_sec": round(time.time() - started, 2),
                 "summary": _shape_summary(value),
                 "sources": _source_summary(raw_files),
@@ -355,7 +355,7 @@ def build(*, strict: bool = False, only: set[str] | None = None) -> int:
             failures += 1
             manifest["marts"][spec.name] = {
                 "error": f"{type(exc).__name__}: {exc}",
-                "built_at": datetime.now().isoformat(timespec="seconds"),
+                "built_at": datetime.now().isoformat(timespec="microseconds"),
                 "duration_sec": round(time.time() - started, 2),
             }
             print(f"  ERROR: {type(exc).__name__}: {exc}")

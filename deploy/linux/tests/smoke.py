@@ -55,7 +55,7 @@ def unit():
              "backend.tests.test_economics.ServiceAndHttpTests", "backend.tests.test_generation",
              "backend.tests.test_map", "backend.tests.test_linear", "backend.tests.test_sales.CalculationTests",
              "backend.tests.test_sales.ServiceTests", "backend.tests.test_updates", "backend.tests.test_tdm",
-             "backend.tests.test_operational.HistoricalMonthTests"]
+             "backend.tests.test_operational.HistoricalMonthTests", "backend.tests.test_mart_freshness"]
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromNames(names))
     if not result.wasSuccessful():
         raise SystemExit(1)

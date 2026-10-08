@@ -45,3 +45,4 @@ data/gdebenz/
 
 # Логи прогонов update_realty.py (ротация хранит последние 20 на диске)
 logs/
+.venv-dashboard/

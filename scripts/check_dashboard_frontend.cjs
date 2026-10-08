@@ -55,6 +55,7 @@ async function inspect(page, label) {
   const reports = [];
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 });
+    page.setDefaultTimeout(60000);
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(url, { waitUntil: 'networkidle' });
@@ -87,6 +88,12 @@ async function inspect(page, label) {
     ]);
     assert.ok(csv.suggestedFilename().endsWith('.csv'));
     await csv.saveAs(path.join(output, csv.suggestedFilename()));
+    const [excel] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByTitle('Скачать полный профиль Excel', { exact: true }).click(),
+    ]);
+    assert.ok(excel.suggestedFilename().endsWith('.xlsx'));
+    await excel.saveAs(path.join(output, excel.suggestedFilename()));
     const [png] = await Promise.all([
       page.waitForEvent('download'),
       page.getByRole('button', { name: 'PNG', exact: true }).first().click(),
@@ -131,6 +138,7 @@ async function inspect(page, label) {
     for (const profile of snapshot.profiles) {
       const query = new URLSearchParams({ developer: profile.developerKey, region: profile.region });
       await page.goto(`${url}/?${query}`, { waitUntil: 'networkidle' });
+      await page.locator('.chart-canvas canvas').first().waitFor();
       await page.waitForTimeout(400);
       assert.equal(await page.getByRole('combobox', { name: 'Группа компаний', exact: true }).inputValue(), profile.developerKey);
       assert.equal(await page.getByRole('combobox', { name: 'Регион', exact: true }).inputValue(), profile.region);
@@ -138,6 +146,7 @@ async function inspect(page, label) {
     }
     await page.getByRole('combobox', { name: 'Группа компаний', exact: true }).selectOption(snapshot.profiles[0].developerKey);
     await page.getByRole('combobox', { name: 'Регион', exact: true }).selectOption('rf');
+    await page.getByRole('combobox', { name: 'Начальный год', exact: true }).waitFor();
     await page.getByRole('combobox', { name: 'Начальный год', exact: true }).selectOption('2022');
     await page.reload({ waitUntil: 'networkidle' });
     assert.equal(await page.getByRole('combobox', { name: 'Регион', exact: true }).inputValue(), 'rf');
@@ -148,16 +157,17 @@ async function inspect(page, label) {
     await page.getByTitle('Закрыть навигацию', { exact: true }).click();
     assert.equal(await page.locator('.sidebar.is-open').count(), 0);
     const failed = await browser.newPage();
-    await failed.route('**/profile-snapshot.json', route => route.abort());
+    await failed.route('**/api/v1/catalog', route => route.abort());
     await failed.goto(url);
-    await failed.getByRole('heading', { name: 'Нет доступного снимка', exact: true }).waitFor();
-    await failed.unroute('**/profile-snapshot.json');
+    await failed.getByRole('heading', { name: 'Данные API недоступны', exact: true }).waitFor();
+    assert.equal(await failed.locator('.chart-canvas').count(), 0, 'Error must not silently fall back to demo data');
+    await failed.unroute('**/api/v1/catalog');
     await failed.getByRole('button', { name: 'Повторить', exact: true }).click();
     await failed.locator('.chart-canvas canvas').first().waitFor();
     await failed.close();
     assert.equal(errors.length, 0, `Browser errors: ${errors.join('; ')}`);
-    fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify({ url, reports, profileChecks, hoverPoints, errors, downloads: [csv.suggestedFilename(), png.suggestedFilename()] }, null, 2));
-    console.log(`Dashboard browser checks passed: ${reports.length} layouts, ${profileChecks.length} profiles, segment hover, filters, theme, navigation, CSV/PNG and failure recovery.`);
+    fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify({ url, reports, profileChecks, hoverPoints, errors, downloads: [csv.suggestedFilename(), png.suggestedFilename(), excel.suggestedFilename()] }, null, 2));
+    console.log(`Dashboard browser checks passed: ${reports.length} layouts, ${profileChecks.length} profiles, segment hover, filters, theme, navigation, CSV/PNG/Excel and failure recovery.`);
   } finally {
     await browser.close();
   }

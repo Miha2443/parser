@@ -21,6 +21,7 @@ export interface Escrow { credit: number | null; debt: number | null; revenue: n
 export interface RegionProfile {
   id: string;
   label: string;
+  sourceContributions: string[];
   annual: AnnualRow[];
   structures: Structure[];
   construction: Areas | null;
@@ -38,4 +39,7 @@ export interface RegionProfile {
   objects: { title: string; columns: string[]; rows: Record<string, JsonValue>[]; note: string }[];
 }
 export interface Developer { id: string; name: string; regions: RegionProfile[] }
-export interface Snapshot { generatedAt: string | null; sources: Source[]; developers: Developer[]; notes: string[] }
+export interface Snapshot { generatedAt: string | null; version: string | null; frozen: boolean; sources: Source[]; developers: Developer[]; notes: string[] }
+export type ApartmentRegion = 'msk' | 'rf';
+export interface CatalogDeveloper { id: string; name: string; regions: ApartmentRegion[] }
+export interface Catalog { metadata: Snapshot; developers: CatalogDeveloper[]; demo?: Snapshot }

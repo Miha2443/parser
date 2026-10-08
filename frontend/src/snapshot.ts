@@ -35,6 +35,10 @@ function delayNote(card: RecordValue, inputs: RecordValue): string | undefined {
   const missing = [2022, 2023, 2024, 2025].filter(year => !years.includes(year));
   return missing.length ? `Учтены сопоставимые годы: ${years.join(', ')}. Нет данных за ${missing.join(', ')}.` : undefined;
 }
+function qualitySources(value: unknown, inQuality = false): string[] {
+  if (Array.isArray(value)) return value.flatMap(v => qualitySources(v, inQuality));
+  return Object.entries(object(value)).flatMap(([key, child]) => inQuality && key === 'source' && typeof child === 'string' && child ? [child] : qualitySources(child, inQuality || key === 'quality'));
+}
 function adaptProfile(raw: RecordValue): RegionProfile {
   const annual = object(raw.annual), ratings = object(raw.ratings), apartments = object(raw.apartments), rasprod = object(raw.rasprod), delays = object(raw.delays), escrow = object(raw.escrow);
   const donuts = list(raw.categoryDonuts), construction = donuts.find(d => d.id === 'construction');
@@ -46,6 +50,7 @@ function adaptProfile(raw: RecordValue): RegionProfile {
   const quality = object(object(ratings.quality).regions);
   return {
     id: text(raw.region), label: raw.region === 'msk' ? 'Москва' : 'Российская Федерация',
+    sourceContributions: [...new Set(qualitySources(raw))],
     annual: [...rowsByYear.values()].map(r => ({ year: numeric(r.year)!, ...areas(r.valuesM2) })).sort((a, b) => a.year - b.year),
     structures: donuts.filter(d => d.id !== 'construction').map(d => ({ title: structureTitle(d), areas: d.status === 'available' ? segments(d.segments) : {}, sourceId: 'monitoring' })),
     construction: construction?.status === 'available' ? segments(construction.segments) : null,
@@ -65,9 +70,15 @@ function adaptProfile(raw: RecordValue): RegionProfile {
 export function normalizeSnapshot(value: unknown): Snapshot {
   const raw = object(value);
   if (raw.schemaVersion !== 1 || !Array.isArray(raw.profiles)) throw new Error('Формат снимка не поддерживается. Ожидается схема версии 1.');
-  const sourceDates = object(raw.sourceDates), evidence = object(object(raw.provenance).sources);
+  const provenance = object(raw.provenance);
+  const sourceDates = object(raw.sourceDates), evidence = object(provenance.sources);
+  const diagnostics = Array.isArray(provenance.issues) ? provenance.issues.flatMap(issue => Array.isArray(issue) && typeof issue[0] === 'string' && typeof issue[1] === 'string' ? [`Диагностика источника (${issue[0]}): ${issue[1]}`] : []) : [];
+  const frozen = object(raw.controls).frozen !== false;
   const definitions = [ ['monitoring', 'monitoring_2_0', 'Мониторинг 2.0'], ['erz_top', 'erzrf_top', 'ЕРЗ · рейтинги'], ['erz_cards', 'erzrf_cards', 'ЕРЗ · карточки'], ['sales', 'rasprodannost', 'Распроданность'], ['apartments', 'kvartirografia', 'Квартирография'], ['escrow', 'escrow_manual', 'Эскроу'] ];
-  const sources: Source[] = definitions.map(([id, family, label]) => { const entry = object(evidence[family]); return { id, label, date: text(sourceDates[family]) || null, files: Array.isArray(entry.openedInputs) ? entry.openedInputs.map(text) : [], note: 'Дата по метаданным витрины или времени изменения исходного файла; не сертифицированная дата наблюдения либо скачивания.' }; });
+  const sources: Source[] = definitions.map(([id, family, label]) => {
+    const entry = object(evidence[family]), files = frozen ? entry.openedInputs : entry.candidateRawFiles;
+    return { id, label, date: text(sourceDates[family]) || null, files: Array.isArray(files) ? files.map(text) : [], note: `${frozen ? '' : 'Перечень файлов-кандидатов реестра источников, не журнал чтений и не подтверждение вклада в показатели. '}Дата по метаданным витрины или времени изменения исходного файла; не сертифицированная дата наблюдения либо скачивания.` };
+  });
   const developers = new Map<string, Developer>();
   for (const p of list(raw.profiles)) {
     const id = text(p.developerKey), name = text(p.developer);
@@ -75,5 +86,5 @@ export function normalizeSnapshot(value: unknown): Snapshot {
     if (!developers.has(id)) developers.set(id, { id, name, regions: [] });
     developers.get(id)!.regions.push(adaptProfile(p));
   }
-  return { generatedAt: text(raw.generatedAt) || null, sources, developers: [...developers.values()], notes: ['Снимок содержит только реально выгруженные профили и доступные регионы квартирографии. Источники не обновляются при открытии страницы.'] };
+  return { generatedAt: text(raw.generatedAt) || null, version: text(raw.version) || null, frozen, sources, developers: [...developers.values()], notes: [frozen ? 'Снимок содержит только реально выгруженные профили и доступные регионы квартирографии. Источники не обновляются при открытии страницы.' : 'Профиль получен через API. Дата формирования ответа не подтверждает свежесть исходных документов.', ...diagnostics] };
 }

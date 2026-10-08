@@ -65,6 +65,14 @@ select { min-width: 0; width: 100%; height: 38px; padding: 0 30px 0 12px; backgr
 .developer-name h2 { font-size: 22px; font-weight: 650; overflow-wrap: anywhere; }
 .region-label { font-size: 10px; color: var(--muted); border-left: 1px solid var(--line); padding-left: 11px; }
 .streamlit-link { display: inline-flex; gap: 6px; font-size: 10px; color: var(--muted); align-items: center; }
+.profile-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.profile-export { display: flex; align-items: center; gap: 8px; }
+.profile-export > span { max-width: 180px; font-size: 10px; overflow-wrap: anywhere; }
+.developer-heading:has(.profile-export [role="alert"]) { flex-wrap: wrap; }
+.profile-actions:has([role="alert"]) { width: 100%; flex-shrink: 1; }
+.profile-actions:has([role="alert"]) .streamlit-link { margin-left: auto; }
+.sources-section .muted { overflow-wrap: anywhere; }
+button:disabled { cursor: default; opacity: .5; }
 .kpi-band { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 24px 0; }
 .metric { padding: 0 22px; border-right: 1px solid var(--line); min-width: 0; }
 .metric:last-child { border: 0; }
@@ -219,3 +227,37 @@ tbody tr:hover { background: var(--soft); }
 @media (max-width: 960px) { .app-shell, .compact-shell { grid-template-columns: minmax(0, 1fr); } .sidebar, .sidebar.is-compact { position: fixed; left: 0; width: 264px; padding: 0 15px; transform: translateX(-100%); transition: transform 160ms; } .sidebar.is-open { transform: translateX(0); } .nav-scrim { display: block; position: fixed; inset: 0; z-index: 25; background: #0006; border: 0; border-radius: 0; } .mobile-close, .menu-button { display: inline-flex; } .mobile-close { margin-left: auto; width: 27px; border: 0; } .collapse-nav { display: none; } .is-compact .brand-text, .is-compact .nav-caption, .is-compact .nav-heading span, .is-compact .nav-heading .chevron, .is-compact .nav-children, .is-compact .theme-button span { display: revert; } .is-compact .brand { justify-content: start; } .is-compact .nav-heading { justify-content: start; padding: 11px 9px; } .is-compact .sidebar-bottom { flex-direction: row; } .is-compact .theme-button { flex: 1; } .is-compact nav { margin-top: 0; } .filters label.developer-filter { width: 300px; } }
 @media (max-width: 680px) { main { padding: 22px 14px 0; } .topbar { min-height: 54px; padding: 8px 14px; } .breadcrumbs { font-size: 10px; gap: 7px; } .breadcrumbs > span { display: none; } .breadcrumbs > svg { display: none; } .page-heading { align-items: start; gap: 12px; margin-bottom: 22px; } h1 { font-size: 22px; max-width: 225px; } .eyebrow { font-size: 8px; } .snapshot-label { font-size: 9px; max-width: 120px; line-height: 1.5; } .snapshot-label > svg { display: none; } .snapshot-label { grid-template-columns: 1fr; } .snapshot-label > span { grid-column: 1; font-size: 9px; } .filters { flex-wrap: wrap; gap: 12px; } .filters label.developer-filter { width: 100%; } .filters label { width: calc(100% - 110px); } .source-anchor { font-size: 10px; } .developer-name h2 { font-size: 19px; } .developer-name > svg { width: 18px; } .region-label { font-size: 9px; } .kpi-band { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; } .kpi-band .metric { padding: 17px 14px; border-bottom: 1px solid var(--line); } .kpi-band .metric:nth-child(2) { border-right: 0; } .kpi-band .metric:nth-child(n+3) { border-bottom: 0; } .metric-number { font-size: 25px; margin-top: 8px; } .metric-foot { font-size: 8px; } .metric-label { font-size: 10px; } .section-nav { gap: 0 16px; padding-top: 8px; } .section-nav a { font-size: 10px; padding: 9px 0; } .section { padding: 22px 14px 17px; } .section-heading { flex-wrap: wrap; gap: 12px; margin-bottom: 17px; } .section-heading h2 { font-size: 15px; } .legend { gap: 8px 14px; font-size: 9px; } .annual-section { grid-template-columns: minmax(0, 1fr); gap: 24px; } .rating-section { border-left: 0; border-top: 1px solid var(--line); padding: 21px 0 0; } .rating-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; } .rating-row { padding: 13px 0; } .rating-row strong { font-size: 21px; } .donut-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; } .donut-item { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; } .donut-item:last-child { padding-bottom: 0; } .two-columns { grid-template-columns: minmax(0, 1fr); gap: 24px; } .sales-section { border-left: 0; border-top: 1px solid var(--line); padding: 22px 0 0; } .construction-structure { grid-template-columns: minmax(130px, 1fr) 1fr; gap: 10px; } .area-list { font-size: 10px; padding: 0; } .area-list > div { gap: 5px; margin-bottom: 12px; } .area-list > div > span { font-size: 9px; } th, td { padding: 12px 8px; font-size: 10px; } th { font-size: 9px; } .share-track { display: none; } .share-cell > span { width: auto; } .delay-band { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 0; } .delay-band .metric { padding: 0 12px; } .delay-band .metric:nth-child(3n) { border-right: 1px solid var(--line); } .delay-band .metric:nth-child(2n) { border: 0; } .delay-band .metric-number { font-size: 23px; } .escrow-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } .escrow-band .metric { padding: 0 12px; } .escrow-band .metric:nth-child(3) { border-right: 1px solid var(--line); } .escrow-band .metric:nth-child(2n) { border: 0; } .escrow-band .metric-number { font-size: 22px; } .source-list > div { grid-template-columns: 1fr auto; gap: 8px; } .source-list > div > div { grid-column: 1 / -1; } .source-count { margin-left: auto; font-size: 9px; } .sources-section summary::after { margin-left: 0; } .page-footer { font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.apartment-overview-grid, .apartment-rooms-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.apartment-overview-grid > div, .apartment-rooms-grid > div { min-width: 0; }
+.apartment-rooms-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: center; }
+.apartment-volume-table { min-width: 960px; }
+.apartment-volume-table th:nth-child(2), .apartment-volume-table th[scope="row"] { text-align: left; min-width: 180px; max-width: 320px; white-space: normal; overflow-wrap: anywhere; }
+.apartment-volume-table th[scope="row"] a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.apartment-room-strip { display: flex; width: 100%; min-width: 140px; height: 12px; background: var(--soft); margin: 10px 0; }
+.apartment-room-strip i { display: block; height: 100%; }
+.apartment-room-label { display: inline-flex; align-items: center; gap: 8px; }
+.apartment-room-label i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.apartment-page-size { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+.apartment-page-size select { width: 70px; height: 35px; padding-left: 8px; padding-right: 15px; }
+.apartment-ranking { padding-bottom: 18px; }
+.apartment-tooltip[style*="visibility: hidden"] { transform: none !important; }
+.selected-developer { background: var(--active); box-shadow: inset 3px 0 var(--accent); }
+.apartment-selected-label { display: block; font-size: 9px; color: var(--accent); margin-top: 4px; }
+.apartments-page .table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.apartments-page .source-list, .apartments-page .method-note, .apartments-page .page-footer { overflow-wrap: anywhere; }
+.apartments-page .sources-section details { margin-top: 16px; }
+.apartments-page .load-state p { overflow-wrap: anywhere; max-width: 100%; }
+.apartments-page .developer-heading:has([role="alert"]) { flex-wrap: wrap; }
+.apartments-page .apartment-export:has([role="alert"]) { width: 100%; }
+.apartments-page .apartment-export > span { max-width: 100%; }
+@media (max-width: 1100px) { .apartment-overview-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 680px) {
+  .apartments-page .page-heading { flex-wrap: wrap; }
+  .apartments-page h1 { max-width: none; font-size: 22px; overflow-wrap: anywhere; }
+  .apartments-page .snapshot-label { max-width: none; }
+  .apartments-page .filters label { width: 100%; }
+  .apartments-page .source-anchor { margin-left: 0; padding-bottom: 0; }
+  .apartment-rooms-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .apartments-page .page-footer { flex-wrap: wrap; }
+}

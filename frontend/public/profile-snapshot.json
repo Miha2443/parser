@@ -1388,8 +1388,12 @@
         "sha256": "77ae47248d39fa80ec16f8f9a41b364d9397073c5b0b318e7097a93dda5efaa1"
       },
       {
+        "path": "pipeline/profile_calculations.py",
+        "sha256": "3731bdd0c427a3c743329efa5958314fc39a78658f4da353c844b76b3932c3b0"
+      },
+      {
         "path": "scripts/build_dashboard_snapshot.py",
-        "sha256": "c11b4d161222c8e2dd0cb957f696df86b08da189c1ad56403cfecc3887ad1f37"
+        "sha256": "b21733b98c0a8c25f919a0647829f209f1f0f8c4deb95aed6a57411f2b3b6896"
       }
     ],
     "runtime": {
@@ -57050,5 +57054,5 @@
     "method": "AST-isolated pure functions from current profile page; no Streamlit/facade import",
     "scope": "Company matching, all-input categories, four rating rows, housing comparison, ERZ delay operands. Not proof of complete UI, formatting, apartments, escrow or six-card parity."
   },
-  "contentSha256": "ee427c3e6fe27d8a11cdc7d562ce6cd033e15c7ab01fd40c6559151cfe0822aa"
+  "contentSha256": "5e6a83d340e3076af5347e4bdbf2648e1a700aaf25e392121308b4ca83c2d334"
 }

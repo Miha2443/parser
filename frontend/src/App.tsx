@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowDownToLine, Building2, CalendarDays, ChevronRight, Database, ExternalLink, Menu, RefreshCw, Star } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { Chart, annualOption, donutOption } from './Chart';
 import Objects from './Objects';
 import { area, categories, date, exportCsv, money, number, percent, sumAreas } from './format';
-import { normalizeSnapshot } from './snapshot';
-import type { Areas, Sales, Snapshot, Source, Theme } from './types';
+import ProfileExport from './ProfileExport';
+import { dataMode, useDashboardData } from './useDashboardData';
+import type { Areas, Sales, Source, Theme } from './types';
+import Apartments from './Apartments';
 
 function SourceLine({ sources, ids, note }: { sources: Source[]; ids: string[]; note?: string }) {
   const selected = sources.filter(s => ids.includes(s.id));
   return <div className="source-line">{selected.map(s => <span key={s.id}>{s.label} · {date(s.date)}</span>)}{note && <span>{note}</span>}</div>;
 }
-function Empty({ text = 'В снимке нет данных для выбранного застройщика и региона.' }: { text?: string }) { return <div className="empty-state"><Database size={20} /><span>{text}</span></div>; }
+function Empty({ text = 'Нет данных для выбранного застройщика и региона.' }: { text?: string }) { return <div className="empty-state"><Database size={20} /><span>{text}</span></div>; }
 function SalesBlock({ label, data }: { label: string; data: Sales | null }) {
   return <div className="sales-region"><h3>{label}</h3><p className="muted">{data?.period ?? 'Период не указан'}</p>{data ? <><div className="progress-metrics">{[{ label: 'Распроданность', value: data.sold, color: '#2c9869' }, { label: 'Стройготовность', value: data.readiness, color: '#329d9c' }].map(m => <div key={m.label}><div className="progress-label"><span>{m.label}</span><strong>{percent(m.value)}</strong></div><div className="progress-track"><div style={{ width: `${Math.max(0, Math.min(100, m.value ?? 0))}%`, background: m.color }} /></div></div>)}</div><div className="ratio-row"><span>Отношение Р/С</span><strong>{percent(data.ratio)}</strong></div></> : <Empty />}</div>;
 }
@@ -25,25 +27,47 @@ export default function App() {
   const [compact, setCompact] = useState(() => localStorage.getItem('dashboard.compact') === 'true');
   const [menu, setMenu] = useState(false);
   const [query, setQuery] = useState(window.location.search);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [error, setError] = useState('');
-  const [reload, setReload] = useState(0);
+  const [path, setPath] = useState(window.location.pathname);
+  const routeQueries = useRef<Record<string, string>>({ [window.location.pathname]: window.location.search });
+  const apartmentQuery = useRef(window.location.pathname.startsWith('/apartments') ? window.location.search : '');
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('dashboard.theme', theme); }, [theme]);
-  useEffect(() => { const listener = () => setQuery(window.location.search); window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener); }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    setError('');
-    fetch('/profile-snapshot.json', { signal: controller.signal, cache: 'no-store' }).then(async response => {
-      if (!response.ok) throw new Error('Снимок данных пока недоступен.');
-      const data = normalizeSnapshot(await response.json());
-      if (!data.developers.length) throw new Error('Снимок не содержит профилей застройщиков.');
-      setSnapshot(data);
-    }).catch(e => { if (e.name !== 'AbortError') setError(e.message || 'Не удалось прочитать снимок данных.'); });
-    return () => controller.abort();
-  }, [reload]);
+  useEffect(() => { const listener = () => { setQuery(window.location.search); setPath(window.location.pathname); }; window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener); }, []);
+  function change(values: Record<string, string | null>, replace = false) {
+    const next = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(values)) value == null ? next.delete(key) : next.set(key, value);
+    window.history[replace ? 'replaceState' : 'pushState'](null, '', `${window.location.pathname}?${next}${window.location.hash}`);
+    setQuery(window.location.search);
+  }
+  function navigate(href: string) {
+    const currentPath = window.location.pathname, currentQuery = window.location.search;
+    routeQueries.current[currentPath] = currentQuery;
+    if (currentPath === '/apartments' || currentPath === '/apartments/developer') apartmentQuery.current = currentQuery;
+    const target = new URL(href, window.location.origin);
+    if (!target.search && !target.hash) {
+      const restored = new URLSearchParams(routeQueries.current[target.pathname] ?? '');
+      if (target.pathname === '/apartments' || target.pathname === '/apartments/developer') {
+        const common = new URLSearchParams(apartmentQuery.current);
+        for (const key of ['region', 'developer']) { const value = common.get(key); if (value !== null) restored.set(key, value); }
+      }
+      target.search = restored.toString();
+    }
+    window.history.pushState(null, '', `${target.pathname}${target.search}${target.hash}`); setPath(window.location.pathname); setQuery(window.location.search); setMenu(false); window.scrollTo(0, 0);
+  }
+  const detail = path === '/apartments/developer';
+  const apartments = detail || path === '/apartments';
+  const title = apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
+  return <div className={`app-shell ${compact ? 'compact-shell' : ''}`}>
+    <Sidebar theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} path={path} onNavigate={navigate} />
+    <div className="workspace">
+      <header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMenu(true)} title="Открыть навигацию"><Menu size={20} /></button><span>Рынок недвижимости</span><ChevronRight size={13} /><strong>{title}</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div></header>
+      {apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}
+    </div>
+  </div>;
+}
+
+function ProfilePage({ theme, query, change }: { theme: Theme; query: string; change: (values: Record<string, string | null>, replace?: boolean) => void }) {
   const params = useMemo(() => new URLSearchParams(query), [query]);
-  const developer = snapshot?.developers.find(d => d.id === params.get('developer')) ?? snapshot?.developers[0];
-  const profile = developer?.regions.find(r => r.id === params.get('region')) ?? developer?.regions[0];
+  const { catalog, developer, region, snapshot, profile, error, retry } = useDashboardData(params);
   const years = profile?.annual.map(r => r.year).sort((a, b) => a - b) ?? [];
   const fromParam = Number(params.get('from'));
   const toParam = Number(params.get('to'));
@@ -55,29 +79,23 @@ export default function App() {
     const present = annual.map(r => r[c.key]).filter((v): v is number => v != null);
     if (present.length) periodAreas[c.key] = present.reduce((sum, value) => sum + value, 0);
   }
-  function change(values: Record<string, string | null>) {
-    const next = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries(values)) value == null ? next.delete(key) : next.set(key, value);
-    window.history.pushState(null, '', `${window.location.pathname}?${next.toString()}${window.location.hash}`); setQuery(window.location.search);
-  }
   useEffect(() => {
-    if (!developer || !profile) return;
-    const next = new URLSearchParams(query); next.set('developer', developer.id); next.set('region', profile.id);
-    if (from != null && to != null) { next.set('from', String(from)); next.set('to', String(to)); } else { next.delete('from'); next.delete('to'); }
-    if (next.toString() !== new URLSearchParams(query).toString()) { window.history.replaceState(null, '', `${window.location.pathname}?${next}${window.location.hash}`); setQuery(window.location.search); }
-  }, [developer, profile, from, to, query]);
+    if (!developer || !region) return;
+    const next = new URLSearchParams(query); next.set('developer', developer.id); next.set('region', region);
+    if (profile) {
+      if (from != null && to != null) { next.set('from', String(from)); next.set('to', String(to)); } else { next.delete('from'); next.delete('to'); }
+    }
+    if (next.toString() !== new URLSearchParams(query).toString()) change(Object.fromEntries([...new Set([...new URLSearchParams(query).keys(), ...next.keys()])].map(key => [key, next.get(key)])), true);
+  }, [developer, region, profile, from, to, query]);
   const sources = snapshot?.sources ?? [];
+  const metadata = snapshot ?? catalog?.metadata;
   const last = profile ? [...profile.annual].sort((a, b) => b.year - a.year)[0] : undefined;
   const score = profile?.ratings.find(r => r.score != null)?.score;
-  return <div className={`app-shell ${compact ? 'compact-shell' : ''}`}>
-    <Sidebar theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} />
-    <div className="workspace">
-      <header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMenu(true)} title="Открыть навигацию"><Menu size={20} /></button><span>Рынок недвижимости</span><ChevronRight size={13} /><strong>Профиль застройщика</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div></header>
-      <main id="profile">
-        <div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Профиль застройщика</h1></div><div className="snapshot-label"><Database size={14} />Зафиксированный срез<span>{snapshot?.generatedAt ? date(snapshot.generatedAt) : 'Загрузка источников'}</span></div></div>
-        {error ? <div className="load-state"><AlertCircle size={26} /><h2>Нет доступного снимка</h2><p>{error}</p><button onClick={() => setReload(reload + 1)}><RefreshCw size={15} />Повторить</button></div> : !snapshot || !developer || !profile ? <div className="load-state"><RefreshCw className="loading-icon" size={26} /><p>Загрузка профиля застройщика…</p></div> : <>
-          <div className="filters"><label className="developer-filter"><span>Группа компаний</span><select aria-label="Группа компаний" value={developer.id} onChange={e => change({ developer: e.target.value, region: null, from: null, to: null })}>{snapshot.developers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label><span>Регион квартирографии</span><select aria-label="Регион" value={profile.id} onChange={e => change({ region: e.target.value })}>{developer.regions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}</select></label><a className="source-anchor" href="#sources" title="Исходные файлы и даты"><Database size={15} />Источники<ChevronRight size={14} /></a></div>
-          <div className="developer-heading"><div className="developer-name"><Building2 size={21} /><h2>{developer.name}</h2><span className="region-label">Мониторинг Москвы</span></div><a className="streamlit-link" href={`http://localhost:8501/${encodeURIComponent('Профиль_застройщика')}`} target="_blank" rel="noreferrer" title="Профиль застройщика · Streamlit">Streamlit<ExternalLink size={13} /></a></div>
+  return <main id="profile">
+        <div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Профиль застройщика</h1></div><div className="snapshot-label"><Database size={14} />{dataMode === 'snapshot' ? 'Зафиксированный срез' : 'Данные API'}<span>{metadata?.generatedAt ? date(metadata.generatedAt) : 'Загрузка источников'}</span></div></div>
+        {catalog && developer && region && <div className="filters"><label className="developer-filter"><span>Группа компаний</span><select aria-label="Группа компаний" value={developer.id} onChange={e => change({ developer: e.target.value, region: null, from: null, to: null })}>{catalog.developers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label><span>Регион квартирографии</span><select aria-label="Регион" value={region} onChange={e => change({ region: e.target.value })}>{developer.regions.map(r => <option key={r} value={r}>{r === 'msk' ? 'Москва' : 'Российская Федерация'}</option>)}</select></label>{profile && <a className="source-anchor" href="#sources" title="Исходные файлы и даты"><Database size={15} />Источники<ChevronRight size={14} /></a>}</div>}
+        {error ? <div className="load-state" role="alert"><AlertCircle size={26} /><h2>{dataMode === 'snapshot' ? 'Нет доступного снимка' : 'Данные API недоступны'}</h2><p>{error}</p><button onClick={retry}><RefreshCw size={15} />Повторить</button></div> : !snapshot || !developer || !region || !profile ? <div className="load-state" role="status" aria-live="polite"><RefreshCw className="loading-icon" size={26} /><p>{catalog ? 'Загрузка профиля застройщика…' : 'Загрузка каталога застройщиков…'}</p></div> : <>
+          <div className="developer-heading"><div className="developer-name"><Building2 size={21} /><h2>{developer.name}</h2><span className="region-label">Мониторинг Москвы</span></div><div className="profile-actions"><ProfileExport developer={developer.id} region={region} version={snapshot.version} frozen={dataMode === 'snapshot'} /><a className="streamlit-link" href={`http://localhost:8501/${encodeURIComponent('Профиль_застройщика')}`} target="_blank" rel="noreferrer" title="Профиль застройщика · Streamlit">Streamlit<ExternalLink size={13} /></a></div></div>
           <div className="kpi-band"><Metric label="В строительстве" value={area(profile.construction ? sumAreas(profile.construction) : null)} unit="тыс. м²" foot="Мониторинг 2.0 · действующие РС" /><Metric label={`Введено · ${from ?? '—'}–${to ?? '—'}`} value={area(sumAreas(periodAreas))} unit="тыс. м²" foot="Все типы площади · выбранные годы" /><Metric label={`Ввод · ${last?.year ?? '—'}`} value={area(last ? sumAreas(last) : null)} unit="тыс. м²" foot="Последний год в реестре" /><Metric label="Оценка ЕРЗ" value={number(score, 1)} foot="По доступной таблице рейтинга" /></div>
           <nav className="section-nav" aria-label="Разделы профиля"><a href="#dynamics">Ввод недвижимости</a><a href="#structure">Структура площади</a><a href="#construction">Строительство</a><a href="#apartments">Квартирография</a><a href="#delays">Сроки ввода</a><a href="#escrow">Эскроу</a></nav>
           <section id="dynamics" className="section annual-section"><div className="annual-main"><div className="section-heading"><div><h2>Динамика ввода</h2><p>Москва · все типы площади</p></div>{years.length > 0 && <div className="year-range"><CalendarDays size={15} /><select aria-label="Начальный год" value={from} onChange={e => change({ from: e.target.value, to: Number(e.target.value) > (to ?? 0) ? e.target.value : String(to) })}>{years.map(y => <option key={y}>{y}</option>)}</select><span>—</span><select aria-label="Конечный год" value={to} onChange={e => change({ to: e.target.value })}>{years.filter(y => y >= from).map(y => <option key={y}>{y}</option>)}</select></div>}</div>{annual.length ? <Chart option={annualOption(annual, theme)} theme={theme} label="Годовой ввод по типам площади" rows={[["Год", ...categories.map(c => `${c.label}, м²`)], ...annual.map(r => [r.year, ...categories.map(c => r[c.key] ?? null)])]} filename={`${developer.id}-msk-annual-${from}-${to}`} height={320} /> : <Empty />}<SourceLine sources={sources} ids={['monitoring']} /></div><aside className="rating-section"><div className="section-heading"><h2>Рейтинги ЕРЗ</h2><Star size={16} /></div><p className="muted">Место в рейтинге</p>{profile.ratings.length ? <div className="rating-list">{profile.ratings.map((r, i) => <div className="rating-row" key={i}><div><span>{r.label}</span><small>{r.region}</small>{r.note && <small className="warning-text">{r.note}</small>}</div><strong>{number(r.place)}</strong></div>)}</div> : <Empty text="Подтверждённые места в рейтингах отсутствуют." />}<SourceLine sources={sources} ids={['erz_top']} /></aside></section>
@@ -98,10 +116,8 @@ export default function App() {
           <section id="delays" className="section"><div className="section-heading"><div><h2>Переносы сроков ввода</h2><p>Москва и другие регионы РФ (РФ минус Москва)</p></div><button className="icon-button" title="Скачать переносы сроков CSV" onClick={() => exportCsv([['Показатель', 'Перенос, м²', 'База, м²', 'Примечание'], ...profile.delayMetrics.map(m => [m.label, m.value, m.base ?? null, m.note ?? ''])], `${developer.id}-delays.csv`)}><ArrowDownToLine size={17} /></button></div>{profile.delayMetrics.length ? <div className="delay-band">{profile.delayMetrics.map((m, i) => <Metric key={i} label={m.label} value={m.displayValue || '—'} danger foot={`${m.displayPercent || '—'} · ${m.displayBase || ''}${m.note ? `. ${m.note}` : ''}`} />)}</div> : <Empty />}<SourceLine sources={sources} ids={['erz_top', 'erz_cards', 'monitoring']} note="Разные базы площади: Москва — Мониторинг 2.0; другие регионы — разность ЕРЗ РФ и Москвы." /></section>
           <section id="escrow" className="section"><div className="section-heading"><div><h2>Кредитные лимиты и эскроу</h2><p>Москва · финансовые показатели</p></div></div>{profile.escrow ? <div className="escrow-band"><Metric label="Объём займов" value={money(profile.escrow.credit)} unit="млрд ₽" /><Metric label="Остаток задолженности" value={money(profile.escrow.debt)} unit="млрд ₽" /><Metric label="Доля остатка" value={percent(profile.escrow.debtShare)} /><Metric label="Выручка от продаж" value={money(profile.escrow.revenue)} unit="млрд ₽" /><Metric label="Покрытие выручкой" value={percent(profile.escrow.coverage)} /></div> : <Empty text="В московском реестре эскроу нет данных выбранной группы компаний." />}<SourceLine sources={sources} ids={['escrow']} note={profile.escrow?.note} /></section>
           <Objects tables={profile.objects} developerId={developer.id} />
-          <section id="sources" className="section sources-section"><details><summary><Database size={17} /><span>Исходные файлы и даты</span><span className="source-count">{sources.length} источников</span></summary><p className="muted">Дата среза: {date(snapshot.generatedAt)}. Даты ниже относятся к исходным документам, а не к сегодняшнему дню.</p><div className="source-list">{sources.map(s => <div key={s.id}><strong>{s.label}</strong><span>{date(s.date)}</span><div>{s.files.map((f, i) => <code key={i}>{f}</code>)}{s.note && <p>{s.note}</p>}</div></div>)}</div>{[...snapshot.notes, ...profile.notes].map((n, i) => <p className="method-note" key={i}><AlertCircle size={14} />{n}</p>)}</details></section>
-          <footer className="page-footer"><span>Аналитика Москвы</span><span>Профиль застройщика · зафиксированный срез</span></footer>
+          <section id="sources" className="section sources-section"><details><summary><Database size={17} /><span>Исходные файлы и даты</span><span className="source-count">{sources.length} источников</span></summary><p className="muted">Дата формирования: {date(snapshot.generatedAt)}.{snapshot.version && ` Версия: ${snapshot.version}.`} Даты ниже относятся к исходным документам, а не к сегодняшнему дню.</p><div className="source-list">{sources.map(s => <div key={s.id}><strong>{s.label}</strong><span>{date(s.date)}</span><div>{s.files.map((f, i) => <code key={i}>{f}</code>)}{s.note && <p>{s.note}</p>}</div></div>)}{!!profile.sourceContributions.length && <div><strong>Выбор источников профиля</strong><span>quality.source</span><div>{profile.sourceContributions.map(path => <code key={path}>{path}</code>)}<p>Пути, указанные в метаданных качества профиля. Не исчерпывающий журнал чтений.</p></div></div>}</div>{[...snapshot.notes, ...profile.notes].map((n, i) => <p className="method-note" key={i}><AlertCircle size={14} />{n}</p>)}</details></section>
+          <footer className="page-footer"><span>Аналитика Москвы</span><span>Профиль застройщика · {dataMode === 'snapshot' ? 'зафиксированный срез' : 'API'}</span></footer>
         </>}
-      </main>
-    </div>
-  </div>;
+      </main>;
 }

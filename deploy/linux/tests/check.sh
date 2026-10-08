@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs only in the disposable Debian integration-test container.
 set -euo pipefail
-[[ "${PARSER_DEBIAN_SMOKE:-}" == 1 && "$(cat /proc/1/comm)" == systemd ]] || {
+[[ "${PARSER_DEBIAN_SMOKE:-}" == 1 && -f /.dockerenv && "$(cat /proc/1/comm)" == systemd ]] || {
   echo 'This check requires the isolated Debian systemd test container.' >&2; exit 1;
 }
 cd /opt/parser-dashboard
@@ -36,7 +36,7 @@ systemctl daemon-reload
 .venv/bin/python deploy/linux/tests/smoke.py publication_failure
 previous_live="$(readlink -f live)"
 previous_pid="$(systemctl show parser-api.service --property=MainPID --value)"
-cat > /etc/systemd/system/parser-update.service.d/fail.conf <<'EOF'
+cat > /etc/systemd/system/parser-update.service.d/zz-fail.conf <<'EOF'
 [Service]
 ExecStart=
 ExecStart=/bin/false

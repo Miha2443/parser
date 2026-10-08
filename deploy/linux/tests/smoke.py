@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT))
 
 
 def guard():
-    if os.environ.get("PARSER_DEBIAN_SMOKE") != "1" or ROOT != Path("/opt/parser-dashboard"):
+    if (os.environ.get("PARSER_DEBIAN_SMOKE") != "1"
+            or ROOT != Path("/opt/parser-dashboard") or not Path("/.dockerenv").is_file()):
         raise RuntimeError("Only run inside the disposable Debian integration-test container")
 
 

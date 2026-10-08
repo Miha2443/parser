@@ -1,0 +1,16 @@
+[Unit]
+Description=Download dashboard sources and rebuild marts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=parserdash
+Group=parserdash
+WorkingDirectory=/opt/parser-dashboard
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/parser-dashboard/.env
+ExecStart=/opt/parser-dashboard/.venv/bin/python -u scripts/update_realty.py all
+TimeoutStartSec=infinity
+KillMode=control-group

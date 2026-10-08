@@ -73,8 +73,9 @@ expansion persist locally. Profile and apartment links use local navigation,
 active sidebar state and close the mobile menu. Menu navigation restores each
 page's last URL query within the current app session. Apartment pages share
 compatible region/raw developer filters; normalized profile IDs stay separate.
-All sidebar sections now use local React routes. The profile retains an explicit
-comparison link to Streamlit at `localhost:8501` in a separate tab.
+All sidebar sections now use local React routes. The old Streamlit comparison
+link was removed because `localhost:8501` points to each remote visitor's own
+computer on a server deployment.
 
 Each chart offers segment hover, clickable swatch legends, a collapsible data
 table, CSV and PNG. Apartments, delays and full object registers export CSV.

@@ -1,0 +1,9 @@
+# Production API + all automated dashboard collectors on Debian 12.
+# Keep the API pins in one place; legacy Streamlit is only needed by the
+# optional map-geocoding helper and compatibility checks.
+-r backend/requirements.txt
+selenium==4.43.0
+beautifulsoup4>=4.12
+lxml>=5
+streamlit>=1.36
+plotly>=5.20

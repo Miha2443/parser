@@ -1,0 +1,21 @@
+[Unit]
+Description=Parser dashboard FastAPI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=parserdash
+Group=parserdash
+WorkingDirectory=/opt/parser-dashboard
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PARSER_REQUIRE_REALTY_MARTS=1
+EnvironmentFile=-/opt/parser-dashboard/.env
+ExecStart=/opt/parser-dashboard/.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

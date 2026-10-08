@@ -1,2 +1,6 @@
 # Keep the byte-verified generated snapshot independent of Windows newline conversion.
 frontend/public/profile-snapshot.json text eol=lf
+*.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+deploy/linux/*.conf text eol=lf

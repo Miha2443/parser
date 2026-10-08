@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -501,7 +502,8 @@ def _run_logged_command(cmd: list[str], label: str) -> int:
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                             errors="replace", env={**child_env, "PYTHONIOENCODING": "utf-8",
-                                                  "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
+                                                  "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"},
+                            start_new_session=os.name != "nt")
     _track_child(proc)
     try:
         for line in proc.stdout:
@@ -526,25 +528,17 @@ def _kill_process_tree(pid: int) -> None:
             capture_output=True, check=False,
         )
         return
-    # POSIX
+    # Each downloader/build child starts a new POSIX session. Killing its process
+    # group also stops Chrome/ChromeDriver grandchildren without psutil.
     try:
-        import signal
-        try:
-            import psutil  # type: ignore
-            parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                except Exception:  # noqa: BLE001
-                    pass
-            try:
-                parent.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        except ImportError:
-            os.kill(pid, signal.SIGKILL)
-    except Exception:  # noqa: BLE001
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
         pass
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 SNAPSHOT_DIRS = [
@@ -811,6 +805,7 @@ def run_source(alias: str, env: dict, force: bool = False,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
             bufsize=1,
+            start_new_session=os.name != "nt",
         )
     except Exception as exc:  # noqa: BLE001
         _print(f"❌ {alias}: не удалось запустить процесс: {exc}")

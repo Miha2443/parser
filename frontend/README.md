@@ -1,13 +1,15 @@
-# Developer Dashboard: Profile, Apartments And Sales
+# Moscow Analytics Dashboard
 
 Просмотр на текущей машине: http://localhost:5173.
 Утверждённое оформление сохранено; профиль подключён к API и полному экспорту Excel.
 Дорожная карта: `../docs/dashboard-roadmap.md`.
 
 React + TypeScript + Vite, ECharts canvas charts and Lucide controls. API is the
-default data mode. Profile, the two apartment pages and sales run locally in React;
-other pages remain in Streamlit. No backend or data files
-are changed by this frontend.
+default data mode. All dashboard sections run locally in React: developer profile,
+apartments, sales, annual/operational/linear commissioning, construction, salary,
+consumer prices, national accounts, map, home, updates and TDM. Streamlit remains
+available separately for comparison and rollback. Analytics never change input
+files; TDM sends only after an explicit user action.
 
 ## Run
 
@@ -71,9 +73,8 @@ expansion persist locally. Profile and apartment links use local navigation,
 active sidebar state and close the mobile menu. Menu navigation restores each
 page's last URL query within the current app session. Apartment pages share
 compatible region/raw developer filters; normalized profile IDs stay separate.
-Other sidebar pages open the existing Streamlit
-server at `localhost:8501` in a separate tab. Its implicit routes strip the
-numeric filename prefixes.
+All sidebar sections now use local React routes. The profile retains an explicit
+comparison link to Streamlit at `localhost:8501` in a separate tab.
 
 Each chart offers segment hover, clickable swatch legends, a collapsible data
 table, CSV and PNG. Apartments, delays and full object registers export CSV.
@@ -206,6 +207,182 @@ both themes, every series hover and canvas/overflow at 360–1920 px.
 Screenshots and `checks.json` are saved to `%TEMP%/dashboard-sales-checks`;
 override the directory using `SALES_OUTPUT`. Workbook calculations/parity are
 owned and checked by the backend agent, not claimed by these frontend tests.
+
+## Operational And Linear Commissioning
+
+`/commissioning/operational` and `/commissioning/linear` reuse the approved shell.
+Both use live API catalogs and reports only, with no frozen fallback. Operational
+reads `/api/v1/commissioning/operational/catalog` and its report; linear reads
+`/api/v1/linear/catalog` and its report. URL filters remain separate on each route,
+including history, reload and menu navigation. Operational uses `month`,
+`exclude_mkd`, `year`, `quarter`, `cumulative`; linear uses `year`, `quarter`,
+`cumulative`, `indicator`. Defaults and available options come from the catalog.
+Linear defaults to the catalog's latest complete quarter, not an incomplete Q4.
+Changing linear year selects that year's catalog default quarter; operational
+year preserves its compatible quarter. Controls remain available during loading
+and errors, and changing filters immediately hides and aborts stale report data.
+Both 404 and version refreshes are bounded per catalog generation/filter pair,
+allowing another refresh after later generations. Persistent errors stay visible
+with retry. No API failures are disguised as empty reports or demo data.
+
+Operational renders all supplied years (16 on the current live report) in two
+stacked charts. Period/remainder/totals/growth come from the backend's wrapped
+`{value}` points without recomputation or unit conversion. The backend's legacy
+plotting zero fills stay zero, while missing history remains null/dashes in the
+full tables and original-value chart CSV column. Segment hover shows totals,
+growth and missing source-period values. Wide charts show total/period/growth
+labels; compact charts keep all bars and values in tooltips/data tables without
+internal scrolling. Annual tables use two decimals for million m2, one for
+growth; CSV retains complete original precision. The quarter structure groups
+all 15 supplied metrics into common/housing/standalone nonresidential groups,
+without calculating or reconciling overlapping parent totals.
+
+Linear shows all four indicators with independent horizontal plan/fact bars,
+one decimal for km and zero for other source units; completion uses one decimal.
+Missing fact remains null/dash and never becomes a zero bar. Actual zero facts
+stay zero. Selected-indicator quarter trends use grouped bars; quarter/cumulative
+values and percentages are backend results, not frontend sums. The complete
+all-quarter table retains code, indicator, unit, year, quarter, plan, fact and
+completion, including missing future facts and every API row.
+
+Both pages provide chart CSV/PNG and full table CSV regardless of search/page or
+hidden series. Operational tables use `operationalhousingSearch/Page/Size` and
+`operationalnonresSearch/Page/Size`; linear uses `linearAllSearch/Page/Size`.
+Each suffix forms a separate URL parameter. Excel always sends the complete
+report selection plus displayed `required_version` to its `/export` route;
+table filters never enter the request. Missing version is rejected by the API.
+HTTP 409 downloads nothing and asks for reload; scope changes cancel pending
+downloads. Operational candidate file dates are explicitly not proof of selected
+inputs; reported monthly-history file/date are shown separately. Linear identifies
+its selected report file/date. Source issues, notes, date evidence and generation
+metadata are retained and visible without a fabricated freshness claim.
+
+Run `node --test src/commissioning.test.mjs` and
+`node src/commissioning.browser.cjs http://127.0.0.1:5173`. Set `NODE_PATH` as above
+for Playwright; `DASHBOARD_CHECK_LIVE=1` adds operational exclusion/cumulative
+combinations and all linear quarters in both modes, real CSV/Excel downloads,
+both themes and 360/390/430/768/1280/1920 layouts. Fixtures cover nulls/zeros,
+all structure values, precision, catalog defaults, URL history/navigation,
+scope/abort, successive generations, generation-bounded 404s, errors/retry,
+removed options, empty data/catalogs, full exports/409, every available series
+hover, canvas pixels, chart scrolling and cropped axis labels. Screenshots and
+`checks.json` go to `%TEMP%/dashboard-commissioning-checks`, overridden with
+`COMMISSIONING_OUTPUT`. Calculation parity and workbook content remain backend
+checks; these frontend checks verify API preservation and browser behavior.
+
+## Annual Commissioning And Current Construction
+
+Local routes `/commissioning/annual` and `/construction` use only the live
+versioned API. `/` remains the existing developer profile. The parent-owned
+map and service pages are integrated at `/map`, `/home`, `/updates`, and `/tdm`.
+
+- Annual catalog/report: `/api/v1/commissioning/annual/catalog` and
+  `/api/v1/commissioning/annual?region=msk|rf`. The page preserves all seven
+  Moscow or two RF charts, units in million square meters, source series colors,
+  historical overrides, all supplied year rows, and both supplied period summaries.
+  Legacy zero-filled annual columns remain zero with the backend's limitations
+  displayed; the RF 2026 zero is explicitly not a confirmed zero annual result.
+- Construction catalog/report: `/api/v1/construction/catalog` and
+  `/api/v1/construction?region=msk|rf&permit_kind=total|housing|nonresidential&month=N`.
+  Latest available month defaults per permit kind. Changing kind preserves a
+  compatible month. KPI region never changes the Moscow-only permit scope.
+  Construction, readiness, and detailed sales period labels remain independent.
+  KPI units/precision are supplied by the API. Detailed sales source areas in
+  thousand square meters are displayed in million square meters by division by
+  1,000, with raw values retained in the complete CSV/table.
+- Missing values remain dashes, source zero values remain zero, and missing sales
+  percentages do not become zero-valued donuts. Permit charts use the backend's
+  zero-filled plotting records; the raw table and chart CSV preserve missing
+  source values separately. Supplied growth and annual summaries are not recalculated.
+- URL `region`, `permit_kind`, `month` and per-table `annual<ID>Search/Page/Size`,
+  `constructionSalesSearch/Page/Size`, `constructionPermitsSearch/Page/Size`
+  restore through navigation, back/forward, and reload. Full CSV exports ignore
+  table search/pagination. Every chart supports full CSV and PNG. Excel always
+  sends `required_version`; HTTP 409 is visible and does not download a workbook.
+- Requests and downloads cancel when their scope changes. Catalog reconciliation
+  on 404/version mismatch is bounded per filter and catalog generation, including
+  repeated sequential changes. API/schema failures never substitute demo data.
+  Candidate source dates and files are labelled as candidate evidence, with
+  separately selected operational-file metadata preserved.
+
+Verification commands (from `frontend`, same bundled `NODE_PATH` as above):
+
+```powershell
+node --test tests/*.test.mjs src/*.test.mjs
+$env:DASHBOARD_CHECK_LIVE='1'
+node src/annualConstruction.browser.cjs http://127.0.0.1:5173
+```
+
+Browser screenshots and `checks.json` are saved under
+`$env:TEMP/dashboard-annual-construction-checks` (override with
+`ANNUAL_CONSTRUCTION_OUTPUT`). This script covers contract fixtures, live
+regions/kinds, version-pinned XLSX, full CSV/PNG, URL history, failures/retry,
+stale cancellation, sequential generations, bounded 404 recovery, missing
+values, both themes, responsive overflow, canvas pixels and physical series hover.
+
+Verified locally on 2026-10-08: operational/linear passed 50 fixture/live layouts,
+96 hover targets and 12 live slices with 12 pinned XLSX downloads. Annual/current
+construction passed 72 layouts, 232 hover targets, 20 chart CSV/PNG downloads,
+eight live selections and eight pinned XLSX downloads. The complete frontend
+unit suite and TypeScript check pass. Production build splits the map engine
+into the lazy `MapPage` chunk; it is not part of the initial non-map JS bundle.
+
+## Map Configuration And Deployment
+
+`/map` uses MapLibre with a configurable XYZ raster basemap. The default
+`https://tile.openstreetmap.org/{z}/{x}/{y}.png` is for limited, interactive local
+preview, not a production hosting commitment. OSM tiles have limited capacity
+and no availability guarantee. Follow the
+[OSMF tile usage policy](https://operations.osmfoundation.org/policies/tiles/):
+keep attribution visible, preserve browser identification/referrer and normal
+HTTP caching, and do not bulk-download or prefetch tiles. Automated browser
+checks use fixture tiles rather than fetching public OSM tiles.
+
+The existing `.env.example` documents the provider settings. Set both in
+`frontend/.env.local` for an approved provider or your own XYZ tile service:
+
+```dotenv
+VITE_MAP_TILE_URL=https://your-tile-server.example/{z}/{x}/{y}.png
+VITE_MAP_ATTRIBUTION=Your provider attribution
+```
+
+Restart Vite after development configuration changes; rebuild for production.
+All `VITE_*` values are public browser configuration, so never put private
+credentials here. Preserve the chosen provider's required attribution and use
+only tiles whose terms permit the intended deployment, traffic and testing.
+Production must use your own service or a provider with appropriate permission
+and capacity; the default OSM endpoint is not the production plan.
+
+`/home`, `/updates` and `/tdm` are local React routes backed by the local API;
+`/` still opens the developer profile. TDM is intended for a trusted localhost
+deployment only. This migration does not provide public authentication or
+authorization. Do not expose the TDM page/API as a public sending service.
+
+## Economics Pages
+
+`/economics/salary`, `/economics/ipc` and `/economics/accounts` use the matching
+`/api/v1/economics/{family}` endpoints. Their catalog supplies all regions,
+industries, periods and defaults. Year/quarter/month, cumulative salary and IPC
+base controls retain the original calculation rules. National accounts keep
+four independent regional selections, structure region/mode/industries and
+industry-index region/industries/total controls. Empty multiselections remain
+empty, rather than silently restoring defaults.
+
+Filters persist in URL and API responses are versioned. Stale requests are
+aborted, failed requests display retry, and no frozen fallback is substituted.
+Tables preserve original values and nulls; search/pagination affect display
+only. CSV and version-pinned Excel retain complete selected data. Each bar
+segment and line point has its own unit-aware hover; all charts support PNG.
+Sources distinguish file dates from recorded download dates.
+
+Verification: `node src/economics.browser.cjs` exercises isolated fixture and
+live API cases (set `DASHBOARD_CHECK_LIVE=1` for live cases). Screenshots/reports
+are stored in `%TEMP%/dashboard-economics-checks`. The final integrated
+production check is `node src/dashboard.browser.cjs`, default port 5180;
+override with `DASHBOARD_TEST_URL`. It verifies 14 routes in both themes at
+360/1280 px, chart pixels/overflow and local sidebar navigation. Map tiles and
+TDM sends are covered separately with fixtures, not public provider requests
+or real outbound messages.
 
 ## Brand Assets
 

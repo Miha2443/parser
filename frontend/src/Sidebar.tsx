@@ -1,11 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowUpRight, Building2, ChevronDown, ChevronLeft, House, Landmark, Moon, PanelLeftClose, Settings2, Sun, UserRound, X } from 'lucide-react';
+import { Building2, ChevronDown, ChevronLeft, House, Landmark, Moon, PanelLeftClose, Settings2, Sun, UserRound, X } from 'lucide-react';
 import type { Theme } from './types';
 
-const root = 'http://localhost:8501';
-function Link({ title, path }: { title: string; path: string }) {
-  return <a className="nav-link" href={`${root}/${encodeURIComponent(path.replace(/^\d+_/, ''))}`} target="_blank" rel="noreferrer" title={`${title} · Streamlit`}><span>{title}</span><ArrowUpRight size={13} /></a>;
-}
 export default function Sidebar({ theme, onTheme, open, onClose, compact, onCompact, path, onNavigate }: { theme: Theme; onTheme: () => void; open: boolean; onClose: () => void; compact: boolean; onCompact: () => void; path: string; onNavigate: (href: string) => void }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('dashboard.navigation') || '{"market":true,"profile":true,"construction":true,"commissioning":false}'); } catch { return { market: true, profile: true }; }
@@ -25,14 +21,14 @@ export default function Sidebar({ theme, onTheme, open, onClose, compact, onComp
       <div className="brand"><div className="brand-mark"><img src="/brand-moscow.svg" alt="" /></div><div className="brand-text"><strong>Аналитика Москвы</strong><span>Недвижимость и экономика</span></div><button className="icon-button mobile-close" onClick={onClose} title="Закрыть навигацию"><X size={18} /></button></div>
       <div className="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <nav aria-label="Разделы аналитики">
-        <a className="nav-heading home-link" href={root} target="_blank" rel="noreferrer" title="Главная · Streamlit"><House size={17} /><span>Главная</span><ArrowUpRight size={13} /></a>
+        {local('Главная', '/home', <House size={17} />)}
         {group('market', 'Рынок недвижимости', <Building2 size={17} />, <>
-          {group('construction', 'Текущее строительство', null, <><Link title="Оперативные данные" path="0_Текущее_строительство" />{local('Квартирография', '/apartments')}<Link title="Карта объектов" path="9_Карта_объектов" />{local('Распроданность', '/sales')}</>, true)}
-          {group('commissioning', 'Ввод недвижимости', null, <><Link title="Оперативный ввод" path="8_Ввод_недвижимости_оперативные" /><Link title="Годовой ввод" path="8_Ввод_недвижимости" /><Link title="Линейные объекты" path="8_Ввод_линейных_объектов" /></>, true)}
+          {group('construction', 'Текущее строительство', null, <>{local('Оперативные данные', '/construction')}{local('Квартирография', '/apartments')}{local('Карта объектов', '/map')}{local('Распроданность', '/sales')}</>, true)}
+          {group('commissioning', 'Ввод недвижимости', null, <>{local('Оперативный ввод', '/commissioning/operational')}{local('Годовой ввод', '/commissioning/annual')}{local('Линейные объекты', '/commissioning/linear')}</>, true)}
           {group('profile', 'Профиль застройщика', null, <>{local('Профиль', '/', <UserRound size={15} />)}{local('Квартирография по застройщику', '/apartments/developer')}</>, true)}
         </>)}
-        {group('statistics', 'Мосстат / Росстат', <Landmark size={17} />, <><Link title="ВВП и ВРП" path="3_ВРП_и_ВВП" /><Link title="ИПЦ" path="2_ИПЦ" /><Link title="Заработная плата" path="1_Заработная_плата" /></>)}
-        {group('service', 'Сервис', <Settings2 size={17} />, <><Link title="Отправка в TDM" path="8_Отправка_в_TDM" /><Link title="Журнал обновлений" path="99_Обновления" /></>)}
+        {group('statistics', 'Мосстат / Росстат', <Landmark size={17} />, <>{local('ВВП и ВРП', '/economics/accounts')}{local('ИПЦ', '/economics/ipc')}{local('Заработная плата', '/economics/salary')}</>)}
+        {group('service', 'Сервис', <Settings2 size={17} />, <>{local('Отправка в TDM', '/tdm')}{local('Журнал обновлений', '/updates')}</>)}
       </nav>
       <div className="sidebar-bottom"><button className="theme-button" onClick={onTheme} title={theme === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему'}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}</span></button><button className="icon-button collapse-nav" onClick={onCompact} title={compact ? 'Развернуть боковую панель' : 'Свернуть боковую панель'}>{compact ? <ChevronLeft className="rotate" size={17} /> : <PanelLeftClose size={17} />}</button></div>
     </aside>

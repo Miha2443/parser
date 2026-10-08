@@ -49,6 +49,7 @@ jobs:
           docker exec parser-debian12 journalctl -u parser-api -u parser-update -u nginx --no-pager > debian12-report/services.log 2>&1 || true
           docker exec parser-debian12 systemctl status parser-api parser-update parser-update.timer nginx --no-pager > debian12-report/status.log 2>&1 || true
           docker cp parser-debian12:/opt/parser-dashboard/logs debian12-report/parser-logs || true
+          cat debian12-report/services.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

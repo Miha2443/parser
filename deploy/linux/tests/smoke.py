@@ -29,6 +29,7 @@ def seed(name="DEBIAN SMOKE OLD"):
            "Отрасли": "Жилые объекты", "Группировка": "Жилье", "Назначение": "Жилье"}
     with pd.ExcelWriter(directory / "monitoring_2_0_20260101.xlsx") as writer:
         pd.DataFrame([{**row, "Год ввода по Мосстату": 2025,
+                       "Месяц ввода по Мосстату": "июнь",
                        "Дата ввода по Мосстату": pd.Timestamp("2025-06-01")}]).to_excel(
             writer, sheet_name="Реестр РВ", index=False)
         pd.DataFrame([{**row, "Срок выдачи РС": pd.Timestamp("2025-01-01"),
@@ -155,8 +156,10 @@ def api():
     try:
         driver.get("http://127.0.0.1:8080/home")
         WebDriverWait(driver, 20).until(lambda d: "Рынок недвижимости" in d.find_element("tag name", "body").text)
+        driver.save_screenshot(str(ROOT / "logs/debian-home.png"))
         driver.get("http://127.0.0.1:8080/?developer=debian+smoke+old&region=msk")
         WebDriverWait(driver, 20).until(lambda d: d.find_elements("css selector", ".chart-canvas canvas"))
+        driver.save_screenshot(str(ROOT / "logs/debian-profile.png"))
         print("React home and profile charts rendered in Debian Chromium")
     finally:
         driver.quit()

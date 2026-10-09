@@ -8,20 +8,19 @@ services:
         GID: ${OP_GID:-1000}
     env_file: .env
     environment:
+      PARSER_ROOT: /runtime/live
+      PARSER_DOWNLOADS: /runtime/live/downloads
+      PARSER_USE_REALTY_MARTS: "1"
       PARSER_REQUIRE_REALTY_MARTS: "1"
     volumes:
-      - ./downloads:/app/downloads
-      - ./data:/app/data
-      - ./state:/app/state
-      - ./logs:/app/logs
-      - ./config:/app/config
+      - ./runtime:/runtime:ro
     expose:
       - "8000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=10)"]
+      interval: 15s
+      timeout: 15s
       retries: 3
 
   web:
@@ -31,13 +30,13 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:8080"
+      - "${WEB_PORT:-8080}:8080"
     volumes:
       - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
 
   # Не поднимается вместе с `up -d` (profile не входит в default).
-  # Полный прогон: docker compose run --rm updater
+  # Полный цикл с безопасным перезапуском API: bash docker/update.sh
   updater:
     build:
       context: .
@@ -46,11 +45,18 @@ services:
         UID: ${OP_UID:-1000}
         GID: ${OP_GID:-1000}
     env_file: .env
+    environment:
+      PARSER_ROOT: /app
+      PARSER_DOWNLOADS: /app/downloads
+      PARSER_REQUIRE_REALTY_MARTS: "0"
+      PARSER_USE_REALTY_MARTS: "1"
+      KVART_PER_DEV: "1"
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
       - ./state:/app/state
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config:ro
+      - ./runtime:/runtime
     shm_size: "10gb"
     profiles: ["updater"]

@@ -55,7 +55,12 @@ def create_app(service=None, apartments_service=None, sales_service=None):
 
     @app.get("/api/v1/health")
     def health():
-        return {"status": "ok", "dataMode": "live"}
+        # A process that cannot load its pinned release is not ready for traffic.
+        payload = call(service.catalog)
+        if not payload.get("controls", {}).get("developers"):
+            raise HTTPException(503, "No developer data available")
+        return {"status": "ok", "dataMode": "live",
+                "release": str(service.context.root) if hasattr(service, "context") else None}
 
     @app.get("/api/v1/catalog")
     def catalog():

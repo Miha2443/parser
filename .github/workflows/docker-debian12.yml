@@ -1,0 +1,50 @@
+name: Docker Compose on Debian 12
+
+on:
+  push:
+    branches: [linux-docker]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-debian12-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot isolated Debian 12 Docker host
+        run: |
+          docker build -t parser-compose-engine docker/tests -f docker/tests/engine.Dockerfile
+          docker run -d --privileged --name parser-compose-engine parser-compose-engine
+          for attempt in $(seq 1 30); do
+            if docker exec parser-compose-engine docker info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec parser-compose-engine docker info >/dev/null
+          docker cp . parser-compose-engine:/opt/parser-dashboard
+          docker exec parser-compose-engine chown -R op:op /opt/parser-dashboard
+      - name: Run actual production Compose workflow and isolated source fixtures
+        run: docker exec -e PARSER_COMPOSE_SMOKE=1 parser-compose-engine runuser -u op -- bash /opt/parser-dashboard/docker/tests/check.sh
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p compose-report
+          docker logs parser-compose-engine > compose-report/engine.log 2>&1 || true
+          docker exec parser-compose-engine sh -c 'cd /opt/parser-dashboard && docker compose logs --no-color' > compose-report/containers.log 2>&1 || true
+          docker cp parser-compose-engine:/opt/parser-dashboard/logs compose-report/parser-logs || true
+          cat compose-report/containers.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compose-debian12-report
+          path: compose-report
+          retention-days: 7
+      - name: Stop disposable Docker host
+        if: always()
+        run: docker rm -f parser-compose-engine || true

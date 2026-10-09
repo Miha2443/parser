@@ -1,0 +1,6 @@
+services:
+  updater:
+    environment:
+      PARSER_COMPOSE_SMOKE: "1"
+      FIXTURE_FAIL: ${FIXTURE_FAIL:-0}
+    command: ["python", "-m", "docker.tests.fixture", "update"]

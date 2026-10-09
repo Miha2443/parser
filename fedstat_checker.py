@@ -131,7 +131,7 @@ DEFAULT_INDICATOR_USAGE = {
 }
 
 DOWNLOAD_DIR = Path("downloads")
-STATE_FILE = Path("fedstat_state.json")
+STATE_FILE = Path("state/fedstat_state.json")
 RUN_CHECKPOINT_FILE = Path("state/fedstat_run_checkpoint.json")
 PAGE_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_TIMEOUT", "20"))
 PAGE_LOAD_TOTAL_TIMEOUT = int(os.environ.get("FEDSTAT_PAGE_LOAD_TOTAL_TIMEOUT", "120"))
@@ -166,7 +166,10 @@ FEDSTAT_CHROMEDRIVER_PATH = os.environ.get("FEDSTAT_CHROMEDRIVER_PATH", "").stri
 
 
 def load_state():
-    return load_json_state(STATE_FILE, label="fedstat")
+    path = STATE_FILE
+    if not path.exists() and path == Path("state/fedstat_state.json"):
+        path = Path("fedstat_state.json")  # Legacy layout; save goes to state/.
+    return load_json_state(path, label="fedstat")
 
 
 def save_state(state):

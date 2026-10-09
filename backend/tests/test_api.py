@@ -110,7 +110,7 @@ class ApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = ProfileService(DataContext(Path(directory)))
             client = TestClient(create_app(service))
-            self.assertEqual(client.get("/api/v1/health").status_code, 200)
+            self.assertEqual(client.get("/api/v1/health").status_code, 503)
             self.assertEqual(client.get("/api/v1/catalog").status_code, 503)
 
     def test_generation_changes_invalidate_profile_cache(self):

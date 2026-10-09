@@ -1,4 +1,203 @@
-# Дашборд недвижимости — Debian 12
+# Дашборд недвижимости — Docker на Debian 12
+
+Основная установка этой ветки — Docker Compose: постоянно работают только
+`web` (React + Nginx) и `backend` (FastAPI). Хостовый cron в 06:00 по Москве
+запускает одноразовый `updater`. Он полностью скачивает все восемь автоматических
+источников, включая per-dev квартирографию, строит данные и проверяет девять
+витрин и основные API. Во время долгого скачивания сайт читает прежний выпуск.
+После успешной публикации ненадолго перезапускается backend; если новый выпуск
+не проходит проверку готовности, возвращается прежний. Для обновления открытой
+страницы нажмите `Ctrl+F5`. Браузер для ежедневного обновления не нужен.
+
+## Чистый сервер: Docker и рабочая папка
+
+Нужны Debian 12 x86_64, доступ к GitHub, Docker Hub, PyPI и сайтам источников.
+Практический старт: 4 vCPU, 16 ГБ RAM и 100 ГБ SSD; размеры выпусков и время
+полного обхода измерьте после первого запуска. Python, Node, Chromium и Nginx
+устанавливаются внутри образов; хостовая `.venv` и systemd-службы парсера здесь
+не используются.
+
+Установите Docker Engine из официального Debian-репозитория Docker:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git util-linux cron
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable' | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker "$USER"
+```
+
+Выйдите из SSH и войдите снова, затем проверьте `docker info` и
+`docker compose version`. Последующие команды выполняет обычный пользователь
+из группы `docker`. В примерах рабочая папка — `/opt/parser-dashboard`:
+
+```bash
+sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/parser-dashboard
+git clone --depth 1 --single-branch --branch linux-docker https://github.com/Miha2443/parser.git /opt/parser-dashboard
+cd /opt/parser-dashboard
+cp .env.example .env
+sed -i "s/^OP_UID=.*/OP_UID=$(id -u)/; s/^OP_GID=.*/OP_GID=$(id -g)/" .env
+chmod 600 .env
+nano .env
+cp config/erzrf.example.json config/erzrf.json
+chmod 600 config/erzrf.json
+nano config/erzrf.json
+bash docker/bootstrap.sh
+```
+
+`.env` обязателен; `OP_UID` и `OP_GID` должны совпадать с пользователем хоста,
+который запускает bootstrap и cron. Для уведомлений заполните реквизиты TDM
+в `.env`; при отсутствии бота задайте `TDM_DISABLED=1`. Файл
+`config/erzrf.json` содержит email и пароль ЕРЗ. Секретные файлы не входят
+в образы и Git; не публикуйте вывод `docker compose config`, содержащий
+подставленные переменные. Updater читает `config/` только для чтения.
+
+Bootstrap собирает образы, создаёт `downloads/`, `data/`, `state/`, `logs/`,
+`runtime/releases/` с правами текущего пользователя и копирует отсутствующие
+статические исходники из образа. Существующие файлы не перезаписываются.
+В образ включены справочники `data/derived/`, пять таблиц/фильтр `vvod/`,
+ручная таблица escrow и JSON линейных объектов. Ручные источники невозможно
+полностью восстановить автоматическим скачиванием: актуальную выгрузку escrow
+и новые линейные объекты кладите в соответствующие `data/raw/realty/` каталоги
+перед полным прогоном. Их изменения попадут на сайт после публикации.
+
+## Первый полный запуск и ежедневный cron
+
+```bash
+cd /opt/parser-dashboard
+bash docker/update.sh > logs/docker-update-first.log 2>&1
+docker compose ps
+curl -f http://127.0.0.1:8080/api/v1/health
+curl -f http://127.0.0.1:8080/api/v1/catalog
+```
+
+Первый запуск может занять несколько часов. Следить за ним можно через
+`tail -f logs/docker-update-first.log`; подробные логи источников лежат в
+`logs/`. По умолчанию выполняется `scripts/update_realty.py all --retries 0`:
+monitoring, rasprod, kvart, construction, erz-top, erz-cards, fedstat, rosstat.
+Автоматическая публикация требует exit code 0, свежего статуса успешного
+завершения и успешности каждого источника. Ошибка источника сохраняет прежний
+публичный выпуск; исправьте причину и повторите `bash docker/update.sh`.
+
+Сайт доступен на `http://АДРЕС_СЕРВЕРА:8080`; разрешите этот порт в сетевом
+экране сервера. Порт можно изменить через `WEB_PORT` в `.env`.
+Для публичного HTTPS настройте внешний reverse proxy. Действия `/api/v1/tdm`
+закрыты Nginx ответом 403.
+
+Cron использует часовой пояс **хоста**, а `TZ` внутри контейнера не меняет
+его расписание. На сервере с расписанием по Москве:
+
+```bash
+sudo timedatectl set-timezone Europe/Moscow
+date
+sudo service cron start
+crontab -e
+```
+
+Добавьте в crontab того же пользователя одну строку:
+
+```cron
+0 6 * * * /bin/bash /opt/parser-dashboard/docker/update.sh >> /opt/parser-dashboard/logs/docker-update-cron.log 2>&1
+```
+
+Проверка: `crontab -l`, `docker compose ps`,
+`tail -n 100 logs/docker-update-cron.log`. `flock` блокирует весь цикл
+скачивания, публикации, перезапуска и проверки: второй параллельный запуск
+завершается с ошибкой. Updater заканчивает работу и удаляется; постоянно
+остаются два контейнера. Cron повторяет полный обход каждый день, даже если
+предыдущий запуск завершился ошибкой.
+
+## Публикация, восстановление и обновление кода
+
+Только updater изменяет рабочие `downloads/`, `data/`, `state/`, `logs/`.
+Backend видит только `runtime/` для чтения:
+`PARSER_ROOT=/runtime/live`, `PARSER_DOWNLOADS=/runtime/live/downloads`.
+Выпуск содержит независимые копии файлов с сохранённым `mtime_ns`, включая
+журналы и исходники; архивы и временные файлы не публикуются. Проверяются
+состав исходников, размер, времена файлов, загрузка всех витрин и API каталоги
+профиля, экономики, карты, линейных объектов, годового ввода и строительства.
+Пустые необязательные наборы разрешены; каталог застройщиков должен содержать
+данные. Затем `runtime/live` атомарно переключается относительной ссылкой
+`releases/<id>`. Backend фиксирует этот путь при старте и продолжает читать
+старый выпуск до перезапуска.
+
+`runtime/pending.json` хранит предыдущий путь до завершения проверки готовности
+нового backend (до 90 секунд). Если host-процесс был прерван, следующий запуск
+`docker/update.sh` сначала восстанавливает предыдущий путь, запускает backend
+и проверяет API. При ошибке восстановления журнал остаётся для повторной
+попытки. Старые выпуски автоматически не удаляются: они могут использоваться
+работающим backend. Перед ручной очисткой убедитесь, что выпуск не является
+`live`, предыдущим путём в `pending.json` или выпуском текущего backend
+(`/api/v1/health`, поле `release`).
+
+Обновление кода и образов:
+
+```bash
+cd /opt/parser-dashboard
+git pull --ff-only
+docker compose --profile updater build
+bash docker/update.sh >> logs/docker-update-manual.log 2>&1
+```
+
+При переходе с уже работающего старого Docker-сервера выполните `git pull`
+в **его фактической папке**, а пути cron замените на её абсолютный путь.
+Сначала удалите старую строку обновления из `crontab -e`, чтобы два разных
+workflow не запускались одновременно. Если раньше были установлены службы
+из `deploy/linux/`, остановите их таймер и службу обновления:
+`sudo systemctl stop parser-update.timer parser-update.service`.
+Эти команды нужны только для ранее установленного варианта systemd.
+Сохраните `.env`, `config/erzrf.json` и рабочие данные, проверьте UID/GID,
+затем выполните `bash docker/bootstrap.sh` и
+`bash docker/update.sh --publish-existing`. Этот режим копирует и проверяет
+уже скачанный набор без сетевого обновления и переводит backend на неизменяемый
+выпуск перед следующим долгим скачиванием. Для него нужны готовые `processed/`
+и корректные витрины всех девяти источников. Если старые витрины не соответствуют
+текущему коду, сначала пересоберите их без скачивания:
+`docker compose run --rm --no-deps updater python -m pipeline.build_realty_marts --strict`.
+При ошибке проверки существующего набора изучите лог и исправьте его до нового
+скачивания. Bootstrap собирает образы, пока прежние контейнеры обслуживают сайт.
+Первый успешный импорт пересоздаст backend с новым mount и web с новым Nginx;
+после этого запустите обычный `bash docker/update.sh` для полного обновления.
+До окончания скачивания `docker compose down` не требуется.
+Если старые рабочие каталоги принадлежат root, измените владельца только
+этих каталогов внутри фактической папки репозитория на OP_UID/OP_GID;
+bootstrap проверяет совпадение пользователя, но не меняет владельца старых
+данных. После успешного запуска добавьте новую строку cron.
+
+Для диагностики без публикации используйте явно переопределённую команду:
+
+```bash
+docker compose run --rm --no-deps updater python scripts/update_realty.py all --plan
+docker compose logs --tail 100 backend web
+```
+
+Не запускайте диагностические скачивания одновременно с полным обновлением.
+Команда `docker compose run --rm updater` сама скачивает и публикует, но
+**не перезапускает backend**; для обычного ручного запуска и cron используйте
+`docker/update.sh`. Если запускаете её отдельно, следующий host-запуск сначала
+откатит незавершённую транзакцию. При переносе старой установки сохраните
+корневые `fedstat_state.json` и `rosstat_state.json` в `state/` перед первым
+контейнерным запуском; новые состояния обоих загрузчиков сохраняются там.
+
+## Проверка Docker на Debian 12
+
+[Docker Compose CI](https://github.com/Miha2443/parser/actions/workflows/docker-debian12.yml)
+поднимает изолированный Docker Engine на настоящем Debian 12, собирает три
+образа и проверяет штатные compose/bootstrap/update.sh, сохранение состояния,
+публикацию, отказ при неполном статусе, старый API во время обновления, откат
+при неготовом backend, DNS после смены IP backend, Nginx и React-графики
+в Chromium. Сетевые ответы источников заменяются искусственными данными
+только в одноразовом CI-проекте. Полный реальный сетевой обход нужно завершить
+на сервере; CI проверяет установку и цикл публикации, а не доступность всех
+внешних сайтов. Логи и screenshot сохраняются в `compose-debian12-report`.
+
+## Альтернативная установка: службы Linux
+
+Далее описан прежний вариант без Docker через `deploy/linux/`.
 
 Рабочая версия состоит из статического сайта React/Vite (`frontend/`), API FastAPI
 (`backend/`) и отдельного загрузчика всех автоматизированных источников

@@ -66,7 +66,7 @@ PAGE_SOURCES: dict[str, list[dict]] = {
 }
 
 DOWNLOAD_DIR = Path("downloads")
-STATE_FILE = Path("rosstat_state.json")
+STATE_FILE = Path("state/rosstat_state.json")
 REQUEST_TIMEOUT = 60
 DATE_RE = re.compile(r"\b(\d{2}\.\d{2}\.\d{4})\b")
 USER_AGENT = (
@@ -76,7 +76,10 @@ USER_AGENT = (
 
 
 def load_state() -> dict:
-    return load_json_state(STATE_FILE, label="rosstat")
+    path = STATE_FILE
+    if not path.exists() and path == Path("state/rosstat_state.json"):
+        path = Path("rosstat_state.json")  # Legacy layout; save goes to state/.
+    return load_json_state(path, label="rosstat")
 
 
 def save_state(state: dict) -> None:

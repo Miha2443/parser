@@ -119,7 +119,7 @@ class Checks(unittest.TestCase):
     def collect(self, directory, callback, factory=Driver):
         with ExitStack() as stack:
             stack.enter_context(patch.object(nc, "DOWNLOAD_DIR", directory))
-            stack.enter_context(patch.object(nc, "create_chrome", side_effect=factory))
+            stack.enter_context(patch.object(nc, "create_chrome", side_effect=lambda **kwargs: factory()))
             stack.enter_context(patch.object(nc, "selenium_sleep"))
             stack.enter_context(patch.object(api, "fetch", side_effect=callback))
             stack.enter_context(redirect_stdout(StringIO()))

@@ -21,7 +21,9 @@ jobs:
       - name: Build and boot isolated Debian 12 Docker host
         run: |
           docker build -t parser-compose-engine docker/tests -f docker/tests/engine.Dockerfile
-          docker run -d --privileged --name parser-compose-engine parser-compose-engine
+          docker volume create parser-compose-engine-data
+          docker run -d --privileged --name parser-compose-engine \
+            -v parser-compose-engine-data:/var/lib/docker parser-compose-engine
           for attempt in $(seq 1 30); do
             if docker exec parser-compose-engine docker info >/dev/null 2>&1; then break; fi
             sleep 2
@@ -47,4 +49,6 @@ jobs:
           retention-days: 7
       - name: Stop disposable Docker host
         if: always()
-        run: docker rm -f parser-compose-engine || true
+        run: |
+          docker rm -f parser-compose-engine || true
+          docker volume rm parser-compose-engine-data || true

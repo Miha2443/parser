@@ -9,4 +9,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
     && groupadd -g 1000 op && useradd -m -u 1000 -g op -G docker op \
     && rm -rf /var/lib/apt/lists/*
+VOLUME ["/var/lib/docker"]
 CMD ["dockerd", "--storage-driver=overlay2"]

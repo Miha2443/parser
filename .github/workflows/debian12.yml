@@ -1,0 +1,61 @@
+name: Debian 12 deployment
+
+on:
+  push:
+    branches: [codex/linux-deployment]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debian12-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build clean Debian 12 system
+        run: docker build -t parser-debian12 deploy/linux/tests
+      - name: Boot Debian with systemd
+        run: |
+          docker run -d --name parser-debian12 --privileged --cgroupns=host \
+            --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw parser-debian12
+          for attempt in $(seq 1 30); do
+            if docker exec parser-debian12 systemctl show --property=Version --value; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec parser-debian12 systemctl show --property=Version --value
+          docker cp . parser-debian12:/opt/parser-dashboard
+          docker exec parser-debian12 chown -R parserdash:parserdash /opt/parser-dashboard
+      - name: Install and build using the production setup script
+        run: docker exec parser-debian12 runuser -u parserdash -- bash /opt/parser-dashboard/deploy/linux/setup.sh
+      - name: Check services, browser downloads and data publication
+        run: docker exec -e PARSER_DEBIAN_SMOKE=1 parser-debian12 bash /opt/parser-dashboard/deploy/linux/tests/check.sh
+      - name: Probe live Monitoring export (external availability)
+        continue-on-error: true
+        run: docker exec -e PARSER_DEBIAN_SMOKE=1 parser-debian12 runuser -u parserdash -- timeout 180 /opt/parser-dashboard/.venv/bin/python /opt/parser-dashboard/deploy/linux/tests/smoke.py source
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p debian12-report
+          docker logs parser-debian12 > debian12-report/boot.log 2>&1 || true
+          docker exec parser-debian12 journalctl -u parser-api -u parser-update -u nginx --no-pager > debian12-report/services.log 2>&1 || true
+          docker exec parser-debian12 systemctl status parser-api parser-update parser-update.timer nginx --no-pager > debian12-report/status.log 2>&1 || true
+          docker cp parser-debian12:/opt/parser-dashboard/logs debian12-report/parser-logs || true
+          cat debian12-report/services.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debian12-report
+          path: debian12-report
+          retention-days: 7
+      - name: Stop test system
+        if: always()
+        run: docker rm -f parser-debian12 || true

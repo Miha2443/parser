@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# ZIP extraction may discard executable bits; systemd invokes these directly.
+chmod +x deploy/linux/*.sh
+
 command -v python3 >/dev/null || { echo 'python3 is required' >&2; exit 1; }
 python3 -c 'import sys; assert (3, 11) <= sys.version_info[:2] < (3, 14), "Python 3.11-3.13 required"'
 command -v node >/dev/null || { echo 'Node.js 24 is required to build frontend' >&2; exit 1; }

@@ -116,10 +116,10 @@ class Checks(unittest.TestCase):
         with self.assertRaisesRegex(api.ReportError, "request failed"):
             api.fetch(Fake(), api.urls("rf", ["dynamics"]))
 
-    def collect(self, directory, callback):
+    def collect(self, directory, callback, factory=Driver):
         with ExitStack() as stack:
             stack.enter_context(patch.object(nc, "DOWNLOAD_DIR", directory))
-            stack.enter_context(patch.object(nc, "create_chrome", return_value=Driver()))
+            stack.enter_context(patch.object(nc, "create_chrome", side_effect=factory))
             stack.enter_context(patch.object(nc, "selenium_sleep"))
             stack.enter_context(patch.object(api, "fetch", side_effect=callback))
             stack.enter_context(redirect_stdout(StringIO()))
@@ -168,6 +168,34 @@ class Checks(unittest.TestCase):
             self.assertEqual(len(calls), 6)
             self.assertEqual(published.read_bytes(), original)
             self.assertTrue((folder / "._rasprodannost_progress.json").exists())
+
+    def test_new_browser_every_twenty_reports_keeps_progress(self):
+        drivers = []
+        class CountingDriver(Driver):
+            def __init__(self):
+                self.reports = 0
+                self.closed = False
+                drivers.append(self)
+            def quit(self): self.closed = True
+        def callback(driver, request_urls):
+            if "/dynamics?" in request_urls[0]:
+                data = series(tuple(range(1, 13)))
+                for chart in data["dynamicCharts"]:
+                    chart["repYears"] = [
+                        {**copy.deepcopy(chart["repYears"][0]), "repYear": year} for year in (2024, 2025)
+                    ]
+                return [data]
+            driver.reports += 1
+            self.assertLessEqual(driver.reports, 20)
+            month = int(parse_qs(urlsplit(request_urls[0]).query)["repMonth"][0])
+            return list(payload(month))
+        with tempfile.TemporaryDirectory() as tmp:
+            (files, ok), _ = self.collect(Path(tmp), callback, CountingDriver)
+            self.assertTrue(ok)
+            data = json.loads(next(p for p in files if p.suffix == ".json").read_text())
+            self.assertEqual(len(data), 48)
+        self.assertEqual(len(drivers), 4)
+        self.assertTrue(all(driver.closed for driver in drivers))
 
 
 if __name__ == "__main__":

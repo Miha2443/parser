@@ -3240,6 +3240,10 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
                 region_url = _rasprod_region_url(url, region["click_label"]) or url
+                if region != RASPROD_REGIONS[0]:
+                    driver.quit()
+                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                    driver.set_page_load_timeout(PAGE_TIMEOUT)
                 driver.get(region_url)
                 selenium_sleep(2)
                 series = api.history(api.fetch(driver, api.urls(region["key"], ["dynamics"]))[0])
@@ -3265,9 +3269,13 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                 consecutive_failures = 0
                 for period_i, (year, month) in enumerate(periods_to_scrape, 1):
                     if period_i > 1 and (period_i - 1) % 20 == 0:
-                        # Renew the regular page session during long history
-                        # reads, just as opening the report again in a browser.
-                        print("       · обновляю страницу для следующего пакета API-периодов")
+                        # A regular reload retains the expired session cookie;
+                        # use a fresh isolated browser for the next 20 months.
+                        flush()
+                        print("       · новая сессия браузера для следующего пакета API-периодов")
+                        driver.quit()
+                        driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                        driver.set_page_load_timeout(PAGE_TIMEOUT)
                         driver.get(region_url)
                         selenium_sleep(2)
                     month_name = api.MONTHS[month - 1]

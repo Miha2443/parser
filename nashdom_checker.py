@@ -3230,7 +3230,7 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
         selenium_sleep(6)
         try:
             WebDriverWait(driver, 45).until(
-                lambda d: "данным на" in d.page_source or "<table" in d.page_source
+                lambda d: all(re.search(r"\d", value) for value in _rasprod_content_signature(d))
             )
         except TimeoutException:
             print(f"  ⚠️  rasprodannost: контент не появился за 45 сек")
@@ -3239,13 +3239,16 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
         for region in RASPROD_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
-                region_url = _rasprod_region_url(url, region["click_label"]) or url
+                region_url = (url if region["key"] == "rf"
+                              else _rasprod_region_url(url, region["click_label"]) or url)
                 if region != RASPROD_REGIONS[0]:
                     driver.quit()
                     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
                     driver.set_page_load_timeout(PAGE_TIMEOUT)
-                driver.get(region_url)
-                selenium_sleep(2)
+                    driver.get(region_url)
+                    WebDriverWait(driver, 45).until(
+                        lambda d: all(re.search(r"\d", value) for value in _rasprod_content_signature(d))
+                    )
                 series = api.history(api.fetch(driver, api.urls(region["key"], ["dynamics"]))[0])
                 periods = sorted(series, reverse=True)
                 print(f"       · API: доступных периодов: {len(periods)}")
@@ -3277,7 +3280,9 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                         driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
                         driver.set_page_load_timeout(PAGE_TIMEOUT)
                         driver.get(region_url)
-                        selenium_sleep(2)
+                        WebDriverWait(driver, 45).until(
+                            lambda d: all(re.search(r"\d", value) for value in _rasprod_content_signature(d))
+                        )
                     month_name = api.MONTHS[month - 1]
                     print(f"       ▸ {period_i}/{len(periods_to_scrape)}: {month_name} {year}")
                     # Three endpoints per report. Pace batches to avoid the

@@ -44,6 +44,7 @@ def payload(month=8):
 class Driver:
     page_source = "<table>"
     def get(self, url): pass
+    def execute_script(self, *args): return "100"
     def set_page_load_timeout(self, seconds): pass
     def quit(self): pass
 

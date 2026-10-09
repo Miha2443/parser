@@ -11,6 +11,8 @@ runuser -u parserdash -- .venv/bin/python scripts/update_realty.py all --plan
 runuser -u parserdash -- .venv/bin/python deploy/linux/tests/smoke.py unit
 runuser -u parserdash -- .venv/bin/python scripts/check_update_realty_runtime.py
 runuser -u parserdash -- .venv/bin/python scripts/check_data_access_core.py
+runuser -u parserdash -- .venv/bin/python scripts/check_erzrf_collector_contract.py
+runuser -u parserdash -- .venv/bin/python scripts/check_nashdom_rasprod_api.py
 runuser -u parserdash -- bash -c 'cd frontend && pnpm test'
 runuser -u parserdash -- .venv/bin/python deploy/linux/tests/smoke.py browser
 # Stop the schedule during synthetic tests; its calendar is checked separately.

@@ -46,7 +46,9 @@ def fixture_frame(kind: str) -> pd.DataFrame:
 
 
 def selection(request: ec.TopExport) -> dict:
-    return {"url": ec._build_top_url(request.region, request.sorting_key), "developer_totals": [1], "selects": [
+    return {"url": ec._build_top_url(request.region, request.sorting_key),
+            "all_developers_shown": request.sorting_key == "potreb_kachestva",
+            "developer_totals": [1], "selects": [
         {"id": "sorting", "value": str(ec.TOP_TYPES[request.sorting_key]),
          "selected_text": next(item["label"] for item in ec.SORTINGS if item["key"] == request.sorting_key),
          "options": [{"value": str(ec.TOP_TYPES[item["key"]]), "text": item["label"]} for item in ec.SORTINGS]},
@@ -125,6 +127,29 @@ class CollectorContract(unittest.TestCase):
         self.assertEqual(ec.TOP_TYPES, {"obyem_stroitelstva": 0, "obyem_vvoda": 1,
                                       "nakopl_vvod": 4, "potreb_kachestva": 2, "skorost": 3})
         self.assertEqual(ec._sorting_control(selection(self.request))[1], ec.TOP_TYPES)
+
+    def test_quality_requires_all_developers_in_url_and_checkbox(self):
+        request = ec.TopExport("rf", "potreb_kachestva")
+        good = selection(request)
+        self.assertEqual(parse_qs(urlparse(good["url"]).query)["isAllDevelopersShown"], ["true"])
+        with patch.object(ec, "_read_top_selection", return_value=good):
+            self.assertTrue(ec._top_request_evidence(None, request, ec.TOP_TYPES)["all_developers_shown"])
+        for value in (False, None):
+            bad = {**good, "all_developers_shown": value}
+            with patch.object(ec, "_read_top_selection", return_value=bad):
+                with self.assertRaisesRegex(ec.TopExportError, "all developers"):
+                    ec._top_request_evidence(None, request, ec.TOP_TYPES)
+        bad = {**good, "url": good["url"].replace("&isAllDevelopersShown=true", "")}
+        with patch.object(ec, "_read_top_selection", return_value=bad):
+            with self.assertRaises(ec.TopExportError):
+                ec._top_request_evidence(None, request, ec.TOP_TYPES)
+
+    def test_moscow_quality_has_no_all_developers_checkbox(self):
+        request = ec.TopExport("msk", "potreb_kachestva")
+        current = {**selection(request), "all_developers_shown": None}
+        self.assertNotIn("isAllDevelopersShown", parse_qs(urlparse(current["url"]).query))
+        with patch.object(ec, "_read_top_selection", return_value=current):
+            self.assertEqual(ec._top_request_evidence(None, request, ec.TOP_TYPES)["region"], "msk")
 
     def test_current_live_sorting_labels_are_recognised(self):
         current = selection(self.request)

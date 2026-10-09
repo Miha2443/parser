@@ -3085,11 +3085,12 @@ def _latest_rasprod_entry(entries: list[dict]) -> dict:
 
 
 def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
-    """Распроданность — настоящая <table>-структура. Пишем xlsx с листами:
-    kpi (4 метрики верха) + по одному листу на каждую из 6 таблиц.
+    """Download exact period/region reports from the page's API.
 
-    Обходит 2 региона (РФ + Москва).
+    Preserve JSON/XLSX schemas and resumable checkpoints; publish only a
+    complete history corroborated by the API's four monthly series.
     """
+    from pipeline.downloaders import nashdom_rasprod_api as api
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = _build_rasprodannost_url()
     print(f"  🌐 rasprodannost: {url}")
@@ -3105,7 +3106,6 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
         else "._rasprodannost_progress.json"
     )
     history_data: list[dict] = []
-    history_keys: set[tuple[str, int, int]] = set()
     if full_history:
         print("     · режим: полный обход истории")
         if checkpoint_json.exists():
@@ -3148,15 +3148,11 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             if _rasprod_entry_key(row) not in suspect_keys
         ]
         print(f"     ⚠️  удалены повторённые значения за {len(suspect_keys)} месяцев; периоды будут скачаны заново")
-    history_keys = {
-        key for row in history_data
-        if (key := _rasprod_entry_key(row)) is not None
-    }
-
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
     all_data: list[dict] = list(history_data)
     refreshed_regions: set[str] = set()
     expected_keys: set[tuple[str, int, int]] = set()
+    confirmed_keys: set[tuple[str, int, int]] = set()
     new_files: list[Path] = []
     complete = False
 
@@ -3239,84 +3235,68 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
         except TimeoutException:
             print(f"  ⚠️  rasprodannost: контент не появился за 45 сек")
             _save_debug_snapshot(driver, "rasprodannost_no_content")
-            return []
-        _scroll_through_page(driver)
-        selenium_sleep(3)
-
-        debug_dir = DOWNLOAD_DIR.parent / "_debug"
-        debug_dir.mkdir(parents=True, exist_ok=True)
-
-        YEAR_FROM = 2020  # самый ранний доступный год по данным пользователя
-
+            return [], False
         for region in RASPROD_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
-                if region["search"]:
-                    ok = _switch_region_rasprodannost(
-                        driver,
-                        target_label=region["click_label"],
-                        search_query=region["search"],
-                    )
-                    if not ok:
-                        print(f"       ⚠️  не удалось переключить, пропускаю")
-                        continue
-                    _scroll_through_page(driver)
-                    selenium_sleep(2)
-
-                # Перечислим все доступные периоды (year, month_idx)
-                periods = _list_all_periods(driver, year_from=YEAR_FROM, year_to=2030)
-                print(f"       · доступных периодов: {len(periods)}")
+                region_url = _rasprod_region_url(url, region["click_label"]) or url
+                driver.get(region_url)
+                selenium_sleep(2)
+                series = api.history(api.fetch(driver, api.urls(region["key"], ["dynamics"]))[0])
+                periods = sorted(series, reverse=True)
+                print(f"       · API: доступных периодов: {len(periods)}")
                 expected_keys.update(
-                    (region["key"], year, m_idx + 1) for year, m_idx in periods
+                    (region["key"], year, month) for year, month in periods
                 )
-                # Самый свежий период — для него отдельно листаем таблицу
-                # «Девелоперы» виртуальным скроллом, чтобы собрать всех (а не
-                # только видимый топ).
-                latest_period = max(periods) if periods else None
-
-                periods_to_scrape = periods
-                if history_keys:
-                    periods_to_scrape = []
-                    for year, m_idx in periods:
-                        key = (region["key"], year, m_idx + 1)
-                        if key not in history_keys or (latest_period and (year, m_idx) == latest_period):
-                            periods_to_scrape.append((year, m_idx))
-                    skipped = len(periods) - len(periods_to_scrape)
-                    if skipped:
-                        print(f"       · incremental: пропускаю уже сохранённых периодов: {skipped}")
-                for period_i, (year, m_idx) in enumerate(periods_to_scrape, 1):
-                    month_name = ["Январь","Февраль","Март","Апрель","Май","Июнь",
-                                  "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][m_idx]
+                cached_keys = {
+                    key for row in all_data
+                    if (key := _rasprod_entry_key(row)) is not None and key[0] == region["key"]
+                    and key[1:] in series and api.matches_history(row, series[key[1:]])
+                }
+                confirmed_keys.update(cached_keys)
+                latest_period = periods[0]
+                periods_to_scrape = [
+                    period for period in periods
+                    if (region["key"], *period) not in cached_keys or period == latest_period
+                ]
+                skipped = len(periods) - len(periods_to_scrape)
+                if skipped:
+                    print(f"       · incremental: пропускаю уже проверённых API-периодов: {skipped}")
+                consecutive_failures = 0
+                for period_i, (year, month) in enumerate(periods_to_scrape, 1):
+                    if period_i > 1 and (period_i - 1) % 20 == 0:
+                        # Renew the regular page session during long history
+                        # reads, just as opening the report again in a browser.
+                        print("       · обновляю страницу для следующего пакета API-периодов")
+                        driver.get(region_url)
+                        selenium_sleep(2)
+                    month_name = api.MONTHS[month - 1]
                     print(f"       ▸ {period_i}/{len(periods_to_scrape)}: {month_name} {year}")
-                    ok = _switch_period(driver, year, m_idx)
-                    if not ok:
+                    # Three endpoints per report. Pace batches to avoid the
+                    # site's rate limit during the first 160-month download.
+                    selenium_sleep(2.5)
+                    try:
+                        index, charts, ready = api.fetch(driver, api.urls(
+                            region["key"], ["index", "charts", "ready-year-charts"], year, month))
+                        data = api.report(region["key"], year, month, series[(year, month)],
+                                          index, charts, ready, page_url=url)
+                    except (api.ReportError, WebDriverException) as exc:
+                        consecutive_failures += 1
+                        print(f"       ⚠️  API-период не подтверждён: {exc}")
+                        flush()
+                        if consecutive_failures >= 3:
+                            print("       ❌ 3 ошибки подряд: останавливаю регион, прогресс сохранён")
+                            break
                         continue
-                    _scroll_through_page(driver)
-                    selenium_sleep(1.5)
-
-                    if latest_period and (year, m_idx) == latest_period:
-                        n_rows = _scroll_developers_table(driver)
-                        if n_rows:
-                            print(f"          📥 свежий период: проскроллил «Девелоперы», {n_rows} строк")
-                        else:
-                            print(f"          ⚠️  не удалось проскроллить «Девелоперы»")
-
-                    data = _parse_rasprodannost(driver.page_source, driver.current_url)
-                    data["region_key"] = region["key"]
-                    data["year"] = year
-                    data["month_num"] = m_idx + 1
-                    data["month_name"] = month_name
-                    data["scraped_at"] = datetime.now().isoformat(timespec="seconds")
-                    data["source"] = "rasprodannost"
+                    consecutive_failures = 0
                     print(
                         f"          KPI={len(data.get('kpi') or [])}, "
                         f"tables={sum(len(v) for v in (data.get('tables') or {}).values())} строк"
                     )
-                    if not data.get("kpi"):
-                        print("          ⚠️  KPI отсутствуют, период пропущен")
-                        continue
-                    refreshed_regions.add(region["key"])
-                    key = (region["key"], year, m_idx + 1)
+                    if (year, month) == latest_period:
+                        refreshed_regions.add(region["key"])
+                    key = (region["key"], year, month)
+                    confirmed_keys.add(key)
                     all_data = [row for row in all_data if _rasprod_entry_key(row) != key]
                     all_data.append(data)
                     # Сохраняем JSON-прогресс для продолжения после таймаута.
@@ -3329,11 +3309,7 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             # В конце региона сохраняем последние периоды в checkpoint.
             flush()
 
-        found_keys = {
-            key for row in all_data
-            if (key := _rasprod_entry_key(row)) is not None
-        }
-        missing_keys = expected_keys - found_keys
+        missing_keys = expected_keys - confirmed_keys
         suspect_keys = _suspect_rasprod_history_keys(all_data)
         complete = (
             bool(expected_keys) and not missing_keys and not suspect_keys

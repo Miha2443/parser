@@ -125,6 +125,10 @@ def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None
     return (
         f"{BASE}/top-zastroyshchikov/{region['path']}"
         f"?topType={top_type}&{region['extra_query']}"
+        # The quality page defaults to large developers, while "Весь список"
+        # exports all developers. Compare the same population (ERZ 09.10.2026).
+        + ("&isAllDevelopersShown=true"
+           if sorting_key == "potreb_kachestva" and region["key"] == "rf" else "")
     )
 
 
@@ -853,7 +857,10 @@ def _read_top_selection(driver) -> dict:
         const totals = [...(document.body.innerText || '').matchAll(
             /из\s+([\d\s\u00a0\u202f]+)\s+застройщик(?:ов|а)?/gi
         )].map(m => Number(m[1].replace(/\s/g, '')));
+        const allControls = [...document.querySelectorAll('input[type="checkbox"]')]
+            .filter(e => /Все\s+застройщики/i.test(e.parentElement.textContent || ''));
         return {url: location.href, developer_totals: totals,
+            all_developers_shown: allControls.length === 1 ? allControls[0].checked : null,
             selects: [...document.querySelectorAll('select')].map(s => ({
             id: s.id, value: s.value,
             selected_text: s.selectedOptions.length === 1 ? s.selectedOptions[0].textContent.trim() : '',
@@ -1070,6 +1077,9 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
             or any(query.get(key) != value for key, value in wanted_query.items())):
         raise TopExportError("current URL differs from requested region/sorting")
+    if (request.sorting_key == "potreb_kachestva" and request.region_key == "rf"
+            and selection.get("all_developers_shown") is not True):
+        raise TopExportError("quality TOP must show all developers before Excel comparison")
     region_controls = [item for item in selection.get("selects", [])
                        if {"0", "143443001"}.issubset(
                            {str(option.get("value")) for option in item.get("options", [])})]
@@ -1094,6 +1104,7 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             "selected_region": region_controls[0].get("selected_text", ""),
             "region_control_ids": [item.get("id", "") for item in region_controls],
             "requested_year": request.year, "selected_year": selected_year,
+            "all_developers_shown": selection.get("all_developers_shown"),
             "expected_rows": totals[0]}
 
 

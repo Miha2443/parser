@@ -14,6 +14,7 @@ fi
 id parserdash >/dev/null 2>&1 || { echo 'Create user parserdash first' >&2; exit 1; }
 test -x "$ROOT/.venv/bin/python" || { echo 'Run deploy/linux/setup.sh as parserdash first' >&2; exit 1; }
 test -f "$ROOT/frontend/dist/index.html" || { echo 'Frontend build is missing' >&2; exit 1; }
+test -x "$ROOT/deploy/linux/publish-data.sh" || { echo 'Data publisher is missing' >&2; exit 1; }
 
 install -m 0644 "$ROOT/deploy/linux/parser-api.service" /etc/systemd/system/parser-api.service
 install -m 0644 "$ROOT/deploy/linux/parser-update.service" /etc/systemd/system/parser-update.service
@@ -23,6 +24,7 @@ ln -sfn /etc/nginx/sites-available/parser-dashboard.conf /etc/nginx/sites-enable
 nginx -t
 systemctl daemon-reload
 systemctl enable --now parser-api.service parser-update.timer
+systemctl restart parser-api.service
 systemctl enable --now nginx
 systemctl reload nginx
 

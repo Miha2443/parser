@@ -7,6 +7,9 @@ venv/
 .vscode/
 node_modules/
 frontend/dist/
+/data-releases/
+/live
+/.live-next
 frontend/.vite/
 frontend/*.tsbuildinfo
 
@@ -16,6 +19,12 @@ frontend/*.tsbuildinfo
 # Производные данные (восстанавливаются из downloads/ через ETL)
 data/processed/
 data/marts/
+# Автоматически загружаемые источники и устаревшие локальные копии.
+/downloads/
+/data/raw/realty/erzrf/
+/data/raw/realty/nashdom/
+/nashdom/
+/_to_delete/
 
 # Бэкапы и устаревшие выгрузки
 data/raw/_archive/

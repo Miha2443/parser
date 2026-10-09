@@ -21,7 +21,7 @@ fi
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements-linux.txt
-mkdir -p downloads data/raw/realty data/processed data/marts/realty data/derived state logs
+mkdir -p downloads data/raw/realty data/processed data/marts/realty data/derived state logs data-releases
 
 (
   cd frontend

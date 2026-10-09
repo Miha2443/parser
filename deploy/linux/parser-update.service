@@ -11,6 +11,8 @@ WorkingDirectory=/opt/parser-dashboard
 Environment=PYTHONUTF8=1
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/parser-dashboard/.env
-ExecStart=/opt/parser-dashboard/.venv/bin/python -u scripts/update_realty.py all
+ExecStart=/usr/bin/env PARSER_ROOT=/opt/parser-dashboard PARSER_DOWNLOADS=/opt/parser-dashboard/downloads /opt/parser-dashboard/.venv/bin/python -u scripts/update_realty.py all
+ExecStartPost=/opt/parser-dashboard/deploy/linux/publish-data.sh
+ExecStartPost=+/usr/bin/systemctl restart parser-api.service
 TimeoutStartSec=infinity
 KillMode=control-group

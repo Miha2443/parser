@@ -126,6 +126,35 @@ class PublicationTests(unittest.TestCase):
             p.transaction(runtime, "ack")
             self.assertFalse(journal.exists())
 
+    def test_coherent_but_empty_quart_mart_with_raw_source_cannot_publish(self):
+        from deploy.linux.tests import smoke
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root, runtime = base / "work", base / "runtime"
+            with patch.object(smoke, "ROOT", root):
+                smoke.seed("PUBLICATION QUART DEFENSE")
+            invalid = root / "data/raw/realty/nashdom/kvartirografia_20261011.json"
+            invalid.write_text(json.dumps([{"region_key": "rf", "developers": [{"наименование": "RF only"}]}]), encoding="utf-8")
+            environment = {**os.environ, "PARSER_ROOT": str(root), "PARSER_DOWNLOADS": str(root / "downloads"),
+                           "PARSER_REQUIRE_REALTY_MARTS": "1", "PYTHONUTF8": "1"}
+            for arguments in (("--strict",), ("--check", "--strict")):
+                result = subprocess.run([sys.executable, "-m", "pipeline.build_realty_marts", *arguments],
+                                        cwd=REPO, env=environment, capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run([sys.executable, "-m", "docker.publication", "validate-api"],
+                                    cwd=REPO, env=environment, capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("kvartirografia mart lacks valid RF/Moscow", result.stderr)
+            (runtime / "releases/old").mkdir(parents=True)
+            # Works on Windows without symlink privilege, while exercising the
+            # real copy and candidate validator before the pointer-swap boundary.
+            with patch.object(p, "live_target", return_value="releases/old"), patch.object(p, "swap") as swap:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    p.publish(root, runtime)
+            swap.assert_not_called()
+            self.assertFalse((runtime / "pending.json").exists())
+            self.assertEqual(list((runtime / "releases").iterdir()), [runtime / "releases/old"])
+
 
 if __name__ == "__main__":
     unittest.main()

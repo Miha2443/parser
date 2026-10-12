@@ -370,6 +370,62 @@ def _load_credentials() -> dict | None:
 # ─────────────────────────────────────────────
 
 
+def _auth_page_ready(driver) -> bool:
+    """A timeout can leave usable UI; error HTML and other origins cannot log in."""
+    try:
+        location = urlparse(driver.current_url)
+        if location.scheme != "https" or location.hostname not in {"erzrf.ru", "www.erzrf.ru"}:
+            return False
+        return bool(driver.execute_script("""
+            const text=(document.body?.innerText || '').trim();
+            if(!text || /temporarily unavailable|the page you are looking for|bad gateway|access denied/i.test(text)) return false;
+            const header=document.querySelector('header,[class*="header" i],[id*="header" i]');
+            const controls=[...document.querySelectorAll('[title],[aria-label]'),
+              ...(header ? header.querySelectorAll('button,a,span') : [])];
+            return controls.some(e=>
+              e.offsetParent!==null && /^(вход|войти|выход|выйти|личный кабинет)$/i.test(
+                (e.getAttribute('title') || e.getAttribute('aria-label') || e.innerText || '').trim()));
+        """))
+    except WebDriverException:
+        return False
+
+
+def _open_auth_page(driver) -> bool:
+    driver.set_page_load_timeout(min(PAGE_TIMEOUT, 30))
+    try:
+        driver.get(BASE)
+    except TimeoutException:
+        print("  ⏳ Главная ЕРЗ: timeout; проверяю уже отрисованный интерфейс")
+        try:
+            driver.execute_script("window.stop();")
+        except WebDriverException:
+            return False
+    try:
+        WebDriverWait(driver, 15).until(_auth_page_ready)
+        return True
+    except (TimeoutException, WebDriverException):
+        return False
+
+
+def _authenticated_session(download_dir):
+    """One fresh browser recovery for authentication; callers own returned driver."""
+    for attempt in range(2):
+        driver = create_chrome(download_dir=download_dir, headless=HEADLESS,
+                               page_load_strategy="eager")
+        try:
+            if _ensure_logged_in(driver):
+                driver.set_page_load_timeout(PAGE_TIMEOUT)
+                return driver
+        except WebDriverException as exc:
+            print(f"  ⚠️  ЕРЗ auth session {attempt + 1}/2: {type(exc).__name__}")
+        try:
+            driver.quit()
+        except WebDriverException:
+            pass
+        print(f"  ⚠️  Авторизация ЕРЗ не подтверждена (сессия {attempt + 1}/2)")
+    raise TopExportError("authorization unavailable after two browser sessions")
+
+
 def _ensure_logged_in(driver) -> bool:
     """Логинится через модалку «Вход в аккаунт ЕРЗ» на erzrf.ru.
 
@@ -392,68 +448,42 @@ def _ensure_logged_in(driver) -> bool:
 
     print(f"  🔐 Логин как {email[:3]}***")
     try:
-        # Шаг 1: открыть главную с retry — erzrf периодически отдаёт
-        # «The page you are looking for is temporarily unavailable»
-        # или просто долго грузится. До 5 попыток с refresh + пауза.
-        MAX_PAGE_ATTEMPTS = 5
-        opened = False
-        for attempt in range(1, MAX_PAGE_ATTEMPTS + 1):
-            try:
-                driver.get(BASE)
-                selenium_sleep(4)
-                # Проверяем что страница нормальная (не «temporarily unavailable»)
-                page_text = (driver.execute_script(
-                    "return document.body && document.body.innerText || ''"
-                ) or "").lower()
-                if "temporarily unavailable" in page_text or "the page you are looking for" in page_text:
-                    print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: страница "
-                          f"temporarily unavailable, ждём 10 сек...")
-                    selenium_sleep(10)
-                    continue
-                # Шаг 2: кликнуть кнопку открытия модалки
-                opened = driver.execute_script(
-                    """
-                    const visible = e => e.offsetParent !== null;
-                    const re = /^\\s*(вход|войти)\\s*$/i;
+        if not _open_auth_page(driver):
+            _save_debug_snapshot(driver, "login_page_unusable")
+            return False
+        opened = driver.execute_script(
+            """
+            const visible = e => e.offsetParent !== null;
+            const re = /^\\s*(вход|войти)\\s*$/i;
 
-                    // 1) точный title (как на скрине пользователя — tooltip «Вход»)
-                    let btn = [...document.querySelectorAll('[title]')]
-                        .find(e => visible(e) && re.test(e.getAttribute('title') || ''));
+            // 1) точный title (как на скрине пользователя — tooltip «Вход»)
+            let btn = [...document.querySelectorAll('[title]')]
+                .find(e => visible(e) && re.test(e.getAttribute('title') || ''));
 
-                    // 2) точный aria-label
-                    if (!btn) {
-                        btn = [...document.querySelectorAll('[aria-label]')]
-                            .find(e => visible(e) && re.test(e.getAttribute('aria-label') || ''));
-                    }
+            // 2) точный aria-label
+            if (!btn) {
+                btn = [...document.querySelectorAll('[aria-label]')]
+                    .find(e => visible(e) && re.test(e.getAttribute('aria-label') || ''));
+            }
 
-                    // 3) элемент в шапке с текстом «Войти»/«Вход» — НЕ ищем по всему
-                    //    документу, иначе словим случайные кнопки в контенте.
-                    if (!btn) {
-                        const header = document.querySelector(
-                            'header, [class*="header" i], [class*="Header"], [id*="header" i]'
-                        );
-                        if (header) {
-                            btn = [...header.querySelectorAll('button, a, div, span')]
-                                .find(e => visible(e) && e.innerText && re.test(e.innerText));
-                        }
-                    }
+            // 3) элемент в шапке с текстом «Войти»/«Вход» — НЕ ищем по всему
+            //    документу, иначе словим случайные кнопки в контенте.
+            if (!btn) {
+                const header = document.querySelector(
+                    'header, [class*="header" i], [class*="Header"], [id*="header" i]'
+                );
+                if (header) {
+                    btn = [...header.querySelectorAll('button, a, div, span')]
+                        .find(e => visible(e) && e.innerText && re.test(e.innerText));
+                }
+            }
 
-                    if (btn) { btn.click(); return true; }
-                    return false;
-                    """
-                )
-                if opened:
-                    break
-                # Не нашёл кнопку — пробуем refresh ещё раз
-                print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: кнопка логина "
-                      f"не появилась, обновляю страницу...")
-                selenium_sleep(5)
-            except Exception as e:  # noqa: BLE001
-                print(f"  ⏳ Попытка {attempt}/{MAX_PAGE_ATTEMPTS}: {e}, повторяю...")
-                selenium_sleep(5)
+            if (btn) { btn.click(); return true; }
+            return false;
+            """
+        )
         if not opened:
-            print(f"  ⚠️  Не нашёл кнопку открытия модалки логина "
-                  f"за {MAX_PAGE_ATTEMPTS} попыток")
+            print("  ⚠️  Кнопка открытия модалки логина не появилась")
             _save_debug_snapshot(driver, "login_open_button")
             return False
 
@@ -560,6 +590,9 @@ def _ensure_logged_in(driver) -> bool:
                     (By.CSS_SELECTOR, 'input[type="password"]')
                 )
             )
+            if not _auth_page_ready(driver):
+                print("  ⚠️  Модалка исчезла, но интерфейс аккаунта не подтверждён")
+                return False
             print("  ✅ Авторизация прошла")
             return True
         except TimeoutException:
@@ -578,15 +611,13 @@ def _ensure_logged_in(driver) -> bool:
 
 
 def _save_debug_snapshot(driver, tag: str) -> None:
-    debug_dir = DOWNLOAD_DIR.parent / "_debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    (debug_dir / f"erzrf_{tag}_{ts}.html").write_text(
-        driver.page_source, encoding="utf-8"
-    )
     try:
+        debug_dir = DOWNLOAD_DIR.parent / "_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        (debug_dir / f"erzrf_{tag}_{ts}.html").write_text(driver.page_source, encoding="utf-8")
         driver.save_screenshot(str(debug_dir / f"erzrf_{tag}_{ts}.png"))
-    except WebDriverException:
+    except (OSError, WebDriverException):
         pass
 
 
@@ -1299,10 +1330,7 @@ def fetch_top(state: dict) -> TopFetchResult:
         batch = staging / "validated-batch"
         batch.mkdir()
         try:
-            driver = create_chrome(download_dir=staging, headless=HEADLESS)
-            driver.set_page_load_timeout(PAGE_TIMEOUT)
-            if not _ensure_logged_in(driver):
-                raise TopExportError("authorization unavailable; no TOP exports downloaded")
+            driver = _authenticated_session(staging)
             driver.get(_build_top_url(REGIONS[0], "obyem_stroitelstva"))
             if not _wait_for_top_content(driver):
                 raise TopExportError("initial TOP content did not load")
@@ -1533,12 +1561,12 @@ def fetch_cards(state: dict) -> list[Path]:
     failed: list[dict] = []
     debug_saved = False
 
-    driver = create_chrome(download_dir=CARDS_DIR, headless=HEADLESS)
     try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-        if not _ensure_logged_in(driver):
-            print("  ⚠️  Без авторизации — карточки могут не открыться")
-
+        driver = _authenticated_session(CARDS_DIR)
+    except TopExportError as exc:
+        print(f"  ❌ ERZ cards: {exc}")
+        return []
+    try:
         for dev in developers[:TOP_N_DEVELOPERS]:
             card_url = dev.get("card_url")
             if not card_url:

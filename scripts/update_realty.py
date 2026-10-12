@@ -1380,6 +1380,14 @@ def _main():
     _print(f"\n{'='*60}")
     _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     _print(f"Источники: {', '.join(sources)}")
+    versions = []
+    for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
+        try:
+            version = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()[:12]
+        except OSError:
+            version = "unavailable"
+        versions.append(f"{name}={version}")
+    _print("Collector source hashes: " + " ".join(versions))
     _print(f"KVART_PER_DEV={env['KVART_PER_DEV']}")
     _print(f"RASPROD_FULL_HISTORY={env.get('RASPROD_FULL_HISTORY', '0')}")
     _print(f"SELENIUM_SLEEP_SCALE={env.get('SELENIUM_SLEEP_SCALE', '1')}")

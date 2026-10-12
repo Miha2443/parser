@@ -9,6 +9,10 @@ for script in docker/*.sh docker/tests/*.sh; do bash -n "$script"; done
 printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collector_browser_recovery.py -v
+for check in check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py; do
+  docker compose run --rm --no-deps updater python "scripts/$check"
+done
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; assert Path('/app/data/derived/salary_2011_2012.csv').is_file(); assert Path('/app/data/raw/realty/linear_objects/linear_objects_2026-09-28.json').is_file()"
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; import fedstat_checker,rosstat_checker; fedstat_checker.save_state({'compose':True}); rosstat_checker.save_state({'compose':True}); assert Path('state/fedstat_state.json').is_file(); assert Path('state/rosstat_state.json').is_file()"
 docker compose run --rm --no-deps updater python -c "import fedstat_checker,rosstat_checker; assert fedstat_checker.load_state()['compose']; assert rosstat_checker.load_state()['compose']"

@@ -27,7 +27,12 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
     initial = {src: "01.07.2026" for src in dates}
     downloads = root / "downloads"
     downloads.mkdir(exist_ok=True)
-    driver = Mock()
+    drivers = []
+
+    def browser(**kwargs):
+        driver = Mock()
+        drivers.append(driver)
+        return driver
     calls = []
 
     def fake_download(src, save_dir, *, remote_date=None, driver=None):
@@ -49,7 +54,7 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
             DIRECT_DOWNLOAD_ON_DATE_FAILURE=direct,
         ))
         stack.enter_context(patch.multiple(dl, DOWNLOADS_DIR=downloads, ROOT=root))
-        stack.enter_context(patch.object(fc, "create_driver", return_value=driver))
+        stack.enter_context(patch.object(fc, "create_driver", side_effect=browser))
         stack.enter_context(patch.object(fc, "load_state", return_value=initial.copy()))
         saved = stack.enter_context(patch.object(fc, "save_state"))
         stack.enter_context(patch.object(fc, "get_last_update_date",
@@ -79,7 +84,10 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
             _require(ok == expected_ok, "run must fail on any incomplete source")
             _require(len(files) == len(set(calls) - failed), "successful files remain available")
 
-        driver.quit.assert_called_once()
+        for driver in drivers:
+            driver.quit.assert_called_once()
+        _require(len(drivers) == 1 + (sum(date is None for date in dates.values()) if not pipeline else 0),
+                 "failed date fetch gets exactly one fresh browser recovery per indicator")
         successful_dated_downloads = sum(
             1 for src in calls if src not in failed and dates[src] is not None
         )

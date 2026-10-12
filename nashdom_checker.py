@@ -29,7 +29,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -203,15 +205,13 @@ def _record_monitoring_state(
 
 
 def _save_debug_snapshot(driver, tag: str) -> None:
-    debug_dir = DOWNLOAD_DIR.parent / "_debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    (debug_dir / f"nashdom_{tag}_{ts}.html").write_text(
-        driver.page_source, encoding="utf-8"
-    )
     try:
+        debug_dir = DOWNLOAD_DIR.parent / "_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        (debug_dir / f"nashdom_{tag}_{ts}.html").write_text(driver.page_source, encoding="utf-8")
         driver.save_screenshot(str(debug_dir / f"nashdom_{tag}_{ts}.png"))
-    except WebDriverException:
+    except (OSError, WebDriverException):
         pass
 
 
@@ -547,8 +547,33 @@ def _color_to_room(bg: str) -> str:
     return ""
 
 
+def _kvart_lists_ready(driver):
+    """Identify aggregate virtual lists by their preceding chart heading.
+
+    A region picker and the regional chart can render before developers. Their
+    position among all div.list nodes is not a stable source identity.
+    """
+    result = driver.execute_script("""
+        const headings=[...document.querySelectorAll('h2')];
+        const found={developers:null,regions:null};
+        document.querySelectorAll('div.list[data-parser-kvart-list]').forEach(x=>x.removeAttribute('data-parser-kvart-list'));
+        for(const list of document.querySelectorAll('div.list')) {
+            if(list.offsetParent===null) continue;
+            const heading=headings.filter(h=>h.compareDocumentPosition(list)&Node.DOCUMENT_POSITION_FOLLOWING).at(-1);
+            const text=(heading?.innerText || '').toLowerCase();
+            const kind=text.includes('по девелоперам') ? 'developers' : text.includes('по регионам') ? 'regions' : null;
+            if(kind && !found[kind]) { found[kind]=list; list.setAttribute('data-parser-kvart-list',kind); }
+        }
+        const names=found.developers ? [...found.developers.querySelectorAll('button.css-5nggi1')]
+          .map(b=>(b.querySelector(':scope > div')?.innerText || '').trim()).filter(Boolean) : [];
+        return {developers:names,regions:!!found.regions};
+    """)
+    return bool(result and result.get("developers") and not _kvart_rows_look_like_regions(
+        [{"наименование": name} for name in result["developers"]]))
+
+
 def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: float = 0.25) -> list[dict]:
-    """Прокручивает виртуальный список div.list[list_index] и собирает все строки.
+    """Scroll the semantic developers (0) or regions (1) virtual list.
 
     Для каждой строки извлекает:
     - наименование (девелопер / регион)
@@ -563,7 +588,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     scrollTop достигает scrollHeight.
     """
     height = driver.execute_script(
-        f"const ls=document.querySelectorAll('div.list');"
+        f"const ls=[document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];"
         f"return ls[{list_index}] ? ls[{list_index}].scrollHeight : 0;"
     )
     if not height:
@@ -579,7 +604,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     while pos < height + step_px:
         driver.execute_script(
             """
-            const ls = document.querySelectorAll('div.list');
+            const ls = [document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];
             const idx = arguments[0];
             const pos = arguments[1];
             if (ls[idx]) {
@@ -594,7 +619,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
         rows = driver.execute_script(
             """
             const idx = arguments[0];
-            const ls = document.querySelectorAll('div.list');
+            const ls = [document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];
             if (!ls[idx]) return [];
             const FLEX_RE = /flex-basis:\\s*([\\d.]+)%/;
             const BG_RE = /background:\\s*(rgb[a]?\\([^)]+\\))/;
@@ -653,14 +678,14 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     # Финальный «добив»: ставим scrollTop в самый конец чтобы поймать
     # хвост, который мог не отрендериться при больших шагах.
     driver.execute_script(
-        f"const ls=document.querySelectorAll('div.list');"
+        f"const ls=[document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];"
         f"if(ls[{list_index}]) ls[{list_index}].scrollTop = ls[{list_index}].scrollHeight;"
     )
     selenium_sleep(pause * 2)
     final_rows = driver.execute_script(
         """
         const idx = arguments[0];
-        const ls = document.querySelectorAll('div.list');
+        const ls = [document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];
         if (!ls[idx]) return [];
         return [...ls[idx].querySelectorAll('button.css-5nggi1')].map(b => {
             const divs = [...b.querySelectorAll(':scope > div')];
@@ -834,11 +859,128 @@ def _kvart_resume_per_dev(existing_region: dict | None) -> tuple[list[dict], lis
     return reusable_per_dev, reusable_attempts, done_sites
 
 
-def fetch_kvartirografia(state: dict) -> list[Path]:
+def _kvart_aggregate_valid(data: dict, region: dict) -> bool:
+    return (data.get("region_key") == region["key"]
+            and data.get("region") == region["click_label"]
+            and bool(data.get("report_date"))
+            and bool(data.get("apartments")) and bool(data.get("distribution"))
+            and bool(data.get("developers"))
+            and not _kvart_rows_look_like_regions(data["developers"]))
+
+
+def _all_developers_selected(label):
+    # The closed public filter currently shows "Все"; its popup says
+    # "Все девелоперы". A missing label is never evidence of a reset.
+    return str(label or "").strip().casefold() in {"все", "все девелоперы"}
+
+
+def _kvart_developers_fingerprint(driver):
+    return driver.execute_script("""
+        const list=document.querySelector('div.list[data-parser-kvart-list=developers]');
+        return list ? `${list.scrollHeight}|${list.innerText.trim().slice(0,1000)}` : '';
+    """) or ""
+
+
+def _open_kvart_region(driver, url, region):
+    """Reset filters on a fresh page and wait for actual aggregate data."""
+    driver.set_page_load_timeout(PAGE_TIMEOUT)
+    try:
+        driver.get(url)
+    except TimeoutException:
+        driver.execute_script("window.stop();")
+    labels = {row["click_label"] for row in KVART_REGIONS}
+    WebDriverWait(driver, 30).until(lambda d: (
+        _get_current_region_label(d) in labels and _parse_num_apartments(_get_all_apartments_count(d)) > 0))
+    if not _clear_developer_filter(driver):
+        return False
+    WebDriverWait(driver, 30).until(lambda d: (
+        _all_developers_selected(_get_developer_filter_label(d)) and _kvart_lists_ready(d)))
+    before_region = _get_current_region_label(driver)
+    before_developers = _kvart_developers_fingerprint(driver)
+    if not _switch_region_filter(driver, region["click_label"], region["search"]):
+        return False
+    WebDriverWait(driver, 25).until(lambda d: (
+        _get_current_region_label(d) == region["click_label"]
+        and _parse_num_apartments(_get_all_apartments_count(d)) > 0
+        and _all_developers_selected(_get_developer_filter_label(d))
+        and _kvart_lists_ready(d)
+        and (before_region == region["click_label"]
+             or _kvart_developers_fingerprint(d) != before_developers)))
+    return True
+
+
+def _fetch_kvart_region(driver, url, region):
+    """One fresh-session recovery for one aggregate region, before per-dev work."""
+    for attempt in range(2):
+        if attempt:
+            try:
+                driver.quit()
+            except WebDriverException:
+                pass
+            driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+        try:
+            if not _open_kvart_region(driver, url, region):
+                raise ValueError("region label or aggregate data not confirmed")
+            data = _parse_kvartirografia(driver.page_source, driver.current_url)
+            data["region_key"] = region["key"]
+            data["developers"] = _scroll_collect_list(driver, list_index=0)
+            data["regions"] = _scroll_collect_list(driver, list_index=1)
+            if not _kvart_aggregate_valid(data, region):
+                raise ValueError("empty aggregate or developers do not represent this region")
+            return driver, data
+        except (TimeoutException, WebDriverException, ValueError) as exc:
+            print(f"       ⚠️  kvart {region['key']} aggregate {attempt + 1}/2: {exc}")
+    return driver, None
+
+
+def _publish_kvart_snapshot(all_data, target_json, target_xlsx):
+    """Stage both formats before replacing any same-day successful snapshot."""
+    if {row.get("region_key") for row in all_data} != {row["key"] for row in KVART_REGIONS}:
+        raise ValueError("kvartirografia RF/Moscow coverage is incomplete")
+    for region in KVART_REGIONS:
+        rows = [row for row in all_data if row.get("region_key") == region["key"]]
+        if len(rows) != 1 or not _kvart_aggregate_valid(rows[0], region):
+            raise ValueError(f"kvartirografia aggregate is invalid: {region['key']}")
+    stage = Path(tempfile.mkdtemp(prefix=".kvart-publish-", dir=target_json.parent.parent))
+    artifacts = [(stage / target_json.name, target_json), (stage / target_xlsx.name, target_xlsx)]
+    cleanup = True
+    try:
+        _write_json_atomic(artifacts[0][0], all_data)
+        _build_kvart_xlsx(all_data, artifacts[1][0])
+        from pipeline.data_access import _kvart_payload_is_valid, _load_kvartirografia_file
+        if any(not _kvart_payload_is_valid(_load_kvartirografia_file(source)) for source, _ in artifacts):
+            raise ValueError("staged kvartirografia formats failed consumer validation")
+        for _, target in artifacts:
+            if target.exists():
+                shutil.copy2(target, stage / ("old-" + target.name))
+        try:
+            for source, target in artifacts:
+                source.replace(target)
+        except BaseException:
+            cleanup = False
+            for source, target in reversed(artifacts):
+                backup = stage / ("old-" + target.name)
+                if backup.exists():
+                    backup.replace(target)
+                elif not source.exists():
+                    target.unlink(missing_ok=True)
+            cleanup = True
+            raise
+        return [target_json, target_xlsx]
+    finally:
+        # Validation/build failures cannot alter targets. A failed filesystem
+        # rollback keeps its backups for manual recovery instead of deleting them.
+        if cleanup:
+            shutil.rmtree(stage)
+        else:
+            print(f"  ❌ kvart rollback failed; backups retained at {stage}")
+
+
+def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
     """Квартирография по 2 регионам (РФ + Москва) с inner-scroll.
 
-    xlsx сохраняется ПОСЛЕ КАЖДОГО региона — даже если процесс
-    прерван на половине, у пользователя есть актуальный файл.
+    Progress lives in state/kvartirografia; JSON/XLSX become discoverable
+    only after both aggregate regions have been confirmed in this run.
 
     Per-developer обход (НОВОЕ):
       После основного сбора для региона дополнительно проходит по
@@ -851,7 +993,7 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
         KVART_PER_DEV_LIMIT=N  — обработать только первые N (для отладки)
 
       Длительность: ~5-7 сек на девелопера × ~400 девелоперов × 2 региона
-      ≈ 70-90 минут. Каждые 10 девелоперов делается flush в xlsx.
+      ≈ 70-90 минут. Каждые 10 девелоперов сохраняется checkpoint.
     """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     url = _build_kvartirografia_url()
@@ -861,7 +1003,11 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     target_xlsx = DOWNLOAD_DIR / f"kvartirografia_{date_str}.xlsx"
     target_json = DOWNLOAD_DIR / f"kvartirografia_{date_str}.json"
 
-    all_data: list[dict] = _initial_kvart_data(target_json)
+    checkpoint = STATE_FILE.parent / "kvartirografia" / f"checkpoint_{date_str}.json"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    all_data: list[dict] = _initial_kvart_data(checkpoint) or _initial_kvart_data(target_json)
+    all_data = [row for row in all_data if row.get("region_key") in {"rf", "msk"}]
+    confirmed_regions: set[str] = set()
     existing_by_region: dict[str, dict] = {
         str(row.get("region_key")): row
         for row in all_data
@@ -877,114 +1023,18 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
     new_files: list[Path] = []
 
     def flush():
-        """Сохраняем текущее накопленное состояние в xlsx + json.
-
-        JSON сохраняется ВСЕГДА (он не может быть занят пользователем).
-        xlsx — best-effort: если файл открыт в Excel/OneDrive, пишем
-        предупреждение и продолжаем, чтобы не терять прогресс per-dev.
-        """
-        if not all_data:
-            return
-        # JSON — приоритет, всегда сохраняем
-        try:
-            _write_json_atomic(target_json, all_data)
-            if target_json not in new_files:
-                new_files.append(target_json)
-        except Exception as exc:  # noqa: BLE001
-            print(f"     ⚠️  ошибка при записи json: {exc}")
-        # xlsx — отдельный try; если занят — не блокируем сбор данных
-        try:
-            _build_kvart_xlsx(all_data, target_xlsx)
-            sizes = {
-                "apartments": sum(len(d.get("apartments", [])) for d in all_data),
-                "distribution": sum(len(d.get("distribution", [])) for d in all_data),
-                "developers": sum(len(d.get("developers", [])) for d in all_data),
-                "regions": sum(len(d.get("regions", [])) for d in all_data),
-                "per_dev": sum(len(d.get("apartments_per_dev", [])) for d in all_data),
-            }
-            print(f"     💾 {target_xlsx.name}: {sizes}")
-            if target_xlsx not in new_files:
-                new_files.append(target_xlsx)
-        except Exception as exc:  # noqa: BLE001
-            print(f"     ⚠️  xlsx занят/недоступен ({exc}) — JSON всё равно сохранён")
+        # Checkpoints are outside discoverable raw paths. They never become marts.
+        if all_data:
+            _write_json_atomic(checkpoint, all_data)
 
     try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-        driver.get(url)
-        selenium_sleep(6)
-        try:
-            WebDriverWait(driver, 45).until(
-                lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
-            )
-        except TimeoutException:
-            print(f"  ⚠️  контент не появился за 45 сек")
-            _save_debug_snapshot(driver, "kvartirografia_no_content")
-            return []
-        selenium_sleep(3)
-
         for region in KVART_REGIONS:
             try:
                 print(f"     ── регион: {region['key']} ({region['label']})")
-                # Если Chrome был положен в per-dev обходе предыдущего региона
-                # (HTTPConnectionPool timeout / chrome not reachable) —
-                # все дальнейшие selenium-вызовы на этом драйвере фейлят сразу.
-                # Перед переключением региона пробуем простой пинг
-                # current_url; если падает — пересоздаём driver.
-                try:
-                    _ = driver.current_url
-                except Exception as ping_exc:  # noqa: BLE001
-                    print(f"       ⚠️  driver мёртв ({ping_exc.__class__.__name__}), "
-                          f"пересоздаю Chrome перед регионом {region['key']}")
-                    try:
-                        driver.quit()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
-                    driver.set_page_load_timeout(PAGE_TIMEOUT)
-                    driver.get(url)
-                    selenium_sleep(6)
-                    try:
-                        WebDriverWait(driver, 45).until(
-                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
-                        )
-                    except TimeoutException:
-                        print(f"       ⚠️  после reset: контент не появился, пропускаю {region['key']}")
-                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_after_reset_no_content")
-                        continue
-                    selenium_sleep(3)
-                if region["search"]:
-                    ok = _switch_region_filter(
-                        driver,
-                        target_label=region["click_label"],
-                        search_query=region["search"],
-                    )
-                    if not ok:
-                        print(f"       ⚠️  не удалось переключить на {region['label']}")
-                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_switch_fail")
-                        continue
-                    # Подождём чтобы данные перезагрузились
-                    selenium_sleep(5)
-
-                data = _parse_kvartirografia(driver.page_source, driver.current_url)
-                data["region_key"] = region["key"]
+                driver, data = _fetch_kvart_region(driver, url, region)
+                if data is None:
+                    continue
                 existing_region = existing_by_region.get(region["key"])
-
-                print(f"       devs (виртуальный список 0):")
-                data["developers"] = _scroll_collect_list(driver, list_index=0)
-                print(f"       regions (виртуальный список 1):")
-                data["regions"] = _scroll_collect_list(driver, list_index=1)
-
-                if _kvart_rows_look_like_regions(data.get("developers", [])):
-                    print(
-                        f"       ⚠️  список developers для {region['key']} похож на регионы; "
-                        "не сохраняю ошибочный снимок"
-                    )
-                    if existing_region and not _kvart_rows_look_like_regions(existing_region.get("developers", [])):
-                        print(f"       · использую предыдущий валидный снимок {region['key']}")
-                        data = existing_region
-                    else:
-                        _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_developers_are_regions")
-                        continue
 
                 print(
                     f"       · apartments={len(data['apartments'])}, "
@@ -995,7 +1045,8 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                 _save_debug_snapshot(driver, f"kvartirografia_{region['key']}_ok")
                 _upsert_region_snapshot(all_data, data)
                 existing_by_region[region["key"]] = data
-                # КРИТИЧНО: сохраняем xlsx ПОСЛЕ каждого региона
+                confirmed_regions.add(region["key"])
+                # This is a checkpoint, not a discoverable source snapshot.
                 flush()
 
                 # === Per-developer обход ===
@@ -1126,21 +1177,11 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
                                     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
                                     driver.set_page_load_timeout(PAGE_TIMEOUT)
                                     try:
-                                        driver.get(url)
-                                        selenium_sleep(6)
-                                        WebDriverWait(driver, 45).until(
-                                            lambda d: "данным на" in d.page_source or "data-rooms" in d.page_source
-                                        )
-                                        selenium_sleep(3)
-                                        if region["search"]:
-                                            _switch_region_filter(
-                                                driver,
-                                                target_label=region["click_label"],
-                                                search_query=region["search"],
-                                            )
-                                            selenium_sleep(5)
+                                        if not _open_kvart_region(driver, url, region):
+                                            raise ValueError("per-dev reset failed to restore the region")
                                     except Exception as reset_exc:  # noqa: BLE001
                                         print(f"          ⚠️  reset не удался ({reset_exc}), останавливаю per-dev")
+                                        data["per_dev_abort_reason"] = str(reset_exc)
                                         break
                                     consecutive_fail = 0
                                 continue
@@ -1239,20 +1280,27 @@ def fetch_kvartirografia(state: dict) -> list[Path]:
         except Exception:  # noqa: BLE001
             pass
 
-    if all_data:
-        got_regions = {d.get("region_key") for d in all_data}
-        expected_regions = {r["key"] for r in KVART_REGIONS}
-        missing_regions = sorted(expected_regions - got_regions)
-        if missing_regions:
-            print(f"  ⚠️  kvartirografia: НЕ собраны регионы: "
-                  f"{missing_regions}. Собрано только: {sorted(got_regions)}")
-        state["kvartirografia"] = {
-            "scraped_at": datetime.now().isoformat(timespec="seconds"),
-            "regions": sorted(got_regions),
-            "missing_regions": missing_regions,
-            "file": target_xlsx.name,
-        }
-    return new_files
+    expected_regions = {r["key"] for r in KVART_REGIONS}
+    missing_regions = sorted(expected_regions - confirmed_regions)
+    state["kvartirografia_attempt"] = {
+        "attempted_at": datetime.now().isoformat(timespec="seconds"),
+        "confirmed_regions": sorted(confirmed_regions), "missing_regions": missing_regions,
+        "complete": not missing_regions,
+    }
+    if missing_regions:
+        print(f"  ❌ kvartirografia: this run did not confirm {missing_regions}; previous files retained")
+        return [], False
+    try:
+        new_files = _publish_kvart_snapshot(all_data, target_json, target_xlsx)
+    except (OSError, ValueError) as exc:
+        state["kvartirografia_attempt"].update(complete=False, error=str(exc))
+        print(f"  ❌ kvartirografia publication: {exc}")
+        return [], False
+    state["kvartirografia"] = {
+        "scraped_at": datetime.now().isoformat(timespec="seconds"),
+        "regions": sorted(confirmed_regions), "missing_regions": [], "file": target_xlsx.name,
+    }
+    return new_files, True
 
 
 def _get_current_region_label(driver) -> str:
@@ -1262,7 +1310,9 @@ def _get_current_region_label(driver) -> str:
         const p = [...document.querySelectorAll('p')].find(e =>
             e.offsetParent !== null && /федеральный\\s*округ/i.test(e.innerText || ''));
         if (!p || !p.nextElementSibling) return '';
-        const span = p.nextElementSibling.querySelector('span.css-wjcl1w');
+        const pill = p.nextElementSibling;
+        const span = pill.querySelector('span.css-203ko5') || pill.querySelector('span.css-wjcl1w') ||
+          [...pill.querySelectorAll('span')].find(s=>(s.innerText||'').trim());
         return span ? span.innerText.trim() : '';
         """
     ) or ""
@@ -1290,6 +1340,56 @@ def _get_all_apartments_count(driver) -> str:
     ) or ""
 
 
+def _kvart_popup_action(driver, action, value=""):
+    """Act only inside the one rendered picker, including fixed overlays.
+
+    Closed region pickers remain in the DOM after selecting Moscow. Neither
+    the first global search input nor global option spans identify developers.
+    """
+    return driver.execute_script("""
+        const action=arguments[0], value=arguments[1];
+        const visible=e=>{
+          const r=e.getBoundingClientRect(), s=getComputedStyle(e);
+          if(!(r.width>0 && r.height>0) || s.display==='none' || s.visibility==='hidden') return false;
+          for(let parent=e;parent;parent=parent.parentElement) {
+            const style=getComputedStyle(parent);
+            if(style.display==='none' || style.visibility==='hidden' || style.opacity==='0') return false;
+          }
+          return true;
+        };
+        const inputs=[...document.querySelectorAll('input[placeholder="Поиск по названию"]')].filter(visible);
+        if(inputs.length!==1) return false;
+        const input=inputs[0];
+        let popup=input.parentElement, options=[];
+        while(popup && popup!==document.body) {
+          options=[...popup.querySelectorAll('span.css-1ogbkfc,span.css-pqw2m5')].filter(visible);
+          if(options.length) break;
+          popup=popup.parentElement;
+        }
+        if(!popup || popup===document.body || !options.length) return false;
+        if(action==='ready') return true;
+        if(action==='search') {
+          const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+          setter.call(input,value);
+          input.dispatchEvent(new Event('input',{bubbles:true}));
+          input.dispatchEvent(new Event('change',{bubbles:true}));
+          return true;
+        }
+        if(action==='top') {
+          popup.querySelectorAll('div.list').forEach(x=>{x.scrollTop=0;});
+          return true;
+        }
+        if(action==='click') {
+          const normalize=s=>(s||'').trim().replace(/\\s+/g,' ').toLowerCase();
+          const option=options.find(x=>normalize(x.innerText)===normalize(value));
+          if(!option) return false;
+          const row=option.parentElement || option;
+          row.scrollIntoView({block:'center'}); row.click(); return true;
+        }
+        return false;
+    """, action, value)
+
+
 def _switch_region_filter(driver, target_label: str, search_query: str = "") -> bool:
     """Переключает фильтр «Федеральный округ / Регион» на target_label.
 
@@ -1313,7 +1413,9 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  не нашёл baseline «Все квартиры»")
         return False
 
-    current = _get_current_region_label(driver) or "Российская Федерация"
+    current = _get_current_region_label(driver)
+    if not current:
+        return False
     print(f"       · текущий регион: «{current}»")
     if current == target_label:
         return True
@@ -1341,74 +1443,12 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
         print(f"       ⚠️  ошибка клика триггера: {exc}")
         return False
 
-    # 2) Дождаться search-input по placeholder (БЕЗ offsetParent —
-    # попап в fixed-оверлее). presence достаточно.
     try:
-        WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script(
-                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
-            )
-        )
-    except TimeoutException:
-        print(f"       ⚠️  search-input попапа не появился")
-        _save_debug_snapshot(driver, "region_switch_no_popup")
-        return False
-    selenium_sleep(0.5)
-
-    # 3) Ввести запрос в search-input через JS (надёжно для React)
-    if search_query:
-        ok = driver.execute_script(
-            """
-            const q = arguments[0];
-            const inp = document.querySelector('input[placeholder="Поиск по названию"]');
-            if (!inp) return false;
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            setter.call(inp, q);
-            inp.dispatchEvent(new Event('input', {bubbles: true}));
-            inp.dispatchEvent(new Event('change', {bubbles: true}));
-            return true;
-            """,
-            search_query,
-        )
-        print(f"       · ввёл в поиск: '{search_query}' (ok={ok})")
-        selenium_sleep(2)
-
-    # 4) Дождаться появления target_label и кликнуть по ВСЕЙ строке
-    # (div-родитель span'а — там висит обработчик клика чекбокса).
-    try:
-        WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script(
-                """
-                const target = arguments[0];
-                return [...document.querySelectorAll('span')]
-                    .some(s => (s.innerText || '').trim() === target);
-                """,
-                target_label,
-            )
-        )
-    except TimeoutException:
-        print(f"       ⚠️  пункт «{target_label}» не появился в попапе")
-        _save_debug_snapshot(driver, f"region_no_option_{target_label}")
-        return False
-
-    clicked = driver.execute_script(
-        """
-        const target = arguments[0];
-        const span = [...document.querySelectorAll('span')]
-            .find(s => (s.innerText || '').trim() === target);
-        if (!span) return false;
-        // Кликаем по строке-родителю (содержит чекбокс + span).
-        // Поднимаемся на 1-2 уровня до кликабельного контейнера.
-        let row = span.parentElement;  // div.css-1ynvnsn
-        if (!row) row = span;
-        row.scrollIntoView({block: 'center'});
-        row.click();
-        return true;
-        """,
-        target_label,
-    )
-    print(f"       · клик на «{target_label}» (ok={clicked})")
-    if not clicked:
+        WebDriverWait(driver, 10).until(lambda d: _kvart_popup_action(d, "ready"))
+        if search_query and not _kvart_popup_action(driver, "search", search_query):
+            return False
+        WebDriverWait(driver, 15).until(lambda d: _kvart_popup_action(d, "click", target_label))
+    except (TimeoutException, WebDriverException):
         return False
 
     # 5) Закрыть попап (клик по body) чтобы данные применились
@@ -1422,7 +1462,8 @@ def _switch_region_filter(driver, target_label: str, search_query: str = "") -> 
     try:
         WebDriverWait(driver, 25).until(
             lambda d: (
-                _get_all_apartments_count(d) != baseline
+                _get_current_region_label(d) == target_label
+                and _get_all_apartments_count(d) != baseline
                 and _get_all_apartments_count(d) != ""
             )
         )
@@ -1496,7 +1537,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
     current = _get_developer_filter_label(driver) or ""
     if debug:
         print(f"          🔍 clear: текущий фильтр = «{current}»")
-    if not current or "все" in current.lower():
+    if _all_developers_selected(current):
         if debug:
             print("          🔍 clear: уже пусто — пропускаем")
         return True
@@ -1517,52 +1558,11 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             driver.execute_script("arguments[0].click();", trigger)
             if debug:
                 print("          🔍 clear: открыли попап")
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script(
-                    "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
-                )
-            )
-            selenium_sleep(0.3)
-            # Очищаем поле поиска чтобы «Все девелоперы» был виден
-            driver.execute_script(
-                """
-                const inp = document.querySelector('input[placeholder="Поиск по названию"]');
-                if (!inp) return;
-                const setter = Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype, 'value').set;
-                setter.call(inp, '');
-                inp.dispatchEvent(new Event('input', {bubbles: true}));
-                inp.dispatchEvent(new Event('change', {bubbles: true}));
-                """
-            )
-            selenium_sleep(0.5)
-            # Скроллим список наверх (там «Все девелоперы» обычно первым)
-            driver.execute_script(
-                """
-                const lists = document.querySelectorAll('div.list');
-                for (const l of lists) {
-                    if (l.offsetParent !== null) l.scrollTop = 0;
-                }
-                """
-            )
-            selenium_sleep(0.3)
-            # Клик «Все девелоперы»
-            result_a = driver.execute_script(
-                """
-                const spans = [...document.querySelectorAll(
-                    'span.css-1ogbkfc, span.css-pqw2m5')];
-                const target = spans.find(s =>
-                    /^все\\s+девелоперы/i.test((s.innerText || '').trim()));
-                if (!target) return 'not-found';
-                const row = target.parentElement || target;
-                row.scrollIntoView({block: 'center'});
-                row.click();
-                return 'clicked';
-                """
-            )
-            if debug:
-                print(f"          🔍 clear: клик «Все девелоперы» → {result_a}")
-            selenium_sleep(0.4)
+            WebDriverWait(driver, 6).until(lambda d: _kvart_popup_action(d, "ready"))
+            if not _kvart_popup_action(driver, "search", ""):
+                return False
+            _kvart_popup_action(driver, "top")
+            WebDriverWait(driver, 6).until(lambda d: _kvart_popup_action(d, "click", "Все девелоперы"))
             # Закрываем попап
             try:
                 driver.execute_script("document.body.click();")
@@ -1572,7 +1572,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             new_label = _get_developer_filter_label(driver) or ""
             if debug:
                 print(f"          🔍 clear: после A фильтр = «{new_label}»")
-            if not new_label or "все" in new_label.lower():
+            if _all_developers_selected(new_label):
                 return True
         except (TimeoutException, WebDriverException) as exc:
             if debug:
@@ -1636,7 +1636,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
         new_label = _get_developer_filter_label(driver) or ""
         if debug:
             print(f"          🔍 clear: после B[{attempt+1}] фильтр = «{new_label}»")
-        if not new_label or "все" in new_label.lower():
+        if _all_developers_selected(new_label):
             return True
 
     # === СПОСОБ C: настоящий клик через ActionChains (физический) ===
@@ -1666,7 +1666,7 @@ def _clear_developer_filter(driver, debug: bool = False) -> bool:
             new_label = _get_developer_filter_label(driver) or ""
             if debug:
                 print(f"          🔍 clear: после C фильтр = «{new_label}»")
-            if not new_label or "все" in new_label.lower():
+            if _all_developers_selected(new_label):
                 return True
     except Exception as exc:  # noqa: BLE001
         if debug:
@@ -1685,12 +1685,10 @@ def _switch_developer_filter(driver, target_label: str, *,
     предыдущий через _clear_developer_filter — иначе шапка
     показывает сумму всех выбранных девелоперов.
 
-    target_label ищется как:
-      1) точное совпадение текста span
-      2) если не нашли — первое совпадение по подстроке
+    Select the exact site name only inside the rendered developer popup.
     """
     # === КРИТИЧНО: сначала сброс фильтра, ВСЕГДА ===
-    if target_label and "все" not in target_label.lower():
+    if target_label and not _all_developers_selected(target_label):
         cleared = _clear_developer_filter(driver, debug=debug)
         if not cleared:
             if debug:
@@ -1718,57 +1716,13 @@ def _switch_developer_filter(driver, target_label: str, *,
     except WebDriverException:
         return False
 
-    # 2) Ждём search-input
     try:
-        WebDriverWait(driver, 6).until(
-            lambda d: d.execute_script(
-                "return !!document.querySelector('input[placeholder=\"Поиск по названию\"]');"
-            )
-        )
-    except TimeoutException:
-        return False
-    selenium_sleep(0.3)
-
-    # 3) Вводим запрос (для уже длинного списка — без запроса попап тормозит)
-    driver.execute_script(
-        """
-        const q = arguments[0];
-        const inp = document.querySelector('input[placeholder="Поиск по названию"]');
-        if (!inp) return false;
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(inp, q);
-        inp.dispatchEvent(new Event('input', {bubbles: true}));
-        inp.dispatchEvent(new Event('change', {bubbles: true}));
-        return true;
-        """,
-        target_label,
-    )
-    selenium_sleep(0.8)
-
-    # 4) Кликаем по совпадению (сначала точное, потом подстрока — case-insensitive)
-    clicked = driver.execute_script(
-        """
-        const target = (arguments[0] || '').trim().toLowerCase();
-        if (!target) return false;
-        const spans = [...document.querySelectorAll(
-            'span.css-1ogbkfc, span.css-pqw2m5')];
-        let match = spans.find(s =>
-            (s.innerText || '').trim().toLowerCase() === target);
-        if (!match) {
-            match = spans.find(s => {
-                const t = (s.innerText || '').trim().toLowerCase();
-                return t && t.includes(target);
-            });
-        }
-        if (!match) return false;
-        const row = match.parentElement || match;
-        row.scrollIntoView({block: 'center'});
-        row.click();
-        return true;
-        """,
-        target_label,
-    )
-    if not clicked:
+        WebDriverWait(driver, 8).until(lambda d: _kvart_popup_action(d, "ready"))
+        if not _kvart_popup_action(driver, "search", target_label):
+            return False
+        _kvart_popup_action(driver, "top")
+        WebDriverWait(driver, timeout).until(lambda d: _kvart_popup_action(d, "click", target_label))
+    except (TimeoutException, WebDriverException):
         try:
             driver.execute_script("document.body.click();")
         except WebDriverException:
@@ -3398,9 +3352,15 @@ def _operational_selected_region(driver) -> str:
 
 def _switch_operational_region(driver, target: str, page: str) -> bool:
     current = _operational_selected_region(driver)
-    if current == target:
-        return True
     baseline = _operational_fingerprint(driver, page)
+    evidence = getattr(driver, "_operational_region_evidence", None)
+    if current == target:
+        return bool(baseline and (
+            evidence == {"page": page, "target": target, "confirmed": True}
+            or (target == "Все" and not evidence)))
+    if not baseline or current not in {"Все", "Город Москва"}:
+        return False
+    driver._operational_region_evidence = {"page": page, "target": target, "confirmed": False}
     try:
         opened = driver.execute_script(
             """
@@ -3424,7 +3384,12 @@ def _switch_operational_region(driver, target: str, page: str) -> bool:
                 """,
                 query,
             )
-            selenium_sleep(1)
+        WebDriverWait(driver, 15).until(lambda d: d.execute_script(
+            """
+            const root=document.querySelector('#regionSelect');
+            return !!root && [...root.querySelectorAll('span')].some(x=>
+              (x.innerText||'').trim()===arguments[0] && x.closest('[tabindex="0"]')?.querySelector('input'));
+            """, target))
         clicked = driver.execute_script(
             """
             const target=arguments[0], root=document.querySelector('#regionSelect');
@@ -3445,9 +3410,38 @@ def _switch_operational_region(driver, target: str, page: str) -> bool:
             and _operational_fingerprint(d, page) != baseline
         ))
         selenium_sleep(1)
+        driver._operational_region_evidence = {"page": page, "target": target, "confirmed": True}
         return True
     except (TimeoutException, WebDriverException):
         return False
+
+
+def _load_operational_region(driver, url, page, target):
+    """Fresh page per region, one fresh browser after a failed transition."""
+    for attempt in range(2):
+        if attempt:
+            try:
+                driver.quit()
+            except WebDriverException:
+                pass
+            driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+        try:
+            driver.set_page_load_timeout(PAGE_TIMEOUT)
+            driver._operational_region_evidence = None
+            try:
+                driver.get(url)
+            except TimeoutException:
+                driver.execute_script("window.stop();")
+            WebDriverWait(driver, 30).until(lambda d: (
+                bool(_operational_fingerprint(d, page))
+                and _operational_selected_region(d) in {"Все", "Город Москва"}))
+            if (_switch_operational_region(driver, target, page)
+                    and _operational_selected_region(driver) == target):
+                return driver, True
+            raise ValueError("selected label did not receive changed table data")
+        except (TimeoutException, WebDriverException, ValueError) as exc:
+            print(f"  ⚠️  construction_operational {page}/{target} {attempt + 1}/2: {exc}")
+    return driver, False
 
 
 def _click_area_mode(driver, target: str) -> bool:
@@ -3637,11 +3631,9 @@ def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
               "construction": [], "sales": []}
     driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
     try:
-        driver.set_page_load_timeout(PAGE_TIMEOUT)
-        driver.get(_build_construction_indicators_url())
-        WebDriverWait(driver, 45).until(lambda d: _operational_fingerprint(d, "construction") != "")
         for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
-            if not _switch_operational_region(driver, label, "construction"):
+            driver, ready = _load_operational_region(driver, _build_construction_indicators_url(), "construction", label)
+            if not ready:
                 raise ValueError(f"construction region did not switch: {label}")
             for mode_label in ("Жилая", "Общая"):
                 if not _click_area_mode(driver, mode_label):
@@ -3650,10 +3642,9 @@ def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
                 snap["region_key"] = region_key
                 result["construction"].append(snap)
 
-        driver.get(_build_apartment_sales_url())
-        WebDriverWait(driver, 45).until(lambda d: _operational_fingerprint(d, "sales") != "")
         for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
-            if not _switch_operational_region(driver, label, "sales"):
+            driver, ready = _load_operational_region(driver, _build_apartment_sales_url(), "sales", label)
+            if not ready:
                 raise ValueError(f"sales region did not switch: {label}")
             snap = _parse_apartment_sales_html(driver.page_source, label)
             snap["region_key"] = region_key
@@ -3662,7 +3653,10 @@ def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
         print(f"  ❌ construction_operational: {exc}")
         return [], False
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except WebDriverException:
+            pass
 
     try:
         _validate_construction_operational_result(result)

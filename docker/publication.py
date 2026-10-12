@@ -6,6 +6,7 @@ Old releases are intentionally retained: running backends resolve live once.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
@@ -90,7 +91,7 @@ def validate(root):
 
 
 def validate_api():
-    from pipeline.data_access import DataAccess, DataContext
+    from pipeline.data_access import DataAccess, DataContext, _kvart_payload_is_valid
     from pipeline.build_realty_marts import _specs
     from fastapi.testclient import TestClient
     from backend.app import create_app
@@ -99,6 +100,15 @@ def validate_api():
     access = DataAccess(DataContext.from_environment())
     for spec in _specs(access):
         getattr(access, spec.loader_name)()  # Enforces source sets, size and mtime_ns.
+        if spec.name == "kvartirografia" and access.source_files(spec.name):
+            # The public loader can fall back or return an empty dict after a
+            # malformed raw snapshot. A coherent manifest alone cannot prove
+            # that the canonical mart contains both required populations.
+            mart = access._load_realty_mart(spec.name, lambda: access.source_files(spec.name))
+            if not _kvart_payload_is_valid(mart):
+                raise RuntimeError("Candidate kvartirografia mart lacks valid RF/Moscow aggregates")
+            if {"rf", "msk"} - set(mart["developers"]["region_key"].astype(str)):
+                raise RuntimeError("Candidate kvartirografia developers lack RF/Moscow coverage")
     with TestClient(create_app()) as client:
         for route in ROUTES:
             response = client.get(route)
@@ -193,6 +203,10 @@ def run_action(action, root, runtime):
         import time
         if (runtime / "pending.json").exists():
             raise RuntimeError("Restart transaction pending; use docker/update.sh for recovery")
+        fingerprints = []
+        for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
+            fingerprints.append(f"{name}={hashlib.sha256((root / name).read_bytes()).hexdigest()[:12]}")
+        print("Updater image source hashes: " + " ".join(fingerprints), flush=True)
         seed(root)
         before = read_status(root).get("run_id")
         started = time.time()

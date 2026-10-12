@@ -30,6 +30,7 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -347,31 +348,42 @@ def close_popup(driver):
         pass
 
 
+def _date_page_ready(driver, real_id):
+    try:
+        location = urlsplit(driver.current_url)
+        if (location.scheme != "https" or location.hostname not in {"www.fedstat.ru", "fedstat.ru"}
+                or location.path.rstrip("/") != f"/indicator/{real_id}"):
+            return False
+        text = driver.find_element(By.TAG_NAME, "body").text.strip().lower()
+        if not text or any(marker in text for marker in
+                           ("forbidden", "bad gateway", "temporarily unavailable", "access denied")):
+            return False
+        return bool(driver.find_elements(By.XPATH, "//a[contains(text(),'ПАСПОРТ') or contains(text(),'Паспорт')]"))
+    except WebDriverException:
+        return False
+
+
 def get_last_update_date(driver, indicator_id):
     # Убираем суффикс типа "_часть1" если есть — для URL нужен только числовой ID
     real_id = indicator_id.split("_")[0]
     url = f"https://www.fedstat.ru/indicator/{real_id}"
     print(f"  🌐 Открываю: {url}")
 
-    start_time = time.time()
-    loaded = False
-
-    while time.time() - start_time < PAGE_LOAD_TOTAL_TIMEOUT:
+    try:
+        driver.set_page_load_timeout(PAGE_LOAD_ATTEMPT_TIMEOUT)
+        driver.get(url)
+    except TimeoutException:
+        print("  ⏳ Таймаут навигации: проверяю DOM паспорта, не повторяю get на той же сессии")
         try:
-            driver.set_page_load_timeout(PAGE_LOAD_ATTEMPT_TIMEOUT)
-            driver.get(url)
-            loaded = True
-            break
-        except Exception:
-            elapsed = int(time.time() - start_time)
-            print(f"  ⏳ Не загрузилось за {PAGE_LOAD_ATTEMPT_TIMEOUT}с (всего {elapsed}с), повторяю...")
-            try:
-                driver.execute_script("window.stop();")
-            except Exception:
-                pass
-
-    if not loaded:
-        print(f"  ⚠️  Страница не загрузилась за {PAGE_LOAD_TOTAL_TIMEOUT}с, пропускаю")
+            driver.execute_script("window.stop();")
+        except WebDriverException:
+            return None
+    except WebDriverException:
+        return None
+    try:
+        WebDriverWait(driver, PAGE_TIMEOUT).until(lambda d: _date_page_ready(d, real_id))
+    except (TimeoutException, WebDriverException):
+        print("  ⚠️  Паспорт показателя не появился на правильной странице")
         return None
 
     wait = WebDriverWait(driver, PAGE_TIMEOUT)
@@ -2431,6 +2443,16 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                 continue
 
             remote_date = get_last_update_date(driver, indicator_id)
+
+            if remote_date is None:
+                print(f"  ♻️  [{indicator_id}] одна новая Chrome-сессия для получения даты")
+                replacement = create_driver(download_dir=DOWNLOAD_DIR)
+                try:
+                    driver.quit()
+                except WebDriverException:
+                    pass
+                driver = replacement
+                remote_date = get_last_update_date(driver, indicator_id)
 
             if remote_date is None:
                 print("  ⚠️  Не удалось получить дату со страницы")

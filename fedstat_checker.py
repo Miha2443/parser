@@ -43,7 +43,7 @@ from pipeline.file_utils import stream_response_atomic, validate_excel_file, wri
 from pipeline.selenium_utils import wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
 from pipeline.download_provenance import record_successful_download
-from pipeline.source_history import date_stamp, history_for
+from pipeline.source_history import confirmed_download, date_stamp, history_for
 
 
 try:
@@ -2574,13 +2574,15 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                 print(f"  ℹ️  Первая загрузка. Дата: {remote_date}")
             elif remote_date != saved_date:
                 print(f"  🔄 Обновился! Было: {saved_date} → Стало: {remote_date}")
-            else:
+            elif (current_filename(indicator_id, saved_date)
+                  and confirmed_download(DOWNLOAD_DIR / current_filename(indicator_id, saved_date),
+                                         source_id=indicator_id, remote_date=remote_date)):
                 print(f"  ✔️  Без изменений ({remote_date})\n")
                 _mark_run_completed(run_checkpoint, indicator_id, remote_date)
-                name = current_filename(indicator_id, saved_date)
-                if name:
-                    retire_download(indicator_id, DOWNLOAD_DIR / name, saved_date)
+                retire_download(indicator_id, DOWNLOAD_DIR / current_filename(indicator_id, saved_date), saved_date)
                 continue
+            else:
+                print("  🔄 Дата прежняя, но активный файл/receipt не подтверждён — восстанавливаю загрузку")
 
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
                                         remote_date=remote_date,

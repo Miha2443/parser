@@ -77,7 +77,10 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             prev_date = prev_date or (saved_date or "")
             new_date = remote_date or new_date
 
-            if remote_date and saved_date == remote_date:
+            saved_name = saved.get("filename", "") if isinstance(saved, dict) else ""
+            if (remote_date and saved_date == remote_date and saved_name
+                    and Path(saved_name).name == saved_name
+                    and rc.confirmed_download(DOWNLOADS_DIR / saved_name, source_id=key, remote_date=remote_date)):
                 if isinstance(saved, dict) and Path(saved.get("filename", "")).name == saved.get("filename"):
                     rc.retire_download(key, DOWNLOADS_DIR / saved["filename"], saved_date)
                 continue

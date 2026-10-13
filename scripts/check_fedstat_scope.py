@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import fedstat_checker as fc
-from pipeline.download_provenance import receipt_path, record_successful_download
+from pipeline.download_provenance import receipt_path, record_download, record_successful_download
 from pipeline.registry import INDICATORS as PIPELINE_INDICATORS
 
 
@@ -81,6 +81,15 @@ class FedstatScopeChecks(unittest.TestCase):
         self.assertEqual(json.loads(self.state_path.read_text(encoding="utf-8")), self.initial)
 
     def test_unchanged_default_is_success_without_download(self):
+        from openpyxl import Workbook
+        self.downloads.mkdir()
+        for source in fc.DEFAULT_INDICATOR_USAGE:
+            path = self.downloads / fc.current_filename(source, "01.07.2026")
+            workbook = Workbook()
+            workbook.active.append(["test-only measured value", 1])
+            workbook.save(path)
+            workbook.close()
+            record_download(path, source_id=source, remote_date="01.07.2026")
         self.date.return_value = "01.07.2026"
         self.assertEqual(fc.main([]), 0)
         self.assertEqual(self.calls, [])

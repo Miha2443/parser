@@ -36,7 +36,7 @@ from bs4 import BeautifulSoup
 
 from pipeline.file_utils import stream_response_atomic, validate_excel_file
 from pipeline.state_utils import load_json_state, write_json_atomic
-from pipeline.source_history import history_for
+from pipeline.source_history import confirmed_download, history_for
 import tempfile
 
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
@@ -373,7 +373,10 @@ def run(force: bool = False) -> list[Path]:
             saved = state.get(key, {})
             saved_date = saved.get("date") if isinstance(saved, dict) else ""
 
-            if not force and remote_date and saved_date == remote_date:
+            saved_name = saved.get("filename", "") if isinstance(saved, dict) else ""
+            if (not force and remote_date and saved_date == remote_date and saved_name
+                    and Path(saved_name).name == saved_name
+                    and confirmed_download(DOWNLOAD_DIR / saved_name, source_id=key, remote_date=remote_date)):
                 print(f"     ✔️  без изменений ({remote_date})")
                 if isinstance(saved, dict) and Path(saved.get("filename", "")).name == saved.get("filename"):
                     retire_download(key, DOWNLOAD_DIR / saved["filename"], saved_date)

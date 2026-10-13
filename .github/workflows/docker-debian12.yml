@@ -10,18 +10,25 @@ on:
         type: boolean
         required: false
         default: false
+      diagnostic_only:
+        description: Run only bounded browser/TLS probes and Rosstat economics repair verification
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: docker-debian12-${{ github.event_name == 'workflow_dispatch' && inputs.live_public && 'live-public' || github.ref }}
-  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.live_public) }}
+  group: docker-debian12-${{ github.event_name == 'workflow_dispatch' && (inputs.live_public || inputs.diagnostic_only) && 'live-public' || github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.live_public || inputs.diagnostic_only)) }}
 
 jobs:
   live-public:
-    if: github.event_name == 'workflow_dispatch' && inputs.live_public
+    if: github.event_name == 'workflow_dispatch' && (inputs.live_public || inputs.diagnostic_only)
     uses: ./.github/workflows/live-public-debian12.yml
+    with:
+      diagnostic_only: ${{ inputs.diagnostic_only }}
 
   compose:
     runs-on: ubuntu-24.04

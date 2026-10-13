@@ -44,14 +44,15 @@ def validate_status(status, started, *, previous_id=None):
     require(math.floor(started) <= first <= last <= time.time() + 1, "public-source status predates this run")
 
 
-def validate_receipts(access, started):
+def validate_receipts(access, started, *, required_ids=None):
     import pandas as pd
     from pipeline.download_provenance import receipt_path
     from pipeline.file_utils import validate_excel_file
     from pipeline.source_records import file_sha256
     from rosstat_checker import PAGE_SOURCES
     rosstat_ids = {item["key"] for entries in PAGE_SOURCES.values() for item in entries}
-    required = FEDSTAT_IDS | rosstat_ids
+    required = FEDSTAT_IDS | rosstat_ids if required_ids is None else frozenset(required_ids)
+    require(required and required <= FEDSTAT_IDS | rosstat_ids, "unrecognized verification download scope")
     records = {}
     for source in access._raw_files([access.DOWNLOADS_DIR], ["*.xls*"]):
         receipt = receipt_path(source)
@@ -116,16 +117,17 @@ def validate_public_sources(access, started):
                                   "latest": rasprod["latest_period_by_region"][region]} for region in ("rf", "msk")}}
 
 
-def validate_etl_audit(access, started):
+def validate_etl_audit(access, started, *, required_ids=None):
     from pipeline.data_access import NA_INDICATORS
-    required = {"avg_salary", "ipc", *NA_INDICATORS}
+    required = {"avg_salary", "ipc", *NA_INDICATORS} if required_ids is None else set(required_ids)
+    require(required and required <= {"avg_salary", "ipc", *NA_INDICATORS}, "unrecognized verification ETL scope")
     path = access.DATA_PROCESSED / "etl_audit.jsonl"
     require(path.is_file(), "fresh economics ETL audit is missing")
     entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     entries = [entry for entry in entries if datetime.fromisoformat(entry["ts"]).timestamp() >= math.floor(started)]
     relevant = [entry for entry in entries if entry.get("indicator") in required]
     require(len(relevant) == len(required) and {entry["indicator"] for entry in relevant} == required,
-            "economics ETL audit does not confirm exactly eight fresh indicators")
+            f"economics ETL audit does not confirm exactly {len(required)} fresh indicators")
     run_ids = {entry["run_id"] for entry in relevant}
     require(len(run_ids) == 1 and all(entry.get("status") == "success" for entry in relevant),
             "economics ETL audit contains skipped/failed indicators or mixed runs")

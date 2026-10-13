@@ -2,7 +2,18 @@ name: Live public sources on Debian 12
 
 on:
   workflow_call:
+    inputs:
+      diagnostic_only:
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
+    inputs:
+      diagnostic_only:
+        description: Only bounded browser/TLS probes and Rosstat economics verification
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +25,7 @@ concurrency:
 jobs:
   public:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: ${{ inputs.diagnostic_only && 10 || 180 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,10 +38,11 @@ jobs:
             -e PARSER_LIVE_PUBLIC_SMOKE=1 -e TDM_DISABLED=1 -e PARALLEL_LIMIT=1 \
             -e KVART_PER_DEV=1 -e HEADLESS_MODE=new -e PARSER_ROOT=/app \
             -e PARSER_DOWNLOADS=/app/downloads -e PARSER_GIT_SHA="$GITHUB_SHA" \
+            -e PARSER_DIAGNOSTIC_ONLY=${{ inputs.diagnostic_only && '1' || '0' }} \
             --entrypoint sh parser-live-public \
-            -c 'mkdir -p /runtime && chown op:op /runtime && exec runuser -u op -- python -u -m docker.tests.live_public'
+            -c 'mkdir -p /runtime && chown op:op /runtime && if [ "$PARSER_DIAGNOSTIC_ONLY" = 1 ]; then exec runuser -u op -- python -u -m docker.tests.live_diagnostic; else exec runuser -u op -- python -u -m docker.tests.live_public; fi'
           test "$(docker inspect -f '{{len .Mounts}}' parser-live-public)" = 0
-      - name: Collect six public sources and verify source, ETL and API evidence
+      - name: Run the explicitly selected public verification mode
         run: |
           docker start -a parser-live-public
           test "$(docker wait parser-live-public)" = 0

@@ -1,7 +1,7 @@
 """Permanent-history contracts; all files and collector responses are isolated."""
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from contextlib import ExitStack, redirect_stdout
-from contextlib import contextmanager
+from contextlib import chdir, contextmanager
 from io import StringIO
 import json
 import multiprocessing
@@ -127,6 +127,126 @@ class SourceHistoryTests(unittest.TestCase):
         self.assertFalse(old.exists() or receipt_path(old).exists())
         self.assertTrue(other.exists())
 
+    def test_real_collectors_never_retire_current_relative_or_absolute_download(self):
+        import fedstat_checker as fs
+        import rosstat_checker as rs
+        for collector, key in ((rs, "vrp_msk"), (fs, "43246")):
+            for style in ("relative", "dot_relative", "absolute"):
+                with self.subTest(collector=collector.__name__, style=style), chdir(self.root), \
+                        patch.object(collector, "DOWNLOAD_DIR", Path("downloads")):
+                    current = self.workbook(f"20261013_{key}_{style}.xlsx", 2)
+                    record_download(current, source_id=key, remote_date="13.10.2026")
+                    original, receipt = current.read_bytes(), receipt_path(current).read_bytes()
+                    argument = {"relative": Path("downloads") / current.name,
+                                "dot_relative": "./downloads/" + current.name,
+                                "absolute": current}[style]
+                    before = len(self.records())
+                    collector.retire_download(key, argument, "13.10.2026")
+                    self.assertEqual(len(self.records()), before)
+                    old = self.workbook(f"20261012_{key}_{style}.xlsx", 1)
+                    record_download(old, source_id=key, remote_date="12.10.2026")
+                    # This predecessor was received before the current file,
+                    # even though the fixture creates it after the fresh case.
+                    old_receipt = json.loads(receipt_path(old).read_bytes())
+                    old_receipt["downloaded_at"] = json.loads(receipt)["downloaded_at"]
+                    receipt_path(old).write_text(json.dumps(old_receipt), encoding="utf-8")
+                    collector.retire_download(key, argument, "13.10.2026")
+                    self.assertEqual(len(self.records()), before + 1)
+                    self.assertFalse(old.exists() or receipt_path(old).exists())
+                    collector.retire_download(key, argument, "13.10.2026")
+                    self.assertEqual(len(self.records()), before + 1)
+                    self.assertEqual(current.read_bytes(), original)
+                    self.assertEqual(receipt_path(current).read_bytes(), receipt)
+                    self.assertEqual(self.records()[-1]["download_receipt"]["remote_date"], "12.10.2026")
+                    current.unlink()
+                    receipt_path(current).unlink()
+
+    def test_rosstat_unchanged_state_repairs_missing_file_or_receipt_without_force(self):
+        import rosstat_checker as rs
+        key, date = "vrp_msk", "13.10.2026"
+        href, page = "https://example.test/book.xlsx", "https://example.test/page"
+        filename = rs._filename_for(href, remote_date=date)
+        state = {key: {"date": date, "filename": filename}}
+        payload = self.workbook("response.xlsx", 12).read_bytes()
+        (self.downloads / "response.xlsx").unlink()
+        response = Mock()
+        response.iter_content.side_effect = lambda **_kw: iter([payload])
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        session = Mock()
+        session.get.return_value = response
+        with chdir(self.root), patch.object(rs, "DOWNLOAD_DIR", Path("downloads")), \
+                patch.object(rs, "PAGE_SOURCES", {page: [{"key": key, "match_any": ["book"]}]}), \
+                patch.object(rs, "load_state", return_value=state), patch.object(rs, "save_state"), \
+                patch.object(rs, "_new_session", return_value=session), patch.object(rs.time, "sleep"), \
+                patch.object(rs, "get_files_on_page", return_value=[{"href": href, "date": date, "titles": ["book"]}]):
+            for missing in ("file", "receipt"):
+                if missing == "receipt":
+                    receipt_path(self.downloads / filename).unlink()
+                files = rs.run()
+                self.assertEqual(files, [Path("downloads") / filename])
+                self.assertTrue(sh.confirmed_download(self.downloads / filename, source_id=key, remote_date=date))
+            before = session.get.call_count
+            self.assertEqual(rs.run(), [])
+            self.assertEqual(session.get.call_count, before)
+            self.assertTrue((self.downloads / filename).is_file())
+
+    def test_fedstat_unchanged_state_repairs_missing_file_or_receipt_without_force(self):
+        import fedstat_checker as fs
+        key, date = "43246", "13.10.2026"
+        current = self.downloads / fs.current_filename(key, date)
+        def download(identifier, directory, **kwargs):
+            self.workbook(current.name, 12)
+            record_download(current, source_id=identifier, remote_date=kwargs["remote_date"])
+            return Path("downloads") / current.name
+        with chdir(self.root), patch.object(fs, "DOWNLOAD_DIR", Path("downloads")), \
+                patch.object(fs, "load_state", return_value={key: date}), patch.object(fs, "save_state"), \
+                patch.object(fs, "create_driver", return_value=Mock()), \
+                patch.object(fs, "get_last_update_date", return_value=date), \
+                patch.object(fs, "_load_run_checkpoint", return_value={}), \
+                patch.object(fs, "download_excel", side_effect=download) as fetch:
+            for missing in ("file", "receipt"):
+                if missing == "receipt":
+                    receipt_path(current).unlink()
+                files, ok = fs.run(only_ids=[key])
+                self.assertTrue(ok)
+                self.assertEqual(len(files), 1)
+                self.assertTrue(sh.confirmed_download(current, source_id=key, remote_date=date))
+            files, ok = fs.run(only_ids=[key])
+            self.assertTrue(ok)
+            self.assertEqual(files, [])
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_pipeline_rosstat_wrapper_also_repairs_unchanged_missing_active_file(self):
+        import rosstat_checker as rs
+        from pipeline.downloaders import rosstat as downloader
+        from types import SimpleNamespace
+        key, date = "vrp_msk", "13.10.2026"
+        href, page = "https://example.test/book.xlsx", "https://example.test/page"
+        filename = rs._filename_for(href, remote_date=date)
+        payload = self.workbook("response.xlsx", 12).read_bytes()
+        (self.downloads / "response.xlsx").unlink()
+        response = Mock()
+        response.iter_content.side_effect = lambda **_kw: iter([payload])
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        session = Mock()
+        session.get.return_value = response
+        indicator = SimpleNamespace(source_ids=[key], file_patterns=["*.xlsx"])
+        with patch.multiple(downloader, ROOT=self.root, DOWNLOADS_DIR=self.downloads), \
+                patch.multiple(rs, DOWNLOAD_DIR=self.downloads, STATE_FILE=self.root / "state/rosstat_state.json"), \
+                patch.object(rs, "PAGE_SOURCES", {page: [{"key": key, "match_any": ["book"]}]}), \
+                patch.object(rs, "load_state", return_value={key: {"date": date, "filename": filename}}), \
+                patch.object(rs, "save_state"), patch.object(rs, "_new_session", return_value=session), \
+                patch.object(rs, "get_files_on_page", return_value=[{"href": href, "date": date, "titles": ["book"]}]):
+            result = downloader.fetch(indicator)
+            self.assertFalse(result["skipped"])
+            self.assertEqual(result["new_files"], [self.downloads / filename])
+            self.assertTrue(sh.confirmed_download(self.downloads / filename, source_id=key, remote_date=date))
+            receipt_path(self.downloads / filename).unlink()
+            self.assertFalse(downloader.fetch(indicator)["skipped"])
+            self.assertTrue(downloader.fetch(indicator)["skipped"])
+
     def test_legacy_current_changed_while_waiting_for_lock_never_retires(self):
         current = self.workbook("20261013_salary.xlsx")
         old = self.workbook("20261012_salary.xlsx")
@@ -152,6 +272,23 @@ class SourceHistoryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sh.archive_file(source, root=self.root, archive_root=Path(other), indicator_key="test", reason="test", move=True)
             self.assertTrue(source.exists() and outside.exists())
+
+    def test_retirement_rejects_leaf_symlink_and_current_outside_downloads(self):
+        current = self.workbook("current.xlsx")
+        old = self.workbook("old.xlsx")
+        record_download(old, source_id="43246", remote_date="12.10.2026")
+        outside = self.root / "outside.xlsx"
+        outside.write_bytes(current.read_bytes())
+        record_download(outside, source_id="43246", remote_date="13.10.2026")
+        self.assertEqual(self.history.retire("fedstat:43246", outside, remote_date="13.10.2026"), [])
+        alias = self.downloads / "alias.xlsx"
+        try:
+            alias.symlink_to(outside)
+        except OSError:
+            self.skipTest("Host does not allow file symlinks")
+        record_download(alias, source_id="43246", remote_date="13.10.2026")
+        self.assertEqual(self.history.retire("fedstat:43246", alias, remote_date="13.10.2026"), [])
+        self.assertTrue(old.is_file() and outside.is_file())
 
     def test_offline_migration_uses_known_saved_current_only(self):
         import fedstat_checker as fs

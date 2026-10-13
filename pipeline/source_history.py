@@ -96,6 +96,20 @@ def validate_workbook(path):
         raise ValueError(f"Invalid downloaded workbook: {path}") from exc
 
 
+def confirmed_download(path, *, source_id, remote_date):
+    """A saved date alone cannot confirm a missing or corrupted active file."""
+    path = Path(path)
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        validate_workbook(path)
+        receipt = _read_json(receipt_path(path))
+        return (receipt.get("source_id") == source_id and receipt.get("remote_date") == remote_date
+                and receipt.get("sha256") == file_sha256(path))
+    except (OSError, ValueError):
+        return False
+
+
 def _archive_locked(source, *, root, archive, indicator_key, reason, move, deduplicate, category=None):
     if source.is_symlink() or not source.is_file() or source.resolve().is_relative_to(archive.resolve()):
         raise ValueError(f"Refusing unsafe archive source: {source}")
@@ -249,6 +263,12 @@ class SourceHistory:
         current = Path(current)
         if not current.is_file() or current.is_symlink() or current.parent.resolve() != self.downloads:
             return []
+        # Collectors may pass ./downloads/name while iterdir yields absolute
+        # paths. Compare the same canonical identity without accepting a leaf
+        # symlink or a file outside this downloads directory.
+        current = current.resolve()
+        if current.parent != self.downloads:
+            return []
         try:
             validate_workbook(current)
         except (OSError, ValueError):
@@ -271,7 +291,8 @@ class SourceHistory:
         with _lock(self.archive):
             # The file/receipt may have been replaced while waiting for another
             # installer. Never retire files based on a stale confirmation.
-            if _read_json(receipt_path(current)) != current_receipt or file_sha256(current) != current_digest:
+            if (current.is_symlink() or current.parent.resolve() != self.downloads
+                    or _read_json(receipt_path(current)) != current_receipt or file_sha256(current) != current_digest):
                 return []
             for old in self.downloads.iterdir():
                 if old == current or not old.is_file() or old.is_symlink() or old.suffix.lower() not in {".xls", ".xlsx"}:

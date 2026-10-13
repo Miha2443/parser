@@ -545,14 +545,57 @@ def _export_post_with_token(session, driver, real_id: str, post_data, *, refresh
     page_url = f"https://www.fedstat.ru/indicator/{real_id}"
     if driver is not None:
         current = urlsplit(driver.current_url or "")
-        if refresh or current.hostname != "www.fedstat.ru" or current.path != f"/indicator/{real_id}":
-            driver.get(page_url)
-        entries = driver.execute_script("""
-            return Array.from(document.querySelectorAll('#downloadTokenHolder input[type="hidden"]'))
-                .map(input => [input.name, input.value]);
-        """)
-        for cookie in driver.get_cookies():
-            session.cookies.set(cookie.get("name"), cookie.get("value"),
+        if refresh or current.scheme != "https" or current.hostname != "www.fedstat.ru" or current.path != f"/indicator/{real_id}":
+            # A marker survives only when navigation leaves the old document
+            # behind. A timed-out get may still have loaded a valid new DOM.
+            driver.execute_script("window.__parserExportOldDocument = true;")
+            driver.set_page_load_timeout(PAGE_LOAD_ATTEMPT_TIMEOUT)
+            try:
+                driver.get(page_url)
+            except TimeoutException:
+                print("  ⏳ Таймаут навигации формы экспорта: жду готовый DOM")
+
+        def ready(browser):
+            try:
+                state = browser.execute_script("""
+                    return {url: document.URL, stale: !!window.__parserExportOldDocument,
+                        text: (document.title + ' ' + (document.body?.innerText || '')).toLowerCase(),
+                        passport: Array.from(document.querySelectorAll('a')).some(a => /паспорт/i.test(a.textContent)),
+                        indicator: document.querySelector('input[name="id"]')?.value || '',
+                        entries: Array.from(document.querySelectorAll('#downloadTokenHolder input[type="hidden"]'))
+                            .map(input => [input.name, input.value])};
+                """)
+                if not isinstance(state, dict) or state.get("stale") or not state.get("passport"):
+                    return False
+                for address in (browser.current_url, state.get("url", "")):
+                    location = urlsplit(address or "")
+                    if (location.scheme != "https" or location.hostname != "www.fedstat.ru"
+                            or location.path.rstrip("/") != f"/indicator/{real_id}"):
+                        return False
+                if state.get("indicator") and str(state["indicator"]) != str(real_id):
+                    return False
+                text = str(state.get("text", "")).casefold()
+                if any(marker in text for marker in ("forbidden", "bad gateway", "temporarily unavailable",
+                        "access denied", "service unavailable", "технические работы", "временно недоступен")):
+                    return False
+                entries = state.get("entries") or []
+                values = dict(entries)
+                name = values.get("struts.token.name")
+                if not isinstance(name, str) or not name or not isinstance(values.get(name), str) or not values[name].strip():
+                    return False
+                cookies = [cookie for cookie in browser.get_cookies()
+                           if cookie.get("name") and cookie.get("value")
+                           and str(cookie.get("domain", "")).lstrip(".") in {"fedstat.ru", "www.fedstat.ru"}]
+                return (entries, cookies) if cookies else False
+            except (WebDriverException, ValueError, TypeError):
+                return False
+
+        try:
+            entries, cookies = WebDriverWait(driver, min(PAGE_TIMEOUT, 15), poll_frequency=0.5).until(ready)
+        except TimeoutException as exc:
+            raise ValueError("Fedstat: verified export form/token/session did not become ready") from exc
+        for cookie in cookies:
+            session.cookies.set(cookie["name"], cookie["value"],
                                 domain=cookie.get("domain"), path=cookie.get("path", "/"))
     else:
         response = session.get(page_url, timeout=30)

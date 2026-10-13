@@ -142,6 +142,14 @@ class Checks(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(len(files), 2)
             self.assertTrue(state["rasprodannost"]["complete"])
+            from pipeline.source_records import file_sha256
+            xlsx = next(path for path in files if path.suffix == ".xlsx")
+            coverage = json.loads(xlsx.with_suffix(".coverage.json").read_text(encoding="utf-8"))
+            self.assertTrue(coverage["complete"])
+            self.assertEqual(coverage["expected"], coverage["confirmed"])
+            self.assertEqual(len(coverage["expected"]), 4)
+            self.assertEqual(coverage["xlsx_sha256"], file_sha256(xlsx))
+            self.assertEqual(coverage["json_sha256"], file_sha256(xlsx.with_suffix(".json")))
             self.assertEqual(len(json.loads(next(p for p in files if p.suffix == ".json").read_text(encoding="utf-8"))), 4)
             self.assertFalse((folder / "._rasprodannost_progress.json").exists())
             calls.clear()
@@ -170,6 +178,26 @@ class Checks(unittest.TestCase):
             self.assertEqual(len(calls), 6)
             self.assertEqual(published.read_bytes(), original)
             self.assertTrue((folder / "._rasprodannost_progress.json").exists())
+
+    def test_extra_unverified_history_is_archived_and_cannot_become_latest_active_period(self):
+        def callback(driver, urls):
+            if "/dynamics?" in urls[0]:
+                return [series()]
+            return list(payload(int(parse_qs(urlsplit(urls[0]).query)["repMonth"][0])))
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            legacy = self.make_report("msk")
+            legacy.update(year=2027, month_num=1, api_verified=False)
+            (folder / "rasprodannost_20260101.json").write_text(json.dumps([legacy]), encoding="utf-8")
+            (files, complete), _ = self.collect(folder, callback)
+            self.assertTrue(complete)
+            active = json.loads(next(path for path in files if path.suffix == ".json").read_text(encoding="utf-8"))
+            self.assertEqual({(row["region_key"], row["year"], row["month_num"]) for row in active},
+                             {(region, 2026, month) for region in ("rf", "msk") for month in (7, 8)})
+            records = [json.loads(line) for line in (folder / "_archive/index.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(records), 1)
+            retained = json.loads((folder / records[0]["archive_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(retained, [legacy])
 
     def test_new_browser_every_twenty_reports_keeps_progress(self):
         drivers = []

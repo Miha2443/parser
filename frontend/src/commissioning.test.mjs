@@ -18,9 +18,9 @@ test('linear defaults use catalog latest year and latest complete quarter, not l
 test('operational reports retain both full sixteen-year tables and record-wrapped chart values without conversion', () => {
   const raw = fixtures.operationalReport(), data = readOperationalReport(raw, fixtures.operationalSelection); assert.deepEqual(data, raw);
   for (const t of data.tables) { assert.equal(t.rows.length, 16); assert.equal(t.chart.x.length, 16); assert.equal(t.chart.x.at(-1), '2026'); }
-  const t = data.tables[1]; assert.equal(t.rows[0]['За выбранный период, млн м²'], null); assert.equal(t.chart.period[0].value, 0); assert.equal(t.chart.remainder[0].value, 2.12345); assert.equal(t.chart.growth[0].value, null);
-  assert.equal(data.tables[0].rows.at(-1)['За год, млн м²'], null); assert.equal(data.tables[0].chart.remainder.at(-1).value, 0);
-  const rows = operationalChartRows(t); assert.deepEqual(rows[1], ['2011', 0, 2.12345, 2.12345, null, null]); assert.equal(tableRows(t).length, 17);
+  const t = data.tables[1]; assert.equal(t.rows[0]['За выбранный период, млн м²'], null); assert.equal(t.chart.period[0].value, null); assert.equal(t.chart.remainder[0].value, 2.12345); assert.equal(t.chart.growth[0].value, null);
+  assert.equal(data.tables[0].rows.at(-1)['За год, млн м²'], null); assert.equal(data.tables[0].chart.remainder.at(-1).value, null);
+  const rows = operationalChartRows(t); assert.deepEqual(rows[1], ['2011', null, 2.12345, 2.12345, null, null]); assert.equal(tableRows(t).length, 17);
 });
 test('all fifteen structure metrics stay supplied independent values, with no invented sums', () => {
   const raw = fixtures.operationalReport(), groups = groupedStructure(raw.treeRows), rows = groups.flatMap(g => g.rows);
@@ -39,10 +39,10 @@ test('cumulative reports and raw percentages are not re-aggregated in the UI', (
   assert.equal(readLinearReport(raw, selection).summary[0].percent, 17.456); assert.equal(readLinearReport(raw, selection).summary[0].plan, raw.summary[0].plan);
   assert.throws(() => readLinearReport(raw, { ...selection, cumulative: false }));
 });
-test('operational chart options use exact API plotting zeros, totals and growth, with segment hover', () => {
+test('operational chart options use exact API missing periods, annual totals and growth, with segment hover', () => {
   const table = fixtures.operationalReport().tables[1], option = operationalChartOption(table, 'Январь–август', 'dark');
   assert.deepEqual(option.series[0].data, table.chart.period.map(p => p.value)); assert.deepEqual(option.series[1].data, table.chart.remainder.map(p => p.value)); assert.equal(option.series[0].stack, option.series[1].stack); assert.equal(option.tooltip.trigger, 'item');
-  const tip = option.tooltip.formatter({ dataIndex: 0, seriesIndex: 0, seriesName: '<period>', name: '2011', value: 0 }); assert.ok(tip.includes('0,00 млн м²') && tip.includes('Исходное значение периода: —') && tip.includes('&lt;period&gt;'));
+  const tip = option.tooltip.formatter({ dataIndex: 0, seriesIndex: 0, seriesName: '<period>', name: '2011', value: null }); assert.ok(tip.includes('— млн м²') && tip.includes('Исходное значение периода: —') && tip.includes('&lt;period&gt;'));
   assert.equal(option.series[0].label.formatter({ dataIndex: 0, value: 0 }), ''); assert.equal(option.series[1].label.formatter({ dataIndex: 0 }), '2,12');
   assert.equal(option.media[0].query.maxWidth, 600); assert.equal(option.media[0].option.series[0].label.show, false);
 });

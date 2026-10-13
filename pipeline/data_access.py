@@ -182,14 +182,14 @@ def latest_period(df: pd.DataFrame) -> str:
 
 
 def _parse_kvart_number(value) -> float | None:
-    """«2 439 665» → 2439665; «48» → 48; «<1» → 0.5; «-» → None."""
+    """Parse measurements; a bound such as «<1» is not an exact value."""
     if value is None:
         return None
     s = str(value).strip().replace("\xa0", "").replace(" ", "")
     if not s or s in ("-", "—"):
         return None
     if s.startswith("<"):
-        return 0.5  # «< 1» — приближение для сортировки
+        return None
     s = s.replace("%", "").replace(",", ".")
     try:
         return float(s)
@@ -238,6 +238,44 @@ def _kvart_normalize_frames(payload: dict) -> dict:
         "report_date": str(payload.get("report_date") or ""),
         "regions_available": list(payload.get("regions_available") or []),
     }
+    for key in ("apartments", "developers", "regions"):
+        frame = out[key]
+        required = {"api_verified", "apartments_count_exact", "apartments_area_thousand_m2_exact"}
+        if required <= set(frame.columns):
+            confirmed = frame["api_verified"].eq(True)
+            counts = pd.to_numeric(frame["apartments_count_exact"], errors="coerce")
+            areas = pd.to_numeric(frame["apartments_area_thousand_m2_exact"], errors="coerce")
+            valid = confirmed & counts.ge(0) & counts.mod(1).eq(0) & areas.ge(0) & areas.lt(float("inf"))
+            count_column = "количество_шт_num" if key == "apartments" else "квартиры_тыс_шт_num"
+            frame.loc[valid, count_column] = counts[valid] / (1 if key == "apartments" else 1000)
+            frame.loc[valid, "площадь_тыс_м²_num"] = areas[valid]
+            for room in ("1комн", "2комн", "3комн", "4+комн"):
+                field = "доля_" + room + "_%"
+                if field + "_exact" in frame:
+                    shares = pd.to_numeric(frame[field + "_exact"], errors="coerce")
+                    measured = valid & shares.between(0, 100)
+                    frame.loc[measured, field + "_num"] = shares[measured]
+    # Older verified API snapshots already contain exact per-developer totals.
+    # Join those by the exact site identity; never turn a display bound into a
+    # fabricated midpoint when its exact source value is absent.
+    details, developers = out["apartments_per_dev"], out["developers"]
+    join_columns = ["region_key", "наименование"]
+    exact_columns = ["Все_количество_шт_num", "Все_площадь_тыс_м²_num"]
+    if set(join_columns + exact_columns + ["api_verified"]) <= set(details.columns) and set(join_columns) <= set(developers.columns):
+        confirmed = details[details.api_verified.eq(True) & ~details.duplicated(join_columns, keep=False)].set_index(join_columns)
+        for index, row in developers.iterrows():
+            identity = tuple(row[column] for column in join_columns)
+            if identity not in confirmed.index:
+                continue
+            exact = confirmed.loc[identity]
+            count, area = exact[exact_columns[0]], exact[exact_columns[1]]
+            if pd.notna(count) and pd.notna(area) and count > 0 and area > 0:
+                developers.at[index, "квартиры_тыс_шт_num"] = count / 1000
+                developers.at[index, "площадь_тыс_м²_num"] = area
+                for room in ("1комн", "2комн", "3комн", "4+комн"):
+                    room_count = exact.get(room + "_количество_шт_num")
+                    if pd.notna(room_count) and room_count >= 0:
+                        developers.at[index, "доля_" + room + "_%_num"] = room_count / count * 100
     if not out["regions_available"]:
         region_keys: list[str] = []
         for key in ("apartments", "distribution", "developers", "regions", "apartments_per_dev"):
@@ -326,6 +364,8 @@ def _load_kvartirografia_json(path: Path) -> dict:
                 "region_key": rk,
                 "наименование": pd_item.get("наименование", ""),
                 "monitoring_name": pd_item.get("monitoring_name", ""),
+                "source_id": pd_item.get("source_id", ""),
+                "api_verified": pd_item.get("api_verified") is True,
                 "Все_количество_шт": (apt.get("all") or {}).get("count", ""),
                 "Все_площадь_тыс_м²": (apt.get("all") or {}).get("area", ""),
                 "1комн_количество_шт": (apt.get("ONE") or {}).get("count", ""),
@@ -1997,10 +2037,11 @@ class DataAccess:
             return pd.DataFrame(
                 columns=["region", "year", "month", "quarter", "period_type", "МКД", "ИЖС", "source_file"]
             )
-        out = pd.concat(frames, ignore_index=True)
+        out = pd.concat([frame.assign(_source_order=index) for index, frame in enumerate(frames)], ignore_index=True)
         out = (
-            out.sort_values(["region", "year", "month", "period_type", "source_file"])
+            out.sort_values(["region", "year", "month", "period_type", "_source_order"])
             .drop_duplicates(["region", "year", "month", "period_type"], keep="last")
+            .drop(columns="_source_order")
             .sort_values(["region", "year", "month", "period_type"])
             .reset_index(drop=True)
         )

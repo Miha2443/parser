@@ -20,8 +20,7 @@ import uuid
 
 TREES = ("downloads", "data/processed", "data/marts", "data/derived",
          "data/raw/realty", "logs")
-SOURCES = {"monitoring", "rasprod", "kvart", "construction", "erz-top",
-           "erz-cards", "fedstat", "rosstat"}
+from docker.coverage import SOURCES
 EXCLUDED = {"_archive", "archive", "archives", "__pycache__", "temp", "tmp",
             ".fedstat_resume", "_debug"}
 
@@ -93,31 +92,19 @@ def validate(root):
 
 
 def validate_api():
-    from pipeline.data_access import DataAccess, DataContext, _kvart_payload_is_valid
-    from pipeline.build_realty_marts import _specs
+    from pipeline.data_access import DataAccess, DataContext
+    from docker.coverage import validate_sources, validate_pages
     from fastapi.testclient import TestClient
     from backend.app import create_app
-    from docker.readiness import ROUTES
-
     access = DataAccess(DataContext.from_environment())
-    for spec in _specs(access):
-        getattr(access, spec.loader_name)()  # Enforces source sets, size and mtime_ns.
-        if spec.name == "kvartirografia" and access.source_files(spec.name):
-            # The public loader can fall back or return an empty dict after a
-            # malformed raw snapshot. A coherent manifest alone cannot prove
-            # that the canonical mart contains both required populations.
-            mart = access._load_realty_mart(spec.name, lambda: access.source_files(spec.name))
-            if not _kvart_payload_is_valid(mart):
-                raise RuntimeError("Candidate kvartirografia mart lacks valid RF/Moscow aggregates")
-            if {"rf", "msk"} - set(mart["developers"]["region_key"].astype(str)):
-                raise RuntimeError("Candidate kvartirografia developers lack RF/Moscow coverage")
+    validate_sources(access)
     with TestClient(create_app()) as client:
-        for route in ROUTES:
+        def get(route):
             response = client.get(route)
             if response.status_code != 200:
                 raise RuntimeError(f"Candidate API failed: {route}: {response.status_code}")
-            if route == "/api/v1/catalog" and not response.json()["controls"]["developers"]:
-                raise RuntimeError("Candidate catalog has no developers")
+            return response.json()
+        validate_pages(get)
 
 
 def live_target(runtime):

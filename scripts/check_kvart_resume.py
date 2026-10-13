@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from nashdom_checker import (  # noqa: E402
     _initial_kvart_data,
     _kvart_resume_per_dev,
+    _kvart_count_matches,
     _load_kvart_resume,
     _upsert_region_snapshot,
 )
@@ -75,9 +76,9 @@ def test_upsert_region_snapshot() -> None:
 def test_resume_per_dev() -> None:
     existing = {
         "apartments_per_dev": [
-            {"site_name": "A", "apartments": {"all": {"count": "10"}}},
-            {"site_name": "B", "apartments": {"all": {"count": "20"}}},
-            {"site_name": "C", "apartments": {"all": {"count": "30"}}},
+            {"site_name": "A", "apartments": {"all": {"count": "10", "area": "1"}}},
+            {"site_name": "B", "apartments": {"all": {"count": "20", "area": "1"}}},
+            {"site_name": "C", "apartments": {"all": {"count": "30", "area": "1"}}},
         ],
         "per_dev_attempts": [
             {"site_name": "A", "status": "ok"},
@@ -87,9 +88,17 @@ def test_resume_per_dev() -> None:
     }
 
     per_dev, attempts, done = _kvart_resume_per_dev(existing)
-    _require(done == {"A", "C"}, "resume should skip only successful/rejected attempts")
-    _require([row["site_name"] for row in per_dev] == ["A", "C"], "per-dev rows should match reusable attempts")
-    _require([row["site_name"] for row in attempts] == ["A", "C"], "attempts should keep reusable statuses")
+    _require(done == {"A"}, "rejected attempts must remain retryable")
+    _require([row["site_name"] for row in per_dev] == ["A"], "per-dev rows should match valid successful attempts")
+    _require(len(attempts) == 3, "retain diagnostic history")
+    existing["per_dev_attempts"].append({"site_name": "missing", "status": "ok"})
+    _require("missing" not in _kvart_resume_per_dev(existing)[2], "absent payload cannot be done")
+    existing.update(report_date="01.01.2026", developers=[{"наименование": "A", "квартиры_тыс_шт": "0.01"}])
+    _require(_kvart_resume_per_dev(existing, dict(existing))[2] == {"A"}, "same valid aggregate can resume")
+    fresh = {**existing, "report_date": "02.01.2026"}
+    _require(_kvart_resume_per_dev(existing, fresh)[2] == set(), "changed aggregate must invalidate cached payloads")
+    fresh = {**existing, "developers": [{"наименование": "A", "квартиры_тыс_шт": "0.02"}]}
+    _require(_kvart_resume_per_dev(existing, fresh)[2] == set(), "changed quantities must invalidate cached payloads")
 
 
 def main() -> int:
@@ -97,6 +106,13 @@ def main() -> int:
     test_force_ignores_kvart_resume()
     test_upsert_region_snapshot()
     test_resume_per_dev()
+    _require(_kvart_count_matches(50, "< 1"), "small developer fits an upper bound")
+    _require(_kvart_count_matches(3, "< 1") and _kvart_count_matches(4, "< 1"), "observed small Moscow developers fit the source interval")
+    _require(_kvart_count_matches(999, "< 1"), "exclusive bound allows 999")
+    _require(not _kvart_count_matches(1000, "< 1"), "exclusive bound rejects 1000")
+    _require(not _kvart_count_matches(100000, "< 1"), "huge stale aggregate is rejected")
+    _require(_kvart_count_matches(1050, "1,1"), "rounded thousands honor their displayed precision")
+    _require(not _kvart_count_matches(990, "1,1"), "outside rounding interval is rejected")
     print("kvartirografia resume checks: ok")
     return 0
 

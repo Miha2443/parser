@@ -156,7 +156,9 @@ class TransportTests(unittest.TestCase):
 
     def test_browser_csrf_refresh_preserves_repeated_filters_and_session(self):
         session = Mock()
-        self.driver.execute_script.return_value = [["struts.token.name", "token"], ["token", "fresh-fixture"]]
+        self.driver.execute_script.return_value = {"url": self.driver.current_url, "passport": True,
+            "text": "Паспорт показателя", "stale": False, "indicator": "31074",
+            "entries": [["struts.token.name", "token"], ["token", "fresh-fixture"]]}
         self.driver.get_cookies.return_value = [{"name": "JSESSIONID", "value": "session-fixture",
                                                "domain": "www.fedstat.ru", "path": "/"}]
         original = self.entries + [("struts.token.name", "token"), ("token", "expired-fixture")]

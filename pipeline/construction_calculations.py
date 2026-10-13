@@ -68,20 +68,21 @@ def report(data, options, region="msk", permit_kind="total", month=None):
     table = pd.DataFrame()
     chart = None
     if not filtered.empty:
-        monthly_full = filtered.groupby("year")["value_thousand_m2"].sum()
+        monthly_full = filtered.groupby("year")["value_thousand_m2"].sum(min_count=1)
         annual = operational.get("permit_annual", pd.DataFrame())
         if not annual.empty and permit_kind != "total":
             annual = annual[annual["kind"].eq(permit_kind)]
-        full = annual.groupby("year")["value_thousand_m2"].sum() if not annual.empty else pd.Series(dtype=float)
+        full = annual.groupby("year")["value_thousand_m2"].sum(min_count=1) if not annual.empty else pd.Series(dtype=float)
         full = full.combine_first(monthly_full)
-        ytd = filtered[filtered["month"].le(month)].groupby("year")["value_thousand_m2"].sum()
+        ytd = filtered[filtered["month"].le(month)].groupby("year")["value_thousand_m2"].sum(min_count=1)
         table = pd.DataFrame({"Год": sorted(set(full.index) | set(ytd.index))})
         table["За год, тыс. м²"] = table["Год"].map(full)
         table["С начала года, тыс. м²"] = table["Год"].map(ytd)
         table = table[table["Год"].ge(2011)].reset_index(drop=True)
-        table["Изменение, %"] = table["С начала года, тыс. м²"].pct_change() * 100
-        period_values = table["С начала года, тыс. м²"].fillna(0)
-        remainder = (table["За год, тыс. м²"] - period_values).clip(lower=0).fillna(0)
+        table["Изменение, %"] = table["С начала года, тыс. м²"].pct_change(fill_method=None) * 100
+        period_values = table["С начала года, тыс. м²"]
+        annual_values = table["За год, тыс. м²"]
+        remainder = (annual_values - period_values).where(period_values.notna(), annual_values).clip(lower=0)
         chart = {"x": [str(int(y)) for y in table["Год"]], "period": records(pd.DataFrame({"value": period_values})),
                  "remainder": records(pd.DataFrame({"value": remainder})),
                  "totals": records(pd.DataFrame({"value": table["За год, тыс. м²"]})),

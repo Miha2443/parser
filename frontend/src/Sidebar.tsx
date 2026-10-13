@@ -1,9 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { Building2, ChevronDown, ChevronLeft, House, Landmark, Moon, PanelLeftClose, Settings2, Sun, UserRound, X } from 'lucide-react';
-import type { Theme } from './types';
+import { Building2, ChevronDown, ChevronLeft, House, Landmark, PanelLeftClose, Settings2, UserRound, X } from 'lucide-react';
 import './home-navigation.css';
 
-export default function Sidebar({ theme, onTheme, open, onClose, compact, onCompact, path, onNavigate }: { theme: Theme; onTheme: () => void; open: boolean; onClose: () => void; compact: boolean; onCompact: () => void; path: string; onNavigate: (href: string) => void }) {
+export default function Sidebar({ open, onClose, compact, onCompact, path, onNavigate }: { open: boolean; onClose: () => void; compact: boolean; onCompact: () => void; path: string; onNavigate: (href: string) => void }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('dashboard.navigation') || '{"market":true,"profile":true,"construction":true,"commissioning":false}'); } catch { return { market: true, profile: true }; }
   });
@@ -31,7 +30,7 @@ export default function Sidebar({ theme, onTheme, open, onClose, compact, onComp
         {group('statistics', 'Мосстат / Росстат', <Landmark size={17} />, <>{local('ВВП и ВРП', '/economics/accounts')}{local('ИПЦ', '/economics/ipc')}{local('Заработная плата', '/economics/salary')}</>)}
         {group('service', 'Сервис', <Settings2 size={17} />, <>{local('Отправка в TDM', '/tdm')}{local('Журнал обновлений', '/updates')}</>)}
       </nav>
-      <div className="sidebar-bottom"><button className="theme-button" onClick={onTheme} title={theme === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему'}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}</span></button><button className="icon-button collapse-nav" onClick={onCompact} title={compact ? 'Развернуть боковую панель' : 'Свернуть боковую панель'}>{compact ? <ChevronLeft className="rotate" size={17} /> : <PanelLeftClose size={17} />}</button></div>
+      <div className="sidebar-bottom"><button className="icon-button collapse-nav" onClick={onCompact} title={compact ? 'Развернуть боковую панель' : 'Свернуть боковую панель'}>{compact ? <ChevronLeft className="rotate" size={17} /> : <PanelLeftClose size={17} />}</button></div>
     </aside>
   </>;
 }

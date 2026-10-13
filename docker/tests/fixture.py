@@ -25,8 +25,18 @@ def update():
     from docker.publication import publish, require_success, SOURCES
     started = time.time()
     seed("COMPOSE NEW")
+    if os.environ.get("FIXTURE_FAIL") == "missing-source":
+        next(Path("/app/data/raw/realty/nashdom").glob("construction_operational_*.json")).unlink()
     time.sleep(6)  # Old API must survive an already-overwritten mutable workbook.
     subprocess.run([sys.executable, "-m", "pipeline.build_realty_marts", "--strict"], check=True)
+    if os.environ.get("FIXTURE_FAIL") == "empty-mart":
+        import pandas as pd
+        from pipeline.build_realty_marts import _shape_summary
+        pd.to_pickle({}, Path("/app/data/marts/realty/kvartirografia.pkl"))
+        manifest_path = Path("/app/data/marts/realty/manifest.json")
+        manifest = json.loads(manifest_path.read_text())
+        manifest["marts"]["kvartirografia"]["summary"] = _shape_summary({})
+        manifest_path.write_text(json.dumps(manifest))
     status = dict(run_id=uuid.uuid4().hex, status="success", current_stage="finished",
                   started_at=datetime.fromtimestamp(started).isoformat(),
                   finished_at=datetime.now().isoformat(), sources_requested=sorted(SOURCES),
@@ -99,7 +109,7 @@ def browser_dom_contract(driver):
       <p>Федеральный округ / Регион</p><div><span class="css-203ko5">Город Москва</span></div>
       <p>Девелопер</p><div><span class="css-wjcl1w">Все</span></div>
       <h2>Объём строительства по регионам</h2>
-      <div class="list" style="height:100px;overflow:auto"><button class="css-5nggi1"><div>Город Москва</div><div>10</div><div>20</div></button></div>
+      <div class="list" style="height:100px;overflow:auto"><button class="selected-region"><div>Город Москва</div><div>10</div><div>20</div></button></div>
     </body></html>'''
     driver.get("data:text/html;charset=utf-8," + quote(html))
     assert checker._get_current_region_label(driver) == "Город Москва"
@@ -110,6 +120,8 @@ def browser_dom_contract(driver):
     assert checker._kvart_lists_ready(driver)
     developers = checker._scroll_collect_list(driver, 0)
     assert [row["наименование"] for row in developers] == ["Fixture developer"]
+    regions = checker._scroll_collect_list(driver, 1)
+    assert [row["наименование"] for row in regions] == ["Город Москва"]
     driver.execute_script('''document.body.insertAdjacentHTML('beforeend',
       '<div style="display:none"><input id="hidden-region-search" placeholder="Поиск по названию" value="Москва"><div onclick="document.body.dataset.choice=\\'hidden\\'"><span class="css-1ogbkfc">Fixture developer</span></div></div>'+
       '<div style="position:fixed;top:20px;left:20px;width:300px;height:150px;background:white"><input id="visible-developer-search" placeholder="Поиск по названию"><div onclick="document.body.dataset.choice=\\'developer\\'"><span class="css-1ogbkfc">Fixture developer</span></div></div>');''')
@@ -130,6 +142,50 @@ def browser():
         browser_dom_contract(driver)
         driver.get("http://web:8080/home")
         WebDriverWait(driver, 25).until(lambda d: "Рынок недвижимости" in d.find_element("tag name", "body").text)
+        assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
+        assert not driver.find_elements("css selector", ".theme-button")
+        driver.execute_script("localStorage.setItem('dashboard.theme','dark')")
+        # Check the HTML prepaint before scripts execute, including legacy storage.
+        driver.execute_cdp_cmd("Emulation.setScriptExecutionDisabled", {"value": True})
+        driver.get("http://web:8080/apartments")
+        assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
+        driver.execute_cdp_cmd("Emulation.setScriptExecutionDisabled", {"value": False})
+        driver.refresh()
+        WebDriverWait(driver, 25).until(lambda d: d.find_elements("css selector", ".chart-canvas canvas"))
+        assert driver.execute_script("return localStorage.getItem('dashboard.theme')") == "light"
+        driver.set_window_size(390, 844)
+        driver.get("http://web:8080/sales")
+        WebDriverWait(driver, 25).until(lambda d: d.find_elements("css selector", ".chart-canvas canvas"))
+        assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
+        assert driver.execute_script("return document.documentElement.scrollWidth <= innerWidth + 1")
+        driver.set_window_size(1440, 1000)
+        for route in ("/apartments", "/commissioning/operational", "/economics/salary", "/economics/ipc", "/economics/accounts"):
+            driver.get("http://web:8080" + route)
+            WebDriverWait(driver, 25).until(lambda d: d.find_elements("css selector", ".sources-section > details"))
+            disclosure = driver.find_element("css selector", ".sources-section > details")
+            assert not disclosure.get_attribute("open")
+            assert not driver.find_elements("css selector", ".page-heading .snapshot-label")
+            source_date = disclosure.find_element("css selector", "p")
+            assert not source_date.is_displayed()
+            assert driver.execute_script("return !document.querySelector('.sources-section').nextElementSibling?.querySelector('.chart-canvas')")
+            disclosure.find_element("css selector", "summary").click()
+            assert disclosure.get_attribute("open") and source_date.is_displayed()
+            assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
+            if route == "/apartments":
+                driver.find_element("css selector", ".chart-data .data-toggle").click()
+                cells = driver.find_elements("css selector", ".chart-data-panel td")
+                import re
+                assert any(re.fullmatch(r"[\d\s\u00a0]+,\d{2}", cell.text) for cell in cells)
+            if route == "/commissioning/operational":
+                result = driver.execute_async_script('''const done=arguments[arguments.length-1];
+                  fetch('/api/v1/commissioning/operational').then(r=>r.json()).then(done);''')
+                for table in result["tables"]:
+                    for index, year in enumerate(table["chart"]["x"]):
+                        row = next(row for row in table["rows"] if str(row["Год"]) == year)
+                        if row["За выбранный период, млн м²"] is None:
+                            assert table["chart"]["period"][index]["value"] is None
+                            if row["За год, млн м²"] is not None:
+                                assert table["chart"]["remainder"][index]["value"] == row["За год, млн м²"]
         driver.get("http://web:8080/?developer=compose+new&region=msk")
         WebDriverWait(driver, 25).until(lambda d: d.find_elements("css selector", ".chart-canvas canvas"))
         driver.save_screenshot("/app/logs/compose-profile.png")

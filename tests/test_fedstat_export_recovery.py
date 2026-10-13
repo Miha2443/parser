@@ -9,6 +9,60 @@ from unittest.mock import Mock, patch
 import fedstat_checker as fc
 
 
+class PollWait:
+    def __init__(self, driver, timeout, **kwargs):
+        self.driver = driver
+
+    def until(self, predicate):
+        for _ in range(3):
+            result = predicate(self.driver)
+            if result:
+                return result
+        raise fc.TimeoutException("offline readiness timeout")
+
+
+class ExportNavigationTests(unittest.TestCase):
+    def setUp(self):
+        self.driver = Mock(current_url="https://www.fedstat.ru/indicator/31074")
+        self.driver.get_cookies.return_value = [{"name": "JSESSIONID", "value": "synthetic-session",
+                                               "domain": "www.fedstat.ru", "path": "/"}]
+        self.entries = [("id", "31074"), ("selectedFilterIds", "3_2025"), ("selectedFilterIds", "3_2026")]
+        self.ready = {"url": self.driver.current_url, "stale": False, "passport": True, "text": "Паспорт",
+                      "indicator": "31074", "entries": [["struts.token.name", "token"], ["token", "synthetic-csrf"]]}
+        self.enterContext(patch.object(fc, "WebDriverWait", PollWait))
+        self.enterContext(redirect_stdout(StringIO()))
+
+    def test_navigation_timeout_with_ready_new_dom_retains_filters_and_session(self):
+        self.driver.get.side_effect = fc.TimeoutException("slow resource")
+        self.driver.execute_script.return_value = self.ready
+        session = Mock()
+        result = fc._export_post_with_token(session, self.driver, "31074", self.entries, refresh=True)
+        self.assertEqual(result[:3], self.entries)
+        self.assertEqual(result[-2:], [("struts.token.name", "token"), ("token", "synthetic-csrf")])
+        self.driver.get.assert_called_once()
+        session.cookies.set.assert_called_once()
+
+    def test_delayed_token_is_waited_for_without_repeated_navigation(self):
+        self.driver.execute_script.side_effect = [{**self.ready, "entries": []}, self.ready]
+        self.assertTrue(fc._export_post_with_token(Mock(), self.driver, "31074", self.entries))
+        self.assertEqual(self.driver.execute_script.call_count, 2)
+        self.driver.get.assert_not_called()
+
+    def test_wrong_indicator_error_html_stale_document_missing_token_or_cookie_are_rejected(self):
+        for changes in ({"url": "https://www.fedstat.ru/indicator/43246"}, {"indicator": "43246"},
+                        {"text": "503 Service unavailable"}, {"stale": True}, {"entries": []}, {"passport": False}):
+            with self.subTest(changes=changes):
+                self.driver.execute_script.return_value = {**self.ready, **changes}
+                session = Mock()
+                with self.assertRaises(ValueError):
+                    fc._export_post_with_token(session, self.driver, "31074", self.entries)
+                session.cookies.set.assert_not_called()
+        self.driver.execute_script.return_value = self.ready
+        self.driver.get_cookies.return_value = []
+        with self.assertRaises(ValueError):
+            fc._export_post_with_token(Mock(), self.driver, "31074", self.entries)
+
+
 class ExportRecoveryTests(unittest.TestCase):
     def run_case(self, export, date):
         with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:

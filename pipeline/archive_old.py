@@ -42,10 +42,13 @@ def family_of(path: Path) -> str:
     с одинаковой датой, например kvartirografia_20260608.*) попали
     в разные семейства и оба сохранились при keep=1.
     """
-    stem = path.stem
-    match = DATE_RE.search(stem)
-    base = stem[: match.start()].rstrip("_-") if match else stem
-    return f"{base}{path.suffix.lower()}"
+    # Preserve the complete suffix after the date. In particular, a coverage
+    # sidecar is a separate family from the JSON payload it describes.
+    match = DATE_RE.search(path.name)
+    if match:
+        base = path.name[:match.start()].rstrip("_-")
+        return base + path.name[match.end():].lower()
+    return path.stem + path.suffix.lower()
 
 
 def is_archivable_file(path: Path) -> bool:

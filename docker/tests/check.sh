@@ -13,6 +13,9 @@ docker compose run --rm --no-deps updater python -m unittest discover -s tests -
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_release_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collector_browser_recovery.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_kvart_api.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_report_missing_values.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_erz_cards_coverage.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_fedstat_export_recovery.py -v
 for check in check_archive_old_collision.py check_deduplicate_cache.py check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py check_nashdom_rasprod_api.py; do
   docker compose run --rm --no-deps updater python "scripts/$check"
@@ -38,10 +41,13 @@ curl -fsS http://localhost:8080/api/v1/linear/catalog >/dev/null
 previous="$(readlink runtime/live)"
 export COMPOSE_FILE=docker-compose.yml:docker/tests/compose.fixture.yml
 before_identity="$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")"
-FIXTURE_FAIL=1 bash docker/update.sh && { echo 'Incomplete updater unexpectedly published'; exit 1; }
-[[ "$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")" == "$before_identity" ]]
-[[ "$(readlink runtime/live)" == "$previous" ]]
-curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE OLD'
+for failure in 1 missing-source empty-mart; do
+  FIXTURE_FAIL="$failure" bash docker/update.sh && { echo "Incomplete updater unexpectedly published: $failure"; exit 1; }
+  [[ "$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")" == "$before_identity" ]]
+  [[ "$(readlink runtime/live)" == "$previous" && ! -f runtime/pending.json ]]
+  curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE OLD'
+  docker compose exec -T backend python docker/readiness.py "/runtime/$previous"
+done
 bash docker/update.sh > logs/compose-update.log 2>&1 &
 update_pid=$!
 sleep 2

@@ -378,7 +378,9 @@ def _auth_page_ready(driver) -> bool:
             return False
         return bool(driver.execute_script("""
             const text=(document.body?.innerText || '').trim();
-            if(!text || /temporarily unavailable|the page you are looking for|bad gateway|access denied/i.test(text)) return false;
+            if(!text || /temporarily unavailable|the page you are looking for|bad gateway|access denied/i.test(text)
+               || /технические работы|maintenance/i.test(document.title)
+               || /^\\s*(ведутся технические работы|сайт временно недоступен)/i.test(text)) return false;
             const header=document.querySelector('header,[class*="header" i],[id*="header" i]');
             const controls=[...document.querySelectorAll('[title],[aria-label]'),
               ...(header ? header.querySelectorAll('button,a,span') : [])];
@@ -409,11 +411,17 @@ def _open_auth_page(driver) -> bool:
                 const body=(document.body?.innerText || '').trim();
                 return {host: location.hostname, path: location.pathname,
                     title: document.title.slice(0,120), bodyLength: body.length,
+                    providerMaintenance: /технические работы|maintenance/i.test(document.title)
+                      || /^\\s*(ведутся технические работы|сайт временно недоступен)/i.test(body),
                     serverError: /temporarily unavailable|bad gateway|access denied|forbidden|service unavailable/i.test(body),
                     authControls: [...document.querySelectorAll('[title],[aria-label],header button,header a')].filter(e=>
                         e.offsetParent!==null && /вход|войти|выход|выйти|личный кабинет/i.test(
                             e.getAttribute('title') || e.getAttribute('aria-label') || e.innerText || '')).length};
             """)
+            if isinstance(info, dict) and info.get("providerMaintenance") is True:
+                driver._erz_auth_failure = "provider_maintenance"
+                info["reason"] = "provider_maintenance"
+                print("  ⚠️  ЕРЗ проводит технические работы; авторизация временно недоступна")
             print("  ⚠️  Интерфейс входа ЕРЗ не готов: " + json.dumps(info, ensure_ascii=False))
         except WebDriverException:
             print("  ⚠️  Интерфейс входа ЕРЗ не готов; браузер не предоставил диагностику")
@@ -422,6 +430,7 @@ def _open_auth_page(driver) -> bool:
 
 def _authenticated_session(download_dir):
     """One fresh browser recovery for authentication; callers own returned driver."""
+    maintenance = False
     for attempt in range(2):
         driver = create_chrome(download_dir=download_dir, headless=HEADLESS,
                                page_load_strategy="eager")
@@ -431,12 +440,14 @@ def _authenticated_session(download_dir):
                 return driver
         except WebDriverException as exc:
             print(f"  ⚠️  ЕРЗ auth session {attempt + 1}/2: {type(exc).__name__}")
+        maintenance = maintenance or getattr(driver, "_erz_auth_failure", None) == "provider_maintenance"
         try:
             driver.quit()
         except WebDriverException:
             pass
         print(f"  ⚠️  Авторизация ЕРЗ не подтверждена (сессия {attempt + 1}/2)")
-    raise TopExportError("authorization unavailable after two browser sessions")
+    raise TopExportError("provider_maintenance: ERZ authorization temporarily unavailable" if maintenance
+                         else "authorization unavailable after two browser sessions")
 
 
 def _ensure_logged_in(driver) -> bool:
@@ -874,6 +885,21 @@ class TopFetchResult:
     @property
     def complete(self) -> bool:
         return bool(self.required_files) and not self.error and not self.missing_files
+
+
+@dataclass
+class CardsFetchResult:
+    files: list[Path] = field(default_factory=list)
+    expected: list[dict] = field(default_factory=list)
+    confirmed: list[dict] = field(default_factory=list)
+    failed: list[dict] = field(default_factory=list)
+    error: str = ""
+    limited: bool = False
+
+    @property
+    def complete(self) -> bool:
+        return (bool(self.files) and bool(self.expected) and not self.failed and not self.error and not self.limited
+                and self.confirmed == self.expected)
 
 
 class TopExportError(ValueError):
@@ -1367,6 +1393,8 @@ def fetch_top(state: dict) -> TopFetchResult:
                     raise TopExportError(f"incomplete TOP-{TOP_N_DEVELOPERS} developers for {region['key']}")
                 target = batch / f"top_developers_{region['key']}_{date_str}.json"
                 _write_json_atomic(target, {"region": region["key"],
+                                           "selection": {"region": region["key"], "sorting": "obyem_stroitelstva",
+                                                         "url": _build_top_url(region, "obyem_stroitelstva")},
                                            "scraped_at": datetime.now().isoformat(timespec="seconds"),
                                            "developers": developers})
             # End the browser session before making the validated snapshot
@@ -1412,22 +1440,25 @@ def _developer_slug(card_url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _load_card_targets():
+    candidates = list(DOWNLOAD_DIR.glob("top_developers_rf_*.json"))
+    if not candidates:
+        raise ValueError("ERZ cards need a current RF TOP developer target file")
+    path = max(candidates, key=lambda item: item.stat().st_mtime_ns)
+    content = path.read_bytes()
+    payload = json.loads(content.decode("utf-8"))
+    from pipeline.erz_cards_contract import target_keys, validate_selection
+    validate_selection(payload)
+    developers = payload.get("developers")
+    return path, payload, target_keys(developers), hashlib.sha256(content).hexdigest()
+
+
 def _load_top_developers() -> list[dict]:
-    candidates = sorted(DOWNLOAD_DIR.glob("top_developers_rf_*.json"))
-    for path in reversed(candidates):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("payload is not an object")
-            developers = payload.get("developers", [])
-            if not isinstance(developers, list):
-                raise ValueError("developers is not a list")
-            if not developers:
-                raise ValueError("developers list is empty")
-            return list(developers)
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            print(f"  ⚠️  Пропускаю битый top_developers JSON {path.name}: {exc}")
-    return []
+    try:
+        return _load_card_targets()[1]["developers"]
+    except (OSError, ValueError) as exc:
+        print(f"  ⚠️  ERZ card targets invalid: {exc}")
+        return []
 
 
 def _parse_card_html(html: str) -> dict:
@@ -1556,7 +1587,7 @@ def _parse_construction_table_df(df) -> dict:
     return {}
 
 
-def fetch_cards(state: dict) -> list[Path]:
+def fetch_cards(state: dict) -> CardsFetchResult:
     """Обходит карточки ТОП-застройщиков и собирает один xlsx.
 
     Селекторы и формат вывода верифицированы локально на 20 реальных HTML
@@ -1564,26 +1595,38 @@ def fetch_cards(state: dict) -> list[Path]:
     page_source; если сайт не успел отрисоваться, добираем короткой паузой.
     """
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
-    developers = _load_top_developers()
-    if not developers:
-        print("  ⚠️  Нет файла top_developers_rf_*.json — сначала запусти fetch_top")
-        return []
-
     date_str = datetime.now().strftime("%Y%m%d")
+    result = CardsFetchResult()
+    def finish(error=""):
+        result.error = result.error or error
+        confirmed_ids = {row["source_id"] for row in result.confirmed}
+        state["erzrf_cards_attempt"] = {"attempted_at": datetime.now().isoformat(timespec="seconds"),
+            "complete": result.complete, "expected": result.expected, "confirmed": result.confirmed,
+            "failed": result.failed, "limited": result.limited, "error": result.error,
+            "missing": [row for row in result.expected if row["source_id"] not in confirmed_ids]}
+        return result
+    try:
+        targets_file, target_payload, result.expected, targets_hash = _load_card_targets()
+        from pipeline.source_records import file_sha256
+        developers = target_payload["developers"]
+        limit = int(os.environ.get("ERZ_CARDS_LIMIT", "0").strip() or "0")
+        if limit < 0:
+            raise ValueError("ERZ_CARDS_LIMIT must be nonnegative")
+        result.limited = limit > 0
+    except (OSError, ValueError) as exc:
+        return finish(str(exc))
     rows: list[dict] = []
-    failed: list[dict] = []
+    failed = result.failed
     debug_saved = False
 
     try:
         driver = _authenticated_session(CARDS_DIR)
     except TopExportError as exc:
         print(f"  ❌ ERZ cards: {exc}")
-        return []
+        return finish(str(exc))
     try:
-        for dev in developers[:TOP_N_DEVELOPERS]:
+        for dev in developers[:limit] if limit else developers:
             card_url = dev.get("card_url")
-            if not card_url:
-                continue
             slug = _developer_slug(card_url) or ""
             place_str = str(dev.get("place", "?")).replace("\n", " | ")[:20]
             name_str = str(dev.get("name", "")).replace("\n", " ")[:50]
@@ -1599,7 +1642,11 @@ def fetch_cards(state: dict) -> list[Path]:
                     debug_saved = True
 
                 data = _scrape_card(driver)
-                if not data.get("deliveries") and not data.get("name"):
+                from pipeline.erz_cards_contract import identity, number
+                if identity(driver.current_url) != identity(card_url):
+                    raise ValueError("card page does not match the requested source ID")
+                if not data.get("deliveries") or not data.get("name") or not any(
+                        number(period.get("sdano")) is not None for period in data.get("deliveries", {}).values()):
                     print(f"       ⚠️  пусто — не удалось распарсить")
                     failed.append({"slug": slug, "url": card_url, "reason": "empty parse"})
                     if len(failed) <= 3:
@@ -1613,25 +1660,33 @@ def fetch_cards(state: dict) -> list[Path]:
                         "name_card": data.get("name", ""),
                         "slug": slug,
                         "url": card_url,
+                        "page_url": driver.current_url,
+                        "source_id": identity(card_url),
                         "regions_count": data.get("regions_count", ""),
                         "regions_as_of": data.get("regions_as_of", ""),
                         "deliveries": data.get("deliveries", {}),
                         "scraped_at": datetime.now().isoformat(timespec="seconds"),
                     }
                 )
-            except WebDriverException as exc:
+                result.confirmed.append({"source_id": identity(card_url), "card_url": card_url})
+            except (WebDriverException, ValueError) as exc:
                 print(f"       ❌ {exc}")
                 failed.append({"slug": slug, "url": card_url, "reason": str(exc)[:200]})
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except WebDriverException as exc:
+            result.error = f"browser cleanup failed: {exc}"
 
-    new_files: list[Path] = []
-    if rows or failed:
+    if failed or result.limited or result.confirmed != result.expected or result.error:
+        return finish("ERZ cards are incomplete; previous successful snapshot preserved")
+
+    if rows:
         try:
             import pandas as pd
         except ImportError:
             print("     ⚠️  pandas не установлен — записать xlsx не получится")
-            return []
+            return finish("pandas unavailable")
 
         # Все встреченные года + флаг наличия «Строится»
         all_years = sorted({
@@ -1640,7 +1695,7 @@ def fetch_cards(state: dict) -> list[Path]:
         has_stroitsa = any("Строится" in (r.get("deliveries") or {}) for r in rows)
 
         # Wide-формат: одна строка на застройщика
-        base_cols = ["place", "name_card", "name_table", "slug", "url",
+        base_cols = ["place", "name_card", "name_table", "slug", "url", "page_url", "source_id",
                      "regions_count", "regions_as_of"]
         wide_rows = []
         for r in rows:
@@ -1665,24 +1720,39 @@ def fetch_cards(state: dict) -> list[Path]:
             with pd.ExcelWriter(path, engine="openpyxl") as writer:
                 if wide_rows:
                     pd.DataFrame(wide_rows).to_excel(writer, sheet_name="cards", index=False)
-                if failed:
-                    pd.DataFrame(failed).to_excel(writer, sheet_name="failed", index=False)
 
         target = CARDS_DIR / f"cards_{date_str}.xlsx"
-        _write_excel_atomic(target, _write_cards_workbook)
+        from pipeline.erz_cards_contract import validate_workbook
+        from pipeline.source_records import file_sha256
+        try:
+            with tempfile.TemporaryDirectory(prefix=".source-staging-erzrf-cards-", dir=CARDS_DIR.parent.parent) as directory:
+                staged = Path(directory) / target.name
+                _write_excel_atomic(staged, _write_cards_workbook)
+                _, confirmed = validate_workbook(staged, result.expected)
+                _write_json_atomic(staged.with_suffix(".xlsx.provenance.json"), {
+                    "schema_version": 1, "complete": True, "limited": False, "failed": [],
+                    "targets_file": targets_file.name, "targets_sha256": targets_hash,
+                    "selection": target_payload["selection"], "expected": result.expected,
+                    "confirmed": confirmed, "sha256": file_sha256(staged)})
+                if file_sha256(targets_file) != targets_hash:
+                    raise ValueError("ERZ card target source changed during collection")
+                recovery = CARDS_DIR.parent.parent / f".source-staging-erzrf-cards-recovery-{uuid.uuid4().hex}"
+                result.files = _publish_top_batch([staged], CARDS_DIR, recovery)
+        except (OSError, ValueError) as exc:
+            return finish(str(exc))
         print(
             f"     ✅ {target.name} "
             f"(карточек: {len(wide_rows)}, лет: {len(all_years)} {all_years}, "
             f"ошибок: {len(failed)})"
         )
-        new_files.append(target)
         state["erzrf_cards"] = {
             "last_run": datetime.now().isoformat(timespec="seconds"),
             "scraped": len(wide_rows),
             "failed": len(failed),
             "file": target.name,
+            "complete": result.complete,
         }
-    return new_files
+    return finish()
 
 
 # ─────────────────────────────────────────────
@@ -1725,10 +1795,10 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
             failed = True
     if "cards" in keys:
         try:
-            files = fetch_cards(state)
-            all_new.extend(files)
+            result = fetch_cards(state)
+            all_new.extend(result.files)
             save_state(state)
-            if not files:
+            if not result.complete:
                 failed = True
         except Exception as exc:  # noqa: BLE001
             print(f"  ❌ cards: {exc}")

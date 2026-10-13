@@ -29,6 +29,8 @@ def _write(path: Path, text: str, mtime: int) -> None:
 
 
 def main() -> int:
+    _require(archive_old.family_of(Path("rasprodannost_20261013.coverage.json")) == "rasprodannost.coverage.json", "compound coverage suffix must be independent")
+    _require(archive_old.family_of(Path("rasprodannost_20261013.json")) == "rasprodannost.json", "JSON payload keeps its own family")
     original_realty_root = archive_old.REALTY_ROOT
     original_archive_root = archive_old.ARCHIVE_ROOT
     try:

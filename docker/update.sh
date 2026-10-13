@@ -47,8 +47,22 @@ control() {
 }
 ready_once() {
   local target="$1" bound="$2"
-  event readiness "expected=/runtime/$target bound=${bound}s"
-  timeout "$bound" docker compose exec -T backend python docker/readiness.py "/runtime/$target"
+  local scope="${3:-full}"
+  event readiness "expected=/runtime/$target scope=$scope bound=${bound}s"
+  if [[ "$scope" == identity ]]; then
+    # The existing backend may still contain an older readiness CLI. Execute
+    # host-owned stdlib code so migration does not depend on that image's files.
+    timeout "$bound" docker compose exec -T backend python -c '
+import json, sys
+from urllib.request import urlopen
+with urlopen("http://127.0.0.1:8000/api/v1/health", timeout=15) as response:
+    health = json.load(response)
+if health.get("status") != "ok" or health.get("release") != sys.argv[1]:
+    raise SystemExit("Backend does not serve the expected healthy pinned release")
+' "/runtime/$target"
+  else
+    timeout "$bound" docker compose exec -T backend python docker/readiness.py "/runtime/$target"
+  fi
 }
 ready_target() {
   local target="$1" deadline remaining
@@ -56,7 +70,7 @@ ready_target() {
   while ((SECONDS < deadline)); do
     remaining=$((deadline - SECONDS))
     ((remaining <= 30)) || remaining=30
-    if ready_once "$target" "$remaining"; then return 0; fi
+    if ready_once "$target" "$remaining" "${2:-full}"; then return 0; fi
     sleep 3
   done
   backend_state
@@ -74,7 +88,7 @@ restart_backend() {
     timeout 60 docker compose restart backend || return
   fi
   backend_state
-  ready_target "$(readlink runtime/live)"
+  ready_target "$(readlink runtime/live)" "${1:-full}"
 }
 
 recover() {
@@ -92,7 +106,7 @@ recover() {
     control ack || return
     return 0
   fi
-  if [[ "$previous" != '-' ]] && ready_once "$previous" 20; then
+  if [[ "$previous" != '-' ]] && ready_once "$previous" 20 identity; then
     event recovery 'backend already serves previous; restore pointer and acknowledge without restart'
     control rollback || return
     control ack || return
@@ -113,7 +127,7 @@ recover() {
   fi
   event recovery 'Neither release ready; restore verified previous pointer and start backend'
   control rollback || return
-  restart_backend || {
+  restart_backend identity || {
     event recovery_blocked 'Previous release is not ready; keep journal. Data rollback does not restore image/configuration.'
     return 1
   }
@@ -128,7 +142,7 @@ fi
 
 before_update="$(backend_signature)"
 if [[ "$mode" == update && -n "$before_update" ]]; then
-  if [[ ! -L runtime/live ]] || ! ready_once "$(readlink runtime/live)" 20; then
+  if [[ ! -L runtime/live ]] || ! ready_once "$(readlink runtime/live)" 20 identity; then
     event preflight_blocked 'Existing backend does not prove a ready immutable live release; no download/restart/stop performed. Complete --publish-existing migration or restore backend readiness first.'
     exit 1
   fi

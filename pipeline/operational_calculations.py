@@ -48,8 +48,11 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
     for key, title, frame in [("housing", "Ввод жилья", housing), ("nonres", "Ввод нежилой недвижимости", nonres)]:
         frame = frame[frame["Год"].ge(2011)].reset_index(drop=True)
         visible = frame[frame[["За год, млн м²", "За выбранный период, млн м²"]].notna().any(axis=1)].copy()
-        period = visible["За выбранный период, млн м²"].fillna(0)
-        remainder = (visible["За год, млн м²"] - period).clip(lower=0).fillna(0)
+        period = visible["За выбранный период, млн м²"]
+        annual = visible["За год, млн м²"]
+        # A known annual value remains visible in grey when its selected
+        # period is unknown; the period itself must stay null.
+        remainder = (annual - period).where(period.notna(), annual).clip(lower=0)
         totals = visible["За год, млн м²"].where(visible["За год, млн м²"].notna(), visible["За выбранный период, млн м²"])
         tables.append({"id": key, "title": title, "columns": [{"id": col, "label": col} for col in frame.columns],
                        "rows": records(frame), "chart": {"x": [str(int(v)) for v in visible["Год"]],

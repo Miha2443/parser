@@ -32,14 +32,14 @@ function Metric({ label, value, unit, foot, danger = false }: { label: string; v
 const areaRows = (a: Areas, construction = false) => [['Категория', 'Площадь, м²'], ...categories.filter(c => a[c.key] != null).map(c => [construction && c.key === 'nonresidentialSeparate' ? 'Нежилое' : c.label, a[c.key] ?? null])] as (string | number | null)[][];
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => { try { return localStorage.getItem('dashboard.theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
+  const theme: Theme = 'light';
   const [compact, setCompact] = useState(() => localStorage.getItem('dashboard.compact') === 'true');
   const [menu, setMenu] = useState(false);
   const [query, setQuery] = useState(window.location.search);
   const [path, setPath] = useState(window.location.pathname);
   const routeQueries = useRef<Record<string, string>>({ [window.location.pathname]: window.location.search });
   const apartmentQuery = useRef(window.location.pathname.startsWith('/apartments') ? window.location.search : '');
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('dashboard.theme', theme); }, [theme]);
+  useEffect(() => { document.documentElement.dataset.theme = 'light'; try { localStorage.setItem('dashboard.theme', 'light'); } catch { /* Storage is optional. */ } }, []);
   useEffect(() => { const listener = () => { setQuery(window.location.search); setPath(window.location.pathname); }; window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener); }, []);
   function change(values: Record<string, string | null>, replace = false) {
     const next = new URLSearchParams(window.location.search);
@@ -73,7 +73,7 @@ export default function App() {
   const economics = path === '/economics/salary' ? 'salary' : path === '/economics/ipc' ? 'ipc' : path === '/economics/accounts' ? 'accounts' : null;
   const title = economics ? { salary: 'Заработная плата', ipc: 'ИПЦ', accounts: 'ВРП и ВВП' }[economics] : home ? 'Главная' : updates ? 'Журнал обновлений' : tdm ? 'Отправка в TDM' : annual ? 'Годовой ввод' : construction ? 'Текущее строительство' : map ? 'Карта объектов' : operational ? 'Оперативный ввод' : linear ? 'Ввод линейных объектов' : sales ? 'Распроданность и стройготовность' : apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
   return <div className={`app-shell ${compact ? 'compact-shell' : ''}`}>
-    <Sidebar theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} path={path} onNavigate={navigate} />
+    <Sidebar open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} path={path} onNavigate={navigate} />
     <div className="workspace">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMenu(true)} title="Открыть навигацию"><Menu size={20} /></button><span>Рынок недвижимости</span><ChevronRight size={13} /><strong>{title}</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div></header>
       {economics ? <Economics key={economics} family={economics} theme={theme} query={query} change={change} /> : home ? <Home navigate={navigate} /> : updates ? <Updates query={query} change={change} /> : tdm ? <Tdm /> : annual ? <Annual theme={theme} query={query} change={change} /> : construction ? <Construction theme={theme} query={query} change={change} /> : map ? <Suspense fallback={<main><div className="load-state" role="status" aria-live="polite"><RefreshCw className="loading-icon" size={26} /><p>Загрузка карты…</p></div></main>}><MapPage theme={theme} query={query} change={change} /></Suspense> : operational ? <Operational theme={theme} query={query} change={change} /> : linear ? <Linear theme={theme} query={query} change={change} /> : sales ? <SalesPage theme={theme} query={query} change={change} /> : apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}

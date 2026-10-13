@@ -92,6 +92,23 @@ class ErAuthTests(unittest.TestCase):
         browser.get.assert_called_once()
         browser.email.send_keys.assert_not_called()
 
+    def test_russian_provider_maintenance_is_reported_without_password_failure(self):
+        class MaintenanceBrowser(AuthBrowser):
+            def execute_script(self, script, *args):
+                if "providerMaintenance:" in script:
+                    return {"title": "ЕРЗ.РФ — технические работы", "bodyLength": 142,
+                            "providerMaintenance": True, "authControls": 0, "serverError": False}
+                return super().execute_script(script, *args)
+        browsers = [MaintenanceBrowser(ready=False), MaintenanceBrowser(ready=False)]
+        with patch.object(erz, "create_chrome", side_effect=browsers) as factory:
+            with self.assertRaisesRegex(erz.TopExportError, "provider_maintenance"):
+                erz._authenticated_session(Path("fixture"))
+        self.assertEqual(factory.call_count, 2)
+        for browser in browsers:
+            browser.email.send_keys.assert_not_called()
+            browser.password.send_keys.assert_not_called()
+            browser.quit.assert_called_once()
+
     def test_wrong_origin_rejects_even_ui_shaped_page(self):
         browser = AuthBrowser()
         browser.current_url = "https://example.org/login"
@@ -217,6 +234,17 @@ class KvartRecoveryTests(unittest.TestCase):
         self.driver = Mock(current_url="https://наш.дом.рф/аналитика/квартирография", page_source="fixture")
         self.date = datetime.now().strftime("%Y%m%d")
 
+    def perdev_context(self):
+        stack = ExitStack()
+        stack.enter_context(patch.object(nd, "_per_dev_enabled", return_value=True))
+        stack.enter_context(patch.object(nd, "_per_dev_limit", return_value=None))
+        stack.enter_context(patch.object(nd, "_per_dev_limit_for_region", return_value=None))
+        stack.enter_context(patch.object(nd, "_load_monitoring_devs", return_value=[]))
+        stack.enter_context(patch.object(nd, "_load_dev_overrides", return_value={}))
+        stack.enter_context(patch.object(nd, "_switch_developer_filter", return_value=True))
+        stack.enter_context(patch.object(nd, "_get_developer_filter_label", return_value="Fixture developer"))
+        return stack
+
     def test_old_checkpoint_cannot_mask_missing_current_moscow_and_old_files_survive(self):
         target = self.raw / f"kvartirografia_{self.date}.json"
         old = [kvart(region) for region in nd.KVART_REGIONS]
@@ -239,18 +267,108 @@ class KvartRecoveryTests(unittest.TestCase):
 
     def test_current_complete_regions_publish_both_valid_formats(self):
         state = {}
-        with patch.object(nd, "create_chrome", return_value=self.driver), \
-                patch.object(nd, "_per_dev_enabled", return_value=False), \
+        with self.perdev_context(), patch.object(nd, "create_chrome", return_value=self.driver), \
+                patch.object(nd, "_parse_apartments_live", return_value={"all": {"count": "100", "area": "1"}}), \
                 patch.object(nd, "_fetch_kvart_region", side_effect=lambda driver, url, region: (driver, kvart(region))):
             files, complete = nd.fetch_kvartirografia(state)
         self.assertTrue(complete)
         self.assertEqual({path.suffix for path in files}, {".json", ".xlsx"})
         self.assertEqual(state["kvartirografia"]["regions"], ["msk", "rf"])
 
+    def test_api_details_publish_exact_source_ids_without_per_developer_filter_clicks(self):
+        from tests.test_kvart_api import dom, evidence, record
+        from pipeline.downloaders.nashdom_kvart_api import resolve
+        from pipeline.data_access import _load_kvartirografia_file
+        def aggregate(driver, url, region):
+            rows = [dom("Fixture developer", "0,1", "5")]
+            proof = evidence([record("source-" + region["key"], 100, 5000)],
+                             {"source-" + region["key"]: "Fixture developer"}, region["key"])
+            data = kvart(region, rows)
+            data["developer_api"] = proof
+            data["_api_per_dev"] = resolve(rows, proof)
+            return driver, data
+        with self.perdev_context(), patch.object(nd, "create_chrome", return_value=self.driver), \
+                patch.object(nd, "_fetch_kvart_region", side_effect=aggregate), \
+                patch.object(nd, "_switch_developer_filter") as switch, \
+                patch.object(nd, "_parse_apartments_live") as live:
+            files, complete = nd.fetch_kvartirografia({})
+        self.assertTrue(complete)
+        switch.assert_not_called()
+        live.assert_not_called()
+        raw = json.loads(next(path for path in files if path.suffix == ".json").read_text(encoding="utf-8"))
+        self.assertEqual({row["apartments_per_dev"][0]["source_id"] for row in raw}, {"source-rf", "source-msk"})
+        for path in files:
+            detailed = _load_kvartirografia_file(path)["apartments_per_dev"]
+            self.assertEqual(set(detailed.source_id), {"source-rf", "source-msk"})
+            self.assertTrue(detailed.api_verified.all())
+            self.assertTrue(detailed["Все_количество_шт_num"].eq(100).all())
+            self.assertTrue(detailed["Все_площадь_тыс_м²_num"].eq(5).all())
+
+    def test_api_is_fetched_before_the_full_scroll_and_not_after_a_failed_request(self):
+        region = nd.KVART_REGIONS[0]
+        events = []
+        fresh = Mock()
+        def read(driver, selected):
+            events.append("api")
+            if driver is self.driver:
+                raise ValueError("status=403")
+            return {"region_key": selected["key"]}
+        def scroll(driver, list_index):
+            events.append("scroll")
+            return kvart(region)["developers"] if list_index == 0 else []
+        with patch.object(nd, "create_chrome", return_value=fresh), \
+                patch.object(nd, "_open_kvart_region", return_value=True), \
+                patch.object(nd, "_read_kvart_api", side_effect=read), \
+                patch.object(nd, "_parse_kvartirografia", return_value=kvart(region)), \
+                patch.object(nd, "_scroll_collect_list", side_effect=scroll), patch.object(nd, "_attach_kvart_api"):
+            driver, data = nd._fetch_kvart_region(self.driver, "fixture", region)
+        self.assertIs(driver, fresh)
+        self.assertIsNotNone(data)
+        self.assertEqual(events, ["api", "api", "scroll", "scroll"])
+
+    def test_rejected_payload_recovers_on_bounded_second_attempt(self):
+        wrong = {"all": {"count": "10", "area": "1"}}
+        good = {"all": {"count": "100", "area": "1"}}
+        with self.perdev_context(), patch.object(nd, "create_chrome", return_value=self.driver), \
+                patch.object(nd, "_parse_apartments_live", side_effect=[wrong, wrong, good, good]) as parse, \
+                patch.object(nd, "_fetch_kvart_region", side_effect=lambda d, url, r: (d, kvart(r))):
+            files, complete = nd.fetch_kvartirografia({})
+        self.assertTrue(complete)
+        self.assertEqual(parse.call_count, 4)
+        payload = json.loads(next(path for path in files if path.suffix == ".json").read_text(encoding="utf-8"))
+        rf = next(row for row in payload if row["region_key"] == "rf")
+        self.assertEqual([a["status"] for a in rf["per_dev_attempts"]], ["rejected", "ok"])
+        self.assertTrue(rf["per_dev_coverage"]["complete"])
+
+    def test_small_developer_upper_bound_accepts_actual_three_or_four_apartments(self):
+        with self.perdev_context(), patch.object(nd, "create_chrome", return_value=self.driver), \
+                patch.object(nd, "_parse_apartments_live", side_effect=[{"all": {"count": "3", "area": "1"}},
+                                                                      {"all": {"count": "4", "area": "1"}}]), \
+                patch.object(nd, "_fetch_kvart_region", side_effect=lambda d, url, r:
+                    (d, kvart(r, [{"наименование": "Fixture developer", "квартиры_тыс_шт": "< 1"}]))):
+            files, complete = nd.fetch_kvartirografia({})
+        self.assertTrue(complete)
+        self.assertEqual(len(files), 2)
+
+    def test_disabled_and_limited_runs_preserve_previous_snapshot(self):
+        for disabled, limit in ((True, None), (False, 1)):
+            with self.subTest(disabled=disabled, limit=limit), self.perdev_context(), \
+                    patch.object(nd, "create_chrome", return_value=self.driver), \
+                    patch.object(nd, "_per_dev_enabled", return_value=not disabled), \
+                    patch.object(nd, "_per_dev_limit", return_value=limit), \
+                    patch.object(nd, "_parse_apartments_live", return_value={"all": {"count": "100", "area": "1"}}), \
+                    patch.object(nd, "_fetch_kvart_region", side_effect=lambda d, url, r: (d, kvart(r))):
+                target = self.raw / f"kvartirografia_{self.date}.json"
+                target.write_text("[]")
+                self.assertEqual(nd.fetch_kvartirografia({}), ([], False))
+                self.assertEqual(target.read_text(), "[]")
+
     def test_failed_moscow_region_recovers_once_on_fresh_driver(self):
         region = nd.KVART_REGIONS[1]
         fresh = Mock(current_url=self.driver.current_url, page_source="fixture")
         with patch.object(nd, "create_chrome", return_value=fresh) as factory, \
+                patch.object(nd, "_read_kvart_api", return_value={}), \
+                patch.object(nd, "_attach_kvart_api"), \
                 patch.object(nd, "_open_kvart_region", side_effect=[False, True]) as opened, \
                 patch.object(nd, "_parse_kvartirografia", return_value=kvart(region)), \
                 patch.object(nd, "_scroll_collect_list", side_effect=lambda d, list_index: kvart(region)["developers"] if list_index == 0 else []):
@@ -338,13 +456,14 @@ class KvartRecoveryTests(unittest.TestCase):
                 [{"site_name": name, "monitoring_name": name, "match_type": "exact"} for name in names]))
             switched = stack.enter_context(patch.object(nd, "_switch_developer_filter", side_effect=lambda d, name, **kw: name in {"RF dev", "Все девелоперы"}))
             stack.enter_context(patch.object(nd, "_get_developer_filter_label", return_value="RF dev"))
-            parsed = stack.enter_context(patch.object(nd, "_parse_apartments_live", return_value={"all": {"count": "100"}}))
+            parsed = stack.enter_context(patch.object(nd, "_parse_apartments_live", return_value={"all": {"count": "100", "area": "1"}}))
             stack.enter_context(patch.object(nd, "_open_kvart_region", return_value=False))
             files, complete = nd.fetch_kvartirografia({})
-        self.assertTrue(complete)  # Aggregate regions are complete; per-dev is partial.
+        self.assertFalse(complete)
+        self.assertEqual(files, [])
         parsed.assert_called_once()
         self.assertNotIn("M5", [call.args[1] for call in switched.call_args_list])
-        payload = json.loads(next(path for path in files if path.suffix == ".json").read_text(encoding="utf-8"))
+        payload = json.loads((self.root / f"state/kvartirografia/checkpoint_{self.date}.json").read_text(encoding="utf-8"))
         moscow = next(row for row in payload if row["region_key"] == "msk")
         self.assertEqual(moscow["apartments_per_dev"], [])
         self.assertEqual(len(moscow["per_dev_attempts"]), 5)

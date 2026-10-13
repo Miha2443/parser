@@ -565,7 +565,8 @@ def _kvart_lists_ready(driver):
             const kind=text.includes('по девелоперам') ? 'developers' : text.includes('по регионам') ? 'regions' : null;
             if(kind && !found[kind]) { found[kind]=list; list.setAttribute('data-parser-kvart-list',kind); }
         }
-        const names=found.developers ? [...found.developers.querySelectorAll('button.css-5nggi1')]
+        const names=found.developers ? [...found.developers.querySelectorAll('button')]
+          .filter(b=>b.querySelectorAll(':scope > div').length>=3)
           .map(b=>(b.querySelector(':scope > div')?.innerText || '').trim()).filter(Boolean) : [];
         return {developers:names,regions:!!found.regions};
     """)
@@ -588,13 +589,20 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
     Останавливается когда 3 шага подряд не дают новых имён, либо
     scrollTop достигает scrollHeight.
     """
-    height = driver.execute_script(
+    dimensions = driver.execute_script(
         f"const ls=[document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];"
-        f"return ls[{list_index}] ? ls[{list_index}].scrollHeight : 0;"
+        f"return ls[{list_index}] ? {{height:ls[{list_index}].scrollHeight,viewport:ls[{list_index}].clientHeight}} : null;"
     )
+    height = dimensions.get("height", 0) if dimensions else 0
+    viewport = dimensions.get("viewport", 0) if dimensions else 0
     if not height:
         print(f"       ⚠️  scrollHeight=0, нет списка")
         return []
+    if viewport <= 0:
+        raise ValueError("kvart virtual list has no measurable viewport")
+    # React only renders the visible window and a small buffer. A 600px jump
+    # over a 285px viewport skips real records; always overlap visible windows.
+    step_px = max(1, min(step_px, int(viewport * 0.7)))
     expected = max(1, height // 19)
     print(f"       inner scrollHeight={height}px (≈{expected} строк)")
 
@@ -624,7 +632,9 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
             if (!ls[idx]) return [];
             const FLEX_RE = /flex-basis:\\s*([\\d.]+)%/;
             const BG_RE = /background:\\s*(rgb[a]?\\([^)]+\\))/;
-            return [...ls[idx].querySelectorAll('button.css-5nggi1')].map(b => {
+            // Selected chart rows have a different CSS class. Their measured
+            // three-column button shape remains the same as unselected rows.
+            return [...ls[idx].querySelectorAll('button')].filter(b=>b.querySelectorAll(':scope > div').length>=3).map(b => {
                 const divs = [...b.querySelectorAll(':scope > div')];
                 const result = {
                     name: (divs[0] && divs[0].innerText || '').trim(),
@@ -688,7 +698,7 @@ def _scroll_collect_list(driver, list_index: int, *, step_px: int = 600, pause: 
         const idx = arguments[0];
         const ls = [document.querySelector('div.list[data-parser-kvart-list=developers]'),document.querySelector('div.list[data-parser-kvart-list=regions]')];
         if (!ls[idx]) return [];
-        return [...ls[idx].querySelectorAll('button.css-5nggi1')].map(b => {
+        return [...ls[idx].querySelectorAll('button')].filter(b=>b.querySelectorAll(':scope > div').length>=3).map(b => {
             const divs = [...b.querySelectorAll(':scope > div')];
             return {
                 name: (divs[0] && divs[0].innerText || '').trim(),
@@ -776,6 +786,8 @@ def _build_kvart_xlsx(all_data: list[dict], target_xlsx: Path) -> None:
                 "report_date": rd,
                 "наименование": pd_row.get("наименование", ""),
                 "источник_имя_monitoring": pd_row.get("monitoring_name", ""),
+                "source_id": pd_row.get("source_id", ""),
+                "api_verified": pd_row.get("api_verified") is True,
                 "Все_количество_шт": (apt.get("all") or {}).get("count", ""),
                 "Все_площадь_тыс_м²": (apt.get("all") or {}).get("area", ""),
                 "1комн_количество_шт": (apt.get("ONE") or {}).get("count", ""),
@@ -836,7 +848,41 @@ def _upsert_region_snapshot(all_data: list[dict], snapshot: dict) -> None:
     all_data.append(snapshot)
 
 
-def _kvart_resume_per_dev(existing_region: dict | None) -> tuple[list[dict], list[dict], set[str]]:
+def _kvart_count_matches(count: float, displayed_thousands) -> bool:
+    """Respect source bounds/rounding instead of treating '< 1' as 1,000."""
+    label = str(displayed_thousands or "").replace("\xa0", " ").strip()
+    match = re.search(r"\d+(?:[.,]\d+)?", label.replace(" ", ""))
+    if not match or count <= 0:
+        return False
+    number = match.group().replace(",", ".")
+    center = float(number) * 1000
+    if "<" in label or "менее" in label.casefold():
+        return count < center
+    if "≤" in label:
+        return count <= center
+    precision = len(number.split(".")[1]) if "." in number else 0
+    half_unit = 500 * 10 ** (-precision)
+    return max(0, center - half_unit) <= count <= center + half_unit
+
+
+def _kvart_per_dev_valid(row: dict, aggregate: dict | None = None) -> bool:
+    apartments = row.get("apartments") or {}
+    all_apartments = apartments.get("all") or {}
+    count = _parse_num_apartments(all_apartments.get("count", ""))
+    area = _parse_num_apartments(all_apartments.get("area", ""))
+    if count <= 0 or area <= 0:
+        return False
+    if aggregate is not None:
+        expected = next((item for item in aggregate.get("developers", [])
+                         if item.get("наименование") == row.get("site_name")), None)
+        if not expected:
+            return False
+        if not _kvart_count_matches(count, expected.get("квартиры_тыс_шт", "")):
+            return False
+    return True
+
+
+def _kvart_resume_per_dev(existing_region: dict | None, fresh_region: dict | None = None) -> tuple[list[dict], list[dict], set[str]]:
     """Return reusable per-dev data, attempts and site names safe to skip."""
     if not existing_region:
         return [], [], set()
@@ -848,16 +894,18 @@ def _kvart_resume_per_dev(existing_region: dict | None) -> tuple[list[dict], lis
         row for row in existing_region.get("per_dev_attempts", [])
         if isinstance(row, dict)
     ]
-    reusable_attempts = [
-        row for row in attempts
-        if row.get("site_name") and row.get("status") in {"ok", "rejected"}
-    ]
-    done_sites = {str(row["site_name"]) for row in reusable_attempts}
+    # A checkpoint is reusable only for the freshly confirmed population.
+    aggregate_keys = ("region_key", "region", "report_date", "apartments", "distribution", "developers", "regions")
+    if fresh_region is not None and any(existing_region.get(key) != fresh_region.get(key) for key in aggregate_keys):
+        return [], attempts, set()
+    latest = {str(row["site_name"]): row for row in attempts if row.get("site_name")}
     reusable_per_dev = [
         row for row in per_dev
-        if row.get("site_name") in done_sites
+        if latest.get(str(row.get("site_name")), {}).get("status") == "ok"
+        and _kvart_per_dev_valid(row, fresh_region)
     ]
-    return reusable_per_dev, reusable_attempts, done_sites
+    done_sites = {str(row["site_name"]) for row in reusable_per_dev}
+    return reusable_per_dev, attempts, done_sites
 
 
 def _kvart_aggregate_valid(data: dict, region: dict) -> bool:
@@ -922,16 +970,62 @@ def _fetch_kvart_region(driver, url, region):
         try:
             if not _open_kvart_region(driver, url, region):
                 raise ValueError("region label or aggregate data not confirmed")
+            # Capture the API on the fresh verified page, before the complete
+            # virtual-list scan. A failed request must not redo a long scan.
+            evidence = _read_kvart_api(driver, region)
             data = _parse_kvartirografia(driver.page_source, driver.current_url)
             data["region_key"] = region["key"]
             data["developers"] = _scroll_collect_list(driver, list_index=0)
             data["regions"] = _scroll_collect_list(driver, list_index=1)
             if not _kvart_aggregate_valid(data, region):
                 raise ValueError("empty aggregate or developers do not represent this region")
+            _attach_kvart_api(driver, data, region, evidence=evidence)
             return driver, data
         except (TimeoutException, WebDriverException, ValueError) as exc:
             print(f"       ⚠️  kvart {region['key']} aggregate {attempt + 1}/2: {exc}")
     return driver, None
+
+
+def _read_kvart_api(driver, region):
+    from pipeline.downloaders import nashdom_kvart_api as api
+    current = urlsplit(driver.current_url)
+    expected = urlsplit(NASHDOM_BASE)
+    if (current.scheme != "https" or not current.hostname
+            or current.hostname.encode("idna") != expected.hostname.encode("idna")):
+        raise ValueError("kvart API needs the verified source origin")
+    if (_get_current_region_label(driver) != region["click_label"]
+            or not _all_developers_selected(_get_developer_filter_label(driver))):
+        raise ValueError("kvart API aggregate filters were not confirmed")
+    report_date = _parse_russian_date(driver.execute_script("return document.body?.innerText || '';"))
+    if not report_date:
+        raise ValueError("kvart API report date was not confirmed")
+    evidence = api.fetch(driver, region["key"])
+    if (_get_current_region_label(driver) != region["click_label"]
+            or not _all_developers_selected(_get_developer_filter_label(driver))):
+        raise ValueError("kvart aggregate filters changed during API collection")
+    if _parse_russian_date(driver.execute_script("return document.body?.innerText || '';")) != report_date:
+        raise ValueError("kvart report date changed during API collection")
+    evidence["report_date"] = report_date
+    return evidence
+
+
+def _attach_kvart_api(driver, data, region, *, evidence):
+    from pipeline.downloaders import nashdom_kvart_api as api
+    if (_get_current_region_label(driver) != region["click_label"]
+            or not _all_developers_selected(_get_developer_filter_label(driver))):
+        raise ValueError("kvart aggregate filters changed during DOM collection")
+    if not data.get("report_date") or data["report_date"] != evidence.get("report_date"):
+        raise ValueError("kvart API and DOM report dates differ")
+    resolved = api.resolve(data["developers"], evidence)
+    resolved_regions = api.resolve_regions(data["regions"], evidence)
+    totals = api.validate_apartment_totals(data["apartments"], evidence)
+    api.annotate_apartment_totals(data["apartments"], totals)
+    api.annotate_measurements(data["developers"], resolved)
+    api.annotate_measurements(data["regions"], resolved_regions)
+    data["developer_api"] = evidence
+    data["_api_per_dev"] = resolved
+    print(f"       · API confirmed complete population: {len(resolved)} names, "
+          f"{len(evidence['aggregate'])} source IDs; exact apartment details")
 
 
 def _publish_kvart_snapshot(all_data, target_json, target_xlsx):
@@ -1081,6 +1175,7 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                                 continue
                             cand = {
                                 "all_count": _parse_num_apartments(d_row.get("квартиры_тыс_шт", "")),
+                                "count_display": d_row.get("квартиры_тыс_шт", ""),
                                 "all_area": _parse_num_apartments(d_row.get("площадь_тыс_м²", "")),
                             }
                             prev = expected.get(nm)
@@ -1109,9 +1204,8 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                               f"{n_none} unmatched")
                         flush()
 
-                        # Per-region лимит per-dev обхода. Для РФ список
-                        # ~1678, без лимита это ~3 часа. Москва обычно
-                        # 200-300 — обходится за 20-30 мин.
+                        # Explicit diagnostic limits never permit a complete
+                        # production snapshot, including the source API path.
                         site_devs = list(site_devs_full)
                         region_limit = _per_dev_limit_for_region(region["key"])
                         if region_limit:
@@ -1120,9 +1214,35 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                         if glob_limit:
                             site_devs = site_devs[:glob_limit]
 
+                        # The page's API exposes exact details for the complete
+                        # chart population. Match homonyms by count, area and
+                        # room shares rather than clicking the first same label.
+                        api_rows = data.pop("_api_per_dev", None)
+                        if api_rows is not None:
+                            by_site = {row["site_name"]: row for row in api_rows}
+                            per_dev, attempts = [], []
+                            for site_name in site_devs:
+                                item = {**by_site[site_name],
+                                        "monitoring_name": mapping_by_site[site_name].get("monitoring_name"),
+                                        "match_type": mapping_by_site[site_name].get("match_type", "none")}
+                                if not _kvart_per_dev_valid(item, data):
+                                    raise ValueError("API detail does not match the fresh developer aggregate")
+                                per_dev.append(item)
+                                attempts.append({"site_name": site_name, "source_id": item["source_id"],
+                                                 "status": "ok", "transport": "source_api"})
+                            missing = sorted(set(site_devs_full) - {row["site_name"] for row in per_dev})
+                            data["apartments_per_dev"] = per_dev
+                            data["per_dev_attempts"] = attempts
+                            data["per_dev_coverage"] = {"expected": len(set(site_devs_full)), "completed": len(per_dev),
+                                "missing": missing, "limited": bool(region_limit or glob_limit),
+                                "complete": not missing and not bool(region_limit or glob_limit), "method": "source_api"}
+                            flush()
+                            print(f"       · API per-dev: {len(per_dev)}/{len(site_devs_full)} confirmed")
+                            continue
+
                         debug_first = os.environ.get(
                             "KVART_PER_DEV_DEBUG", "0").strip() == "1"
-                        per_dev, attempts, done_sites = _kvart_resume_per_dev(existing_region)
+                        per_dev, attempts, done_sites = _kvart_resume_per_dev(existing_region, data)
                         if done_sites:
                             print(
                                 f"       · resume per-dev: пропускаю уже обработанных "
@@ -1140,7 +1260,12 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                         rejected = sum(1 for row in attempts if row.get("status") == "rejected")
                         consecutive_fail = 0
                         CONSECUTIVE_FAIL_LIMIT = 5
-                        for i, site_name in enumerate(site_devs, 1):
+                        # At most two attempts per missing site in this run.
+                        # Rejected/failed sites remain retryable in checkpoints.
+                        work = site_devs + site_devs
+                        for i, site_name in enumerate(work, 1):
+                            if site_name in done_sites:
+                                continue
                             m = mapping_by_site.get(site_name, {})
                             attempt = {
                                 "i": i,
@@ -1191,47 +1316,44 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                             apt = _parse_apartments_live(
                                 driver, debug=(debug_first and i == 1))
 
-                            # Verification: ratio с агрегатом developers по site_key.
+                            # Compare exact source bounds/rounding for this site.
                             filter_label = _get_developer_filter_label(driver) or site_name
                             attempt["filter_label"] = filter_label
                             site_key = normalize_developer_name(site_name)
-                            exp = expected.get(site_key) or expected.get(
-                                normalize_developer_name(filter_label))
+                            exact_expected = next((row for row in data.get("developers", [])
+                                                   if row.get("наименование") == site_name), None)
+                            exp = ({"count_display": exact_expected.get("квартиры_тыс_шт", "")}
+                                   if exact_expected else expected.get(site_key) or expected.get(
+                                       normalize_developer_name(filter_label)))
                             if exp and apt and apt.get("all"):
                                 got = _parse_num_apartments(apt["all"].get("count", ""))
-                                want = exp["all_count"] * 1000
-                                if want > 0:
-                                    ratio = got / want
-                                    if ratio < 0.9 or ratio > 1.1:
-                                        selenium_sleep(2.0)
-                                        apt = _parse_apartments_live(driver)
-                                        got2 = _parse_num_apartments(
-                                            (apt.get("all") or {}).get("count", "")) if apt else 0
-                                        if got2 > 0:
-                                            ratio = got2 / want
-                                        if ratio < 0.9 or ratio > 1.1:
-                                            rejected += 1
-                                            attempt.update(
-                                                status="rejected",
-                                                got=int(got2 or got),
-                                                want=int(want),
-                                                ratio=round(ratio, 3),
-                                            )
-                                            attempts.append(attempt)
-                                            if rejected <= 3:
-                                                print(f"          🚫 {i}/{len(site_devs)} «{site_name[:30]}»: "
-                                                      f"парсер дал {got2 or got:.0f} шт, "
-                                                      f"ожидалось ~{want:.0f} (ratio={ratio:.2f}) — пропускаю")
-                                            continue
+                                display = exp["count_display"]
+                                if not _kvart_count_matches(got, display):
+                                    selenium_sleep(2.0)
+                                    apt = _parse_apartments_live(driver)
+                                    got2 = _parse_num_apartments(
+                                        (apt.get("all") or {}).get("count", "")) if apt else 0
+                                    if not _kvart_count_matches(got2, display):
+                                        rejected += 1
+                                        attempt.update(status="rejected", got=int(got2 or got),
+                                                       expected_display=str(display))
+                                        attempts.append(attempt)
+                                        if rejected <= 3:
+                                            print(f"          U0001f6ab {i}/{len(site_devs)} «{site_name[:30]}»: "
+                                                  f"парсер дал {got2 or got:.0f} шт, "
+                                                  f"ожидалось {display} тыс. — пропускаю")
+                                        continue
 
-                            if apt and apt.get("all"):
-                                per_dev.append({
+                            candidate = {
                                     "наименование": filter_label,
                                     "site_name": site_name,
                                     "monitoring_name": m.get("monitoring_name"),
                                     "match_type": m.get("match_type", "none"),
                                     "apartments": apt,
-                                })
+                                }
+                            if apt and _kvart_per_dev_valid(candidate, data):
+                                per_dev.append(candidate)
+                                done_sites.add(site_name)
                                 attempt["status"] = "ok"
                                 ok_count += 1
                             else:
@@ -1248,6 +1370,13 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
                         # финальный сейв
                         data["apartments_per_dev"] = per_dev
                         data["per_dev_attempts"] = attempts
+                        missing = sorted(set(site_devs_full) - done_sites)
+                        data["per_dev_coverage"] = {
+                            "expected": len(set(site_devs_full)), "completed": len(done_sites),
+                            "missing": missing, "selected": len(set(site_devs)),
+                            "limited": bool(region_limit or glob_limit),
+                            "complete": not missing and not bool(region_limit or glob_limit),
+                        }
                         flush()
                         print(f"       ✅ per-dev: {ok_count} собрано, "
                               f"{fail_count} ошибок селектора, "
@@ -1283,13 +1412,29 @@ def fetch_kvartirografia(state: dict) -> tuple[list[Path], bool]:
 
     expected_regions = {r["key"] for r in KVART_REGIONS}
     missing_regions = sorted(expected_regions - confirmed_regions)
+    per_dev_coverage = {}
+    for region in sorted(expected_regions):
+        row = next((item for item in all_data if item.get("region_key") == region), {})
+        expected = {item.get("наименование") for item in row.get("developers", []) if item.get("наименование")}
+        completed = {item.get("site_name") for item in row.get("apartments_per_dev", [])
+                     if _kvart_per_dev_valid(item, row)}
+        missing = sorted(expected - completed)
+        limited = row.get("per_dev_coverage", {}).get("limited", False)
+        per_dev_coverage[region] = {"expected": len(expected), "completed": len(expected & completed),
+                                   "missing": missing, "limited": limited,
+                                   "complete": bool(expected) and not missing and not limited and _per_dev_enabled()}
+        row["per_dev_coverage"] = per_dev_coverage[region]
+        row.pop("_api_per_dev", None)
+    complete = not missing_regions and all(item["complete"] for item in per_dev_coverage.values())
+    flush()
     state["kvartirografia_attempt"] = {
         "attempted_at": datetime.now().isoformat(timespec="seconds"),
         "confirmed_regions": sorted(confirmed_regions), "missing_regions": missing_regions,
-        "complete": not missing_regions,
+        "complete": complete, "per_dev_coverage": per_dev_coverage,
     }
-    if missing_regions:
-        print(f"  ❌ kvartirografia: this run did not confirm {missing_regions}; previous files retained")
+    if not complete:
+        print(f"  ❌ kvartirografia: incomplete regions={missing_regions}; "
+              f"per-dev={ {key: str(item['completed']) + '/' + str(item['expected']) for key, item in per_dev_coverage.items()} }; previous files retained")
         return [], False
     try:
         new_files = _publish_kvart_snapshot(all_data, target_json, target_xlsx)
@@ -2107,20 +2252,19 @@ def _per_dev_limit() -> int | None:
 def _per_dev_limit_for_region(region_key: str) -> int | None:
     """Per-region лимит per-dev обхода.
 
-    - Москва (msk): без лимита (список ~200-300, проходится за 20-30 мин).
-    - РФ (rf): топ-200 по умолчанию (список 1678, без лимита — ~3 часа).
-      Список отсортирован сайтом по убыванию объёма строительства,
-      то есть «первые 200» = топ-200 крупнейших застройщиков РФ.
+    - Москва (msk): полный список по умолчанию.
+    - РФ (rf): полный список по умолчанию. Лимит только для диагностики;
+      ограниченный запуск не публикует производственный snapshot.
 
     Override через env: KVART_PER_DEV_LIMIT_RF=N (0 чтобы выключить).
     """
     if region_key == "rf":
-        raw = os.environ.get("KVART_PER_DEV_LIMIT_RF", "200").strip()
+        raw = os.environ.get("KVART_PER_DEV_LIMIT_RF", "0").strip()
         try:
             n = int(raw)
             return n if n > 0 else None
         except ValueError:
-            return 200
+            return None
     return None
 
 
@@ -3039,6 +3183,39 @@ def _latest_rasprod_entry(entries: list[dict]) -> dict:
     return max(entries, key=sort_key, default={})
 
 
+def _write_rasprod_coverage(target_json, target_xlsx, expected_keys, confirmed_keys):
+    """Persist the source API's exact population, bound to both published files."""
+    from pipeline.source_records import file_sha256
+    _write_json_atomic(target_xlsx.with_suffix(".coverage.json"), {
+        "schema_version": 1, "complete": bool(expected_keys) and set(expected_keys) <= set(confirmed_keys),
+        "expected": [list(key) for key in sorted(expected_keys)],
+        "confirmed": [list(key) for key in sorted(set(confirmed_keys) & set(expected_keys))],
+        "json_sha256": file_sha256(target_json), "xlsx_sha256": file_sha256(target_xlsx),
+    })
+
+
+def _rasprod_entry_complete(row):
+    from pipeline.rasprod_contract import validate_entry
+    try:
+        validate_entry(row)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _archive_excluded_rasprod_history(entries):
+    """Keep excluded/duplicate legacy rows recoverable outside active inputs."""
+    if not entries:
+        return
+    import uuid
+    from pipeline.source_history import archive_file
+    path = DOWNLOAD_DIR / ("._rasprodannost_excluded_" + uuid.uuid4().hex + ".json")
+    _write_json_atomic(path, entries)
+    archive_file(path, root=DOWNLOAD_DIR, archive_root=DOWNLOAD_DIR / "_archive",
+                 indicator_key="realty:rasprodannost:excluded-api-history",
+                 reason="outside_confirmed_api_population_or_duplicate", move=True)
+
+
 def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     """Download exact period/region reports from the page's API.
 
@@ -3107,6 +3284,7 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
     all_data: list[dict] = list(history_data)
     refreshed_regions: set[str] = set()
     expected_keys: set[tuple[str, int, int]] = set()
+    expected_values: dict[tuple[str, int, int], dict] = {}
     confirmed_keys: set[tuple[str, int, int]] = set()
     new_files: list[Path] = []
     complete = False
@@ -3173,6 +3351,7 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                 pd.DataFrame(rows).to_excel(writer, sheet_name=sname, index=False)
         os.replace(temp_xlsx, target_xlsx)
         _write_json_atomic(target_json, all_data)
+        _write_rasprod_coverage(target_json, target_xlsx, expected_keys, confirmed_keys)
         if target_xlsx not in new_files:
             new_files.append(target_xlsx)
         if target_json not in new_files:
@@ -3210,10 +3389,11 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                 expected_keys.update(
                     (region["key"], year, month) for year, month in periods
                 )
+                expected_values.update({(region["key"], *period): values for period, values in series.items()})
                 cached_keys = {
                     key for row in all_data
                     if (key := _rasprod_entry_key(row)) is not None and key[0] == region["key"]
-                    and key[1:] in series and api.matches_history(row, series[key[1:]])
+                    and key[1:] in series and _rasprod_entry_complete(row) and api.matches_history(row, series[key[1:]])
                 }
                 confirmed_keys.update(cached_keys)
                 latest_period = periods[0]
@@ -3295,8 +3475,18 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
             # В конце региона сохраняем последние периоды в checkpoint.
             flush()
 
-        missing_keys = expected_keys - confirmed_keys
-        suspect_keys = _suspect_rasprod_history_keys(all_data)
+        active, excluded = {}, []
+        for row in all_data:
+            key = _rasprod_entry_key(row)
+            if (key not in expected_keys or not _rasprod_entry_complete(row)
+                    or not api.matches_history(row, expected_values[key])):
+                excluded.append(row)
+                continue
+            if key in active:
+                excluded.append(active[key])
+            active[key] = row
+        missing_keys = expected_keys - set(active)
+        suspect_keys = _suspect_rasprod_history_keys(list(active.values()))
         complete = (
             bool(expected_keys) and not missing_keys and not suspect_keys
             and refreshed_regions == {r["key"] for r in RASPROD_REGIONS}
@@ -3306,6 +3496,8 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
         if suspect_keys:
             print(f"  ❌ rasprodannost: повторяются KPI за {len(suspect_keys)} месяцев")
         if complete:
+            _archive_excluded_rasprod_history(excluded)
+            all_data = [active[key] for key in sorted(active)]
             flush(final=True)
             checkpoint_json.unlink(missing_ok=True)
             latest_entry = _latest_rasprod_entry(all_data)

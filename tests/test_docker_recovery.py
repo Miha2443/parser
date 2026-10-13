@@ -1,6 +1,7 @@
 """Real host-shell recovery decisions against a disposable daemon simulator."""
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,8 +14,48 @@ from docker import publication as p
 
 REPO = Path(__file__).resolve().parents[1]
 
+# Snapshot of the production 3d09add CLI, kept local so shallow CI clones can
+# exercise migration without fetching historical commits or a Docker daemon.
+LEGACY_READINESS = '''import json,sys
+from urllib.request import urlopen
+ROUTES=("/api/v1/catalog","/api/v1/economics/salary/catalog","/api/v1/economics/ipc/catalog",
+        "/api/v1/economics/accounts/catalog","/api/v1/map/catalog","/api/v1/linear/catalog",
+        "/api/v1/commissioning/annual/catalog","/api/v1/construction/catalog")
+def probe(base="http://127.0.0.1:8000",expected=None):
+    with urlopen(base+"/api/v1/health",timeout=20) as response: health=json.load(response)
+    if expected and health.get("release")!=expected: raise RuntimeError("Backend still serves another release")
+    for route in ROUTES:
+        with urlopen(base+route,timeout=20) as response: payload=json.load(response)
+        if route=="/api/v1/catalog" and not payload["controls"]["developers"]: raise RuntimeError("Backend has no developers")
+if __name__=="__main__": probe(expected=sys.argv[1] if len(sys.argv)>1 else None)
+'''
+
+
+class LegacyIdentityProbeTests(unittest.TestCase):
+    def test_host_probe_is_independent_of_the_actual_legacy_cli(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old_cli = root / "readiness.py"
+            old_cli.write_text(LEGACY_READINESS, encoding="utf-8")
+            original = old_cli.read_bytes()
+            health = {"status": "ok", "release": "/runtime/releases/old"}
+            setup = ("import io,json,urllib.request\nhealth=" + repr(health) + "\n"
+                     "urllib.request.urlopen=lambda url,**kwargs: io.StringIO(json.dumps(health if url.endswith('/health') else {'controls':{'developers':[{'developer':'OLD'}]}}))\n")
+            old = subprocess.run([sys.executable, "-I", "-c", setup + "\n" + LEGACY_READINESS,
+                                  "--identity-only", health["release"]], cwd=root, capture_output=True)
+            self.assertNotEqual(old.returncode, 0)  # The old file treats the flag as the expected release.
+            host = (REPO / "docker/update.sh").read_text(encoding="utf-8")
+            code = re.search(r"python -c '(.*?)'\s+\"/runtime/\$target\"", host, re.S).group(1)
+            for status, expected, success in (("ok", health["release"], True), ("ok", "/runtime/releases/other", False),
+                                              ("unavailable", health["release"], False)):
+                prefix = setup.replace("'status': 'ok'", "'status': '" + status + "'")
+                result = subprocess.run([sys.executable, "-I", "-c", prefix + code, expected],
+                                        cwd=root, capture_output=True)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+            self.assertEqual(old_cli.read_bytes(), original)
+
 DAEMON = '''#!/usr/bin/env python3
-import json,os,sys
+import json,os,sys,runpy
 from pathlib import Path
 sys.path.insert(0, os.environ['TEST_REPO'])
 from docker import publication as p
@@ -39,7 +80,18 @@ if command=='run':
         except Exception as exc: print(str(exc),file=sys.stderr); die(1)
         die(0)
     state['downloads']+=1; die(1)
-if command=='exec': die(0 if state['id'] and state['status']=='running' and args[-1]=='/runtime/'+state['served'] else 1)
+if command=='exec':
+    if '-c' in args:
+        # Execute the actual host-owned probe rather than guessing its flags.
+        import io,urllib.request
+        urllib.request.urlopen=lambda *a,**kw: io.StringIO(json.dumps({'status':'ok' if state['id'] and state['status']=='running' else 'unavailable','release':'/runtime/'+state['served']}))
+        code=args[args.index('-c')+1]; sys.argv=['-c',args[-1]]
+        try: exec(compile(code,'host-identity-probe','exec'))
+        except SystemExit: die(1)
+        die(0)
+    if state.get('old_cli'):
+        assert '--identity-only' not in args, 'Old readiness.py has no flag support'
+    die(0 if state['id'] and state['status']=='running' and args[-1]=='/runtime/'+state['served'] and state.get('full_ready',True) else 1)
 if command=='stop': state['stops']+=1; state['status']='exited'; die(0)
 if command in ('up','restart'):
     if args[-1]=='web': die(0)
@@ -192,6 +244,13 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertIn('backend ID and StartedAt unchanged', result.stdout)
         self.assertEqual((self.state['stops'], self.state['restarts']), (0, 0))
         self.assertEqual(self.state['downloads'], 1)
+
+    def test_partial_pinned_previous_release_allows_collection_without_restart(self):
+        self.state.update(served='releases/new', full_ready=False, old_cli=True)
+        result = self.run_host()
+        self.assertNotEqual(result.returncode, 0)  # Simulated source failure.
+        self.assertEqual(self.state['downloads'], 1)
+        self.assertEqual((self.state['started'], self.state['stops'], self.state['restarts']), ('original-start', 0, 0))
 
     def test_legacy_without_pending_cannot_start_mutable_downloads(self):
         self.state['served'] = '/app'

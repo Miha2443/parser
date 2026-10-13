@@ -31,7 +31,7 @@ jobs:
           docker exec parser-compose-engine docker info >/dev/null
           docker cp . parser-compose-engine:/opt/parser-dashboard
           docker exec parser-compose-engine chown -R op:op /opt/parser-dashboard
-      - name: Run actual production Compose workflow and isolated source fixtures
+      - name: Verify full source/page coverage, failure preservation and Compose recovery
         run: docker exec -e PARSER_COMPOSE_SMOKE=1 parser-compose-engine runuser -u op -- bash /opt/parser-dashboard/docker/tests/check.sh
       - name: Collect diagnostics
         if: always()

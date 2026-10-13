@@ -27,10 +27,13 @@ def report(data, options, region="msk"):
     if not charts:
         raise SourceUnavailable("Annual report has no source data")
     notes = ["Единицы всех графиков: млн м²; период 2011–2026, реновация с 2017 года.",
-             "Заполнение пропусков нулём в годовых графиках сохранено по прежнему правилу; это не подтверждение полноты исходных данных.",
+             "Неизвестные значения остаются null. Итог периода неизвестен, если отсутствует хотя бы один год выбранного ряда.",
+             "34118: общий ввод, ИЖС, сельский ИЖС и явно названный МКД — разные категории; сельский ИЖС входит в ИЖС и не прибавляется к нему.",
+             "МКД берётся только из явной категории источника или подтверждённого подтипа РВ. Общий ввод минус ИЖС не называется МКД.",
+             "Серый сегмент — жильё без подтверждённого вида; общий ввод служит отдельным контролем и не добавляется в сумму сегментов.",
              "ИЖС до 2015 года не показывается: сопоставимый подтверждённый ряд начинается с 2015 года."]
     if region == "rf":
-        notes.append("2026 год по РФ — нет данных; нулевой столбец не означает нулевой фактический ввод.")
+        notes.append("2026 год по РФ — нет годового итога; месячные и нарастающие значения источника не подменяют полный год.")
     else:
         notes.extend(["2026 год по Москве дополняется мониторингом 2.0; исторические значения МОП и реновации сохранены из утверждённой страницы.",
                       "Дополнительные отрасли показываются при покрытии мониторингом не менее 95% годового объёма; иначе площадь остаётся в «Прочем».",
@@ -51,6 +54,11 @@ def export_workbook(payload):
     for key in ("version", "generatedAt", "region", "source", "notes"):
         value = payload[key]
         tab.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value])
+    for chart in payload["charts"]:
+        if chart.get("categoryProvenance"):
+            tab.append([chart["id"] + "/categoryProvenance", json.dumps(chart["categoryProvenance"], ensure_ascii=False)])
+        if chart.get("rawCategoryValues"):
+            tab.append([chart["id"] + "/rawCategoryValues", json.dumps(chart["rawCategoryValues"], ensure_ascii=False)])
     for chart in payload["charts"]:
         tab = book.create_sheet(chart["id"])
         tab.append([column["label"] for column in chart["columns"]])

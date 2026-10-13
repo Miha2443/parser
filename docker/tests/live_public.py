@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from docker.coverage import (finite, require, require_construction_sales, require_frame,
                              validate_construction_sources, validate_economic_sources,
-                             validate_kvart_sources, validate_monitoring_history,
+                             validate_kvart_sources, validate_monitoring_history, validate_monitoring_registry,
                              validate_rasprod_sources, validate_sources)
 
 PUBLIC_SOURCES = frozenset({"monitoring", "construction", "kvart", "rasprod", "fedstat", "rosstat"})
@@ -91,6 +91,7 @@ def validate_public_sources(access, started):
                 name + " contains source files predating this run")
     for key in ("rv", "oks"):
         require_frame(payloads["monitoring_2_0"].get(key), "monitoring/" + key, numeric=("Общая площадь",))
+    validate_monitoring_registry(access, payloads["monitoring_2_0"]["rv"])
     validate_kvart_sources(access, payloads["kvartirografia"])
     validate_construction_sources(access, payloads["construction_operational"])
     validate_rasprod_sources(access, payloads["rasprodannost"])

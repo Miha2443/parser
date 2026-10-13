@@ -169,7 +169,11 @@ def browser():
             assert not source_date.is_displayed()
             assert driver.execute_script("return !document.querySelector('.sources-section').nextElementSibling?.querySelector('.chart-canvas')")
             disclosure.find_element("css selector", "summary").click()
-            assert disclosure.get_attribute("open") and source_date.is_displayed()
+            try:
+                WebDriverWait(driver, 10).until(lambda d: disclosure.get_attribute("open") and source_date.is_displayed())
+            except Exception as exc:
+                raise AssertionError(f"Sources disclosure did not open after click: route={route}, url={driver.current_url}, "
+                                     f"open={disclosure.get_attribute('open')}, date_visible={source_date.is_displayed()}") from exc
             assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
             if route == "/apartments":
                 driver.find_element("css selector", ".chart-data .data-toggle").click()

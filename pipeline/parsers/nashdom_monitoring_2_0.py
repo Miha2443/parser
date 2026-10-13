@@ -73,7 +73,13 @@ def _read_sheets(path: Path) -> list[tuple[str, pd.DataFrame]]:
                 "Общая площадь",
             }.issubset(set(df.columns)):
                 out.append((sheet, df))
-    return out
+    from pipeline.monitoring_registry import select_rv_supplements
+    primary = next((frame for sheet, frame in out if sheet == SHEET_RV), pd.DataFrame())
+    supplements = [(sheet, frame) for sheet, frame in out if sheet not in {SHEET_OKS, SHEET_RV}
+                   and {"Год ввода по Мосстату", "Общая площадь", "Группа компаний"} <= set(frame.columns)]
+    admitted, _ = select_rv_supplements(primary, supplements)
+    selected = {SHEET_RV: admitted[0], **{sheet: frame for (sheet, _), frame in zip(supplements, admitted[1:])}}
+    return [(sheet, selected.get(sheet, frame)) for sheet, frame in out]
 
 
 def _row_year(record: pd.Series, sheet: str) -> int:

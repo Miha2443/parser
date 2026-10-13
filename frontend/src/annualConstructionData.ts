@@ -8,7 +8,7 @@ import type { Theme } from './types';
 type Choice = { id: string; label: string };
 export type AnnualCatalog = CommissioningMetadata & { regions: Choice[] };
 export type AnnualSelection = { region: string };
-export type AnnualChart = ReportTable & { unit: string; totals: boolean; series: { id: string; name: string; color: string; points: { x: string; y: number | null }[] }[]; summaries: { from: number; to: number; values: { id: string; label: string; value: number | null }[] }[] };
+export type AnnualChart = ReportTable & { unit: string; totals: boolean; controlTotal?: string; categoryProvenance?: Record<string, unknown>[]; rawCategoryValues?: Record<string, number | null>[]; series: { id: string; name: string; color: string; points: { x: string; y: number | null }[] }[]; summaries: { from: number; to: number; values: { id: string; label: string; value: number | null }[] }[] };
 export type AnnualReport = CommissioningMetadata & { region: Choice; charts: AnnualChart[]; notes: string[] };
 export type ConstructionCatalog = AnnualCatalog & { permitKinds: Choice[]; monthsByKind: Record<string, number[]> };
 export type ConstructionSelection = { region: string; permitKind: string; month: number };
@@ -42,7 +42,26 @@ export function readAnnualReport(value: unknown, selection: AnnualSelection): An
     const table = readReportTable(c), series = distinct(list(c.series, value => { const s = obj(value); return { id: str(s.id), name: str(s.name), color: str(s.color), points: list(s.points, value => { const p = obj(value); return { x: str(p.x), y: num(p.y) }; }) }; }), s => s.id);
     if (series.some(s => !table.columns.some(c => c.id === s.id) || s.points.length !== table.rows.length || s.points.some((p, i) => p.x !== String(table.rows[i].year) || p.y !== table.rows[i][s.id]))) throw invalid();
     const summaries = list(c.summaries, value => { const s = obj(value), from = int(s.from), to = int(s.to); if (to < from) throw invalid(); return { from, to, values: distinct(list(s.values, value => { const r = obj(value); return { id: str(r.id), label: str(r.label), value: num(r.value) }; }), r => r.id) }; });
-    return { ...table, unit: str(c.unit), totals: c.totals, series, summaries };
+    const controlTotal = c.controlTotal === undefined ? undefined : str(c.controlTotal);
+    if (controlTotal) {
+      if (!table.columns.some(column => column.id === controlTotal) || series.some(series => series.id === controlTotal)) throw invalid();
+      table.rows.forEach(row => num(row[controlTotal]));
+    }
+    const categoryProvenance = c.categoryProvenance === undefined ? undefined : list(c.categoryProvenance, value => {
+      const proof = obj(value); int(proof.year);
+      for (const item of Object.values(proof)) {
+        if (Array.isArray(item)) { item.forEach(value => typeof value === 'string' ? str(value) : int(value, 1, 10000000)); }
+        else if (typeof item !== 'string') num(item);
+      }
+      return { ...proof };
+    });
+    const rawCategoryValues = c.rawCategoryValues === undefined ? undefined : distinct(list(c.rawCategoryValues, value => {
+      const row = obj(value); int(row.year);
+      return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, num(value)]));
+    }), row => row.year!);
+    return { ...table, unit: str(c.unit), totals: c.totals, series, summaries,
+      ...(controlTotal ? { controlTotal } : {}), ...(categoryProvenance ? { categoryProvenance } : {}),
+      ...(rawCategoryValues ? { rawCategoryValues } : {}) };
   }), c => c.id);
   return { ...readCommissioningMetadata(v), region, charts, notes: list(v.notes, str) };
 }
@@ -73,13 +92,23 @@ const escape = (v: string) => v.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
 const tones = (theme: Theme) => ({ muted: theme === 'light' ? '#606975' : '#b2bac5', line: theme === 'light' ? '#e4e8ed' : '#363a40' });
 export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: string[]): EChartsCoreOption {
   const t = tones(theme), visible = c.series.filter(s => visibleNames === undefined || visibleNames.includes(s.name)), single = visible.length === 1, topId = visible.at(-1)?.id;
-  const labelled = (id: string) => id === topId && (single || c.totals);
+  const topAt = (index: number) => visible.filter(series => series.points[index].y !== null).at(-1)?.id;
+  const labelled = (id: string) => c.controlTotal ? visible.some(series => series.id === id) && (single || c.totals) : id === topId && (single || c.totals);
   return {
     grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
     tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(c.unit)}` },
     xAxis: { type: 'category', data: c.rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
     yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: (v: number) => number(v, 1) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
     series: c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: s.points.map(p => p.y), itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {
+      if (c.controlTotal && topAt(p.dataIndex) !== s.id) return '';
+      if (c.controlTotal && visible.length === c.series.length) {
+        const control = c.rows[p.dataIndex][c.controlTotal];
+        const known = visible.map(series => series.points[p.dataIndex].y).filter((value): value is number => value !== null);
+        const proof = c.categoryProvenance?.find(row => row.year === c.rows[p.dataIndex].year);
+        const precision = proof ? Object.entries(proof).filter(([key]) => key.endsWith('_source_precision_million'))
+          .reduce((sum, [, value]) => sum + (typeof value === 'number' ? value / 2 : 0), 0) : 0;
+        if (typeof control === 'number' && known.length && Math.abs(known.reduce((sum, value) => sum + value, 0) - control) <= precision + 1e-10) return number(control, 1);
+      }
       const values = visible.map(s => s.points[p.dataIndex].y);
       return values.some(v => v === null) ? '' : number(values.reduce<number>((sum, v) => sum + (v ?? 0), 0), 1);
     } } })),

@@ -238,6 +238,36 @@ class CoverageTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "operational housing monthly history is empty"):
                     validate_sources(self.access())
 
+    def test_primary_rv_repeat_or_changed_raw_area_cannot_pass_a_coherent_mart(self):
+        import pandas as pd
+        from docker.coverage import validate_sources
+        mart = self.root / "data/marts/realty/monitoring_2_0.pkl"
+        payload = pd.read_pickle(mart)
+        original = payload["rv"].copy()
+        for mutation in ("duplicate", "area", "subtype", "year", "measurement"):
+            payload["rv"] = pd.concat([original, original.iloc[[0]]], ignore_index=True) if mutation == "duplicate" else original.copy()
+            if mutation == "area":
+                payload["rv"].loc[payload["rv"].index[0], "Жилая площадь"] += 10
+            elif mutation == "subtype":
+                payload["rv"].loc[payload["rv"].index[0], "Подтип объекта"] = "ИЖС"
+            elif mutation == "year":
+                payload["rv"].loc[payload["rv"].index[0], "Год ввода по Мосстату"] += 1
+            elif mutation == "measurement":
+                payload["rv"].loc[payload["rv"].index[0], "Жилая площадь_measured"] = False
+            pd.to_pickle(payload, mart)
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(RuntimeError, "physical primary|physical source|measurement evidence"):
+                validate_sources(self.access())
+
+    def test_annual_ihs_cannot_be_relabelled_mkd_with_consistent_source_manifest(self):
+        import pandas as pd
+        from docker.coverage import validate_sources
+        mart = self.root / "data/marts/realty/emiss_34118.pkl"
+        frame = pd.read_pickle(mart)
+        frame.loc[frame.year.eq(2025), "ИЖС"] = frame.loc[frame.year.eq(2025), "МКД"]
+        pd.to_pickle(frame, mart)
+        with self.assertRaisesRegex(RuntimeError, "annual category differs"):
+            validate_sources(self.access())
+
     def test_each_required_dynamic_source_missing_fails_with_coherent_manifest(self):
         from docker.coverage import validate_sources
         patterns = {"monitoring": "data/raw/realty/nashdom/monitoring_*.xlsx",

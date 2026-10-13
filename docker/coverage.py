@@ -127,11 +127,17 @@ def validate_rasprod_sources(access, rasprod):
 
 
 def validate_dynamic_commissioning(access, verified_downloads):
-    """34118 currently provides IHS, with RF/Moscow in both source parts."""
-    import pandas as pd
+    """Admit actual labelled cells; TOTAL and rural IHS are separate measures."""
     from pipeline.data_access import _parse_emiss_34118_periods_file
+    from pipeline.commissioning_validation import validate_emiss_frame
     keys = ["region", "year", "month", "period_type"]
-    frames = []
+    oracles = []
+    bases = [path for path in access.source_files("emiss_34118") if path.name == "emiss_34118_base.xls"]
+    for base in bases:
+        try:
+            oracles.append((base, validate_emiss_frame(base, _parse_emiss_34118_periods_file(base))))
+        except ValueError as exc:
+            raise RuntimeError("Incomplete dashboard coverage: " + str(exc)) from exc
     for identifier in ("34118_часть1", "34118_часть2"):
         source = max(verified_downloads[identifier], key=lambda path: path.stat().st_mtime_ns)
         frame = _parse_emiss_34118_periods_file(source)
@@ -144,16 +150,52 @@ def validate_dynamic_commissioning(access, verified_downloads):
             require(selected.source_file.eq(source.name).all(), identifier + " has incorrect source provenance")
             require(selected.month.between(1, 12).all() and selected.year.gt(0).all()
                     and selected.period_type.isin(["month", "quarter", "ytd", "year"]).all(), identifier + " has invalid periods")
-        frames.append((source, frame))
-    expected = pd.concat([frame for _, frame in sorted(frames, key=lambda pair: pair[0].stat().st_mtime_ns)], ignore_index=True)
-    expected = expected.drop_duplicates(keys, keep="last").set_index(keys)
+        try:
+            oracles.append((source, validate_emiss_frame(source, frame)))
+        except ValueError as exc:
+            raise RuntimeError("Incomplete dashboard coverage: " + str(exc)) from exc
+    # Later exports can supersede individual categories, never erase an older
+    # explicit MKD measurement merely because their own rows contain no MKD.
+    expected = {}
+    ordered = [(source, cells) for source, cells in oracles if source in bases] + sorted(
+        [(source, cells) for source, cells in oracles if source not in bases], key=lambda pair: pair[0].stat().st_mtime_ns)
+    for source, cells in ordered:
+        expected.update(cells)
     consumed = access.load_emiss_34118_periods().set_index(keys)
-    for period, row in expected.iterrows():
+    require(not consumed.index.duplicated().any(), "34118 consumer contains duplicate periods")
+    for key, source in expected.items():
+        period, category = key[:4], key[4]
         require(period in consumed.index, "dynamic 34118 period is absent from the consumer")
         chosen = consumed.loc[period]
-        require(chosen.source_file == row.source_file and finite(chosen["ИЖС"])
-                and math.isclose(chosen["ИЖС"], row["ИЖС"], rel_tol=1e-10, abs_tol=1e-8),
-                "dynamic 34118 measurements are masked by another source")
+        require(finite(chosen.get(category)) and math.isclose(chosen[category], source["value"], rel_tol=1e-10, abs_tol=1e-8),
+                "dynamic 34118 category is masked or relabelled: " + category)
+        require(all(chosen.get(category + "_" + suffix) == source[suffix]
+                    for suffix in ("source_file", "source_row", "source_column", "source_label")),
+                "dynamic 34118 category provenance differs from its raw source cell: " + category)
+    annual = access.load_emiss_34118().set_index("year")
+    require(not annual.index.duplicated().any(), "34118 annual mart contains duplicate years")
+    for key, source in expected.items():
+        region, year, month, kind, category = key
+        if region != "РФ" or month != 12 or kind not in {"year", "ytd"}:
+            continue
+        require(year in annual.index, "34118 annual category disappeared from its canonical mart")
+        chosen = annual.loc[year]
+        require(finite(chosen.get(category)) and math.isclose(chosen[category], source["value"], rel_tol=1e-10, abs_tol=1e-8)
+                and chosen.get(category + "_source_file") == source["source_file"],
+                "34118 annual category differs from its raw source cell: " + category)
+
+
+def validate_monitoring_registry(access, rv=None):
+    from pipeline.commissioning_validation import validate_primary_rv
+    files = access.source_files("monitoring_2_0")
+    require(files, "monitoring has no workbook")
+    source = max(files, key=lambda path: path.stat().st_mtime_ns)
+    if rv is None:
+        rv = access.load_monitoring_2_0()["rv"]
+    try:
+        return validate_primary_rv(source, rv)
+    except ValueError as exc:
+        raise RuntimeError("Incomplete dashboard coverage: " + str(exc)) from exc
 
 
 def validate_erz_cards(access, canonical):
@@ -352,6 +394,7 @@ def validate_sources(access):
     monitoring = payloads["monitoring_2_0"]
     for key in ("rv", "oks"):
         require_frame(monitoring.get(key), "monitoring/" + key, numeric=("Общая площадь",))
+    validate_monitoring_registry(access, monitoring["rv"])
     validate_monitoring_history(access)
     validate_kvart_sources(access, payloads["kvartirografia"])
     validate_construction_sources(access, payloads["construction_operational"])

@@ -656,67 +656,52 @@ def _parse_emiss_34118_periods_file(path: Path) -> pd.DataFrame:
             continue
         col_meta[j] = (last_year, period_type, month)
 
-    records: list[dict] = []
+    from pipeline.commissioning_categories import EMISS_CATEGORIES, emiss_category
+    from decimal import Decimal
+    records = {}
     for i in range(yrow + 1, len(df)):
         region = _emiss_region_name(df.iat[i, 0])
         if region is None:
             continue
-        label = str(df.iat[i, 1]).lower()
-        if "построенные населением" in label or "построенных населением" in label:
-            metric = "ИЖС"
-            priority = 1
-        elif "жилые дома" in label:
-            metric = "МКД"
-            priority = 3
-        elif "жилые здания" in label:
-            metric = "МКД"
-            priority = 2 if "многоквартирн" not in label else 1
-        elif "многоквартирн" in label:
-            metric = "МКД"
-            priority = 1
-        else:
+        metric = emiss_category(df.iat[i, 1])
+        if metric is None:
             continue
         for j, (year, period_type, month) in col_meta.items():
             val = _to_float(df.iat[i, j])
             if pd.isna(val):
                 continue
-            records.append({
-                "region": region,
-                "year": year,
-                "month": month,
-                "quarter": (month - 1) // 3 + 1,
-                "period_type": period_type,
-                "metric": metric,
-                "priority": priority,
-                "value": val / 1000.0,
-                "source_file": path.name,
-            })
-
+            if not math.isfinite(val) or val < 0:
+                raise ValueError("34118 contains an invalid measured value")
+            key = (region, year, month, period_type)
+            row = records.setdefault(key, {"region": region, "year": year, "month": month,
+                "quarter": (month - 1) // 3 + 1, "period_type": period_type, "source_file": path.name})
+            if metric in row:
+                raise ValueError("34118 has ambiguous duplicate measurements for " + metric)
+            row[metric] = val / 1000.0
+            row[metric + "_source_file"] = path.name
+            row[metric + "_source_label"] = str(df.iat[i, 1])
+            row[metric + "_source_row"] = i + 1
+            row[metric + "_source_column"] = j + 1
+            literal = str(df.iat[i, j]).replace("\xa0", "").replace(" ", "").replace(",", ".")
+            row[metric + "_source_precision_million"] = float(Decimal(10) ** Decimal(literal).as_tuple().exponent) / 1000
     if not records:
         return pd.DataFrame()
-    out = pd.DataFrame(records)
-    out = (
-        out.sort_values(["year", "month", "period_type", "metric", "priority"])
-        .drop_duplicates(["region", "year", "month", "period_type", "metric"], keep="last")
-        .pivot_table(
-            index=["region", "year", "month", "quarter", "period_type", "source_file"],
-            columns="metric",
-            values="value",
-            aggfunc="first",
-        )
-        .reset_index()
-    )
-    out.columns.name = None
-    return out
+    out = pd.DataFrame(records.values())
+    for metric in EMISS_CATEGORIES:
+        for suffix in ("", "_source_file", "_source_label", "_source_row", "_source_column", "_source_precision_million"):
+            if metric + suffix not in out:
+                out[metric + suffix] = float("nan")
+    return out.sort_values(["region", "year", "month", "period_type"]).reset_index(drop=True)
+
 
 
 def _parse_emiss_34118_file(path: Path) -> dict:
     """Парсит один ЕМИСС-34118 .xls → {year: {'МКД': млн м², 'ИЖС': млн м²}} для РФ.
 
-    Объединяет 2 РФ-строки («Российская Федерация» 2015-2022 +
-    «… без учета новых субъектов» 2023-2025): для каждого года берём ту,
-    где есть значение. МКД = «Жилые здания», если нет — «многоквартирные».
-    ИЖС = «построенные населением». Значения тыс. м² → млн (÷1000).
+    Совместимый годовой срез явно подписанных категорий РФ.
+    МКД берётся только из явной многоквартирной категории, ИЖС — из
+    категории всех домов населения без сельского подмножества и общего ввода.
+    Значения тыс. м² → млн (÷1000).
     """
     periods = _parse_emiss_34118_periods_file(path)
     if periods.empty:
@@ -1105,7 +1090,8 @@ class DataAccess:
         Листы:
           «Реестр ОКС»  — объекты в строительстве
           «Реестр РВ»   — введённые объекты, все строки листа
-          «Лист4»       — старые годы, добавляется к «Реестр РВ»
+          исторические RV-листы — только самостоятельные строки, без копий
+          или однозначно исправленных версий текущего «Реестр РВ»
 
         Возвращает:
           'rv': DataFrame реестра РВ
@@ -1132,11 +1118,11 @@ class DataAccess:
         source_hash = file_sha256(latest) if include_provenance else None
 
         def add_provenance(frame: pd.DataFrame, sheet: str) -> None:
-            # Assigned immediately after read_excel(header=0), before any filters.
-            # This is the original worksheet row, never a transformed frame index.
+            # Row/sheet identity remains available in canonical marts too.
+            frame["source_sheet"] = sheet
+            frame["source_row"] = range(2, len(frame) + 2)
+            frame["source_file"] = latest.name
             if include_provenance:
-                frame["source_sheet"] = sheet
-                frame["source_row"] = range(2, len(frame) + 2)
                 frame["source_file_sha256"] = source_hash
                 frame["source_record_id"] = [source_record_id(source_hash, sheet, row)
                                              for row in frame["source_row"]]
@@ -1149,57 +1135,20 @@ class DataAccess:
         add_provenance(oks, "Реестр ОКС")
         rv["source_sheet"] = "Реестр РВ"
 
-        # Третий лист со старыми годами (2017-2021). Имя может быть «Лист4»
-        # или другое — берём первый лист, не являющийся ОКС/РВ, в котором
-        # есть ключевые колонки реестра ввода.
-        extra_sheets = [s for s in sheet_names if s not in ("Реестр ОКС", "Реестр РВ")]
-        for sheet in extra_sheets:
-            try:
-                old = pd.read_excel(latest, sheet_name=sheet)
-            except Exception:  # noqa: BLE001
+        # Current rows are the reference before year/company filters. A stale
+        # historical copy must not resurrect a primary row excluded later.
+        from pipeline.monitoring_registry import select_rv_supplements
+        supplements = []
+        for sheet in sheet_names:
+            if sheet in ("Реестр ОКС", "Реестр РВ"):
                 continue
-            required = {"Год ввода по Мосстату", "Общая площадь", "Группа компаний"}
-            if not required.issubset(set(old.columns)):
+            old = pd.read_excel(latest, sheet_name=sheet)
+            if not {"Год ввода по Мосстату", "Общая площадь", "Группа компаний"} <= set(old.columns):
                 continue
             add_provenance(old, sheet)
-            core_cols = [
-                c for c in ("УИН", "№ РВ", "Дата ввода по Мосстату", "Год ввода по Мосстату", "Общая площадь")
-                if c in old.columns
-            ]
-            if core_cols:
-                old = old[old[core_cols].notna().any(axis=1)].copy()
-
-            # ФИКС сдвига колонок (часть строк 2018-2019): «Год» содержит
-            # название месяца («сентябрь»), а сам год уехал в «Дата ввода
-            # по Мосстату». Там он в двух видах:
-            #   а) число года как Excel-дата: 2019 → 1905-07-11
-            #      (serial number) → год = (дата − 1899-12-30).days
-            #   б) настоящая дата ввода: 2018-01-11 → год = .dt.year
-            year_num = pd.to_numeric(old["Год ввода по Мосстату"], errors="coerce")
-            year_raw = old["Год ввода по Мосстату"]
-            shifted = (
-                (year_num.isna() | ~year_num.between(2000, 2030))
-                & year_raw.notna()
-            )
-            if shifted.any() and "Дата ввода по Мосстату" in old.columns:
-                excel_epoch = pd.Timestamp("1899-12-30")
-                dates = pd.to_datetime(old.loc[shifted, "Дата ввода по Мосстату"], errors="coerce")
-                serial = (dates - excel_epoch).dt.days
-                # а) serial — это сам год (число 2000-2030 как Excel-дата)
-                recovered = serial.where((serial >= 2000) & (serial <= 2030))
-                # б) иначе — настоящая дата, берём её год
-                real_year = dates.dt.year.where((dates.dt.year >= 2000) & (dates.dt.year <= 2030))
-                recovered = recovered.fillna(real_year)
-                year_num.loc[shifted] = recovered
-                # Месяц у сдвинутых строк лежит в колонке «Год»
-                if "Месяц ввода по Мосстату" in old.columns:
-                    month_values = year_raw.loc[shifted].where(pd.to_numeric(year_raw.loc[shifted], errors="coerce").isna())
-                    old.loc[shifted, "Месяц ввода по Мосстату"] = month_values.combine_first(
-                        old.loc[shifted, "Месяц ввода по Мосстату"]
-                    )
-            old["Год ввода по Мосстату"] = year_num
-            old["source_sheet"] = sheet
-            rv = pd.concat([rv, old], ignore_index=True)
+            supplements.append((sheet, old))
+        admitted, rv_matching = select_rv_supplements(rv, supplements)
+        rv = pd.concat(admitted, ignore_index=True)
 
         rv["Год ввода по Мосстату"] = pd.to_numeric(
             rv["Год ввода по Мосстату"], errors="coerce")
@@ -1238,8 +1187,12 @@ class DataAccess:
             df["category_нежилое_отдельное"] = 0.0
             if "Общая площадь" not in df.columns:
                 return df
-            df["Общая площадь"] = numeric_area(df["Общая площадь"])
-            df["Жилая площадь"] = numeric_area(df["Жилая площадь"])
+            for column in ("Общая площадь", "Жилая площадь"):
+                normalized = df[column].map(lambda value: value.replace("\xa0", "").replace(" ", "").replace(",", ".")
+                                            if isinstance(value, str) else value)
+                values = pd.to_numeric(normalized, errors="coerce")
+                df[column + "_measured"] = values.notna() & values.ge(0) & values.lt(float("inf"))
+                df[column] = numeric_area(df[column])
             is_zh_otrasl = df.get("Отрасли", "") == "Жилые объекты"
             is_zh_grp = df.get("Группировка", "") == "Жилье"
             is_nzh_grp = df.get("Группировка", "") == "Нежилье"
@@ -1293,6 +1246,7 @@ class DataAccess:
             raise RuntimeError("Monitoring input changed while parsing")
 
         return {
+            "rv_matching": rv_matching,
             "rv": rv,
             "oks": oks,
             "developers": developers,
@@ -2041,36 +1995,18 @@ class DataAccess:
         if mart is not None:
             return mart
 
-        merged: dict[int, dict] = {}
-        base = self._vvod_dir()
-        if base is not None:
-            bp = base / "emiss_34118_base.xls"
-            if bp.exists():
-                merged.update(_parse_emiss_34118_file(bp))
+        from pipeline.commissioning_categories import EMISS_CATEGORIES
+        periods = self.load_emiss_34118_periods()
+        if periods.empty:
+            return pd.DataFrame(columns=["year", *EMISS_CATEGORIES])
+        annual = periods.loc[periods.region.eq("РФ") & periods.month.eq(12)
+                             & periods.period_type.isin(["year", "ytd"])].copy()
+        return annual.sort_values(["year", "source_file"]).drop_duplicates("year", keep="last").reset_index(drop=True)
 
-        downloads = self.DOWNLOADS_DIR
-        if downloads.exists():
-            live = sorted(
-                list(downloads.glob("*Введено в действие общей площади жилых домов*.xls*")),
-                key=lambda p: p.stat().st_mtime,
-            )
-            if live:
-                for path in live:
-                    for y, v in _parse_emiss_34118_file(path).items():
-                        merged[y] = v  # живые перекрывают базу
-
-        if not merged:
-            return pd.DataFrame(columns=["year", "МКД", "ИЖС"])
-        rows = sorted(merged)
-        return pd.DataFrame({
-            "year": rows,
-            "МКД": [merged[y].get("МКД", float("nan")) for y in rows],
-            "ИЖС": [merged[y].get("ИЖС", float("nan")) for y in rows],
-        })
 
 
     def load_emiss_34118_periods(self) -> pd.DataFrame:
-        """РФ-ввод жилья из ЕМИСС 34118 по месяцам/кварталам/годам, млн м²."""
+        """Категории РФ/Москвы 34118 по месяцам/кварталам/годам, млн м²."""
         frames: list[pd.DataFrame] = []
         base = self._vvod_dir()
         if base is not None:
@@ -2089,18 +2025,23 @@ class DataAccess:
             return pd.DataFrame(
                 columns=["region", "year", "month", "quarter", "period_type", "МКД", "ИЖС", "source_file"]
             )
-        out = pd.concat([frame.assign(_source_order=index) for index, frame in enumerate(frames)], ignore_index=True)
-        out = (
-            out.sort_values(["region", "year", "month", "period_type", "_source_order"])
-            .drop_duplicates(["region", "year", "month", "period_type"], keep="last")
-            .drop(columns="_source_order")
-            .sort_values(["region", "year", "month", "period_type"])
-            .reset_index(drop=True)
-        )
-        for col in ("МКД", "ИЖС"):
-            if col not in out.columns:
-                out[col] = float("nan")
-        return out
+        from pipeline.commissioning_categories import EMISS_CATEGORIES
+        keys = ["region", "year", "month", "quarter", "period_type"]
+        measured = {}
+        for frame in frames:
+            for raw in frame.to_dict("records"):
+                key = tuple(raw[name] for name in keys)
+                row = measured.setdefault(key, {name: raw[name] for name in keys})
+                row["source_file"] = raw["source_file"]
+                for metric in EMISS_CATEGORIES:
+                    if pd.notna(raw.get(metric)):
+                        for suffix in ("", "_source_file", "_source_label", "_source_row", "_source_column", "_source_precision_million"):
+                            row[metric + suffix] = raw.get(metric + suffix)
+        out = pd.DataFrame(measured.values())
+        for metric in EMISS_CATEGORIES:
+            if metric not in out:
+                out[metric] = float("nan")
+        return out.sort_values(["region", "year", "month", "period_type"]).reset_index(drop=True)
 
 
     def load_monitoring_2011_2026_static(self) -> dict[str, pd.DataFrame]:

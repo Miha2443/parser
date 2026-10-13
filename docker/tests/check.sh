@@ -15,6 +15,8 @@ docker compose run --rm --no-deps updater python -m unittest discover -s tests -
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collector_browser_recovery.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_kvart_api.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_report_missing_values.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_commissioning_categories.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_monitoring_registry.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_erz_cards_coverage.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_fedstat_export_recovery.py -v
 for check in check_archive_old_collision.py check_deduplicate_cache.py check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py check_nashdom_rasprod_api.py; do

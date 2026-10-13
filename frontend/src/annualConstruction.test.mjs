@@ -30,6 +30,41 @@ test('annual stack label follows highest visible series and sums only visible se
   assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.series[1].label.formatter({ dataIndex: 5 }), '3,7'); assert.ok(o.media[0].option.series.every(s => s.label.show === false)); assert.deepEqual(c, before);
   assert.ok(annualChartOption(c, 'dark', []).series.every(s => s.label.show === false));
 });
+
+test('annual controls label the last measured segment per year and never add TOTAL to the stack', () => {
+  const raw = fixtures.annualReport(), chart = raw.charts[1];
+  chart.columns = [{ id: 'year', label: 'Год' }, ...['МКД', 'ИЖС', 'Остальное', 'TOTAL'].map(id => ({ id, label: id }))];
+  chart.rows = [{ year: 2011, МКД: null, ИЖС: null, Остальное: 3, TOTAL: 3 },
+    { year: 2025, МКД: 6.7925, ИЖС: .6015, Остальное: null, TOTAL: 7.3939 },
+    { year: 2026, МКД: 4.0554834, ИЖС: .214205, Остальное: null, TOTAL: 4.2696884 }];
+  chart.series = ['МКД', 'ИЖС', 'Остальное'].map(id => ({ id, name: id, color: '#abcdef', points: chart.rows.map(row => ({ x: String(row.year), y: row[id] })) }));
+  chart.controlTotal = 'TOTAL';
+  chart.rawCategoryValues = [{ year: 2011, МКД: null, ИЖС: .5, TOTAL: 3 }];
+  chart.categoryProvenance = [{ year: 2025, МКД_source_file: 'base.xls', ИЖС_source_file: 'dynamic.xls',
+    МКД_source_precision_million: .0001, ИЖС_source_precision_million: .0001, TOTAL_source_precision_million: .0001 },
+  { year: 2026, МКД_source_rows: [2, 3], ИЖС_source_rows: [4], TOTAL_source_precision_million: 1e-6 }];
+  const parsed = readAnnualReport(raw, annualSelection).charts[1], before = structuredClone(parsed), o = annualChartOption(parsed, 'light');
+  assert.equal(o.series.length, 3); assert.equal(o.series.some(s => s.name === 'TOTAL'), false);
+  assert.equal(o.series[0].data[0], null); assert.equal(o.series[1].data[0], null);
+  assert.equal(o.series[2].label.formatter({ dataIndex: 0 }), '3,0');
+  assert.equal(o.series[2].label.formatter({ dataIndex: 1 }), '');
+  assert.equal(o.series[1].label.formatter({ dataIndex: 1 }), '7,4');
+  assert.equal(o.series[1].label.formatter({ dataIndex: 2 }), '4,3');
+  const ihsOnly = annualChartOption(parsed, 'light', ['ИЖС']);
+  assert.equal(ihsOnly.series[1].label.formatter({ dataIndex: 1 }), '0,6');
+  assert.equal(ihsOnly.series[1].label.formatter({ dataIndex: 0 }), '');
+  assert.deepEqual(parsed, before); assert.deepEqual(parsed.categoryProvenance, chart.categoryProvenance);
+  assert.deepEqual(parsed.rawCategoryValues, chart.rawCategoryValues); assert.equal(o.series[1].data[0], null);
+  assert.equal(tableRows(parsed)[1][1], null); assert.equal(tableRows(parsed)[2].at(-1), 7.3939);
+  // A known control with incomplete visible coverage is not a measured stack.
+  parsed.rows[1].TOTAL = 8;
+  assert.equal(annualChartOption(parsed, 'light').series[1].label.formatter({ dataIndex: 1 }), '');
+  for (const mutate of [c => c.rows[0].TOTAL = false, c => c.controlTotal = 'missing',
+    c => c.series.push({ id: 'TOTAL', name: 'TOTAL', color: '#fff', points: c.rows.map(row => ({ x: String(row.year), y: row.TOTAL })) }),
+    c => c.categoryProvenance[0].МКД_source_file = { guessed: true }, c => c.categoryProvenance[1].МКД_source_rows = [0]]) {
+    const bad = structuredClone(raw); mutate(bad.charts[1]); assert.throws(() => readAnnualReport(bad, annualSelection));
+  }
+});
 test('pinned exports contain every selection filter and never table search/page', () => {
   assert.deepEqual(marketParams(constructionSelection), { region: 'msk', permit_kind: 'total', month: '3' }); assert.equal(new URL(marketUrl('annual', annualSelection, 'v +'), 'http://local').searchParams.get('required_version'), 'v +'); const u = new URL(marketUrl('construction', constructionSelection, 'v2'), 'http://local'); assert.equal(u.pathname, '/api/v1/construction/export'); assert.deepEqual([...u.searchParams.keys()], ['region', 'permit_kind', 'month', 'required_version']);
 });

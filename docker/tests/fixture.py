@@ -38,6 +38,28 @@ def update():
     publish(Path("/app"), Path("/runtime"))
 
 
+def old_releases():
+    for day in range(1, 4):
+        name = f"200001{day:02d}T060002-{'b' * 12}"
+        folder = Path("/runtime/releases") / name
+        folder.mkdir()
+        (folder / "old-input.xlsx").write_bytes(name.encode())
+
+
+def check_archives():
+    from docker.publication import require_target
+    runtime = Path("/runtime")
+    reserve = json.loads((runtime / "previous-good.json").read_text())
+    for target in (os.readlink(runtime / "live"), reserve["previous"]):
+        require_target(runtime, target)
+    for day in range(1, 4):
+        name = f"200001{day:02d}T060002-{'b' * 12}"
+        assert not (runtime / "releases" / name).exists()
+        assert (runtime / "_archive/releases" / name / "old-input.xlsx").read_bytes() == name.encode()
+        record = json.loads((runtime / "_archive/releases" / (name + ".json")).read_text())
+        assert record["status"] == "archived"
+
+
 def browser_dom_contract(driver):
     # Actual DOM regression: closed filters change CSS class after selection;
     # the regional chart can render before the developer chart.
@@ -87,4 +109,5 @@ def browser():
 
 if __name__ == "__main__":
     guard()
-    {"seed": seed, "update": update, "browser": browser}[sys.argv[1]]()
+    {"seed": seed, "update": update, "browser": browser,
+     "old-releases": old_releases, "check-archives": check_archives}[sys.argv[1]]()

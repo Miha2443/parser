@@ -9,8 +9,10 @@ for script in docker/*.sh docker/tests/*.sh; do bash -n "$script"; done
 printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_release_history.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collector_browser_recovery.py -v
-for check in check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py; do
+for check in check_archive_old_collision.py check_deduplicate_cache.py check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py; do
   docker compose run --rm --no-deps updater python "scripts/$check"
 done
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; assert Path('/app/data/derived/salary_2011_2012.csv').is_file(); assert Path('/app/data/raw/realty/linear_objects/linear_objects_2026-09-28.json').is_file()"
@@ -70,6 +72,10 @@ curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE NEW'
 export COMPOSE_FILE=docker-compose.yml:docker/tests/compose.fixture.yml
 docker compose up -d --no-deps backend
 sleep 3
+# Exercise archiving through actual Compose DNS and the pinned backend health.
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture old-releases
+docker compose run --rm --no-deps updater python -m docker.publication archive
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture check-archives
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture browser
 docker compose down
 echo 'Debian 12 Compose, browser, publication, readiness rollback and DNS checks passed.'

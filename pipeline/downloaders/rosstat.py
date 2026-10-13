@@ -6,19 +6,17 @@
 
 Внутри переадресует пути rosstat_checker в `paths.DOWNLOADS_DIR` и
 `paths.STATE_DIR / 'rosstat_state.json'`, обходит только нужный
-indicator.source_ids (ключи из PAGE_SOURCES) и архивирует старые xlsx
-по тем же паттернам, что и fedstat-downloader.
+indicator.source_ids (ключи из PAGE_SOURCES) и архивирует только
+подтверждённые предыдущие версии этого ключа.
 """
 from __future__ import annotations
 
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import requests
 
-from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
+from pipeline.paths import DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
 from pipeline.downloaders.local_files import list_local_files
 
@@ -28,18 +26,7 @@ def _find_local(patterns: list[str]) -> list[Path]:
 
 
 def _archive_old(patterns: list[str], keep: list[Path]) -> None:
-    keep_set = {p.resolve() for p in keep}
-    today = datetime.now().strftime("%Y-%m-%d")
-    archive_dir = DATA_ARCHIVE / today
-    for pat in patterns:
-        for f in DOWNLOADS_DIR.glob(pat):
-            if f.resolve() in keep_set:
-                continue
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            target = archive_dir / f.name
-            if target.exists():
-                target = archive_dir / f"{f.stem}_{datetime.now().strftime('%H%M%S')}{f.suffix}"
-            shutil.move(str(f), str(target))
+    """Legacy wildcard API deliberately does nothing; retire by source key only."""
 
 
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:
@@ -56,7 +43,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
 
     rc.DOWNLOAD_DIR = DOWNLOADS_DIR
     # Единое состояние с standalone-чекером (py rosstat_checker.py).
-    rc.STATE_FILE = ROOT / "rosstat_state.json"
+    rc.STATE_FILE = ROOT / "state/rosstat_state.json"
 
     state = rc.load_state()
     session = rc._new_session()
@@ -91,22 +78,25 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             new_date = remote_date or new_date
 
             if remote_date and saved_date == remote_date:
+                if isinstance(saved, dict) and Path(saved.get("filename", "")).name == saved.get("filename"):
+                    rc.retire_download(key, DOWNLOADS_DIR / saved["filename"], saved_date)
                 continue
 
-            filename = rc._filename_for(match["href"])
+            filename = rc._filename_for(match["href"], remote_date=remote_date)
             save_path = DOWNLOADS_DIR / filename
-            if rc.download_file(session, match["href"], referer=url, save_path=save_path):
+            if rc.download_file(session, match["href"], referer=url, save_path=save_path,
+                                source_key=key, remote_date=remote_date):
                 new_files.append(save_path)
                 state[key] = {
                     "date": remote_date or saved_date or "",
                     "filename": filename,
                     "url": match["href"],
                 }
+                rc.save_state(state)
+                rc.retire_download(key, save_path, remote_date, saved.get("filename") if isinstance(saved, dict) else None)
 
     rc.save_state(state)
 
-    if new_files:
-        _archive_old(list(indicator.file_patterns), keep=new_files)
 
     return {
         "new_files": new_files,

@@ -36,6 +36,8 @@ from bs4 import BeautifulSoup
 
 from pipeline.file_utils import stream_response_atomic, validate_excel_file
 from pipeline.state_utils import load_json_state, write_json_atomic
+from pipeline.source_history import history_for
+import tempfile
 
 # Росстат использует сертификаты российского УЦ Минцифры, которых нет в
 # стандартном trust store Python. Поскольку мы GET-им только публичные
@@ -77,8 +79,8 @@ USER_AGENT = (
 
 def load_state() -> dict:
     path = STATE_FILE
-    if not path.exists() and path == Path("state/rosstat_state.json"):
-        path = Path("rosstat_state.json")  # Legacy layout; save goes to state/.
+    if not path.exists() and path.name == "rosstat_state.json" and path.parent.name == "state":
+        path = path.parent.parent / "rosstat_state.json"  # Legacy layout; save goes to state/.
     return load_json_state(path, label="rosstat")
 
 
@@ -300,7 +302,8 @@ def _filename_for(href: str, *, remote_date: str | None = None) -> str:
     return f"{date_prefix}_{stem}{ext}"
 
 
-def download_file(session: requests.Session, href: str, referer: str, save_path: Path) -> bool:
+def download_file(session: requests.Session, href: str, referer: str, save_path: Path,
+                  *, source_key: str | None = None, remote_date=None) -> bool:
     """Скачивает файл в save_path. Возвращает True при успехе."""
     print(f"  ⬇️  {href}")
     try:
@@ -312,7 +315,12 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
             verify=VERIFY_SSL,
         )
         resp.raise_for_status()
-        stream_response_atomic(resp, save_path, validate=validate_excel_file)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".source-staging-", dir=save_path.parent) as directory:
+            candidate = Path(directory) / save_path.name
+            stream_response_atomic(resp, candidate, validate=validate_excel_file)
+            history_for(save_path.parent).install(candidate, save_path,
+                indicator_key=f"rosstat:{source_key or 'unmapped'}", remote_date=remote_date)
         size_kb = save_path.stat().st_size // 1024
         print(f"  ✅ Сохранён: {save_path.name} ({size_kb} КБ)")
         return True
@@ -321,10 +329,20 @@ def download_file(session: requests.Session, href: str, referer: str, save_path:
         return False
 
 
+def retire_download(key, current, remote_date, previous=None):
+    try:
+        records = history_for(DOWNLOAD_DIR).retire(f"rosstat:{key}", current, remote_date=remote_date,
+            legacy_names=[previous] if previous else [], migrate_legacy=bool(remote_date))
+        if records:
+            print(f"  📦 Архив {key}: {len(records)} прежних файлов")
+    except (OSError, ValueError) as exc:
+        print(f"  ⚠️  Архив {key}: старые файлы оставлены на месте ({exc})")
+
+
 def run(force: bool = False) -> list[Path]:
     """force=True — игнорируем state, перекачиваем все источники."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    state = load_state() if not force else {}
+    state = load_state()
     session = _new_session()
     downloaded: list[Path] = []
 
@@ -355,8 +373,10 @@ def run(force: bool = False) -> list[Path]:
             saved = state.get(key, {})
             saved_date = saved.get("date") if isinstance(saved, dict) else ""
 
-            if remote_date and saved_date == remote_date:
+            if not force and remote_date and saved_date == remote_date:
                 print(f"     ✔️  без изменений ({remote_date})")
+                if isinstance(saved, dict) and Path(saved.get("filename", "")).name == saved.get("filename"):
+                    retire_download(key, DOWNLOAD_DIR / saved["filename"], saved_date)
                 continue
 
             if not remote_date:
@@ -370,7 +390,8 @@ def run(force: bool = False) -> list[Path]:
 
             filename = _filename_for(match["href"], remote_date=remote_date)
             save_path = DOWNLOAD_DIR / filename
-            ok = download_file(session, match["href"], referer=url, save_path=save_path)
+            ok = download_file(session, match["href"], referer=url, save_path=save_path,
+                               source_key=key, remote_date=remote_date)
             if ok:
                 downloaded.append(save_path)
                 state[key] = {
@@ -378,6 +399,8 @@ def run(force: bool = False) -> list[Path]:
                     "filename": filename,
                     "url": match["href"],
                 }
+                save_state(state)
+                retire_download(key, save_path, remote_date, saved.get("filename") if isinstance(saved, dict) else None)
             # Маленькая пауза, чтобы не долбить Росстат подряд.
             time.sleep(0.5)
         if not matched_any and items:

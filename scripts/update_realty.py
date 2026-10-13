@@ -53,6 +53,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline.state_utils import load_json_state
+from pipeline.source_history import archive_file, migrate_downloads
 
 REALTY_ROOT = ROOT / "data" / "raw" / "realty"
 LOG_DIR = ROOT / "logs"
@@ -199,22 +200,23 @@ def clear_archive_warnings() -> None:
 def _setup_logging() -> Path:
     """Открывает logs/update_<timestamp>.log на запись; ротирует старые.
 
-    Хранит последние 20 логов прогонов, остальное удаляет — чтоб папка
-    не разрасталась. Возвращает путь к свежему файлу лога.
+    Хранит последние 20 логов в активной папке, остальные бессрочно
+    сохраняет в архиве. Возвращает путь к свежему файлу лога.
     """
     global _LOG_FILE, _LOG_FH
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8]
     _LOG_FILE = LOG_DIR / f"update_{ts}.log"
     _LOG_FH = open(_LOG_FILE, "x", encoding="utf-8", buffering=1)
-    # Ротация — удаляем всё старше 20-го прогона.
+    # Ротация сохраняет историю, уменьшая только активный список.
     old_logs = sorted(p for p in LOG_DIR.glob("update_*.log")
                       if re.fullmatch(r"update_\d{8}_\d{6}(?:_\d{6}_[0-9a-f]{8})?\.log", p.name))
     for path in old_logs[:-20]:
         try:
-            path.unlink()
-        except OSError:
-            pass
+            archive_file(path, root=ROOT, archive_root=LOG_DIR / "_archive",
+                         indicator_key="update_logs", reason="active_log_rotation", move=True)
+        except (OSError, ValueError) as exc:
+            _print(f"⚠️  Старый лог сохранён в активной папке: {exc}")
     return _LOG_FILE
 
 
@@ -323,9 +325,11 @@ def write_realty_status(payload: dict) -> bool:
                                  if re.fullmatch(r"run_\d{8}_\d{6}_\d{6}_[0-9a-f]{8}\.json", p.name))
                 for old in history[:-RUN_HISTORY_LIMIT]:
                     try:
-                        old.unlink()
-                    except OSError as exc:
-                        _print(f"⚠️  Не удалось удалить старую историю {old}: {exc}")
+                        archive_file(old, root=ROOT,
+                            archive_root=REALTY_STATUS_FILE.parent / "_archive/realty_update_runs",
+                            indicator_key="realty_update_runs", reason="active_run_rotation", move=True)
+                    except (OSError, ValueError) as exc:
+                        _print(f"⚠️  Старая история осталась в активной папке: {exc}")
             _write_json_atomic(REALTY_STATUS_FILE, payload)
             return True
         except (OSError, json.JSONDecodeError) as exc:
@@ -785,6 +789,22 @@ def run_source(alias: str, env: dict, force: bool = False,
         if do_archive
         else {}
     )
+    # Preserve bytes before same-day collectors can overwrite their raw names.
+    # A failed backup blocks that collector; cleanup warnings never erase data.
+    if do_archive and alias not in {"fedstat", "rosstat"}:
+        try:
+            for key in before_src:
+                if not key.startswith("realty:"):
+                    continue
+                path = REALTY_ROOT / key.split(":", 1)[1]
+                from pipeline.archive_old import family_of
+                source_rel = path.parent.relative_to(REALTY_ROOT).as_posix()
+                archive_file(path, root=ROOT, archive_root=REALTY_ROOT / "_archive",
+                    indicator_key=f"realty:{source_rel}:{family_of(path)}", category=source_rel,
+                    reason="before_source_run", deduplicate=True)
+        except (OSError, ValueError) as exc:
+            _print(f"❌ {alias}: невозможно сохранить прежние исходники; запуск отменён: {exc}")
+            return False
 
     # Принудительно utf-8 в child: с stdout=PIPE Python берёт кодировку
     # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
@@ -1516,6 +1536,12 @@ def _main():
     final_archive_ok = True
     if not args.no_archive:
         write_active_realty_run_progress(current_stage="archive")
+        if not failures:
+            try:
+                archived_downloads = migrate_downloads(ROOT)
+                _print(f"📦 Старые downloads: архивировано {len(archived_downloads)} уверенно сопоставленных файлов")
+            except (OSError, ValueError) as exc:
+                add_archive_warning(f"downloads migration left old files in place: {exc}")
         final_archive_ok = archive_old(keep=args.keep)
     archive_warnings = get_archive_warnings()
 

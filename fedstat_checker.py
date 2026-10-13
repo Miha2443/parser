@@ -43,6 +43,7 @@ from pipeline.file_utils import stream_response_atomic, validate_excel_file, wri
 from pipeline.selenium_utils import wait_for_download
 from pipeline.state_utils import load_json_state, write_json_atomic
 from pipeline.download_provenance import record_successful_download
+from pipeline.source_history import date_stamp, history_for
 
 
 try:
@@ -168,8 +169,8 @@ FEDSTAT_CHROMEDRIVER_PATH = os.environ.get("FEDSTAT_CHROMEDRIVER_PATH", "").stri
 
 def load_state():
     path = STATE_FILE
-    if not path.exists() and path == Path("state/fedstat_state.json"):
-        path = Path("fedstat_state.json")  # Legacy layout; save goes to state/.
+    if not path.exists() and path.name == "fedstat_state.json" and path.parent.name == "state":
+        path = path.parent.parent / "fedstat_state.json"  # Legacy layout; save goes to state/.
     return load_json_state(path, label="fedstat")
 
 
@@ -1448,7 +1449,7 @@ def _download_34118_period_chunks(
 
 
 @record_successful_download
-def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
+def _download_excel_staged(indicator_id, save_dir, *, remote_date: str | None = None,
                    driver=None, payload_template_override: dict | None = None,
                    save_path_override: Path | None = None,
                    allow_34118_chunks: bool = True, fast_fail: bool = False):
@@ -2391,6 +2392,52 @@ def download_excel(indicator_id, save_dir, *, remote_date: str | None = None,
         return None
 
 
+def current_filename(indicator_id, remote_date):
+    """Exact legacy basename for known source keys; no broad title wildcard."""
+    stamp = date_stamp(remote_date)
+    if not stamp or indicator_id not in INDICATORS:
+        return None
+    title = (_payload_34118_part(indicator_id)["filename_title"]
+             if indicator_id in {"34118_часть1", "34118_часть2"} else INDICATORS[indicator_id])
+    safe = re.sub(r'[\\/*?:"<>|]', "", title)[:80]
+    return f"{stamp}_{safe}.xls"
+
+
+def retire_download(indicator_id, current, remote_date):
+    try:
+        records = history_for(DOWNLOAD_DIR).retire(f"fedstat:{indicator_id}", current,
+                                                  remote_date=remote_date, migrate_legacy=bool(date_stamp(remote_date)))
+        if records:
+            print(f"  📦 Архив {indicator_id}: {len(records)} прежних файлов")
+    except (OSError, ValueError) as exc:
+        print(f"  ⚠️  Архив {indicator_id}: старые файлы оставлены на месте ({exc})")
+
+
+def download_excel(indicator_id, save_dir, **kwargs):
+    """All HTTP/browser/chunk fallbacks write staging; only complete files replace."""
+    save_dir = Path(save_dir)
+    # Resume chunks are internal checkpoints, not active source downloads.
+    if kwargs.get("payload_template_override") is not None and kwargs.get("allow_34118_chunks") is False:
+        return _download_excel_staged(indicator_id, save_dir, **kwargs)
+    override = kwargs.get("save_path_override")
+    destination_dir = Path(override).parent if override is not None else save_dir
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".source-staging-", dir=destination_dir) as directory:
+        staged_args = dict(kwargs)
+        if override is not None:
+            staged_args["save_path_override"] = Path(directory) / Path(override).name
+        candidate = _download_excel_staged(indicator_id, Path(directory), **staged_args)
+        if not candidate:
+            return None
+        target = Path(override) if override is not None else save_dir / Path(candidate).name
+        try:
+            return history_for(destination_dir).install(candidate, target,
+                indicator_key=f"fedstat:{indicator_id}", remote_date=kwargs.get("remote_date"))
+        except (OSError, ValueError) as exc:
+            print(f"  ❌ Подтверждённая замена {indicator_id} не выполнена; прежний файл сохранён: {exc}")
+            return None
+
+
 def run(force: bool = False, only_ids: list[str] | None = None):
     """Update dashboard sources, or an explicit selection from the full catalog.
 
@@ -2466,6 +2513,7 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                         downloaded_without_date.append(indicator_id)
                         checked_ok += 1
                         _mark_run_completed(run_checkpoint, indicator_id, None)
+                        retire_download(indicator_id, saved_path, None)
                         print("  ✅ Скачано напрямую; state по дате не обновляю\n")
                         continue
                 elif DIRECT_DOWNLOAD_ON_DATE_FAILURE:
@@ -2486,6 +2534,9 @@ def run(force: bool = False, only_ids: list[str] | None = None):
             else:
                 print(f"  ✔️  Без изменений ({remote_date})\n")
                 _mark_run_completed(run_checkpoint, indicator_id, remote_date)
+                name = current_filename(indicator_id, saved_date)
+                if name:
+                    retire_download(indicator_id, DOWNLOAD_DIR / name, saved_date)
                 continue
 
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
@@ -2499,6 +2550,7 @@ def run(force: bool = False, only_ids: list[str] | None = None):
                 save_state(state)
                 state_persisted = True
                 _mark_run_completed(run_checkpoint, indicator_id, remote_date)
+                retire_download(indicator_id, saved_path, remote_date)
             else:
                 failed_downloads.append(indicator_id)
             print()

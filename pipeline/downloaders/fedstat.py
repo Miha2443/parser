@@ -11,12 +11,10 @@
 """
 from __future__ import annotations
 
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
-from pipeline.paths import DATA_ARCHIVE, DOWNLOADS_DIR, ROOT
+from pipeline.paths import DOWNLOADS_DIR, ROOT
 from pipeline.registry import Indicator
 from pipeline.downloaders.local_files import list_local_files
 
@@ -32,19 +30,7 @@ def _find_local(patterns: list[str]) -> list[Path]:
 
 
 def _archive_old(patterns: list[str], keep: list[Path]) -> None:
-    """Перемещает старые файлы по паттернам в архив (кроме `keep`)."""
-    keep_set = {p.resolve() for p in keep}
-    today = datetime.now().strftime("%Y-%m-%d")
-    archive_dir = DATA_ARCHIVE / today
-    for pat in patterns:
-        for f in DOWNLOADS_DIR.glob(pat):
-            if f.resolve() in keep_set:
-                continue
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            target = archive_dir / f.name
-            if target.exists():
-                target = archive_dir / f"{f.stem}_{datetime.now().strftime('%H%M%S')}{f.suffix}"
-            shutil.move(str(f), str(target))
+    """Legacy wildcard API deliberately does nothing; retire by source key only."""
 
 
 def fetch(indicator: Indicator, *, download: bool = True) -> dict:
@@ -64,7 +50,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
     fc.DOWNLOAD_DIR = DOWNLOADS_DIR
     # Единое состояние с standalone-чекером (py fedstat_checker.py): один файл,
     # где хранятся даты обновления данных на сайте — чтобы не качать дважды.
-    fc.STATE_FILE = ROOT / "fedstat_state.json"
+    fc.STATE_FILE = ROOT / "state/fedstat_state.json"
 
     state = fc.load_state()
     driver = fc.create_driver(download_dir=DOWNLOADS_DIR)
@@ -85,6 +71,9 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
             new_date = remote_date
             if saved_date == remote_date:
                 unchanged = True
+                name = fc.current_filename(src_id, saved_date)
+                if name:
+                    fc.retire_download(src_id, DOWNLOADS_DIR / name, saved_date)
                 continue
             saved_path = fc.download_excel(
                 src_id, DOWNLOADS_DIR, remote_date=remote_date, driver=driver
@@ -94,6 +83,7 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
                 state[src_id] = remote_date
                 fc.save_state(state)
                 state_persisted = True
+                fc.retire_download(src_id, saved_path, remote_date)
             else:
                 failures.append(f"{src_id}: обновился, но не скачался")
     finally:
@@ -108,8 +98,6 @@ def fetch(indicator: Indicator, *, download: bool = True) -> dict:
 
     # Паттерны общие для нескольких source_ids: при частичном обновлении нельзя
     # архивировать файлы неизменившихся источников вместе со старыми версиями.
-    if new_files and not unchanged:
-        _archive_old(list(indicator.file_patterns), keep=new_files)
 
     return {
         "new_files": new_files,

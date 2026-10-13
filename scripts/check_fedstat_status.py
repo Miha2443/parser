@@ -78,7 +78,7 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
             if not expected_ok or any(date == initial[src] for src, date in dates.items()):
                 archive.assert_not_called()
             elif calls:
-                archive.assert_called_once()
+                archive.assert_not_called()  # Broad indicator patterns must never retire neighbors.
         else:
             files, ok = fc.run(only_ids=list(dates) if only else None)
             _require(ok == expected_ok, "run must fail on any incomplete source")

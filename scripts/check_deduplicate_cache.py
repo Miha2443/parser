@@ -90,10 +90,9 @@ def main() -> int:
             duplicate_key = str(duplicate_active.resolve())
             with redirect_stdout(StringIO()):
                 kept, is_update = dd.deduplicate(duplicate_active, log_prefix="")
-            _require(kept == archive, "deduplicate should keep archive duplicate")
-            _require(not is_update, "duplicate should not be marked as update")
-            _require(not duplicate_active.exists(), "duplicate active file should be removed")
-            _require(duplicate_key not in dd._SHA256_CACHE, "removed duplicate hash should be pruned")
+            _require(kept == duplicate_active, "an archive-only match is still the new active version")
+            _require(is_update, "A -> B -> A must be marked as update")
+            _require(duplicate_active.exists(), "archive match must not remove current file")
             _require(str(archive.resolve()) in dd._SHA256_CACHE, "archive hash should stay cached")
     finally:
         dd.REALTY_ROOT = original_realty_root

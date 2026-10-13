@@ -28,6 +28,7 @@ data/marts/
 
 # Бэкапы и устаревшие выгрузки
 data/raw/_archive/
+/data/raw/realty/_archive/
 data/raw/realty/**/*.tmp
 data/raw/realty/**/*.crdownload
 # Полные отчёты ДСТИ содержат показатели вне дашборда; в Git хранится только срез 1.1–1.4.
@@ -52,7 +53,7 @@ data/gdebenz/
 .env.local
 .env.*.local
 
-# Логи прогонов update_realty.py (ротация хранит последние 20 на диске)
+# Логи прогонов update_realty.py (последние 20 активны, остальные в архиве)
 logs/
 .venv-dashboard/
 # Docker immutable publications and host restart transaction.

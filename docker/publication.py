@@ -1,7 +1,7 @@
 """Copy, validate and atomically publish immutable data for Compose.
 
 Only updater writes /runtime. Host update.sh serializes publication and restart.
-Old releases are intentionally retained: running backends resolve live once.
+Old releases are retained; archive moves require proof of the backend's live release.
 """
 from __future__ import annotations
 
@@ -21,7 +21,8 @@ TREES = ("downloads", "data/processed", "data/marts", "data/derived",
          "data/raw/realty", "logs")
 SOURCES = {"monitoring", "rasprod", "kvart", "construction", "erz-top",
            "erz-cards", "fedstat", "rosstat"}
-EXCLUDED = {"_archive", "archive", "archives", "__pycache__", "temp", "tmp"}
+EXCLUDED = {"_archive", "archive", "archives", "__pycache__", "temp", "tmp",
+            ".fedstat_resume", "_debug"}
 
 
 @contextmanager
@@ -38,7 +39,7 @@ def copy_tree(source: Path, target: Path, *, seed=False):
     if not source.exists():
         return
     for item in source.iterdir():
-        if (item.name.casefold() in EXCLUDED or item.name.startswith("~$")
+        if (item.name.casefold() in EXCLUDED or item.name.startswith(("~$", ".source-staging-"))
                 or item.suffix.casefold() in {".tmp", ".part", ".crdownload", ".download"}):
             continue
         if item.is_symlink():
@@ -188,11 +189,20 @@ def transaction(runtime, action):
         return  # Keep journal until the restored backend becomes ready.
     elif live_target(runtime) not in {record["next"], record["previous"]}:
         raise RuntimeError("Cannot acknowledge another release")
+    if live_target(runtime) == record["next"]:
+        # Retain the explicit rollback reserve even if newer failed releases exist.
+        from docker.release_history import _write_record
+        _write_record(runtime / "previous-good.json", {
+            "current": record["next"], "previous": record["previous"],
+        })
     pending.unlink()
 
 
 def run_action(action, root, runtime):
-    if action in {"rollback", "ack"}:
+    if action == "archive":
+        from docker.release_history import archive_releases
+        archive_releases(runtime, keep=int(os.environ.get("RELEASE_KEEP", "3")))
+    elif action in {"rollback", "ack"}:
         transaction(runtime, action)
     elif action == "seed":
         seed(root)
@@ -218,7 +228,7 @@ def run_action(action, root, runtime):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["update", "seed", "publish", "validate-api", "rollback", "ack"])
+    parser.add_argument("action", choices=["update", "seed", "publish", "validate-api", "rollback", "ack", "archive"])
     args = parser.parse_args()
     root, runtime = Path("/app"), Path("/runtime")
     if args.action == "validate-api":

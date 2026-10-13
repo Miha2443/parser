@@ -214,10 +214,13 @@ class TransportTests(unittest.TestCase):
         session = Mock()
         session.post.side_effect = fc.requests.RequestException("503")
         chunk_result = self.root / "chunked.xls"
-        chunk_result.write_bytes(self.excel)
+        def staged_chunks(indicator_id, payload_template, save_dir, save_path, **kwargs):
+            result = Path(save_dir) / chunk_result.name
+            result.write_bytes(self.excel)
+            return result
         with patch.object(fc.requests, "Session", return_value=session), \
                 patch.object(fc, "_export_post_with_token", return_value=self.entries), \
-                patch.object(fc, "_download_34118_period_chunks", return_value=chunk_result) as chunks, \
+                patch.object(fc, "_download_34118_period_chunks", side_effect=staged_chunks) as chunks, \
                 redirect_stdout(StringIO()):
             result = fc.download_excel("34118_часть2", self.root, remote_date="19.09.2026")
         self.assertEqual(result, chunk_result)

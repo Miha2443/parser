@@ -74,4 +74,9 @@ if ! restart_backend; then
 fi
 control ack
 docker compose up -d --no-deps web
+# Archiving follows restart, data-route readiness and acknowledgement.
+# Storage problems must not roll back an already healthy site.
+if ! control archive; then
+  echo 'WARNING: release archiving failed; healthy site retained, old releases remain available.' >&2
+fi
 echo "Update complete: $(readlink runtime/live)"

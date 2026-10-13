@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -59,7 +60,9 @@ def main() -> int:
             _require(office_lock.exists(), "office lock file should remain outside archive")
             _require(existing_archive.read_text(encoding="utf-8") == "existing archive", "existing archive file should remain")
 
-            collision_copy = existing_archive.with_name("monitoring_2_0_20260701_1.xlsx")
+            records = [json.loads(line) for line in (archive_root / "index.jsonl").read_text(encoding="utf-8").splitlines()]
+            _require(len(records) == 1, "archived move must have a durable index record")
+            collision_copy = realty_root / records[0]["archive_path"]
             _require(collision_copy.is_file(), "archive collision should create suffixed file")
             _require(collision_copy.read_text(encoding="utf-8") == "old active", "suffixed archive should contain moved file")
     finally:

@@ -1,8 +1,8 @@
 """Дедупликация скачанных файлов по контенту.
 
 Используется парсерами и update_realty: после скачивания нового файла
-смотрим на последний в архиве. Если содержимое идентичное —
-удаляем новый, не засчитываем как обновление.
+сравниваем с самой новой активной версией того же семейства. Только
+её идентичная копия удаляется; совпадение с архивом сохраняет обновление.
 
 API:
     is_duplicate_of_latest(new_file) -> Path | None
@@ -230,12 +230,18 @@ def deduplicate(
     """
     if not new_file.is_file():
         return None, False
-    dup = is_duplicate_of_latest(new_file, index=index)
+    # Destructive deduplication must compare ONLY the latest active predecessor
+    # in this directory. An archive match may represent a real A -> B -> A update.
+    siblings = [path for path in find_active_siblings(_family_key(new_file), exclude=new_file, index=index)
+                if path.is_file() and not path.is_symlink() and path.parent.resolve() == new_file.parent.resolve()]
+    latest = max(siblings, key=lambda path: path.stat().st_mtime_ns) if siblings else None
+    dup = (latest if latest is not None and latest.stat().st_size == new_file.stat().st_size
+           and _file_sha256(latest) == _file_sha256(new_file) else None)
     if dup is not None:
         try:
             new_file.unlink()
         except OSError:
-            pass
+            return new_file, True
         _prune_sha256_cache()
         print(f"{log_prefix}↩️  без изменений (дубль {dup.name}) — удалён {new_file.name}")
         return dup, False

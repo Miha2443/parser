@@ -28,12 +28,20 @@ class PublicationTests(unittest.TestCase):
             (source / "_archive").mkdir()
             (source / "_archive/old.xlsx").write_bytes(b"archive")
             (source / "partial.crdownload").write_bytes(b"partial")
+            for directory in (".fedstat_resume", ".source-staging-interrupted", "_debug"):
+                (source / directory).mkdir()
+                (source / directory / "working.xlsx").write_bytes(b"private working data")
+            (source / ".download_receipts").mkdir()
+            (source / ".download_receipts/input.xlsx.json").write_text("confirmed provenance")
             p.copy_tree(source, target)
             self.assertEqual(original.stat().st_mtime_ns, (target / original.name).stat().st_mtime_ns)
             original.write_bytes(b"new mutable workbook")
             self.assertEqual((target / original.name).read_bytes(), b"old workbook")
             self.assertFalse((target / "_archive").exists())
             self.assertFalse((target / "partial.crdownload").exists())
+            for directory in (".fedstat_resume", ".source-staging-interrupted", "_debug"):
+                self.assertFalse((target / directory).exists())
+            self.assertEqual((target / ".download_receipts/input.xlsx.json").read_text(), "confirmed provenance")
 
     def test_seed_never_overwrites_operator_files(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
+from pipeline.source_history import archive_file
 
 REALTY_ROOT = Path(__file__).resolve().parent.parent / "data" / "raw" / "realty"
 ARCHIVE_ROOT = REALTY_ROOT / "_archive"
@@ -66,11 +65,13 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
     kvartirografia_*).
     """
     src_dir = REALTY_ROOT / source_rel
+    if not src_dir.resolve().is_relative_to(REALTY_ROOT.resolve()) or src_dir.is_symlink():
+        return {}
     if not src_dir.exists():
         return {}
     families: dict[str, list[Path]] = {}
     for f in src_dir.iterdir():
-        if not f.is_file():
+        if not f.is_file() or f.is_symlink():
             continue
         if not is_archivable_file(f):
             continue
@@ -85,24 +86,12 @@ def scan_source(source_rel: str, prefixes: list[str] | None = None) -> dict[str,
     return families
 
 
-def _unique_archive_dest(dest: Path) -> Path:
-    """Return a non-existing archive destination, preserving the original suffix."""
-    if not dest.exists():
-        return dest
-    for i in range(1, 1000):
-        candidate = dest.with_name(f"{dest.stem}_{i}{dest.suffix}")
-        if not candidate.exists():
-            return candidate
-    raise RuntimeError(f"cannot allocate unique archive path for {dest}")
-
-
 def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
                       prefixes: list[str] | None = None) -> int:
     """Архивирует устаревшие файлы. Возвращает количество перемещённых."""
     families = scan_source(source_rel, prefixes=prefixes)
     if not families:
         return 0
-    today = datetime.now().strftime("%Y-%m-%d")
     moved = 0
     for fam, files in sorted(families.items()):
         if len(files) <= keep:
@@ -113,25 +102,18 @@ def archive_directory(source_rel: str, keep: int, dry_run: bool = False,
         if not stale:
             continue
         for old in stale:
-            # Извлекаем дату из имени файла для папки архива
-            m = DATE_RE.search(old.stem)
-            date_tag = m.group(1) if m else "unknown"
-            # Нормализуем дату: 20260604 → 2026-06-04
-            if len(date_tag) == 8 and date_tag.isdigit():
-                date_tag = f"{date_tag[:4]}-{date_tag[4:6]}-{date_tag[6:8]}"
-            dest_dir = ARCHIVE_ROOT / date_tag / source_rel
-            dest = dest_dir / old.name
             if dry_run:
-                print(f"  [DRY] {old.relative_to(REALTY_ROOT)} -> _archive/{date_tag}/{source_rel}/{old.name}")
+                print(f"  [DRY] {old.relative_to(REALTY_ROOT)} -> _archive/<archive-date>/<source>/<version>/{old.name}")
             else:
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                dest = _unique_archive_dest(dest)
                 try:
-                    shutil.move(str(old), str(dest))
-                except OSError as exc:
+                    root = REALTY_ROOT.parents[2] if REALTY_ROOT.parts[-3:] == ("data", "raw", "realty") else REALTY_ROOT
+                    record = archive_file(old, root=root, archive_root=ARCHIVE_ROOT,
+                        indicator_key=f"realty:{source_rel}:{fam}", category=source_rel,
+                        reason="older_active_version", move=True, deduplicate=True)
+                except (OSError, ValueError) as exc:
                     print(f"  [WARN] skip locked file: {old.name} ({exc})")
                     continue
-                print(f"  [ARCHIVE] {old.name} -> _archive/{date_tag}/{source_rel}/")
+                print(f"  [ARCHIVE] {old.name} -> {record['archive_path']}")
             moved += 1
     return moved
 

@@ -4,15 +4,25 @@ on:
   push:
     branches: [linux-docker]
   workflow_dispatch:
+    inputs:
+      live_public:
+        description: Also verify the six real public network sources in a fresh Debian container
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: docker-debian12-${{ github.ref }}
-  cancel-in-progress: true
+  group: docker-debian12-${{ github.event_name == 'workflow_dispatch' && inputs.live_public && 'live-public' || github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.live_public) }}
 
 jobs:
+  live-public:
+    if: github.event_name == 'workflow_dispatch' && inputs.live_public
+    uses: ./.github/workflows/live-public-debian12.yml
+
   compose:
     runs-on: ubuntu-24.04
     timeout-minutes: 40

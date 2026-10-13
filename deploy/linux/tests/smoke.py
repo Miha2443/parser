@@ -40,6 +40,16 @@ def seed(name="DEBIAN SMOKE OLD"):
                        "Дата выдачи": pd.Timestamp("2025-01-01"),
                        "Статус объекта": "Строящийся"}]).to_excel(
             writer, sheet_name="Реестр ОКС", index=False)
+        # Test-only monthly source: match the real named housing block/calendar
+        # layout, rather than letting an absent history pass publication.
+        from pipeline.data_access import MONTH_NAMES_RU
+        history = pd.DataFrame([[None] * 18 for _ in range(5)])
+        history.iloc[1, 5] = "Ввод жилья"
+        history.iloc[2, 5] = "Год"
+        history.iloc[2, 6:18] = MONTH_NAMES_RU
+        history.iloc[3, 5] = 2011
+        history.iloc[3, 6:18] = list(range(10, 22))
+        history.to_excel(writer, sheet_name="Данные с 2011 года", header=False, index=False)
     # Full positive publication fixture. Approved manual histories are copied
     # from Git; every dynamic source below has explicit synthetic records.
     repository = Path(__file__).resolve().parents[3]

@@ -199,6 +199,7 @@ class CoverageTests(unittest.TestCase):
         from backend.app import create_app
         from fastapi.testclient import TestClient
         validate_sources(self.access())
+        self.assertEqual(len(self.access().load_monitoring_operational_history()["housing_monthly"]), 12)
         with patch.dict(os.environ, {"PARSER_ROOT": str(self.root), "PARSER_DOWNLOADS": str(self.root / "downloads"),
                                      "PARSER_REQUIRE_REALTY_MARTS": "1"}), TestClient(create_app()) as client:
             def get(route):
@@ -213,6 +214,29 @@ class CoverageTests(unittest.TestCase):
                     return get(route)
                 with self.subTest(missing=missing), self.assertRaises(RuntimeError):
                     validate_pages(broken)
+
+    def test_missing_housing_title_header_or_sheet_cannot_publish_coherent_marts(self):
+        from docker.coverage import validate_sources
+        from openpyxl import load_workbook
+        source = next((self.root / "data/raw/realty/nashdom").glob("monitoring_*.xlsx"))
+        original = source.read_bytes()
+        for missing in ("title", "header", "sheet"):
+            source.write_bytes(original)
+            workbook = load_workbook(source)
+            sheet = workbook["Данные с 2011 года"]
+            if missing == "title":
+                sheet["F2"] = "Другой показатель"
+            elif missing == "header":
+                sheet["G3"] = "Нет месяца"
+            else:
+                workbook.remove(sheet)
+            workbook.save(source)
+            workbook.close()
+            with self.subTest(missing=missing):
+                self.build(self.root)  # Fresh source metadata and valid structural marts.
+                self.assertTrue(self.access().load_monitoring_operational_history()["housing_monthly"].empty)
+                with self.assertRaisesRegex(RuntimeError, "operational housing monthly history is empty"):
+                    validate_sources(self.access())
 
     def test_each_required_dynamic_source_missing_fails_with_coherent_manifest(self):
         from docker.coverage import validate_sources

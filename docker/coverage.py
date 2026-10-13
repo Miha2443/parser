@@ -52,6 +52,20 @@ def require_construction_sales(row, label):
         require(finite(row.get(field)), label + " lacks measured " + field)
 
 
+def validate_monitoring_history(access):
+    """The named monthly housing source is mandatory for publication."""
+    history = access.load_monitoring_operational_history()["housing_monthly"]
+    require_frame(history, "operational housing monthly history", numeric=("value_thousand_m2",))
+    require({"year", "month", "value_thousand_m2"} <= set(history.columns), "operational housing history schema is invalid")
+    require(not history.duplicated(["year", "month"]).any(), "operational housing history contains duplicate periods")
+    for row in history.to_dict("records"):
+        year, month, value = row["year"], row["month"], row["value_thousand_m2"]
+        require(finite(year) and year > 0 and year == int(year) and finite(month) and month == int(month)
+                and 1 <= month <= 12 and finite(value) and value >= 0,
+                "operational housing history contains invalid periods/measurements")
+    return history
+
+
 def kvart_details_match(actual, expected):
     from pipeline.rasprod_contract import number
     if not isinstance(actual, dict) or set(actual) != set(expected):
@@ -177,21 +191,7 @@ def validate_erz_cards(access, canonical):
                 require(number(row.get(column)) == value, "erz-cards canonical measurement differs from its source")
 
 
-def validate_sources(access):
-    """Read canonical marts directly so a raw/derived fallback cannot mask gaps."""
-    from pipeline.build_realty_marts import _specs
-    from pipeline.data_access import NA_INDICATORS, RASPROD_TABLE_SHEETS
-    from pipeline.registry import by_id
-
-    payloads = {}
-    for spec in _specs(access):
-        files = access.source_files(spec.name)
-        require(files, f"{spec.name} has no source files")
-        payloads[spec.name] = access._load_realty_mart(spec.name, files)
-    monitoring = payloads["monitoring_2_0"]
-    for key in ("rv", "oks"):
-        require_frame(monitoring.get(key), "monitoring/" + key, numeric=("Общая площадь",))
-    kvart = payloads["kvartirografia"]
+def validate_kvart_sources(access, kvart):
     kvart_jsons = [path for path in access.source_files("kvartirografia") if path.suffix == ".json"]
     require(kvart_jsons, "kvartirografia has no collector coverage JSON")
     raw_kvart = json.loads(max(kvart_jsons, key=lambda path: path.stat().st_mtime_ns).read_text(encoding="utf-8"))
@@ -284,7 +284,9 @@ def validate_sources(access):
                     require(finite(value) and math.isclose(value, float(item["apartments"][room][field]), rel_tol=1e-10, abs_tol=1e-8),
                             "kvartirografia canonical measurement differs from verified API detail")
 
-    construction = payloads["construction_operational"]
+
+
+def validate_construction_sources(access, construction):
     require(any(p.name.startswith("construction_operational_") for p in access.source_files("construction_operational")),
             "construction has no dynamic snapshot")
     require_frame(construction.get("construction"), "construction", regions=True, numeric=("value_thousand_m2",))
@@ -292,19 +294,12 @@ def validate_sources(access):
     for row in construction["sales"].to_dict("records"):
         require_construction_sales(row, "construction/sales/" + str(row.get("region_key")))
     require_frame(construction.get("permits"), "construction/permits", numeric=("value_thousand_m2",))
-    rasprod = payloads["rasprodannost"]
+
+
+def validate_economic_sources(access):
+    from pipeline.data_access import NA_INDICATORS
+    from pipeline.registry import by_id
     from pipeline.source_records import file_sha256
-    validate_rasprod_sources(access, rasprod)
-    top = payloads["erzrf_top"]
-    for key in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod", "potreb_kachestva", "skorost"):
-        for region in ("rf", "msk"):
-            require_frame(top.get(key, {}).get(region), f"erz-top/{key}/{region}")
-    require_frame(payloads["erzrf_cards"], "erz-cards")
-    validate_erz_cards(access, payloads["erzrf_cards"])
-    require_frame(payloads["escrow_manual"], "escrow_manual")
-    require(any(getattr(frame, "empty", True) is False for frame in payloads["vvod_static"].values()),
-            "vvod_static is empty")
-    require_frame(payloads["emiss_34118"], "emiss_34118")
     from pipeline.download_provenance import receipt_path
     fedstat_ids = {"43246", "57824", "31074_часть1", "31074_часть2", "34118_часть1", "34118_часть2"}
     verified_downloads = {}
@@ -341,6 +336,38 @@ def validate_sources(access):
             regions = frame.region.astype(str).str.casefold()
             require(regions.str.contains("моск").any() and regions.str.contains("российская федерация").any(),
                     f"{identifier} lacks Moscow/RF")
+
+    return verified_downloads
+
+
+def validate_sources(access):
+    """Read canonical marts directly so a raw/derived fallback cannot mask gaps."""
+    from pipeline.build_realty_marts import _specs
+
+    payloads = {}
+    for spec in _specs(access):
+        files = access.source_files(spec.name)
+        require(files, f"{spec.name} has no source files")
+        payloads[spec.name] = access._load_realty_mart(spec.name, files)
+    monitoring = payloads["monitoring_2_0"]
+    for key in ("rv", "oks"):
+        require_frame(monitoring.get(key), "monitoring/" + key, numeric=("Общая площадь",))
+    validate_monitoring_history(access)
+    validate_kvart_sources(access, payloads["kvartirografia"])
+    validate_construction_sources(access, payloads["construction_operational"])
+    rasprod = payloads["rasprodannost"]
+    validate_rasprod_sources(access, rasprod)
+    top = payloads["erzrf_top"]
+    for key in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod", "potreb_kachestva", "skorost"):
+        for region in ("rf", "msk"):
+            require_frame(top.get(key, {}).get(region), f"erz-top/{key}/{region}")
+    require_frame(payloads["erzrf_cards"], "erz-cards")
+    validate_erz_cards(access, payloads["erzrf_cards"])
+    require_frame(payloads["escrow_manual"], "escrow_manual")
+    require(any(getattr(frame, "empty", True) is False for frame in payloads["vvod_static"].values()),
+            "vvod_static is empty")
+    require_frame(payloads["emiss_34118"], "emiss_34118")
+    validate_economic_sources(access)
 
 
 def validate_pages(get):

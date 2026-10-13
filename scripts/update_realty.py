@@ -1350,9 +1350,9 @@ def _main():
                         help="Передать --force в чекеры (игнорировать state, "
                              "пере-скачать всё; для rasprodannost включает "
                              "--full-rasprod-history)")
-    parser.add_argument("--retries", type=int, default=2,
+    parser.add_argument("--retries", type=int, default=0,
                         help="Сколько раз повторять упавшие источники "
-                             "(default: 2; задержка 30/60с между раундами)")
+                             "(default: 0; дополнительные раунды только по явному --retries N)")
     args = parser.parse_args()
     if args.keep < 1 or args.retries < 0:
         parser.error("--keep must be >= 1 and --retries must be >= 0")

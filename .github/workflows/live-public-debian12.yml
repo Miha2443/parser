@@ -1,0 +1,52 @@
+name: Live public sources on Debian 12
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-public-debian12
+  cancel-in-progress: false
+
+jobs:
+  public:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the production Debian 12 updater
+        run: docker build -f docker/updater.Dockerfile -t parser-live-public .
+      - name: Create a fresh container without mounts or private configuration
+        run: |
+          docker create --name parser-live-public --shm-size=10g --user root \
+            -e PARSER_LIVE_PUBLIC_SMOKE=1 -e TDM_DISABLED=1 -e PARALLEL_LIMIT=1 \
+            -e KVART_PER_DEV=1 -e HEADLESS_MODE=new -e PARSER_ROOT=/app \
+            -e PARSER_DOWNLOADS=/app/downloads -e PARSER_GIT_SHA="$GITHUB_SHA" \
+            --entrypoint sh parser-live-public \
+            -c 'mkdir -p /runtime && chown op:op /runtime && exec runuser -u op -- python -u -m docker.tests.live_public'
+          test "$(docker inspect -f '{{len .Mounts}}' parser-live-public)" = 0
+      - name: Collect six public sources and verify source, ETL and API evidence
+        run: |
+          docker start -a parser-live-public
+          test "$(docker wait parser-live-public)" = 0
+      - name: Collect only verification metadata and logs
+        if: always()
+        run: |
+          mkdir -p live-public-report
+          docker logs parser-live-public > live-public-report/container.log 2>&1 || true
+          docker cp parser-live-public:/app/logs/live-public/. live-public-report/ || true
+          docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} mounts={{len .Mounts}}' parser-live-public > live-public-report/container-status.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-public-debian12-report
+          path: live-public-report
+          retention-days: 7
+      - name: Stop the disposable verification container
+        if: always()
+        run: docker rm -f parser-live-public || true

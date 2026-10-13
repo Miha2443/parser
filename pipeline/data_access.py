@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import json
+import math
 import re
 import fnmatch
 from collections.abc import Callable
@@ -179,6 +180,57 @@ def latest_period(df: pd.DataFrame) -> str:
     last_year = int(months_only["year"].max())
     last_month = int(months_only[months_only["year"] == last_year]["month"].max())
     return f"январь–{MONTH_NAMES_RU[last_month - 1]} {last_year}"
+
+
+def _parse_monitoring_housing_history(frame: pd.DataFrame) -> pd.DataFrame:
+    """Read only the named housing block, never repeated years in IHS/MKD/RS."""
+    columns = ["year", "month", "value_thousand_m2"]
+    empty = pd.DataFrame(columns=columns)
+    if frame.shape[1] < 18:
+        return empty
+    def text(value):
+        return re.sub(r"\s+", " ", str(value)).strip().casefold() if pd.notna(value) else ""
+    titles = [index for index in range(len(frame)) if text(frame.iat[index, 5]) == "ввод жилья"]
+    if not titles:
+        return empty
+    if len(titles) != 1:
+        raise ValueError("Monitoring housing history has multiple named housing blocks")
+    start = titles[0] + 1
+    end = len(frame)
+    for index in range(start, len(frame)):
+        label = text(frame.iat[index, 5])
+        year = _to_float(frame.iat[index, 5])
+        if label and label != "год" and pd.isna(year):
+            end = index
+            break
+    months = ["январь", "февраль", "март", "апрель", "май", "июнь",
+              "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+    headers = [index for index in range(start, end)
+               if [text(value) for value in frame.iloc[index, 6:18]] == months]
+    if not headers:
+        return empty
+    if len(headers) != 1:
+        raise ValueError("Monitoring housing history has multiple month headers")
+    rows, periods = [], set()
+    for index in range(headers[0] + 1, end):
+        year = _to_float(frame.iat[index, 5])
+        if pd.isna(year):
+            continue
+        if not math.isfinite(year) or year <= 0 or year != int(year):
+            raise ValueError("Monitoring housing history contains an invalid year")
+        for month, column in enumerate(range(6, 18), 1):
+            raw = frame.iat[index, column]
+            value = float("nan") if str(raw).strip().startswith(("<", ">")) else _to_float(raw)
+            if pd.isna(value):
+                continue
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("Monitoring housing history contains an invalid measurement")
+            period = (int(year), month)
+            if period in periods:
+                raise ValueError("Monitoring housing history contains duplicate year/month")
+            periods.add(period)
+            rows.append({"year": int(year), "month": month, "value_thousand_m2": value})
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _parse_kvart_number(value) -> float | None:
@@ -2163,27 +2215,16 @@ class DataAccess:
         except Exception:  # noqa: BLE001
             return empty
 
-        def number(value: object) -> float:
-            return _to_float(value)
-
-        housing_rows: list[dict[str, object]] = []
-        # In the source layout each housing row has its year in column F and
-        # January–December in G:R.
-        for i in range(len(frame)):
-            year = number(frame.iat[i, 5]) if frame.shape[1] > 5 else float("nan")
-            if not pd.notna(year) or not 2011 <= int(year) <= 2100:
-                continue
-            for month, col in enumerate(range(6, 18), start=1):
-                value = number(frame.iat[i, col]) if col < frame.shape[1] else float("nan")
-                if pd.notna(value):
-                    housing_rows.append({"year": int(year), "month": month, "value_thousand_m2": value})
+        housing = _parse_monitoring_housing_history(frame)
+        if housing.empty:
+            self._report_issue("warning", "Monthly housing history lacks the named housing block/month header; values remain unknown")
 
         match = re.search(r"(20\d{6})", latest.name)
         source_date = ""
         if match:
             source_date = f"{match.group(1)[6:8]}.{match.group(1)[4:6]}.{match.group(1)[:4]}"
         return {
-            "housing_monthly": pd.DataFrame(housing_rows),
+            "housing_monthly": housing,
             "source_file": str(latest),
             "source_date": source_date,
         }

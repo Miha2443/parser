@@ -404,6 +404,19 @@ def _open_auth_page(driver) -> bool:
         WebDriverWait(driver, 15).until(_auth_page_ready)
         return True
     except (TimeoutException, WebDriverException):
+        try:
+            info = driver.execute_script("""
+                const body=(document.body?.innerText || '').trim();
+                return {host: location.hostname, path: location.pathname,
+                    title: document.title.slice(0,120), bodyLength: body.length,
+                    serverError: /temporarily unavailable|bad gateway|access denied|forbidden|service unavailable/i.test(body),
+                    authControls: [...document.querySelectorAll('[title],[aria-label],header button,header a')].filter(e=>
+                        e.offsetParent!==null && /вход|войти|выход|выйти|личный кабинет/i.test(
+                            e.getAttribute('title') || e.getAttribute('aria-label') || e.innerText || '')).length};
+            """)
+            print("  ⚠️  Интерфейс входа ЕРЗ не готов: " + json.dumps(info, ensure_ascii=False))
+        except WebDriverException:
+            print("  ⚠️  Интерфейс входа ЕРЗ не готов; браузер не предоставил диагностику")
         return False
 
 

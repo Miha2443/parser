@@ -33,6 +33,16 @@ class ReportError(ValueError):
     pass
 
 
+class TransportError(ReportError):
+    """A failed request can be retried once; semantic report errors cannot."""
+    def __init__(self, url, response):
+        self.status = response.get("status") if isinstance(response, dict) else None
+        self.retryable = (self.status in {403, 408, 429} or
+                          isinstance(self.status, int) and 500 <= self.status <= 599 or
+                          isinstance(response, dict) and bool(response.get("error")))
+        super().__init__(f"API request failed: {url}: {response}")
+
+
 def number(value) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ReportError(f"expected numeric API value, got {value!r}")
@@ -94,7 +104,7 @@ def fetch(driver, request_urls: list[str]) -> list[dict]:
     for url, response in zip(request_urls, result):
         if (not isinstance(response, dict) or response.get("url") != url
                 or response.get("status") != 200 or not isinstance(response.get("data"), dict)):
-            raise ReportError(f"API request failed: {url}: {response}")
+            raise TransportError(url, response)
         data.append(response["data"])
     return data
 

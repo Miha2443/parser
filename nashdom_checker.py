@@ -32,6 +32,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -3243,10 +3244,28 @@ def fetch_rasprodannost(state: dict) -> tuple[list[Path], bool]:
                     # site's rate limit during the first 160-month download.
                     selenium_sleep(2.5)
                     try:
-                        index, charts, ready = api.fetch(driver, api.urls(
-                            region["key"], ["index", "charts", "ready-year-charts"], year, month))
-                        data = api.report(region["key"], year, month, series[(year, month)],
-                                          index, charts, ready, page_url=url)
+                        for report_attempt in range(2):
+                            try:
+                                index, charts, ready = api.fetch(driver, api.urls(
+                                    region["key"], ["index", "charts", "ready-year-charts"], year, month))
+                                data = api.report(region["key"], year, month, series[(year, month)],
+                                                  index, charts, ready, page_url=url)
+                                break
+                            except api.TransportError as transport:
+                                if report_attempt or not transport.retryable:
+                                    raise
+                                flush()
+                                print(f"       · API HTTP {transport.status}: пауза 15 сек, затем один повтор этого периода")
+                                # Respect the server's cooldown; GUI sleep scaling
+                                # must not shrink rate-limit recovery delays.
+                                time.sleep(15)
+                                driver.quit()
+                                driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+                                driver.set_page_load_timeout(PAGE_TIMEOUT)
+                                driver.get(region_url)
+                                WebDriverWait(driver, 45).until(
+                                    lambda d: all(re.search(r"\d", value) for value in _rasprod_content_signature(d))
+                                )
                     except (api.ReportError, WebDriverException) as exc:
                         consecutive_failures += 1
                         print(f"       ⚠️  API-период не подтверждён: {exc}")

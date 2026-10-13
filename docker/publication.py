@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -135,7 +136,7 @@ def require_target(runtime, target):
     releases = runtime / "releases"
     selected = runtime / path
     if (path.is_absolute() or len(path.parts) != 2 or path.parts[0] != "releases"
-            or path.parts[1] in {"..", "."} or releases.is_symlink()
+            or path.parts[1] in {"..", "."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", path.parts[1]) or releases.is_symlink()
             or selected.is_symlink() or not selected.is_dir()
             or selected.resolve().parent != releases.resolve()):
         raise RuntimeError("Unsafe release target")
@@ -179,16 +180,44 @@ def publish(root, runtime):
             shutil.rmtree(candidate)
 
 
-def transaction(runtime, action):
+def recovery_info(runtime):
+    """Read and validate every transaction boundary before any recovery mutation."""
     pending = runtime / "pending.json"
+    if pending.is_symlink():
+        raise RuntimeError("Recovery journal must be a regular file")
     if not pending.exists():
-        return
+        return None
     record = json.loads(pending.read_text(encoding="utf-8"))
+    if (not isinstance(record, dict) or set(record) != {"previous", "next"}
+            or not isinstance(record["previous"], str) or not isinstance(record["next"], str)
+            or record["previous"] == record["next"]):
+        raise RuntimeError("Invalid recovery journal; inspect runtime/pending.json")
+    require_target(runtime, record["next"])
+    if record["previous"]:
+        require_target(runtime, record["previous"])
+    live = live_target(runtime)
+    if live not in {record["next"], record["previous"]}:
+        raise RuntimeError("Recovery journal does not match live release; no mutation allowed")
+    return {**record, "live": live}
+
+
+def transaction(runtime, action):
+    record = recovery_info(runtime)
+    if record is None:
+        return
+    pending = runtime / "pending.json"
     if action == "rollback":
+        if not record["previous"]:
+            raise RuntimeError("No previous immutable release; refusing destructive rollback")
         swap(runtime, record["previous"])
         return  # Keep journal until the restored backend becomes ready.
-    elif live_target(runtime) not in {record["next"], record["previous"]}:
-        raise RuntimeError("Cannot acknowledge another release")
+    if action == "activate-next":
+        swap(runtime, record["next"])
+        return
+    if action != "ack":
+        raise RuntimeError("Unknown recovery action")
+    if not record["live"]:
+        raise RuntimeError("Cannot acknowledge an unpublished bootstrap release")
     if live_target(runtime) == record["next"]:
         # Retain the explicit rollback reserve even if newer failed releases exist.
         from docker.release_history import _write_record
@@ -202,7 +231,13 @@ def run_action(action, root, runtime):
     if action == "archive":
         from docker.release_history import archive_releases
         archive_releases(runtime, keep=int(os.environ.get("RELEASE_KEEP", "3")))
-    elif action in {"rollback", "ack"}:
+    elif action == "recovery-info":
+        record = recovery_info(runtime)
+        if record is None:
+            raise RuntimeError("No recovery journal")
+        # Validated tokens only; '-' represents the empty bootstrap predecessor.
+        print(" ".join(record[key] or "-" for key in ("previous", "next", "live")), flush=True)
+    elif action in {"rollback", "ack", "activate-next"}:
         transaction(runtime, action)
     elif action == "seed":
         seed(root)
@@ -228,7 +263,7 @@ def run_action(action, root, runtime):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["update", "seed", "publish", "validate-api", "rollback", "ack", "archive"])
+    parser.add_argument("action", choices=["update", "seed", "publish", "validate-api", "rollback", "ack", "archive", "recovery-info", "activate-next"])
     args = parser.parse_args()
     root, runtime = Path("/app"), Path("/runtime")
     if args.action == "validate-api":

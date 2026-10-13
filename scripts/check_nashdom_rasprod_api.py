@@ -122,6 +122,7 @@ class Checks(unittest.TestCase):
             stack.enter_context(patch.object(nc, "DOWNLOAD_DIR", directory))
             stack.enter_context(patch.object(nc, "create_chrome", side_effect=lambda **kwargs: factory()))
             stack.enter_context(patch.object(nc, "selenium_sleep"))
+            stack.enter_context(patch.object(nc.time, "sleep"))
             stack.enter_context(patch.object(api, "fetch", side_effect=callback))
             stack.enter_context(redirect_stdout(StringIO()))
             state = {}
@@ -141,7 +142,7 @@ class Checks(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(len(files), 2)
             self.assertTrue(state["rasprodannost"]["complete"])
-            self.assertEqual(len(json.loads(next(p for p in files if p.suffix == ".json").read_text())), 4)
+            self.assertEqual(len(json.loads(next(p for p in files if p.suffix == ".json").read_text(encoding="utf-8"))), 4)
             self.assertFalse((folder / "._rasprodannost_progress.json").exists())
             calls.clear()
             (files, ok), _ = self.collect(folder, callback)
@@ -193,10 +194,45 @@ class Checks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (files, ok), _ = self.collect(Path(tmp), callback, CountingDriver)
             self.assertTrue(ok)
-            data = json.loads(next(p for p in files if p.suffix == ".json").read_text())
+            data = json.loads(next(p for p in files if p.suffix == ".json").read_text(encoding="utf-8"))
             self.assertEqual(len(data), 48)
         self.assertEqual(len(drivers), 4)
         self.assertTrue(all(driver.closed for driver in drivers))
+
+    def test_transient_403_retries_only_failed_month_and_keeps_full_history(self):
+        calls = []
+        def callback(driver, request_urls):
+            if "/dynamics?" in request_urls[0]: return [series()]
+            calls.append(request_urls[0])
+            query = parse_qs(urlsplit(request_urls[0]).query)
+            month = int(query["repMonth"][0])
+            if month == 7 and "regionCd" not in query and calls.count(request_urls[0]) == 1:
+                raise api.TransportError(request_urls[0], {"status": 403})
+            return list(payload(month))
+        with tempfile.TemporaryDirectory() as tmp:
+            (files, ok), _ = self.collect(Path(tmp), callback)
+            self.assertTrue(ok)
+            self.assertEqual(len(json.loads(next(p for p in files if p.suffix == ".json").read_text(encoding="utf-8"))), 4)
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(calls.count(api.urls("rf", ["index"], 2026, 8)[0]), 1)
+        self.assertEqual(calls.count(api.urls("rf", ["index"], 2026, 7)[0]), 2)
+
+    def test_persistent_403_has_bounded_retry_and_never_publishes_partial_history(self):
+        calls = []
+        def callback(driver, request_urls):
+            if "/dynamics?" in request_urls[0]: return [series((8, 7, 6, 5))]
+            calls.append(request_urls[0])
+            raise api.TransportError(request_urls[0], {"status": 403})
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            old = folder / "rasprodannost_20260101.json"
+            previous = json.dumps([self.make_report("rf"), self.make_report("msk")]).encode()
+            old.write_bytes(previous)
+            (files, ok), _ = self.collect(folder, callback)
+            self.assertFalse(ok)
+            self.assertEqual(files, [])
+            self.assertEqual(old.read_bytes(), previous)
+        self.assertEqual(len(calls), 12)  # Three periods x two attempts x two regions.
 
 
 if __name__ == "__main__":

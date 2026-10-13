@@ -60,6 +60,36 @@ def check_archives():
         assert record["status"] == "archived"
 
 
+def recovery_fixture(kind):
+    """Create crash boundaries only in the explicitly disposable CI runtime."""
+    import shutil
+    from docker.publication import live_target, swap
+    runtime = Path("/runtime")
+    current = live_target(runtime)
+    state = runtime / ".fixture-recovery.json"
+    if kind == "clear":
+        original = json.loads(state.read_text())["original"]
+        swap(runtime, original)
+        (runtime / "pending.json").unlink(missing_ok=True)
+        state.unlink()
+        return
+    state.write_text(json.dumps({"original": current}))
+    if kind == "next":
+        reserve = runtime / "previous-good.json"
+        previous = json.loads(reserve.read_text()).get("previous", "") if reserve.exists() else ""
+        next_target = current
+    else:
+        next_target = "releases/fixture-" + uuid.uuid4().hex
+        shutil.copytree(runtime / current, runtime / next_target, copy_function=shutil.copy2)
+        previous = "" if kind == "empty" else current
+        if kind != "unrelated":
+            swap(runtime, next_target)
+        else:
+            previous = "releases/fixture-" + uuid.uuid4().hex
+            shutil.copytree(runtime / current, runtime / previous, copy_function=shutil.copy2)
+    (runtime / "pending.json").write_text(json.dumps({"previous": previous, "next": next_target}))
+
+
 def browser_dom_contract(driver):
     # Actual DOM regression: closed filters change CSS class after selection;
     # the regional chart can render before the developer chart.
@@ -109,5 +139,8 @@ def browser():
 
 if __name__ == "__main__":
     guard()
+    if sys.argv[1] == "recovery":
+        recovery_fixture(sys.argv[2])
+        sys.exit(0)
     {"seed": seed, "update": update, "browser": browser,
      "old-releases": old_releases, "check-archives": check_archives}[sys.argv[1]]()

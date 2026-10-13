@@ -86,8 +86,11 @@ def _check(root: Path, *, pipeline: bool, dates: dict, failed: set,
 
         for driver in drivers:
             driver.quit.assert_called_once()
-        _require(len(drivers) == 1 + (sum(date is None for date in dates.values()) if not pipeline else 0),
-                 "failed date fetch gets exactly one fresh browser recovery per indicator")
+        recoveries = (sum(date is None for date in dates.values()) +
+                      sum(src in failed and date is not None and date != initial[src]
+                          for src, date in dates.items())) if not pipeline else 0
+        _require(len(drivers) == 1 + recoveries,
+                 "each failed date/export gets exactly one bounded fresh-session recovery")
         successful_dated_downloads = sum(
             1 for src in calls if src not in failed and dates[src] is not None
         )

@@ -2542,6 +2542,21 @@ def run(force: bool = False, only_ids: list[str] | None = None):
             saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
                                         remote_date=remote_date,
                                         driver=driver)
+            if not saved_path:
+                print(f"  ♻️  [{indicator_id}] один повтор неудачного экспорта в новой Chrome-сессии")
+                replacement = create_driver(download_dir=DOWNLOAD_DIR)
+                try:
+                    driver.quit()
+                except WebDriverException:
+                    pass
+                driver = replacement
+                retry_date = get_last_update_date(driver, indicator_id)
+                if retry_date is not None:
+                    remote_date = retry_date
+                    saved_path = download_excel(indicator_id, DOWNLOAD_DIR,
+                                                remote_date=remote_date, driver=driver)
+                else:
+                    print("  ⚠️  Повторный экспорт отменён: дата показателя не подтверждена")
             if saved_path:
                 downloaded_files.append(saved_path)
                 state[indicator_id] = remote_date

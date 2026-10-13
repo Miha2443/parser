@@ -101,7 +101,8 @@ class TransportTests(unittest.TestCase):
                     patch.object(fc, "download_excel", return_value=self.output if succeeded else None) as download, \
                     redirect_stdout(StringIO()):
                 files, ok = fc.run(force=True, only_ids=["31074"])
-                download.assert_called_once()
+                self.assertEqual(download.call_count, 1 if succeeded else 2)
+                self.assertTrue(all(call.args[0] == "31074" for call in download.call_args_list))
                 self.assertEqual(ok, succeeded)
                 save.assert_called_once_with(initial)
 

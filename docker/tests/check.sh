@@ -75,6 +75,9 @@ bash docker/update.sh --recover
 [[ "$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")" == "$before_identity" ]]
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture recovery clear
 # Empty previous is ambiguous with an existing legacy backend: never stop it.
+# Legacy deployments read working marts; production publication now builds only
+# its private candidate, so explicitly prepare the legacy fixture's data.
+docker compose run --rm --no-deps updater python -m pipeline.build_realty_marts --strict
 cat > docker/tests/compose.legacy.yml <<'EOF'
 services:
   backend:

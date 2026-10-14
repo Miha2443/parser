@@ -25,7 +25,7 @@ backend_state() {
   local id details
   id="$(backend_id)" || { event backend_state 'inspect=unavailable'; return; }
   if [[ -z "$id" ]]; then event backend_state 'container=absent'; return; fi
-  details="$(timeout 15 docker inspect -f '{"id":{{json .Id}},"image":{{json .Config.Image}},"status":{{json .State.Status}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"error":{{json .State.Error}},"restartCount":{{.RestartCount}}}' "$id")" || return
+  details="$(timeout 15 docker inspect -f '{"id":{{json .Id}},"image":{{json .Config.Image}},"imageId":{{json .Image}},"status":{{json .State.Status}},"healthStatus":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"error":{{json .State.Error}},"restartCount":{{.RestartCount}}}' "$id")" || return
   event backend_state "$details"
 }
 finish() {
@@ -142,8 +142,16 @@ fi
 
 before_update="$(backend_signature)"
 if [[ "$mode" == update && -n "$before_update" ]]; then
-  if [[ ! -L runtime/live ]] || ! ready_once "$(readlink runtime/live)" 20 identity; then
-    event preflight_blocked 'Existing backend does not prove a ready immutable live release; no download/restart/stop performed. Complete --publish-existing migration or restore backend readiness first.'
+  if [[ ! -L runtime/live ]]; then
+    if [[ -e runtime/live ]]; then
+      event preflight_blocked 'reason=live_not_symlink Existing runtime/live is not a published release symlink; no download/restart/stop performed. Inspect its contents and backend mounts before resolving this path conflict. Preserve the existing path: --publish-existing refuses an ordinary directory/file, and --recover without a pending journal does not migrate.'
+    else
+      event preflight_blocked 'reason=live_missing Published runtime/live symlink is missing; no download/restart/stop performed. Inspect runtime/live and backend mounts. Complete the documented offline ETL/mart rebuild and --publish-existing migration; --recover without a pending journal does not migrate.'
+    fi
+    exit 1
+  fi
+  if ! ready_once "$(readlink runtime/live)" 20 identity; then
+    event preflight_blocked 'reason=live_identity_not_ready Existing backend does not prove the expected healthy pinned runtime/live release; no download/restart/stop performed. Inspect /api/v1/health, backend_state, mounts and backend logs. Restore readiness before collection; inspect runtime/pending.json before using --recover.'
     exit 1
   fi
 fi

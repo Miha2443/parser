@@ -64,7 +64,11 @@ def save(): statefile.write_text(json.dumps(state))
 def die(code): save(); sys.exit(code)
 if args[0]=='inspect':
     if '|{{.State.Status}}|' in args[2]: print(state['id']+'|'+state['status']+'|'+state['started'])
-    else: print(json.dumps({'id':state['id'],'status':state['status'],'startedAt':state['started'],'exitCode':0,'oomKilled':False}))
+    else:
+        details={'id':state['id'],'status':state['status'],'startedAt':state['started'],'exitCode':0,'oomKilled':False}
+        if '.State.Health.Status' in args[2]: details['healthStatus']=state.get('health_status')
+        if '"imageId":{{json .Image}}' in args[2]: details['imageId']='sha256:simulated-old-image'
+        print(json.dumps(details))
     die(0)
 assert args[0]=='compose', args
 args=args[1:]; command=args[0]
@@ -84,7 +88,7 @@ if command=='exec':
     if '-c' in args:
         # Execute the actual host-owned probe rather than guessing its flags.
         import io,urllib.request
-        urllib.request.urlopen=lambda *a,**kw: io.StringIO(json.dumps({'status':'ok' if state['id'] and state['status']=='running' else 'unavailable','release':'/runtime/'+state['served']}))
+        urllib.request.urlopen=lambda *a,**kw: io.StringIO(json.dumps({'status':state.get('health_http_status','ok' if state['id'] and state['status']=='running' else 'unavailable'),'release':'/runtime/'+state['served']}))
         code=args[args.index('-c')+1]; sys.argv=['-c',args[-1]]
         try: exec(compile(code,'host-identity-probe','exec'))
         except SystemExit: die(1)
@@ -257,6 +261,8 @@ class HostRecoveryTests(unittest.TestCase):
         result = self.run_host()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('preflight_blocked', result.stdout)
+        self.assertIn('reason=live_identity_not_ready', result.stdout)
+        self.assertIn('step=readiness', result.stdout)
         self.assertEqual((self.state['stops'], self.state['restarts'], self.state['downloads']), (0, 0, 0))
 
     def test_missing_live_with_existing_backend_cannot_start_downloads(self):
@@ -264,6 +270,32 @@ class HostRecoveryTests(unittest.TestCase):
         result = self.run_host()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('preflight_blocked', result.stdout)
+        self.assertIn('reason=live_missing', result.stdout)
+        self.assertNotIn('step=readiness', result.stdout)
+        self.assertIn('--publish-existing', result.stdout)
+        self.assertEqual((self.state['stops'], self.state['restarts'], self.state['downloads']), (0, 0, 0))
+
+    def test_ordinary_live_directory_reports_migration_without_http_probe_or_mutation(self):
+        (self.root / 'runtime/live').unlink()
+        (self.root / 'runtime/live').mkdir()
+        result = self.run_host()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('reason=live_not_symlink', result.stdout)
+        self.assertIn('--publish-existing refuses an ordinary directory/file', result.stdout)
+        self.assertNotIn('step=readiness', result.stdout)
+        self.assertEqual((self.state['id'], self.state['started']), ('backend-1', 'original-start'))
+        self.assertEqual((self.state['stops'], self.state['restarts'], self.state['downloads']), (0, 0, 0))
+        self.assertTrue((self.root / 'runtime/live').is_dir())
+
+    def test_failed_health_with_pinned_live_reports_health_and_blocks_collection(self):
+        self.state.update(served='releases/new', health_status='unhealthy', health_http_status='unavailable')
+        result = self.run_host()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('reason=live_identity_not_ready', result.stdout)
+        self.assertIn('step=readiness', result.stdout)
+        self.assertIn('"healthStatus": "unhealthy"', result.stdout)
+        self.assertIn('"imageId": "sha256:simulated-old-image"', result.stdout)
+        self.assertEqual((self.state['id'], self.state['started']), ('backend-1', 'original-start'))
         self.assertEqual((self.state['stops'], self.state['restarts'], self.state['downloads']), (0, 0, 0))
 
     def test_first_bootstrap_starts_only_once(self):

@@ -1,7 +1,7 @@
 """Manual disposable Debian verification of six public network sources.
 
-This runner cannot publish. Production acceptance still requires all eight
-sources; the public check must prove that full production acceptance fails.
+This runner cannot publish. Six public sources are mandatory in production;
+ERZ is optional, and this run explicitly reports its absence.
 """
 from __future__ import annotations
 
@@ -228,16 +228,17 @@ def validate_public_pages(get, housing_history):
 
 
 def confirm_full_publication_denied(access, status, started):
+    """Explicit all-eight completeness check, not the default admission policy."""
     from docker.publication import require_success
     denied = {}
     try:
-        require_success(status, None, started)
+        require_success(status, None, started, expected_sources=set(PUBLIC_SOURCES) | {"erz-top", "erz-cards"})
     except RuntimeError as exc:
         denied["status_gate"] = str(exc)
     require("status_gate" in denied, "six sources were accepted as a complete production run")
     require(not access.source_files("erzrf_cards") and not access.source_files("erzrf_top"), "public container contains ERZ fixtures/data")
     try:
-        validate_sources(access)
+        validate_sources(access, require_erz=True)
     except RuntimeError as exc:
         require(any(name + " has no source files" in str(exc) for name in ("erzrf_cards", "erzrf_top")),
                 "full production coverage failed for an unrelated reason: " + str(exc))
@@ -272,7 +273,7 @@ def main():
             and Path.cwd() == root, "live-public runner needs a disposable /app Docker container")
     report_dir = root / "logs/live-public"
     report_dir.mkdir(parents=True, exist_ok=True)
-    summary = {"scope": "six public sources; full production publication forbidden", "success": False,
+    summary = {"scope": "six public sources; optional ERZ absent; verification does not publish", "success": False,
                "started_at": datetime.now(timezone.utc).isoformat(), "stages": []}
     code, started = 1, time.time()
     try:
@@ -304,7 +305,10 @@ def main():
         access = DataAccess(DataContext(root, downloads=root / "downloads", use_marts=True, require_marts=True))
         summary["sources"] = validate_public_sources(access, started)
         summary["etl"] = validate_etl_audit(access, started)
-        summary["full_publication_denied"] = confirm_full_publication_denied(access, status, started)
+        validate_sources(access)
+        from docker.publication import require_success
+        require_success(status, None, started, expected_sources=PUBLIC_SOURCES)
+        summary["all_eight_coverage_unavailable"] = confirm_full_publication_denied(access, status, started)
         from fastapi.testclient import TestClient
         from backend.app import create_app
         os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"

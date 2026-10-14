@@ -367,23 +367,23 @@ def delay_data(top, card, rv, oks, key):
     historical_delay = msk_exact_delay if exact_years else estimate
     rf, msk = inputs["rf"], inputs["msk"]
     def difference(field):
-        return max((rf[field] or 0) - (msk[field] or 0), 0.0)
+        return None if rf[field] is None or msk[field] is None else max(rf[field] - msk[field], 0.0)
     specs = [
         ("constructionMoscow", "msk", "Перенос в текущем строительстве в Москве", msk["constructionDelayM2"], mon_construction,
          "в стройке Москвы", "ERZ construction Moscow numerator / active ОКС Общая площадь denominator"),
         ("constructionOtherRf", "otherRf", "Перенос в текущем строительстве в регионах РФ", difference("constructionDelayM2"), difference("constructionM2"),
-         "в стройке регионов РФ", "max(ERZ RF - ERZ Moscow,0), numerator AND denominator; missing operands page-default to zero"),
+         "в стройке регионов РФ", "max(ERZ RF - ERZ Moscow,0), numerator AND denominator; missing operands remain null"),
         ("historicalMoscow", "msk", f"Перенос ввода в Москве за {min(exact_years)}-{max(exact_years)}" if exact_years else "Перенос ввода в Москве за 2022-2025 (оценка)",
          historical_delay, mon_historical, "введённых в Москве 22-25",
          "Annual ERZ Moscow exact years where available; else cards RF delay * min(РВ Moscow housing/cards RF input,1). "
          "Displayed denominator ALWAYS РВ Общая площадь ALL 2022-2025, even when exact years incomplete."),
-        ("historicalOtherRf", "otherRf", "Перенос ввода в регионах РФ за 2022-2025", max(paired_rf_delay - paired_msk_delay, 0.0), max(paired_rf_input - paired_msk_input, 0.0),
+        ("historicalOtherRf", "otherRf", "Перенос ввода в регионах РФ за 2022-2025", max(paired_rf_delay - paired_msk_delay, 0.0) if paired_years else None, max(paired_rf_input - paired_msk_input, 0.0) if paired_years else None,
          "введённых в регионах РФ 22-25", "Only paired annual ERZ company years, RF requires both input and delay columns; clamped RF-Moscow. "
-         "No paired observations means page computes zero; this is NOT confirmed zero delays."),
+         "No paired observations means unknown delays, not a confirmed zero."),
         ("currentMoscow", "msk", "Перенос ввода в Москве за 2026", msk["currentInputDelayM2"], mon_current,
          "ввода в Москве за 2026", "Current obyem_vvoda Moscow numerator / РВ Общая площадь 2026. Page label is hardcoded 2026; see currentYearByRegion."),
         ("currentOtherRf", "otherRf", "Перенос ввода в регионах РФ за 2026", difference("currentInputDelayM2"), difference("currentInputM2"),
-         "ввода в регионах РФ за 2026", "Current ERZ RF-Moscow numerator AND denominator; clamp at zero, page missing operands default zero."),
+         "ввода в регионах РФ за 2026", "Current ERZ RF-Moscow numerator AND denominator; clamp at zero, missing operands remain null."),
     ]
     result = []
     for identifier, region, title, value, base, label, note in specs:
@@ -391,7 +391,7 @@ def delay_data(top, card, rv, oks, key):
         result.append({"id": identifier, "region": region, "title": title,
                        "valueM2": value, "baseM2": base, "percent": pct,
                        "displayValue": f"{ru_num(value / 1000, 1)} тыс. м²" if number(value) is not None and value > 0 else DASH,
-                       "displayBase": f"от {ru_num(base / 1000)} тыс. м² {label}",
+                       "displayBase": f"от {ru_num(base / 1000)} тыс. м² {label}" if base is not None else DASH,
                        "displayPercent": display_percent(pct), "sourceNote": note})
     card_years = sorted({int(c.split("_")[1]) for c in card.index
                          if str(c).startswith(("Сдано_", "Перенос_", "Уточн_")) and str(c).endswith("_м²_num")}) if card is not None else []
@@ -404,8 +404,8 @@ def delay_data(top, card, rv, oks, key):
         "exactMoscowDelayM2": msk_exact_delay if exact_years else None,
         "exactMoscowInputM2": msk_exact_input if exact_years else None,
         "estimatedMoscowDelayM2": estimate,
-        "pairedRfDelayM2": paired_rf_delay, "pairedMoscowDelayM2": paired_msk_delay,
-        "pairedRfInputM2": paired_rf_input, "pairedMoscowInputM2": paired_msk_input,
+        "pairedRfDelayM2": paired_rf_delay if paired_years else None, "pairedMoscowDelayM2": paired_msk_delay if paired_years else None,
+        "pairedRfInputM2": paired_rf_input if paired_years else None, "pairedMoscowInputM2": paired_msk_input if paired_years else None,
         "currentYearByRegion": top.get("obyem_vvoda_current_year")},
         "annualTopRows": evidence,
         "annualCardRows": [{"year": year, "commissionedM2": card.get(f"Сдано_{year}_м²_num"),
@@ -497,5 +497,3 @@ def make_profile(developer, region, data):
             "objects": object_tables(rv, oks_all),
             "sourceNotes": ["region applies only to квартирография; all other geography is unchanged from the page.",
                             "No geographic-coordinate, map eligibility, financing, housing-only or subtype restrictions added."]}
-
-

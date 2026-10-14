@@ -31,7 +31,7 @@ function delayNote(card: RecordValue, inputs: RecordValue): string | undefined {
   if (text(card.id).startsWith('current')) return 'Год в заголовке сохранён из прежней страницы; период таблицы ЕРЗ не подтверждён.';
   if (card.id !== 'historicalOtherRf') return undefined;
   const years = Array.isArray(inputs.pairedYears) ? inputs.pairedYears.filter((year): year is number => typeof year === 'number' && Number.isFinite(year)).sort((a, b) => a - b) : [];
-  if (!years.length) return 'Нет подтверждённых парных наблюдений; расчётный ноль не подтверждает отсутствие переносов.';
+  if (!years.length) return 'Значение не рассчитано: нет подтверждённых парных наблюдений.';
   const missing = [2022, 2023, 2024, 2025].filter(year => !years.includes(year));
   return missing.length ? `Учтены сопоставимые годы: ${years.join(', ')}. Нет данных за ${missing.join(', ')}.` : undefined;
 }
@@ -77,7 +77,7 @@ export function normalizeSnapshot(value: unknown): Snapshot {
   const definitions = [ ['monitoring', 'monitoring_2_0', 'Мониторинг 2.0'], ['erz_top', 'erzrf_top', 'ЕРЗ · рейтинги'], ['erz_cards', 'erzrf_cards', 'ЕРЗ · карточки'], ['sales', 'rasprodannost', 'Распроданность'], ['apartments', 'kvartirografia', 'Квартирография'], ['escrow', 'escrow_manual', 'Эскроу'] ];
   const sources: Source[] = definitions.map(([id, family, label]) => {
     const entry = object(evidence[family]), files = frozen ? entry.openedInputs : entry.candidateRawFiles;
-    return { id, label, date: text(sourceDates[family]) || null, files: Array.isArray(files) ? files.map(text) : [], note: `${frozen ? '' : 'Перечень файлов-кандидатов реестра источников, не журнал чтений и не подтверждение вклада в показатели. '}Дата по метаданным витрины или времени изменения исходного файла; не сертифицированная дата наблюдения либо скачивания.` };
+    return { id, label, date: text(sourceDates[family]) || null, files: Array.isArray(files) ? files.map(text) : [], note: `${text(object(evidence[family]).availabilityNote)} ${frozen ? '' : 'Перечень файлов-кандидатов реестра источников, не журнал чтений и не подтверждение вклада в показатели. '}Дата по метаданным витрины или времени изменения исходного файла; не сертифицированная дата наблюдения либо скачивания.`.trim() };
   });
   const developers = new Map<string, Developer>();
   for (const p of list(raw.profiles)) {

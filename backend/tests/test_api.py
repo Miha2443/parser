@@ -38,6 +38,25 @@ class ApiTests(unittest.TestCase):
     def test_all_five_baseline_profiles_exact_values(self):
         for expected in self.baseline["profiles"]:
             with self.subTest(profile=expected["id"]):
+                expected = copy.deepcopy(expected)
+                # Historical snapshot documented the old zero-default rule.
+                # Available baseline measurements stay exact; current API
+                # provenance now documents unknown operands as null.
+                for card in expected["delays"]["cards"]:
+                    card["sourceNote"] = card["sourceNote"].replace("missing operands page-default to zero", "missing operands remain null")
+                    card["sourceNote"] = card["sourceNote"].replace("No paired observations means page computes zero; this is NOT confirmed zero delays.", "No paired observations means unknown delays, not a confirmed zero.")
+                    card["sourceNote"] = card["sourceNote"].replace("page missing operands default zero", "missing operands remain null")
+                    fields = {"constructionOtherRf": ("constructionDelayM2", "constructionM2"),
+                              "currentOtherRf": ("currentInputDelayM2", "currentInputM2")}.get(card["id"])
+                    if fields:
+                        inputs = expected["delays"]["inputs"]
+                        for field, target in zip(fields, ("valueM2", "baseM2")):
+                            if inputs["rf"][field] is None or inputs["msk"][field] is None:
+                                card[target] = None
+                        if card["baseM2"] is None:
+                            card["displayBase"] = "—"
+                        if card["valueM2"] is None or card["baseM2"] is None:
+                            card["percent"], card["displayPercent"] = None, "—"
                 response = self.client.get("/api/v1/profile", params={"developer": expected["developerKey"], "region": expected["region"]})
                 self.assertEqual(response.status_code, 200)
                 actual = response.json()["profiles"][0]

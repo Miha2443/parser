@@ -76,6 +76,24 @@ class RuntimeChecks(unittest.TestCase):
         self.assertEqual(len(list((self.status.parent / "realty_update_runs").glob("*.json"))), 2)
         self.assertEqual(len(list(ur.LOG_DIR.glob("*.log"))), 2)
 
+    def test_optional_processed_scope_excludes_erz_but_required_build_failure_stays_failed(self):
+        from docker.coverage import REQUIRED_SOURCES
+        self.source.side_effect = lambda alias, *args, **kwargs: alias not in {"erz-top", "erz-cards"}
+        for processed_ok in (True, False):
+            with self.subTest(processed_ok=processed_ok):
+                self.processed.reset_mock()
+                self.processed.return_value = processed_ok
+                with patch.object(sys, "argv", ["update_realty.py", "all", "--no-notify", "--no-archive",
+                                               "--no-marts", "--skip-optional-processed"]):
+                    self.assertEqual(ur.main(), 2)  # ERZ failures keep their real collector status.
+                self.processed.assert_called_once_with(only=ur.select_processed_indicators(sorted(REQUIRED_SOURCES)))
+                status = self.payload()
+                self.assertEqual(set(status["successes"]), REQUIRED_SOURCES)
+                self.assertEqual(set(status["failures"]), {"erz-top", "erz-cards"})
+                self.assertEqual(status["processed_ok"], processed_ok)
+                self.assertEqual(status["processed_scope"], "required_sources_only")
+                self.assertEqual("processed dashboard build failed" in status["error"], not processed_ok)
+
     def test_initial_status_failure_preserves_previous_and_stops_sources(self):
         self.status.parent.mkdir(parents=True)
         self.status.write_bytes(b'{"status":"old"}')

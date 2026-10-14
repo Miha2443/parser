@@ -61,14 +61,14 @@ class PublicationTests(unittest.TestCase):
                      finished_at=datetime.now().isoformat(), sources_requested=list(p.SOURCES),
                      successes=list(p.SOURCES), failures=[], status_write_errors=[], error="",
                      marts_ok=True, processed_ok=True)
-        p.require_success(valid, "old", started)
+        p.require_success(valid, "old", started, expected_sources=p.SOURCES)
         cases = ({"status": "running"}, {"run_id": "old"}, {"successes": ["monitoring"]},
                  {"sources_requested": ["monitoring"]}, {"processed_ok": False},
                  {"marts_ok": False}, {"status_write_errors": ["disk full"]},
                  {"started_at": "2020-01-01T00:00:00"}, {"failures": ["fedstat"]})
         for changes in cases:
             with self.subTest(changes=changes), self.assertRaises(RuntimeError):
-                p.require_success({**valid, **changes}, "old", started)
+                p.require_success({**valid, **changes}, "old", started, expected_sources=p.SOURCES)
 
     def test_failed_validation_does_not_switch_pointer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -79,7 +79,7 @@ class PublicationTests(unittest.TestCase):
                 (runtime / "live").symlink_to("releases/old", target_is_directory=True)
             except OSError:
                 self.skipTest("Host does not allow directory symlinks")
-            with patch.object(p, "validate", side_effect=RuntimeError("stale mart")):
+            with patch.object(p, "build_candidate"), patch.object(p, "validate", side_effect=RuntimeError("stale mart")):
                 with self.assertRaises(RuntimeError):
                     p.publish(working, runtime)
             self.assertEqual(os.readlink(runtime / "live"), "releases/old")
@@ -155,6 +155,12 @@ class PublicationTests(unittest.TestCase):
                                     cwd=REPO, env=environment, capture_output=True, text=True, encoding="utf-8")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("kvartirografia/apartments is empty", result.stderr)
+            # Publication rebuilds private marts now; a raw coverage defect must
+            # still fail rather than being repaired by rebuilding an empty mart.
+            source = next((root / "data/raw/realty/nashdom").glob("kvartirografia_*.json"))
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            payload[0]["per_dev_coverage"]["complete"] = False
+            source.write_text(json.dumps(payload), encoding="utf-8")
             (runtime / "releases/old").mkdir(parents=True)
             # Works on Windows without symlink privilege, while exercising the
             # real copy and candidate validator before the pointer-swap boundary.
@@ -274,7 +280,6 @@ class CoverageTests(unittest.TestCase):
                     "kvart": "data/raw/realty/nashdom/kvartirografia_*",
                     "construction": "data/raw/realty/nashdom/construction_operational_*",
                     "rasprod": "data/raw/realty/nashdom/rasprodannost_*",
-                    "erz-top": "data/raw/realty/erzrf/top_*", "erz-cards": "data/raw/realty/erzrf/cards_*",
                     "fedstat": "downloads/*начисленная*", "rosstat": "downloads/VVP_god*"}
         for name, pattern in patterns.items():
             with self.subTest(source=name):

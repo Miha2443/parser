@@ -93,10 +93,18 @@ class ProfileService:
         dates = {name: access.latest_realty_mart_source_date(name) or access.latest_raw_source_date(*patterns) or None
                  for name, patterns in FAMILIES.items()}
         evidence = {}
+        publication_file = self.context.root / "data/processed/publication_status.json"
+        publication = json.loads(publication_file.read_text(encoding="utf-8")) if publication_file.is_file() else {}
         for name in FAMILIES:
             candidates = [self._relative(path) for path in access.source_files(name)]
             evidence[name] = {"candidateRawFiles": candidates,
                               "selectionNote": "Source registry candidates, not proof of contribution; DataAccess selects mart/raw inputs."}
+            if name in {"erzrf_top", "erzrf_cards"}:
+                alias = "erz-top" if name == "erzrf_top" else "erz-cards"
+                state = "unavailable" if not candidates else publication.get("optional_sources", {}).get(alias, {}).get("state", "retained")
+                evidence[name]["availability"] = state
+                evidence[name]["availabilityNote"] = ("Данные ЕРЗ отсутствуют; остальные источники доступны." if state == "unavailable" else
+                                                       "ЕРЗ не обновлялся: используются сохранённые данные с указанной датой." if state == "retained" else "ЕРЗ обновлён в этом прогоне.")
         self._metadata = {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(),
                           "version": hashlib.sha256(repr(versions).encode()).hexdigest(), "sourceDates": dates,
                           "controls": {"developers": developers, "frozen": False, "regionControl": "apartmentsOnly"},

@@ -7,6 +7,15 @@ import { sumAreas } from '../src/format.ts';
 const raw = JSON.parse(readFileSync(new URL('../public/profile-snapshot.json', import.meta.url), 'utf8'));
 const snapshot = normalizeSnapshot(raw);
 
+test('optional ERZ absence retains null measurements and an explicit source note', () => {
+  const input = structuredClone(raw);
+  input.provenance = { sources: { erzrf_top: { candidateRawFiles: [], availabilityNote: 'Данные ЕРЗ отсутствуют; остальные источники доступны.' } } };
+  input.profiles[0].delays.cards.forEach(card => { card.valueM2 = null; card.percent = null; });
+  const read = normalizeSnapshot(input);
+  assert.ok(read.sources.find(source => source.id === 'erz_top').note.includes('Данные ЕРЗ отсутствуют'));
+  assert.ok(read.developers[0].regions[0].delayMetrics.every(row => row.value === null));
+});
+
 test('rejects unsupported schema without guessing fields', () => {
   assert.throws(() => normalizeSnapshot({ profiles: [] }), /версии 1/);
   assert.throws(() => normalizeSnapshot({ schemaVersion: 2, profiles: [] }), /версии 1/);
@@ -75,5 +84,5 @@ test('period captions disclose real coverage and missing paired years', () => {
   const empty = structuredClone(raw);
   empty.profiles[0].delays.inputs.pairedYears = [];
   const adapted = normalizeSnapshot(empty).developers[0].regions[0];
-  assert.ok(adapted.delayMetrics.find(d => d.label.includes('регионах РФ за 2022')).note.includes('Нет подтверждённых'));
+  assert.ok(adapted.delayMetrics.find(d => d.label.includes('регионах РФ за 2022')).note.includes('Значение не рассчитано'));
 });

@@ -1341,6 +1341,8 @@ def _main():
                         help="Не отправлять уведомление в TDM")
     parser.add_argument("--no-marts", action="store_true",
                         help="Не пересобирать data/marts/realty после прогона")
+    parser.add_argument("--skip-optional-processed", action="store_true",
+                        help="Не включать необязательный ЕРЗ в общую processed-сборку; остальные источники проверяются")
     parser.add_argument("--plan", action="store_true",
                         help="Показать план источников/волн/витрин и выйти без запуска")
     parser.add_argument("--full-rasprod-history", action="store_true",
@@ -1424,6 +1426,7 @@ def _main():
         "full_rasprod_history": env["RASPROD_FULL_HISTORY"].lower() in {"1", "true", "yes", "on"},
         "kvart_per_dev": env["KVART_PER_DEV"],
         "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
+        "processed_scope": "required_sources_only" if args.skip_optional_processed else "requested_sources",
     }
     # All retries of the same Fedstat subprocess share completion receipts.
     # A new top-level realty run gets a new id and checks remote dates normally.
@@ -1551,8 +1554,12 @@ def _main():
     processed_ok = True
     if should_build_processed(successes, diff):
         write_active_realty_run_progress(current_stage="processed build")
-        processed_ok = build_processed_pickles(
-            only=None if "all" in args.sources else select_processed_indicators(sources))
+        processed_sources = ([source for source in sources if source not in {"erz-top", "erz-cards"}]
+                             if args.skip_optional_processed else sources)
+        if processed_sources:
+            processed_only = (None if "all" in args.sources and not args.skip_optional_processed
+                              else select_processed_indicators(processed_sources))
+            processed_ok = build_processed_pickles(only=processed_only)
 
     marts_ok = True
     marts_selected: set[str] | None = set()

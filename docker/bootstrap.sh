@@ -14,4 +14,4 @@ mkdir -p downloads data state logs config runtime/releases
 chmod 600 .env
 docker compose --profile updater build
 docker compose run --rm --no-deps updater python -m docker.publication seed
-echo 'Images and working directories ready. Configure config/erzrf.json, then run bash docker/update.sh.'
+echo 'Images and working directories ready. Run bash docker/update.sh; ERZ is skipped by default. Configure config/erzrf.json only with UPDATE_ERZ=1.'

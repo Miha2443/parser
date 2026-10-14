@@ -2,7 +2,6 @@
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 import uuid
@@ -21,22 +20,41 @@ def seed(name="COMPOSE OLD"):
     smoke.seed(name)
 
 
+def seed_no_erz():
+    guard()
+    seed("COMPOSE NO ERZ")
+    for file in Path("/app/data/raw/realty/erzrf").iterdir():
+        if file.is_symlink() or not file.is_file():
+            raise RuntimeError("Unexpected fixture ERZ path")
+        file.unlink()
+
+
+def check_no_erz():
+    guard()
+    from urllib.request import urlopen
+    from urllib.parse import urlencode
+    from docker.coverage import validate_pages
+    def get(route):
+        with urlopen("http://backend:8000" + route, timeout=20) as response:
+            return json.load(response)
+    assert get("/api/v1/health")["status"] == "ok"
+    catalog = get("/api/v1/catalog")
+    for family in ("erzrf_top", "erzrf_cards"):
+        assert catalog["provenance"]["sources"][family]["availability"] == "unavailable"
+    selected = catalog["controls"]["developers"][0]
+    profile = get("/api/v1/profile?" + urlencode({"developer": selected["developerKey"], "region": "msk"}))["profiles"][0]
+    assert all(row["valueM2"] is None for row in profile["delays"]["cards"])
+    validate_pages(get)
+
+
 def update():
+    from docker import publication
     from docker.publication import publish, require_success, SOURCES
     started = time.time()
     seed("COMPOSE NEW")
     if os.environ.get("FIXTURE_FAIL") == "missing-source":
         next(Path("/app/data/raw/realty/nashdom").glob("construction_operational_*.json")).unlink()
     time.sleep(6)  # Old API must survive an already-overwritten mutable workbook.
-    subprocess.run([sys.executable, "-m", "pipeline.build_realty_marts", "--strict"], check=True)
-    if os.environ.get("FIXTURE_FAIL") == "empty-mart":
-        import pandas as pd
-        from pipeline.build_realty_marts import _shape_summary
-        pd.to_pickle({}, Path("/app/data/marts/realty/kvartirografia.pkl"))
-        manifest_path = Path("/app/data/marts/realty/manifest.json")
-        manifest = json.loads(manifest_path.read_text())
-        manifest["marts"]["kvartirografia"]["summary"] = _shape_summary({})
-        manifest_path.write_text(json.dumps(manifest))
     status = dict(run_id=uuid.uuid4().hex, status="success", current_stage="finished",
                   started_at=datetime.fromtimestamp(started).isoformat(),
                   finished_at=datetime.now().isoformat(), sources_requested=sorted(SOURCES),
@@ -44,8 +62,23 @@ def update():
                   marts_ok=True, processed_ok=True)
     if os.environ.get("FIXTURE_FAIL") == "1":
         status["successes"].remove("fedstat")
-    require_success(status, None, started)
-    publish(Path("/app"), Path("/runtime"))
+    require_success(status, None, started, expected_sources=SOURCES)
+    if os.environ.get("FIXTURE_FAIL") == "empty-mart":
+        from unittest.mock import patch
+        original = publication.build_candidate
+        def tamper_after_build(candidate):
+            original(candidate)
+            import pandas as pd
+            from pipeline.build_realty_marts import _shape_summary
+            pd.to_pickle({}, candidate / "data/marts/realty/kvartirografia.pkl")
+            manifest_path = candidate / "data/marts/realty/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["marts"]["kvartirografia"]["summary"] = _shape_summary({})
+            manifest_path.write_text(json.dumps(manifest))
+        with patch.object(publication, "build_candidate", side_effect=tamper_after_build):
+            publish(Path("/app"), Path("/runtime"))
+    else:
+        publish(Path("/app"), Path("/runtime"))
 
 
 def old_releases():
@@ -202,5 +235,5 @@ if __name__ == "__main__":
     if sys.argv[1] == "recovery":
         recovery_fixture(sys.argv[2])
         sys.exit(0)
-    {"seed": seed, "update": update, "browser": browser,
+    {"seed": seed, "seed-no-erz": seed_no_erz, "check-no-erz": check_no_erz, "update": update, "browser": browser,
      "old-releases": old_releases, "check-archives": check_archives}[sys.argv[1]]()

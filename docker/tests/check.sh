@@ -9,6 +9,7 @@ for script in docker/*.sh docker/tests/*.sh; do bash -n "$script"; done
 printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_optional_erz.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_recovery.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_release_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_history.py -v
@@ -25,13 +26,17 @@ done
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; assert Path('/app/data/derived/salary_2011_2012.csv').is_file(); assert Path('/app/data/raw/realty/linear_objects/linear_objects_2026-09-28.json').is_file()"
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; import fedstat_checker,rosstat_checker; fedstat_checker.save_state({'compose':True}); rosstat_checker.save_state({'compose':True}); assert Path('state/fedstat_state.json').is_file(); assert Path('state/rosstat_state.json').is_file()"
 docker compose run --rm --no-deps updater python -c "import fedstat_checker,rosstat_checker; assert fedstat_checker.load_state()['compose']; assert rosstat_checker.load_state()['compose']"
-docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture seed
-docker compose run --rm --no-deps updater python -m pipeline.build_realty_marts --strict
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture seed-no-erz
 bash docker/update.sh --publish-existing
 ! grep -q 'step=backend_restart' "$(ls -t logs/docker-update_*.log | head -n 1)"
 docker compose up -d
 docker compose exec -T web nginx -t
 sleep 3
+docker compose exec -T backend python docker/readiness.py
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture check-no-erz
+# Restore the complete fixture for the existing failure/recovery lifecycle.
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture seed
+bash docker/update.sh --publish-existing
 docker compose exec -T backend python docker/readiness.py
 backend_id="$(docker compose ps -q backend)"
 [[ "$(docker inspect -f '{{len .Mounts}}' "$backend_id")" == 1 ]]

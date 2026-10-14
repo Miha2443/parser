@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 SOURCES = frozenset({"monitoring", "kvart", "construction", "rasprod", "rosstat",
                      "fedstat", "erz-top", "erz-cards"})
+OPTIONAL_SOURCES = frozenset({"erz-top", "erz-cards"})
+REQUIRED_SOURCES = SOURCES - OPTIONAL_SOURCES
 CATALOG_ROUTES = tuple("/api/v1/" + name + "/catalog" for name in (
     "apartments", "sales", "economics/salary", "economics/ipc", "economics/accounts",
     "map", "linear", "commissioning/annual", "commissioning/operational", "construction"))
@@ -382,14 +384,42 @@ def validate_economic_sources(access):
     return verified_downloads
 
 
-def validate_sources(access):
+def validate_erz_sources(access, top=None, cards=None):
+    """Validate one raw or canonical ERZ cohort without reading other sources."""
+    top = access.load_erzrf_top() if top is None else top
+    cards = access.load_erzrf_cards() if cards is None else cards
+    for key in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod", "potreb_kachestva", "skorost"):
+        for region in ("rf", "msk"):
+            frame = top.get(key, {}).get(region)
+            if access.source_files("erzrf_top"):
+                require_frame(frame, f"erz-top/{key}/{region}")
+            else:
+                require(frame is None or getattr(frame, "empty", False), "ERZ top mart has data without source files")
+    if not access.source_files("erzrf_top"):
+        def has_frame_rows(value):
+            if isinstance(value, dict):
+                return any(has_frame_rows(item) for item in value.values())
+            return hasattr(value, "empty") and not value.empty
+        require(not has_frame_rows(top), "ERZ top mart has data without source files")
+        names = top.get("all_developers")
+        require(names is None or (isinstance(names, (list, tuple)) and not names)
+                or getattr(names, "empty", False), "ERZ top mart has developer facts without source files")
+    if access.source_files("erzrf_cards"):
+        require_frame(cards, "erz-cards")
+        validate_erz_cards(access, cards)
+    else:
+        require(getattr(cards, "empty", False), "ERZ cards mart has data without source files")
+
+
+def validate_sources(access, *, require_erz=False):
     """Read canonical marts directly so a raw/derived fallback cannot mask gaps."""
     from pipeline.build_realty_marts import _specs
 
     payloads = {}
     for spec in _specs(access):
         files = access.source_files(spec.name)
-        require(files, f"{spec.name} has no source files")
+        if spec.name not in {"erzrf_top", "erzrf_cards"} or require_erz:
+            require(files, f"{spec.name} has no source files")
         payloads[spec.name] = access._load_realty_mart(spec.name, files)
     monitoring = payloads["monitoring_2_0"]
     for key in ("rv", "oks"):
@@ -400,12 +430,7 @@ def validate_sources(access):
     validate_construction_sources(access, payloads["construction_operational"])
     rasprod = payloads["rasprodannost"]
     validate_rasprod_sources(access, rasprod)
-    top = payloads["erzrf_top"]
-    for key in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod", "potreb_kachestva", "skorost"):
-        for region in ("rf", "msk"):
-            require_frame(top.get(key, {}).get(region), f"erz-top/{key}/{region}")
-    require_frame(payloads["erzrf_cards"], "erz-cards")
-    validate_erz_cards(access, payloads["erzrf_cards"])
+    validate_erz_sources(access, payloads["erzrf_top"], payloads["erzrf_cards"])
     require_frame(payloads["escrow_manual"], "escrow_manual")
     require(any(getattr(frame, "empty", True) is False for frame in payloads["vvod_static"].values()),
             "vvod_static is empty")

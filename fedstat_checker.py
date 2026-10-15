@@ -144,7 +144,7 @@ DIRECT_DOWNLOAD_ON_DATE_FAILURE = (
 )
 DIRECT_FALLBACK_IDS = {
     item.strip()
-    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824,34118").split(",")
+    for item in os.environ.get("FEDSTAT_DIRECT_FALLBACK_IDS", "57824,34118,31074").split(",")
     if item.strip()
 }
 BROWSER_POST_TIMEOUT = int(os.environ.get("FEDSTAT_BROWSER_POST_TIMEOUT", "120"))

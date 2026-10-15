@@ -220,6 +220,44 @@ class FedstatBrowserTests(unittest.TestCase):
             old.quit.assert_called_once()
             fresh.quit.assert_called_once()
 
+    def test_ipc_parts_can_download_without_passport_date_but_never_invent_it(self):
+        self.assertTrue(fed._should_direct_fallback("31074_часть1"))
+        self.assertTrue(fed._should_direct_fallback("31074_часть2"))
+        self.assertFalse(fed._should_direct_fallback("33648"))
+        for failed in (None, "31074_часть1", "31074_часть2"):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory)
+                identifiers = ["31074_часть1", "31074_часть2"]
+                initial = {key: "14.10.2026" for key in identifiers}
+                browsers = [Mock(), Mock(), Mock()]
+                previous = root / "previous.xls"
+                previous.write_bytes(b"previous verified source")
+                stack.enter_context(patch.multiple(fed, DOWNLOAD_DIR=root,
+                    DIRECT_DOWNLOAD_ON_DATE_FAILURE=True))
+                stack.enter_context(patch.object(fed, "create_driver", side_effect=browsers))
+                stack.enter_context(patch.object(fed, "load_state", return_value=initial.copy()))
+                stack.enter_context(patch.object(fed, "_load_run_checkpoint", return_value={"completed": {}}))
+                stack.enter_context(patch.object(fed, "get_last_update_date", return_value=None))
+                save = stack.enter_context(patch.object(fed, "save_state"))
+                complete = stack.enter_context(patch.object(fed, "_mark_run_completed"))
+                retire = stack.enter_context(patch.object(fed, "retire_download"))
+                download = stack.enter_context(patch.object(fed, "download_excel",
+                    side_effect=lambda identifier, *args, **kwargs:
+                        None if identifier == failed else root / (identifier + ".xls")))
+                stack.enter_context(redirect_stdout(StringIO()))
+                files, ok = fed.run(only_ids=identifiers)
+                self.assertEqual(ok, failed is None)
+                self.assertEqual(len(files), 2 if failed is None else 1)
+                self.assertEqual([call.args[0] for call in download.call_args_list], identifiers)
+                self.assertTrue(all(call.kwargs["remote_date"] is None for call in download.call_args_list))
+                save.assert_called_once_with(initial)
+                self.assertTrue(all(call.args[2] is None for call in complete.call_args_list))
+                self.assertEqual(complete.call_count, len(files))
+                self.assertEqual(retire.call_count, len(files))
+                self.assertEqual(previous.read_bytes(), b"previous verified source")
+                for browser in browsers:
+                    browser.quit.assert_called_once()
+
 
 class KvartRecoveryTests(unittest.TestCase):
     def setUp(self):

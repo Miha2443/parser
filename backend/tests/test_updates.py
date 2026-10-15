@@ -46,6 +46,41 @@ class UpdatesTests(unittest.TestCase):
             for path, content in before.items():
                 self.assertEqual(path.read_bytes(), content)
 
+    def test_outage_and_retained_data_are_reported_separately_and_read_only(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed = root / 'data/processed'
+            processed.mkdir(parents=True)
+            status = {'status': 'degraded', 'updated_at': datetime.now().isoformat(),
+                      'source_outcomes': {
+                          'fedstat': {'status': 'skipped', 'reason_code': 'site_unavailable',
+                                      'reason': 'Сайт недоступен: HTTP 503', 'checked_at': '2026-10-15T06:01:00'},
+                          'monitoring': {'status': 'success', 'checked_at': '2026-10-15T06:02:00'},
+                          'erz-cards': {'status': 'success', 'reason': 'Источник обновлён'},
+                          'erz-top': {'status': 'skipped', 'reason_code': 'maintenance',
+                                      'reason': 'На сайте проводятся технические работы'}}}
+            publication = {'sources': {'fedstat': {'state': 'retained'}, 'monitoring': {'state': 'fresh'},
+                                       'erz-top': {'state': 'unavailable'},
+                                       'erz-cards': {'state': 'retained', 'reason_code': 'provider_maintenance',
+                                                     'reason': 'Сохранён комплект ЕРЗ: техработы TOP'}}}
+            status_path = processed / 'realty_update_status.json'
+            selected_path = processed / 'publication_status.json'
+            status_path.write_text(json.dumps(status))
+            selected_path.write_text(json.dumps(publication))
+            before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (status_path, selected_path)}
+            report = UpdatesService(DataContext(root)).report()
+            sources = {row['source']: row for row in report['sourceUpdates']}
+            self.assertEqual(report['realtySummary']['label'], 'завершено с пропусками')
+            self.assertEqual(sources['fedstat']['status'], 'Пропущен')
+            self.assertEqual(sources['fedstat']['dataState'], 'Сохранены прежние')
+            self.assertEqual(sources['fedstat']['reason'], 'Сайт недоступен: HTTP 503')
+            self.assertEqual(sources['monitoring']['dataState'], 'Обновлены или проверены')
+            self.assertEqual(sources['erz-top']['dataState'], 'Данных пока нет')
+            self.assertEqual(sources['erz-cards']['status'], 'Проверен')
+            self.assertEqual(sources['erz-cards']['reason'], 'Сохранён комплект ЕРЗ: техработы TOP')
+            for path, expected in before.items():
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

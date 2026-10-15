@@ -36,8 +36,8 @@ export function profileUrl(developer: string, region: ApartmentRegion, exportFil
 
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number) {
-    super(`Сервер данных вернул ошибку HTTP ${status}.`);
+  constructor(status: number, reason?: string) {
+    super(reason || `Сервер данных вернул ошибку HTTP ${status}.`);
     this.name = 'ApiError'; this.status = status;
   }
 }
@@ -49,7 +49,16 @@ export async function request(url: string, signal: AbortSignal): Promise<Respons
     if (signal.aborted) throw error;
     throw new Error('Не удалось подключиться к серверу данных. Проверьте доступность API.');
   }
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) {
+    let reason: string | undefined;
+    if (response.status === 503) {
+      try {
+        const detail = object(object(await response.json()).detail);
+        if (detail.code === 'source_unavailable' && typeof detail.reason === 'string' && detail.reason.trim()) reason = detail.reason.slice(0, 1000);
+      } catch { /* Non-JSON infrastructure errors keep the ordinary HTTP message. */ }
+    }
+    throw new ApiError(response.status, reason);
+  }
   return response;
 }
 

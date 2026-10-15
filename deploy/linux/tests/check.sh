@@ -19,7 +19,7 @@ runuser -u parserdash -- .venv/bin/python deploy/linux/tests/smoke.py browser
 bash deploy/linux/install-services.sh
 systemctl stop parser-update.timer
 systemd-analyze verify /etc/systemd/system/parser-{api,update}.service /etc/systemd/system/parser-update.timer
-systemd-analyze calendar '*-*-* 06:00:00 Europe/Moscow'
+systemd-analyze calendar '*-*-* 06:00:00'
 runuser -u parserdash -- .venv/bin/python deploy/linux/tests/smoke.py seed
 runuser -u parserdash -- .venv/bin/python -m pipeline.build_realty_marts --strict
 runuser -u parserdash -- bash deploy/linux/publish-data.sh

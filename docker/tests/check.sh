@@ -11,6 +11,8 @@ bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_optional_erz.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_recovery.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_cron_install.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_availability.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_release_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collector_browser_recovery.py -v

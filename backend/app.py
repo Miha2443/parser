@@ -4,7 +4,7 @@ from pickle import UnpicklingError
 from zipfile import BadZipFile
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 
 from backend.profile_service import FilterUnavailable, ProfileService, SourceUnavailable
 from backend.apartments_service import ApartmentsService
@@ -22,6 +22,18 @@ def create_app(service=None, apartments_service=None, sales_service=None):
     app.state.apartments_service = apartments_service
     sales_service = sales_service or SalesService(DataContext.from_environment())
     app.state.sales_service = sales_service
+    context = getattr(service, "context", DataContext.from_environment())
+    from pipeline.source_availability import read_publication, unavailable, route_sources, verify_manifest, manifest_signature
+    verified_signature = None
+    def availability():
+        publication = read_publication(context.root)
+        return {"schemaVersion": 1, "status": publication.get("status", "success"), "runId": publication.get("run_id"),
+                "sources": {alias: {key: row.get(key) for key in ("state", "reason_code", "reason", "source_dates")}
+                            for alias, row in publication.get("sources", {}).items()}}
+
+    @app.get("/api/v1/availability")
+    def source_availability():
+        return availability()
 
     def call(function, *args, scope="Profile"):
         try:
@@ -55,11 +67,20 @@ def create_app(service=None, apartments_service=None, sales_service=None):
 
     @app.get("/api/v1/health")
     def health():
+        nonlocal verified_signature
         # A process that cannot load its pinned release is not ready for traffic.
-        payload = call(service.catalog)
-        if not payload.get("controls", {}).get("developers"):
-            raise HTTPException(503, "No developer data available")
-        return {"status": "ok", "dataMode": "live",
+        declaration = read_publication(context.root)
+        if declaration:
+            signature = call(manifest_signature, context.root)
+            if signature != verified_signature:
+                call(verify_manifest, context.root)
+                verified_signature = signature
+        if "monitoring" not in unavailable(context.root):
+            payload = call(service.catalog)
+            if not payload.get("controls", {}).get("developers"):
+                raise HTTPException(503, "No developer data available")
+        return {"status": "ok", "dataMode": "degraded" if declaration.get("status") == "degraded" else "live",
+                "sources": availability()["sources"],
                 "release": str(service.context.root) if hasattr(service, "context") else None}
 
     @app.get("/api/v1/catalog")
@@ -134,6 +155,16 @@ def create_app(service=None, apartments_service=None, sales_service=None):
 
     @app.middleware("http")
     async def no_store(request, call_next):
+        try:
+            missing = route_sources(request.url.path) & unavailable(context.root)
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            return JSONResponse(status_code=503, content={"detail": {"code": "release_unavailable", "reason": "Проверка доступности источников не пройдена"}},
+                                headers={"Cache-Control": "no-store"})
+        if missing:
+            rows = read_publication(context.root)["sources"]
+            return JSONResponse(status_code=503, content={"detail": {"code": "source_unavailable", "sources": sorted(missing),
+                                "reason": "; ".join(rows[alias]["reason"] for alias in sorted(missing))}},
+                                headers={"Cache-Control": "no-store"})
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         return response

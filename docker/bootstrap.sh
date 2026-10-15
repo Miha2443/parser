@@ -14,4 +14,4 @@ mkdir -p downloads data state logs config runtime/releases
 chmod 600 .env
 docker compose --profile updater build
 timeout --kill-after=5s 120s docker compose run --rm --no-deps -T --interactive=false updater python -m docker.publication seed </dev/null
-echo 'Images and working directories ready. Run bash docker/update.sh; ERZ is skipped by default. Configure config/erzrf.json only with UPDATE_ERZ=1.'
+echo 'Images and working directories ready. Configure config/erzrf.json and run bash docker/update.sh; all eight sources are checked, unavailable sites are reported and skipped.'

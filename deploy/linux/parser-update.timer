@@ -1,8 +1,8 @@
 [Unit]
-Description=Daily dashboard data update at 06:00 Moscow time
+Description=Daily dashboard data update at 06:00 server local time
 
 [Timer]
-OnCalendar=*-*-* 06:00:00 Europe/Moscow
+OnCalendar=*-*-* 06:00:00
 Persistent=true
 Unit=parser-update.service
 

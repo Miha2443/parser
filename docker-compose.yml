@@ -51,7 +51,7 @@ services:
       PARSER_REQUIRE_REALTY_MARTS: "0"
       PARSER_USE_REALTY_MARTS: "1"
       KVART_PER_DEV: "1"
-      UPDATE_ERZ: ${UPDATE_ERZ:-0}
+      UPDATE_ERZ: ${UPDATE_ERZ:-1}
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data

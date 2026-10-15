@@ -166,6 +166,7 @@ def realty_update_status_summary(status: dict[str, Any]) -> dict[str, Any]:
     label = {
         "running": "в работе",
         "success": "успех",
+        "degraded": "завершено с пропусками",
         "failed": "ошибка",
         "interrupted": "прерван",
         "unknown": "нет статуса",

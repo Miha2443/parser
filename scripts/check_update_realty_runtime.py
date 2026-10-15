@@ -76,6 +76,30 @@ class RuntimeChecks(unittest.TestCase):
         self.assertEqual(len(list((self.status.parent / "realty_update_runs").glob("*.json"))), 2)
         self.assertEqual(len(list(ur.LOG_DIR.glob("*.log"))), 2)
 
+    def test_confirmed_outage_does_not_stop_other_source_waves(self):
+        from pipeline.source_availability import outcome, check_provider, stamp, SOURCES
+        def source(alias, env, **kwargs):
+            if alias == "fedstat":
+                return check_provider(alias, env["REALTY_RUN_ID"], check=lambda url: {"url": url, "checked_at": stamp(), "http_status": 503})
+            return outcome(alias, env["REALTY_RUN_ID"], "success")
+        self.source.side_effect = source
+        with patch.object(sys, "argv", ["update_realty.py", "all", "--collect-only", "--no-notify", "--no-archive"]):
+            self.assertEqual(ur.main(), 0)
+        payload = self.payload()
+        self.assertEqual(self.source.call_count, 8)
+        self.assertEqual(set(payload["successes"]), SOURCES - {"fedstat"})
+        self.assertEqual(payload["failures"], [])
+        self.assertEqual(payload["skipped"], ["fedstat"])
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(set(payload["source_outcomes"]), SOURCES)
+        report = ur.build_tdm_report(payload["successes"], [], {"added": [], "changed": []}, 0,
+                                     source_outcomes=payload["source_outcomes"])
+        self.assertIn("7/8", report)
+        self.assertIn("Пропущено 1", report)
+        self.assertIn("HTTP 503", report)
+        self.processed.assert_not_called()
+        self.marts.assert_not_called()
+
     def test_optional_processed_scope_excludes_erz_but_required_build_failure_stays_failed(self):
         from docker.coverage import REQUIRED_SOURCES
         self.source.side_effect = lambda alias, *args, **kwargs: alias not in {"erz-top", "erz-cards"}

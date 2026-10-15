@@ -61,6 +61,8 @@ class PublicationTests(unittest.TestCase):
                      finished_at=datetime.now().isoformat(), sources_requested=list(p.SOURCES),
                      successes=list(p.SOURCES), failures=[], status_write_errors=[], error="",
                      marts_ok=True, processed_ok=True)
+        from pipeline.source_availability import outcome
+        valid["source_outcomes"] = {alias: outcome(alias, "new", "success") for alias in p.SOURCES}
         p.require_success(valid, "old", started, expected_sources=p.SOURCES)
         cases = ({"status": "running"}, {"run_id": "old"}, {"successes": ["monitoring"]},
                  {"sources_requested": ["monitoring"]}, {"processed_ok": False},

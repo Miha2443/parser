@@ -13,6 +13,43 @@ from pipeline.notifier import format_summary
 from pipeline.registry import INDICATORS
 
 
+SOURCE_TITLES = {
+    "monitoring": "Мониторинг 2.0", "kvart": "Квартирография",
+    "construction": "Текущее строительство и продажи", "rasprod": "Распроданность",
+    "fedstat": "Федстат", "rosstat": "Росстат / Мосстат",
+    "erz-top": "ЕРЗ: рейтинги застройщиков", "erz-cards": "ЕРЗ: карточки застройщиков",
+}
+
+
+def source_update_rows(status, publication):
+    """Keep collection outcomes separate from freshness of the served inputs."""
+    outcomes = status.get("source_outcomes", {})
+    selected = publication.get("sources", {})
+    outcomes = outcomes if isinstance(outcomes, dict) else {}
+    selected = selected if isinstance(selected, dict) else {}
+    legacy = publication.get("optional_sources", {})
+    legacy = legacy if isinstance(legacy, dict) else {}
+    rows = []
+    for alias, title in SOURCE_TITLES.items():
+        outcome = outcomes.get(alias, {})
+        source = selected.get(alias, legacy.get(alias, {}))
+        outcome = outcome if isinstance(outcome, dict) else {}
+        source = source if isinstance(source, dict) else {}
+        if not outcome and not source:
+            continue
+        result = outcome.get("status", "")
+        state = source.get("state", "")
+        reason = source if state in {"retained", "unavailable"} and source.get("reason") else outcome
+        rows.append({"source": alias, "title": title,
+                     "status": {"success": "Проверен", "skipped": "Пропущен", "failed": "Ошибка"}.get(result, "Нет результата проверки"),
+                     "dataState": {"fresh": "Обновлены или проверены", "retained": "Сохранены прежние",
+                                   "unavailable": "Данных пока нет"}.get(state, "Не указано"),
+                     "reasonCode": reason.get("reason_code") or source.get("reason_code") or "",
+                     "reason": reason.get("reason") or source.get("reason") or "",
+                     "checkedAt": outcome.get("checked_at") or outcome.get("finished_at")})
+    return rows
+
+
 def safe(value):
     if isinstance(value, dict):
         return {str(key): safe(item) for key, item in value.items()}
@@ -33,7 +70,8 @@ class UpdatesService:
         self.access = DataAccess(context)
         self.paths = [context.root / suffix for suffix in (
             "data/processed/etl_audit.jsonl", "data/processed/realty_update_status.json",
-            "data/processed/monitoring_2_0_changes.jsonl", "data/marts/realty/manifest.json")]
+            "data/processed/monitoring_2_0_changes.jsonl", "data/marts/realty/manifest.json",
+            "data/processed/publication_status.json")]
 
     def _signature(self):
         return tuple(file_signature(path) if path.exists() else None for path in self.paths)
@@ -68,6 +106,7 @@ class UpdatesService:
             row["title"] = titles.get(row["indicator"], row["indicator"])
             row["source"] = sources.get(row["indicator"], "")
         status = self._json(self.paths[1])
+        source_updates = source_update_rows(status, self._json(self.paths[4]))
         status_summary = realty_update_status_summary(status)
         if isinstance(status.get("log_file"), str):
             warnings = [item for item in status_summary.get("warnings", []) if item != "log missing"]
@@ -113,6 +152,7 @@ class UpdatesService:
                                                              for path in self.paths if path.exists()], "issues": []},
                        "selection": {"days": days, "monitoringDays": monitoring_days, "onlyErrors": only_errors},
                        "lastRun": last, "realtyStatus": status, "realtySummary": status_summary,
+                       "sourceUpdates": source_updates,
                        "indicators": per_indicator, "events": events, "monitoringChanges": selected_changes,
                        "latestMonitoring": {"date": latest_changes[0]["detected_at"] if latest_changes else None,
                                             "added": sum(row["action"] == "Добавлено" for row in latest_changes),

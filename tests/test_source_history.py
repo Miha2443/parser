@@ -371,9 +371,9 @@ class SourceHistoryTests(unittest.TestCase):
                 patch.object(ur.subprocess, "Popen", side_effect=OSError("failed to launch")) as child:
             ur._RUN_CANCELLED.clear()
             with patch.object(ur, "archive_file", side_effect=OSError("disk denied")):
-                self.assertFalse(ur.run_source("monitoring", {}))
+                self.assertFalse(ur._collect_source("monitoring", {}))
             child.assert_not_called()
-            self.assertFalse(ur.run_source("monitoring", {}))
+            self.assertFalse(ur._collect_source("monitoring", {}))
             child.assert_called_once()
         record = self.records(raw.parents[1] / "_archive")[0]
         self.assertEqual((self.root / record["archive_path"]).read_bytes(), b"previous")

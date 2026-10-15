@@ -330,17 +330,18 @@ def validate_kvart_sources(access, kvart):
 
 
 
-def validate_construction_sources(access, construction):
+def validate_construction_sources(access, construction, *, require_permits=True):
     require(any(p.name.startswith("construction_operational_") for p in access.source_files("construction_operational")),
             "construction has no dynamic snapshot")
     require_frame(construction.get("construction"), "construction", regions=True, numeric=("value_thousand_m2",))
     require_frame(construction.get("sales"), "construction/sales", regions=True)
     for row in construction["sales"].to_dict("records"):
         require_construction_sales(row, "construction/sales/" + str(row.get("region_key")))
-    require_frame(construction.get("permits"), "construction/permits", numeric=("value_thousand_m2",))
+    if require_permits:
+        require_frame(construction.get("permits"), "construction/permits", numeric=("value_thousand_m2",))
 
 
-def validate_economic_sources(access):
+def validate_economic_sources(access, *, aliases=frozenset({"fedstat", "rosstat"}), processed=True):
     from pipeline.data_access import NA_INDICATORS
     from pipeline.registry import by_id
     from pipeline.source_records import file_sha256
@@ -353,14 +354,25 @@ def validate_economic_sources(access):
             info = json.loads(receipt.read_text(encoding="utf-8"))
             if info.get("source_id") in fedstat_ids and info.get("sha256") == file_sha256(source):
                 verified_downloads.setdefault(info["source_id"], []).append(source)
-    require(fedstat_ids <= set(verified_downloads), "fedstat lacks verified downloads: " +
-            ", ".join(sorted(fedstat_ids - set(verified_downloads))))
-    validate_dynamic_commissioning(access, verified_downloads)
+    if "fedstat" in aliases:
+        require(fedstat_ids <= set(verified_downloads), "fedstat lacks verified downloads: " +
+                ", ".join(sorted(fedstat_ids - set(verified_downloads))))
+        validate_dynamic_commissioning(access, verified_downloads)
 
     # Historical CSV additions are allowed only alongside the live processed
     # indicators. Empty ETL skips cannot inherit a falsely complete publication.
     for identifier in ("avg_salary", "ipc", *NA_INDICATORS):
         indicator = by_id(identifier)
+        if indicator.source not in aliases:
+            continue
+        sources = access._raw_files([access.DOWNLOADS_DIR], list(indicator.file_patterns))
+        require(sources, f"{indicator.source}/{identifier} has no downloaded source")
+        if not processed:
+            import pandas as pd
+            for source in sources:
+                with pd.ExcelFile(source):
+                    pass
+            continue
         target = access.DATA_PROCESSED / f"{identifier}.pkl"
         require(target.is_file(), f"{indicator.source}/{identifier} processed file is missing")
         frame = access.load_indicator(identifier)
@@ -411,64 +423,127 @@ def validate_erz_sources(access, top=None, cards=None):
         require(getattr(cards, "empty", False), "ERZ cards mart has data without source files")
 
 
+def validate_source_raw(access, alias):
+    """Validate only this provider before combining independently selected families."""
+    from pipeline.source_availability import source_files
+    require(source_files(access.PROJECT_ROOT, alias), alias + " has no source files")
+    if alias == "monitoring":
+        data = access.load_monitoring_2_0()
+        for key in ("rv", "oks"):
+            require_frame(data.get(key), "monitoring/" + key, numeric=("Общая площадь",))
+        validate_monitoring_registry(access, data["rv"])
+        validate_monitoring_history(access)
+    elif alias == "kvart":
+        validate_kvart_sources(access, access.load_kvartirografia())
+    elif alias == "rasprod":
+        validate_rasprod_sources(access, access.load_rasprodannost())
+    elif alias == "construction":
+        validate_construction_sources(access, access.load_construction_operational(), require_permits=False)
+    elif alias in {"fedstat", "rosstat"}:
+        validate_economic_sources(access, aliases={alias}, processed=False)
+    elif alias in {"erz-top", "erz-cards"}:
+        validate_erz_sources(access)
+
+
 def validate_sources(access, *, require_erz=False):
     """Read canonical marts directly so a raw/derived fallback cannot mask gaps."""
     from pipeline.build_realty_marts import _specs
 
+    from pipeline.source_availability import unavailable, source_files, indicator_ids
+    absent = unavailable(access.PROJECT_ROOT)
+    from pipeline.source_availability import read_publication, verify_inventory
+    verify_inventory(access.PROJECT_ROOT, read_publication(access.PROJECT_ROOT))
+    for alias in absent:
+        require(not source_files(access.PROJECT_ROOT, alias), "Unavailable source still has raw data: " + alias)
+        require(not any((access.DATA_PROCESSED / (key + ".pkl")).exists() for key in indicator_ids({alias})),
+                "Unavailable source still has processed data: " + alias)
+    owners = {"monitoring_2_0": "monitoring", "kvartirografia": "kvart", "construction_operational": "construction",
+              "rasprodannost": "rasprod", "erzrf_top": "erz-top", "erzrf_cards": "erz-cards", "emiss_34118": "fedstat"}
     payloads = {}
     for spec in _specs(access):
         files = access.source_files(spec.name)
-        if spec.name not in {"erzrf_top", "erzrf_cards"} or require_erz:
+        if owners.get(spec.name) not in absent and (spec.name not in {"erzrf_top", "erzrf_cards"} or require_erz):
             require(files, f"{spec.name} has no source files")
         payloads[spec.name] = access._load_realty_mart(spec.name, files)
     monitoring = payloads["monitoring_2_0"]
-    for key in ("rv", "oks"):
-        require_frame(monitoring.get(key), "monitoring/" + key, numeric=("Общая площадь",))
-    validate_monitoring_registry(access, monitoring["rv"])
-    validate_monitoring_history(access)
-    validate_kvart_sources(access, payloads["kvartirografia"])
-    validate_construction_sources(access, payloads["construction_operational"])
+    def empty_frames(value):
+        if isinstance(value, dict):
+            return all(empty_frames(item) for item in value.values())
+        return not hasattr(value, "empty") or value.empty
+    for alias, family in (("monitoring", "monitoring_2_0"), ("kvart", "kvartirografia"), ("rasprod", "rasprodannost")):
+        if alias in absent:
+            require(empty_frames(payloads[family]), "Unavailable source has fabricated mart rows: " + alias)
+    if "construction" in absent:
+        for field in ("construction", "sales"):
+            require(empty_frames(payloads["construction_operational"].get(field)), "Unavailable construction has fabricated " + field)
+    if "monitoring" not in absent:
+        for key in ("rv", "oks"):
+            require_frame(monitoring.get(key), "monitoring/" + key, numeric=("Общая площадь",))
+        validate_monitoring_registry(access, monitoring["rv"])
+        validate_monitoring_history(access)
+    if "kvart" not in absent:
+        validate_kvart_sources(access, payloads["kvartirografia"])
+    if "construction" not in absent:
+        validate_construction_sources(access, payloads["construction_operational"], require_permits="monitoring" not in absent)
     rasprod = payloads["rasprodannost"]
-    validate_rasprod_sources(access, rasprod)
+    if "rasprod" not in absent:
+        validate_rasprod_sources(access, rasprod)
     validate_erz_sources(access, payloads["erzrf_top"], payloads["erzrf_cards"])
     require_frame(payloads["escrow_manual"], "escrow_manual")
     require(any(getattr(frame, "empty", True) is False for frame in payloads["vvod_static"].values()),
             "vvod_static is empty")
     require_frame(payloads["emiss_34118"], "emiss_34118")
-    validate_economic_sources(access)
+    validate_economic_sources(access, aliases={"fedstat", "rosstat"} - absent)
 
 
-def validate_pages(get):
+def validate_pages(get, *, source_states=None):
     """Use the same meaningful API reports before and after a release switch."""
+    from pipeline.source_availability import route_sources
+    absent = {alias for alias, row in (source_states or {}).items() if row.get("state") == "unavailable"}
+    original_get = get
+    def get(route):
+        payload = original_get(route)
+        blocked = route_sources(route.split("?")[0]) & absent
+        if blocked:
+            require(payload.get("sourceUnavailable") is True and set(payload.get("sources", [])) == blocked,
+                    "API does not explicitly declare unavailable source: " + route)
+            return {}
+        return payload
     catalogs = {route: get(route) for route in ROUTES}
     developers = catalogs["/api/v1/catalog"].get("controls", {}).get("developers", [])
-    require(developers, "profile catalog has no developers")
+    require(developers or "monitoring" in absent, "profile catalog has no developers")
     developer = next((row for row in developers if "msk" in row.get("regions", [])), None)
-    require(developer, "profile catalog has no Moscow developer")
-    profile = get("/api/v1/profile?" + urlencode({"developer": developer["developerKey"], "region": "msk"}))
-    require(profile.get("profiles"), "developer profile is empty")
+    require(developer or "monitoring" in absent, "profile catalog has no Moscow developer")
+    if developer:
+        profile = get("/api/v1/profile?" + urlencode({"developer": developer["developerKey"], "region": "msk"}))
+        require(profile.get("profiles") or bool(route_sources("/api/v1/profile") & absent), "developer profile is empty")
     for region in ("msk", "rf"):
         apartments = get("/api/v1/apartments?region=" + region)
-        require(apartments.get("apartments") and apartments.get("distribution") and apartments.get("developers"),
-                "apartments overview lacks rows for " + region)
-        require(any(finite(row.get("count")) for row in apartments["apartments"]), "apartments lack measurements")
-        detail = get("/api/v1/apartments/developer?" + urlencode({"region": region, "developer": apartments["developers"][0]["name"]}))
-        require(finite(detail.get("summary", {}).get("countThousand")), "apartment developer lacks measurements")
+        if "kvart" not in absent:
+            require(apartments.get("apartments") and apartments.get("distribution") and apartments.get("developers"),
+                    "apartments overview lacks rows for " + region)
+            require(any(finite(row.get("count")) for row in apartments["apartments"]), "apartments lack measurements")
+            detail = get("/api/v1/apartments/developer?" + urlencode({"region": region, "developer": apartments["developers"][0]["name"]}))
+            require(finite(detail.get("summary", {}).get("countThousand")), "apartment developer lacks measurements")
         sales = get("/api/v1/sales?region=" + region)
-        require(sales.get("metrics") and all(finite(row.get("value")) for row in sales["metrics"]), "sales lack measurements for " + region)
+        require("rasprod" in absent or sales.get("metrics") and all(finite(row.get("value")) for row in sales["metrics"]), "sales lack measurements for " + region)
         construction = get("/api/v1/construction?region=" + region)
-        require(construction.get("metrics") and all(finite(row.get("value")) for row in construction["metrics"]),
-                "construction lacks measurements for " + region)
-        require(construction.get("permits", {}).get("rows"), "construction permits are empty")
-        require_construction_sales(construction.get("sales"), "construction report sales for " + region)
+        if "construction" not in absent:
+            metrics = construction.get("metrics", [])
+            require(metrics and all((row.get("value") is None if "rasprod" in absent and row.get("id") in {"sold", "ready", "ratio"}
+                                     else finite(row.get("value"))) for row in metrics), "construction lacks measurements for " + region)
+        if not ({"construction", "monitoring"} & absent):
+            require(construction.get("permits", {}).get("rows"), "construction permits are empty")
+        if "construction" not in absent:
+            require_construction_sales(construction.get("sales"), "construction report sales for " + region)
         annual = get("/api/v1/commissioning/annual?region=" + region)
         require(annual.get("charts") and any(chart.get("rows") for chart in annual["charts"]), "annual commissioning is empty")
     operational = get("/api/v1/commissioning/operational")
-    require(operational.get("tables") and any(table.get("rows") for table in operational["tables"]), "operational commissioning is empty")
-    require(get("/api/v1/map?only_with_coords=false").get("rows"), "map is empty")
+    require("monitoring" in absent or operational.get("tables") and any(table.get("rows") for table in operational["tables"]), "operational commissioning is empty")
+    require(get("/api/v1/map?only_with_coords=false").get("rows") or "monitoring" in absent, "map is empty")
     require(get("/api/v1/linear").get("summary"), "linear commissioning is empty")
     for family in ("salary", "ipc", "accounts"):
         report = get("/api/v1/economics/" + family)
-        require(report.get("charts") and any(finite(point.get("y")) for chart in report["charts"]
+        require(("rosstat" if family == "accounts" else "fedstat") in absent or report.get("charts") and any(finite(point.get("y")) for chart in report["charts"]
                 for series in chart.get("series", []) for point in series.get("points", [])),
                 "economics/" + family + " has no measured chart points")

@@ -60,6 +60,8 @@ def update():
                   finished_at=datetime.now().isoformat(), sources_requested=sorted(SOURCES),
                   successes=sorted(SOURCES), failures=[], status_write_errors=[], error="",
                   marts_ok=True, processed_ok=True)
+    from pipeline.source_availability import outcome
+    status["source_outcomes"] = {alias: outcome(alias, status["run_id"], "success") for alias in SOURCES}
     if os.environ.get("FIXTURE_FAIL") == "1":
         status["successes"].remove("fedstat")
     require_success(status, None, started, expected_sources=SOURCES)
@@ -76,9 +78,9 @@ def update():
             manifest["marts"]["kvartirografia"]["summary"] = _shape_summary({})
             manifest_path.write_text(json.dumps(manifest))
         with patch.object(publication, "build_candidate", side_effect=tamper_after_build):
-            publish(Path("/app"), Path("/runtime"))
+            publish(Path("/app"), Path("/runtime"), run_status=status, collector_returncode=0)
     else:
-        publish(Path("/app"), Path("/runtime"))
+        publish(Path("/app"), Path("/runtime"), run_status=status, collector_returncode=0)
 
 
 def old_releases():

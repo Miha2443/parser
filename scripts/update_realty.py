@@ -417,6 +417,8 @@ def mark_active_realty_run_failed(exc: BaseException) -> None:
             current_stage=ctx.get("current_stage"),
             kvart_per_dev=ctx.get("kvart_per_dev"),
             status_write_errors=list(_STATUS_WRITE_ERRORS),
+            skipped=list(ctx.get("skipped") or []),
+            source_outcomes=dict(ctx.get("source_outcomes") or {}),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -436,7 +438,7 @@ def _write_active_realty_run_progress_locked() -> None:
     successes = list(ctx.get("successes") or [])
     failures = list(ctx.get("failures") or [])
     sources = list(ctx.get("sources") or [])
-    completed = list(dict.fromkeys(successes + failures))
+    completed = list(dict.fromkeys(successes + failures + list(ctx.get("skipped") or [])))
     pending = [source for source in sources if source not in completed]
     try:
         write_realty_run_status(
@@ -458,6 +460,8 @@ def _write_active_realty_run_progress_locked() -> None:
             active_sources=ctx.get("active_sources", []),
             last_completed_source=ctx.get("last_completed_source"),
             last_completed_ok=ctx.get("last_completed_ok"),
+            skipped=list(ctx.get("skipped") or []),
+            source_outcomes=dict(ctx.get("source_outcomes") or {}),
             kvart_per_dev=ctx.get("kvart_per_dev"),
             status_write_errors=list(_STATUS_WRITE_ERRORS),
         )
@@ -756,8 +760,8 @@ def diff_snapshots(before: dict, after: dict) -> dict:
     return {"added": added, "changed": changed, "removed": removed}
 
 
-def run_source(alias: str, env: dict, force: bool = False,
-               keep: int = 1, do_archive: bool = True) -> bool:
+def _collect_source(alias: str, env: dict, force: bool = False,
+               keep: int = 1, do_archive: bool = True, failure_info=None) -> bool:
     """Запускает один источник.
 
     Запускает subprocess с watchdog'ом (per-source timeout). Stdout
@@ -765,11 +769,15 @@ def run_source(alias: str, env: dict, force: bool = False,
     не смешивался. После успеха — дедупликация и архивация СВОЕГО
     семейства (старые файлы → _archive/<date>/<source>/).
     """
-    if _RUN_CANCELLED.is_set():
+    def failed(code, reason, phase="collector"):
+        if failure_info is not None:
+            failure_info.update(reason_code=code, reason=reason, phase=phase)
         return False
+    if _RUN_CANCELLED.is_set():
+        return failed("cancelled", "Запуск отменён")
     if alias not in SOURCE_MAP:
         _print(f"⚠️  Неизвестный источник: {alias}")
-        return False
+        return failed("unknown_source", "Неизвестный источник")
     script, args = SOURCE_MAP[alias]
     extra = []
     if force and alias in ("fedstat", "rosstat", "monitoring", "rasprod", "kvart", "construction"):
@@ -804,7 +812,7 @@ def run_source(alias: str, env: dict, force: bool = False,
                     reason="before_source_run", deduplicate=True)
         except (OSError, ValueError) as exc:
             _print(f"❌ {alias}: невозможно сохранить прежние исходники; запуск отменён: {exc}")
-            return False
+            return failed("backup_failed", "Не удалось сохранить предыдущие исходники")
 
     # Принудительно utf-8 в child: с stdout=PIPE Python берёт кодировку
     # по locale (cp1251 на Windows) — любая эмодзи в print() падает с
@@ -829,13 +837,20 @@ def run_source(alias: str, env: dict, force: bool = False,
         )
     except Exception as exc:  # noqa: BLE001
         _print(f"❌ {alias}: не удалось запустить процесс: {exc}")
-        return False
+        return failed("process_launch_failed", "Не удалось запустить коллектор")
 
     _track_child(proc)
+    hard_failure = []
     # Stream stdout в отдельном потоке с префиксом alias.
     def _stream() -> None:
         try:
             for line in proc.stdout:  # type: ignore[union-attr]
+                # HTML/partial exports can produce parser errors during a real
+                # outage. Only local memory/auth failures forbid an independent
+                # availability recheck after an unsuccessful collector.
+                if re.search(r"MemoryError|invalid credentials|wrong password|неверн\w*\s+парол",
+                             line, re.I):
+                    hard_failure.append(True)
                 _print(f"{prefix} {line.rstrip()}")
         except Exception:  # noqa: BLE001
             pass
@@ -867,8 +882,10 @@ def run_source(alias: str, env: dict, force: bool = False,
         proc.stdout.close()
     elapsed = time.time() - started
 
+    if hard_failure and (timed_out or proc.returncode != 0):
+        return failed("authentication_or_memory_error", "Коллектор сообщил ошибку авторизации или нехватки памяти")
     if timed_out:
-        return False
+        return failed("watchdog_timeout", f"Коллектор превысил watchdog {timeout_min} минут", "watchdog")
     rc = proc.returncode
     if rc == 0:
         _print(f"✅ {alias}: успех (за {elapsed/60:.1f} мин)")
@@ -885,7 +902,28 @@ def run_source(alias: str, env: dict, force: bool = False,
                 add_archive_warning(f"{alias}: source archive failed")
         return True
     _print(f"❌ {alias}: код выхода {rc} (за {elapsed/60:.1f} мин)")
-    return False
+    if rc in {-9, 137}:
+        return failed("process_killed", "Процесс коллектора был принудительно завершён")
+    return failed("collector_exit_" + str(rc), "Коллектор завершился с кодом " + str(rc))
+
+
+def run_source(alias: str, env: dict, force: bool = False, keep: int = 1, do_archive: bool = True):
+    from pipeline.source_availability import check_provider, outcome
+    run_id = env.get("REALTY_RUN_ID", "")
+    unavailable = check_provider(alias, run_id)
+    if unavailable:
+        _print(f"[skipped] {alias}: {unavailable['reason']} ({unavailable['evidence'][0]['url']})")
+        return unavailable
+    failure = {}
+    success = _collect_source(alias, env, force=force, keep=keep, do_archive=do_archive, failure_info=failure)
+    if not success and (not failure or failure.get("reason_code") == "watchdog_timeout" or failure.get("reason_code", "").startswith("collector_exit_")):
+        confirmed = check_provider(alias, run_id)
+        if confirmed:
+            confirmed["phase"] = "postflight"
+            confirmed["collector_reason_code"] = failure.get("reason_code", "collector_exit_unknown")
+            _print(f"[skipped] {alias}: {confirmed['reason']} после ошибки коллектора ({confirmed['evidence'][0]['url']})")
+            return confirmed
+    return outcome(alias, run_id, "success" if success else "failed", **failure)
 
 
 def archive_old(keep: int = 1) -> bool:
@@ -1188,19 +1226,24 @@ def build_tdm_report(successes: list[str], failures: list[str],
                      marts_ok: bool = True,
                      processed_ok: bool = True,
                      final_archive_ok: bool = True,
-                     archive_warnings: list[str] | None = None) -> str:
+                     archive_warnings: list[str] | None = None,
+                     source_outcomes: dict | None = None) -> str:
     """Формирует текст сводки для TDM."""
     archive_warnings = archive_warnings or []
-    icon = "✅" if not failures and marts_ok and processed_ok else "⚠️"
+    skipped = {alias: row for alias, row in (source_outcomes or {}).items() if row.get("status") == "skipped"}
+    icon = "✅" if not failures and not skipped and marts_ok and processed_ok else "⚠️"
     today = datetime.now().strftime("%d.%m.%Y %H:%M")
     lines = [
         f"{icon} **Прогон realty** {today} (за {total_min:.1f} мин)",
-        f"Источники: {len(successes)}/{len(successes) + len(failures)} ОК",
+        f"Источники: {len(successes)}/{len(successes) + len(failures) + len(skipped)} ОК",
     ]
     if successes:
         lines.append(f"✓ OK: {', '.join(successes)}")
     if failures:
         lines.append(f"✗ FAIL: {', '.join(failures)}")
+    if skipped:
+        lines.append(f"Пропущено {len(skipped)}:")
+        lines.extend(f"  {alias}: {row['reason']}" for alias, row in sorted(skipped.items()))
     if not marts_ok:
         lines.append("Marts build failed")
     if not processed_ok:
@@ -1220,7 +1263,7 @@ def build_tdm_report(successes: list[str], failures: list[str],
             lines.append(f"  • {t}")
     else:
         lines.append("")
-        lines.append("ℹ️ Новых данных нет — все источники без изменений")
+        lines.append("ℹ️ Новых файлов нет; недоступные источники перечислены выше" if skipped else "ℹ️ Новых данных нет — все источники без изменений")
 
     if site_dates:
         date_lines = format_site_dates(site_dates)
@@ -1343,6 +1386,8 @@ def _main():
                         help="Не пересобирать data/marts/realty после прогона")
     parser.add_argument("--skip-optional-processed", action="store_true",
                         help="Не включать необязательный ЕРЗ в общую processed-сборку; остальные источники проверяются")
+    parser.add_argument("--collect-only", action="store_true",
+                        help="Только сбор и статус; ETL и витрины выполняет publisher в частном кандидате")
     parser.add_argument("--plan", action="store_true",
                         help="Показать план источников/волн/витрин и выйти без запуска")
     parser.add_argument("--full-rasprod-history", action="store_true",
@@ -1356,6 +1401,8 @@ def _main():
                         help="Сколько раз повторять упавшие источники "
                              "(default: 0; дополнительные раунды только по явному --retries N)")
     args = parser.parse_args()
+    if args.collect_only:
+        args.no_marts = True
     if args.keep < 1 or args.retries < 0:
         parser.error("--keep must be >= 1 and --retries must be >= 0")
 
@@ -1416,7 +1463,7 @@ def _main():
     _print(f"Лог-файл: {log_path}")
     _print(f"{'='*60}")
     clear_archive_warnings()
-    successes, failures = [], []
+    successes, failures, skipped, source_outcomes = [], [], [], {}
     do_archive = not args.no_archive
     run_meta = {
         "run_id": log_path.stem.removeprefix("update_"),
@@ -1427,10 +1474,14 @@ def _main():
         "kvart_per_dev": env["KVART_PER_DEV"],
         "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
         "processed_scope": "required_sources_only" if args.skip_optional_processed else "requested_sources",
+        "collect_only": args.collect_only,
+        "source_outcomes": source_outcomes,
+        "skipped": skipped,
     }
     # All retries of the same Fedstat subprocess share completion receipts.
     # A new top-level realty run gets a new id and checks remote dates normally.
     env["FEDSTAT_RUN_ID"] = run_meta["run_id"]
+    env["REALTY_RUN_ID"] = run_meta["run_id"]
     status_ok = write_realty_run_status(
         "running",
         started=started,
@@ -1479,11 +1530,19 @@ def _main():
                 for f in as_completed(futures):
                     alias = futures[f]
                     try:
-                        ok = f.result()
+                        result = f.result()
+                        from pipeline.source_availability import outcome
+                        # Bool support is retained for embedders/tests of the
+                        # collector; only evidence-bearing dictionaries may skip.
+                        row = result if isinstance(result, dict) else outcome(alias, run_meta["run_id"], "success" if result else "failed")
+                        source_outcomes[alias] = row
+                        ok = row["status"] == "success"
                     except Exception as exc:  # noqa: BLE001
                         _print(f"❌ {alias}: непредвиденная ошибка — {exc}")
                         ok = False
-                    (successes if ok else failures).append(alias)
+                        from pipeline.source_availability import outcome
+                        source_outcomes[alias] = outcome(alias, run_meta["run_id"], "failed", reason_code="collector_exception", reason=str(exc)[:300])
+                    (skipped if source_outcomes[alias]["status"] == "skipped" else successes if ok else failures).append(alias)
                     active_sources.remove(alias)
                     write_active_realty_run_progress(
                         current_stage=label,
@@ -1552,12 +1611,13 @@ def _main():
     check_escrow()
 
     processed_ok = True
-    if should_build_processed(successes, diff):
+    if not args.collect_only and should_build_processed(successes, diff):
         write_active_realty_run_progress(current_stage="processed build")
-        processed_sources = ([source for source in sources if source not in {"erz-top", "erz-cards"}]
+        processed_sources = ([source for source in sources if source not in {"erz-top", "erz-cards"} and source not in skipped]
                              if args.skip_optional_processed else sources)
+        processed_sources = [source for source in processed_sources if source not in skipped]
         if processed_sources:
-            processed_only = (None if "all" in args.sources and not args.skip_optional_processed
+            processed_only = (None if "all" in args.sources and not args.skip_optional_processed and not skipped
                               else select_processed_indicators(processed_sources))
             processed_ok = build_processed_pickles(only=processed_only)
 
@@ -1594,6 +1654,10 @@ def _main():
     _print(f"  ✅ Успешно: {len(successes)} — {', '.join(successes) if successes else '—'}")
     if failures:
         _print(f"  ❌ Ошибки:  {len(failures)} — {', '.join(failures)}")
+    if skipped:
+        _print(f"  Пропущено {len(skipped)}:")
+        for alias in skipped:
+            _print(f"    {alias}: {source_outcomes[alias]['reason']}")
     if diff["added"]:
         _print(f"  📥 Новых файлов:    {len(diff['added'])}")
     if diff["changed"]:
@@ -1613,7 +1677,7 @@ def _main():
 
     stop_realty_heartbeat()
     status_ok = write_realty_run_status(
-        "success" if not failures and marts_ok and processed_ok and not _STATUS_WRITE_ERRORS else "failed",
+        ("degraded" if skipped else "success") if not failures and marts_ok and processed_ok and not _STATUS_WRITE_ERRORS else "failed",
         started=started,
         sources=sources,
         log_path=log_path,
@@ -1652,7 +1716,8 @@ def _main():
                                     marts_ok=marts_ok,
                                     processed_ok=processed_ok,
                                     final_archive_ok=final_archive_ok,
-                                    archive_warnings=archive_warnings)
+                                    archive_warnings=archive_warnings,
+                                    source_outcomes=source_outcomes)
             notify(text, silent=True)
         except Exception:  # noqa: BLE001
             pass

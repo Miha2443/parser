@@ -34,6 +34,25 @@ def mutation_lock(root):
         yield
 
 
+@contextmanager
+def bootstrap_baseline(root, runtime):
+    """Pin the last working generation before a first collector can overwrite it."""
+    if live_target(runtime):
+        yield None
+        return
+    runtime.mkdir(parents=True, exist_ok=True)
+    baseline = runtime / (".bootstrap-baseline-" + uuid.uuid4().hex)
+    baseline.mkdir()
+    try:
+        for relative in TREES:
+            copy_tree(root / relative, baseline / relative)
+        yield baseline
+    finally:
+        if baseline.is_symlink() or baseline.resolve().parent != runtime.resolve():
+            raise RuntimeError("Unsafe bootstrap baseline cleanup")
+        shutil.rmtree(baseline)
+
+
 def copy_tree(source: Path, target: Path, *, seed=False):
     target.mkdir(parents=True, exist_ok=True)
     if not source.exists():
@@ -67,32 +86,40 @@ def read_status(root):
 
 
 def requested_sources():
-    value = os.environ.get("UPDATE_ERZ", "0")
-    if value not in {"0", "1"}:
-        raise RuntimeError("UPDATE_ERZ must be 0 or 1")
-    return SOURCES if value == "1" else REQUIRED_SOURCES
+    if os.environ.get("UPDATE_ERZ") == "0":
+        print("UPDATE_ERZ=0 is deprecated: all eight providers are checked; confirmed outages retain previous data", flush=True)
+    return SOURCES
 
 
 def require_success(status, previous_id, started, *, expected_sources=None, returncode=None):
+    from pipeline.source_availability import validate_outcome
     expected = requested_sources() if expected_sources is None else frozenset(expected_sources)
     requested, successes, failures = (status.get(key, []) for key in ("sources_requested", "successes", "failures"))
     valid_lists = all(isinstance(values, list) and all(isinstance(value, str) for value in values)
                       and len(values) == len(set(values)) for values in (requested, successes, failures))
-    optional_failure = bool(failures)
-    expected_error = "source failures: " + ", ".join(failures) if valid_lists and failures else ""
+    skipped = status.get("skipped", [])
+    if not isinstance(skipped, list) or not all(isinstance(alias, str) for alias in skipped) or len(skipped) != len(set(skipped)):
+        raise RuntimeError("Invalid skipped source list")
+    expected_error = ""
     if (not status.get("run_id") or status["run_id"] == previous_id
-            or status.get("status") != ("failed" if optional_failure else "success") or not status.get("finished_at")
+            or status.get("status") != ("degraded" if skipped else "success") or not status.get("finished_at")
             or status.get("current_stage") != "finished"
             or not valid_lists or not REQUIRED_SOURCES <= expected <= SOURCES
-            or set(requested) != expected or set(successes) | set(failures) != expected
-            or set(successes) & set(failures) or not REQUIRED_SOURCES <= set(successes)
-            or not set(failures) <= OPTIONAL_SOURCES or status.get("status_write_errors")
+            or set(requested) != expected or set(successes) | set(skipped) != expected
+            or set(successes) & set(skipped) or failures or status.get("status_write_errors")
             or (status.get("error") or "") != expected_error or status.get("marts_ok") is not True
             or status.get("processed_ok") is not True
-            or (returncode is not None and returncode != (2 if optional_failure else 0))):
+            or (returncode is not None and returncode != 0)):
         raise RuntimeError("Current required-source run did not succeed; refusing publication")
     if datetime.fromisoformat(status["started_at"]).timestamp() < started - 2:
         raise RuntimeError("Update status predates this invocation")
+    outcomes = status.get("source_outcomes", {})
+    if not isinstance(outcomes, dict) or set(outcomes) != expected:
+        raise RuntimeError("Source outcome partition is incomplete")
+    for alias in expected:
+        row = validate_outcome(outcomes[alias], alias, status["run_id"], status["started_at"], status["finished_at"])
+        if row["status"] != ("skipped" if alias in skipped else "success"):
+            raise RuntimeError("Source outcome contradicts its run partition")
 
 
 def publication_status(root, status=None, returncode=None, *, full_marts_built=False):
@@ -131,19 +158,119 @@ def validate_api():
     from backend.app import create_app
     access = DataAccess(DataContext.from_environment())
     validate_sources(access)
+    from pipeline.source_availability import read_publication, unavailable, route_sources
+    source_states = read_publication(access.PROJECT_ROOT).get("sources", {})
     with TestClient(create_app()) as client:
         def get(route):
             response = client.get(route)
+            if response.status_code == 503:
+                detail = response.json().get("detail", {})
+                blocked = route_sources(route.split("?")[0]) & unavailable(access.PROJECT_ROOT)
+                if blocked and isinstance(detail, dict) and detail.get("code") == "source_unavailable" and set(detail.get("sources", [])) == blocked:
+                    return {"sourceUnavailable": True, "sources": sorted(blocked)}
             if response.status_code != 200:
                 raise RuntimeError(f"Candidate API failed: {route}: {response.status_code}")
             return response.json()
-        validate_pages(get)
+        validate_pages(get, source_states=source_states)
 
 
 def build_candidate(root):
     environment = {**os.environ, "PARSER_ROOT": str(root), "PARSER_DOWNLOADS": str(root / "downloads"),
                    "PARSER_USE_REALTY_MARTS": "0", "PARSER_REQUIRE_REALTY_MARTS": "0"}
     subprocess.run([sys.executable, "-m", "pipeline.build_realty_marts", "--strict"], env=environment, check=True)
+
+
+def build_candidate_processed(root, sources):
+    """Reuse current proven processed inputs; rebuild missing/stale indicators privately."""
+    from pipeline.source_availability import indicator_ids
+    from pipeline.data_access import DataAccess, DataContext
+    from pipeline.registry import by_id
+    access = DataAccess(DataContext(root, downloads=root / "downloads", use_marts=False))
+    selected = []
+    for identifier in sorted(indicator_ids(set(sources) - OPTIONAL_SOURCES)):
+        indicator = by_id(identifier)
+        target = root / "data/processed" / (identifier + ".pkl")
+        # Economic files are genuinely reusable when the existing contribution
+        # provenance and download timestamps pass the final coverage contract.
+        files = access._raw_files([access.DOWNLOADS_DIR], list(indicator.file_patterns)) if indicator.source in {"fedstat", "rosstat"} else []
+        reusable = (files and target.is_file() and all(file.stat().st_mtime_ns <= target.stat().st_mtime_ns for file in files))
+        if not reusable:
+            selected.append(identifier)
+    if selected:
+        environment = {**os.environ, "PARSER_ROOT": str(root), "PARSER_DOWNLOADS": str(root / "downloads"), "TDM_DISABLED": "1"}
+        subprocess.run([sys.executable, "pipeline/orchestrator.py", "--skip-download", "--no-notify", "--only", *selected],
+                       cwd=Path(__file__).resolve().parents[1], env=environment, check=True)
+
+
+def select_candidate_sources(candidate, status, previous=None):
+    from pipeline.source_availability import source_files, indicator_ids, FAMILIES
+    from pipeline.data_access import DataAccess, DataContext
+    from docker.coverage import validate_source_raw, validate_erz_sources
+    from zipfile import BadZipFile
+    def access(root):
+        return DataAccess(DataContext(root, downloads=root / "downloads", use_marts=False))
+    rows = {}
+    units = [(alias,) for alias in ("monitoring", "construction", "kvart", "rasprod", "fedstat", "rosstat")]
+    units.append(("erz-top", "erz-cards"))
+    for aliases in units:
+        skipped = [alias for alias in aliases if status["source_outcomes"][alias]["status"] == "skipped"]
+        chosen = candidate if not skipped else previous
+        reason = "Источник обновлён и проверен"
+        code = "collected"
+        if skipped:
+            reason, code = (status["source_outcomes"][skipped[0]][key] for key in ("reason", "reason_code"))
+        if chosen is not None:
+            try:
+                if len(aliases) == 2:
+                    validate_erz_sources(access(chosen))
+                    if not skipped:
+                        for alias in aliases:
+                            if not source_files(chosen, alias):
+                                raise RuntimeError("Successful ERZ collector has no source data")
+                else:
+                    validate_source_raw(access(chosen), aliases[0])
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError, BadZipFile, EOFError) as exc:
+                if not skipped:
+                    raise RuntimeError("Successful collector produced invalid " + ", ".join(aliases) + ": " + str(exc)) from exc
+                chosen = None
+                reason += "; прежний проверенный набор недоступен: " + str(exc)[:250]
+        selected = {alias: source_files(chosen, alias) if chosen else [] for alias in aliases}
+        if skipped:
+            # Remove only this family's candidate files. Downloads and Nashdom
+            # are shared namespaces; another source's files never move here.
+            for file in sorted({file for alias in aliases for file in source_files(candidate, alias)}):
+                file.unlink()
+            for file in sorted({file for files in selected.values() for file in files}):
+                destination = candidate / file.relative_to(chosen)
+                if not destination.resolve().is_relative_to(candidate.resolve()):
+                    raise RuntimeError("Unsafe retained source destination")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(file, destination)
+                if destination.stat().st_mtime_ns != file.stat().st_mtime_ns:
+                    raise RuntimeError("Retained source timestamp changed")
+            for identifier in indicator_ids(aliases):
+                destination = candidate / "data/processed" / (identifier + ".pkl")
+                destination.unlink(missing_ok=True)
+                source = chosen / "data/processed" / destination.name if chosen else None
+                if source and source.is_file():
+                    if source.is_symlink() or not source.resolve().is_relative_to(chosen.resolve()):
+                        raise RuntimeError("Unsafe retained processed source")
+                    shutil.copy2(source, destination)
+        for alias in aliases:
+            files = source_files(candidate, alias)
+            state = "unavailable" if not files else "retained" if skipped else "fresh"
+            evidence_alias = skipped[0] if skipped else alias
+            rows[alias] = {"state": state, "reason_code": code, "reason": reason,
+                           "outage_alias": evidence_alias, "outcome": status["source_outcomes"][evidence_alias],
+                           "files": [str(file.relative_to(candidate)) for file in files],
+                           "source_dates": {file.name: datetime.fromtimestamp(file.stat().st_mtime, timezone.utc).isoformat() for file in files},
+                           "inventory": [{"path": str(file.relative_to(candidate)), "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
+                                          "mtime_ns": file.stat().st_mtime_ns} for file in files]}
+    return {"schema_version": 2, "status": "degraded" if any(row["state"] != "fresh" for row in rows.values()) else "success",
+            "mode": "collector", "sources": rows, "optional_sources": {alias: rows[alias] for alias in OPTIONAL_SOURCES},
+            "run_id": status["run_id"], "run_started_at": status["started_at"], "run_finished_at": status["finished_at"],
+            "collector_status": status["status"], "collector_returncode": 0, "full_marts_built": False,
+            "collector_marts_skipped": True, "recorded_at": datetime.now(timezone.utc).isoformat()}
 
 
 def _erz_files(access):
@@ -241,7 +368,10 @@ def swap(runtime, target):
         (runtime / "live").unlink()
 
 
-def publish(root, runtime, *, run_status=None, collector_returncode=None):
+def publish(root, runtime, *, run_status=None, collector_returncode=None, baseline=None):
+    if run_status is not None:
+        require_success(run_status, None, datetime.fromisoformat(run_status["started_at"]).timestamp(),
+                        expected_sources=SOURCES, returncode=collector_returncode)
     runtime.mkdir(parents=True, exist_ok=True)
     previous = live_target(runtime)
     if (runtime / "pending.json").exists():
@@ -256,17 +386,26 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None):
     try:
         for relative in TREES:
             copy_tree(root / relative, candidate / relative)
-        selection = select_candidate_erz(candidate, runtime / previous if previous else None)
+        if run_status and run_status.get("source_outcomes"):
+            metadata = select_candidate_sources(candidate, run_status, runtime / previous if previous else baseline)
+            (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
+            build_candidate_processed(candidate, {alias for alias, row in metadata["sources"].items() if row["state"] != "unavailable"})
+            selection = None
+        else:
+            selection = select_candidate_erz(candidate, runtime / previous if previous else None)
+            metadata = publication_status(candidate, run_status, collector_returncode)
         build_candidate(candidate)
-        metadata = publication_status(candidate, run_status, collector_returncode, full_marts_built=True)
-        metadata["erz_selection"] = selection
-        for row in metadata["optional_sources"].values():
-            if selection["selection"] == "previous" and row["state"] != "unavailable":
-                row["state"] = "retained"
-            row["reason"] = selection["reason"]
-        metadata["status"] = "degraded" if any(row["state"] != "fresh" for row in metadata["optional_sources"].values()) else "success"
+        metadata["full_marts_built"] = True
+        if selection is not None:
+            metadata["erz_selection"] = selection
+            for row in metadata["optional_sources"].values():
+                if selection["selection"] == "previous" and row["state"] != "unavailable":
+                    row["state"] = "retained"
+                row["reason"] = selection["reason"]
+            metadata["status"] = "degraded" if any(row["state"] != "fresh" for row in metadata["optional_sources"].values()) else "success"
         (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
-        print("Candidate ERZ: " + json.dumps(selection), flush=True)
+        print("Candidate sources: " + json.dumps({key: {"state": row["state"], "reason_code": row["reason_code"]}
+              for key, row in metadata.get("sources", {}).items()} if "sources" in metadata else selection), flush=True)
         validate(candidate)
         final = releases / identifier
         candidate.rename(final)
@@ -363,11 +502,12 @@ def run_action(action, root, runtime):
         before = read_status(root).get("run_id")
         started = time.time()
         expected = requested_sources()
-        result = subprocess.run([sys.executable, "-u", "scripts/update_realty.py", *sorted(expected), "--retries", "0", "--no-marts", "--skip-optional-processed"],
-                                cwd=root, check=False)
-        status = read_status(root)
-        require_success(status, before, started, expected_sources=expected, returncode=result.returncode)
-        publish(root, runtime, run_status=status, collector_returncode=result.returncode)
+        with bootstrap_baseline(root, runtime) as baseline:
+            result = subprocess.run([sys.executable, "-u", "scripts/update_realty.py", *sorted(expected), "--retries", "0", "--collect-only"],
+                                    cwd=root, check=False)
+            status = read_status(root)
+            require_success(status, before, started, expected_sources=expected, returncode=result.returncode)
+            publish(root, runtime, run_status=status, collector_returncode=result.returncode, baseline=baseline)
 
 
 def main():

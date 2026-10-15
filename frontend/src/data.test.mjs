@@ -74,6 +74,19 @@ test('HTTP and network errors remain visible with no snapshot fallback', async t
   await assert.rejects(request('/api/v1/catalog', new AbortController().signal), /подключиться/);
 });
 
+test('declared missing source shows its reason without replacing unrelated errors', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ detail: {
+    code: 'source_unavailable', sources: ['fedstat'], reason: 'Федстат: технические работы. Прежних данных пока нет.'
+  } }, { status: 503 }));
+  await assert.rejects(request('/api/v1/economics/ipc', new AbortController().signal), error => {
+    assert.equal(error.status, 503);
+    assert.equal(error.message, 'Федстат: технические работы. Прежних данных пока нет.');
+    return true;
+  });
+  globalThis.fetch = async () => Response.json({ detail: { code: 'unknown', reason: 'internal technical details' } }, { status: 503 });
+  await assert.rejects(request('/api/v1/economics/ipc', new AbortController().signal), /HTTP 503/);
+});
+
 test('snapshot mode is explicit, frozen, and never requests a live profile', async t => {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async url => { calls.push(url); return Response.json(fixture); });

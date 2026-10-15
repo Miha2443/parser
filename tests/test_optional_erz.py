@@ -47,12 +47,16 @@ class OptionalErzTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def status(self, requested=REQUIRED_SOURCES, failures=()):
-        return dict(run_id="fresh", status="failed" if failures else "success", current_stage="finished",
+    def status(self, requested=SOURCES, failures=(), skipped=()):
+        from pipeline.source_availability import outcome, check_provider, stamp
+        rows = {alias: outcome(alias, "fresh", "failed" if alias in failures else "success") for alias in requested}
+        for alias in skipped:
+            rows[alias] = check_provider(alias, "fresh", check=lambda url: {"url": url, "checked_at": stamp(), "http_status": 503})
+        return dict(run_id="fresh", status="failed" if failures else "degraded" if skipped else "success", current_stage="finished",
                     started_at=datetime.now().isoformat(), finished_at=datetime.now().isoformat(),
-                    sources_requested=sorted(requested), successes=sorted(set(requested) - set(failures)),
+                    sources_requested=sorted(requested), successes=sorted(set(requested) - set(failures) - set(skipped)),
                     failures=list(failures), error="source failures: " + ", ".join(failures) if failures else "",
-                    status_write_errors=[], processed_ok=True, marts_ok=True)
+                    skipped=list(skipped), source_outcomes=rows, status_write_errors=[], processed_ok=True, marts_ok=True)
 
     def raw_access(self, root):
         return DataAccess(DataContext(root, downloads=root / "downloads", use_marts=False))
@@ -88,11 +92,11 @@ class OptionalErzTests(unittest.TestCase):
         return release, json.loads((release / "data/processed/publication_status.json").read_text())
 
     def test_request_scope_and_failures_are_exact_and_only_erz_can_degrade(self):
-        for enabled, requested, failures in (("0", REQUIRED_SOURCES, ()), ("1", SOURCES, ()),
-                                             ("1", SOURCES, ("erz-top", "erz-cards"))):
+        for enabled, requested, skipped in (("0", SOURCES, ()), ("1", SOURCES, ()),
+                                            ("1", SOURCES, ("erz-top", "erz-cards"))):
             with patch.dict(os.environ, {"UPDATE_ERZ": enabled}):
-                valid = self.status(requested, failures)
-                p.require_success(valid, None, time.time(), returncode=2 if failures else 0)
+                valid = self.status(requested, skipped=skipped)
+                p.require_success(valid, None, time.time(), returncode=0)
                 for changes in ({"successes": ["monitoring"]}, {"sources_requested": sorted(requested) + ["monitoring"]},
                                 {"processed_ok": False}, {"marts_ok": False}, {"error": "unexpected crash"},
                                 {"current_stage": "running"}, {"run_id": "previous"}):
@@ -100,8 +104,8 @@ class OptionalErzTests(unittest.TestCase):
                         p.require_success({**valid, **changes}, "previous", time.time())
         with patch.dict(os.environ, {"UPDATE_ERZ": "1"}), self.assertRaises(RuntimeError):
             p.require_success(self.status(SOURCES, ("fedstat",)), None, time.time(), returncode=2)
-        with patch.dict(os.environ, {"UPDATE_ERZ": "0"}), self.assertRaises(RuntimeError):
-            p.require_success(self.status(SOURCES), None, time.time())
+        with patch.dict(os.environ, {"UPDATE_ERZ": "0"}):
+            self.assertEqual(p.requested_sources(), SOURCES)
 
     def test_no_erz_first_snapshot_has_all_marts_pages_and_null_erz_facts(self):
         from fastapi.testclient import TestClient
@@ -157,7 +161,7 @@ class OptionalErzTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(RuntimeError, "without source files"):
                 validate_sources(self.access())
 
-    def test_first_runner_skips_erz_and_builds_all_nine_before_publication(self):
+    def test_first_runner_checks_all_eight_and_builds_all_nine_after_confirmed_erz_outage(self):
         self.no_erz()
         for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
             (self.root / name).write_text("test stub")
@@ -166,11 +170,10 @@ class OptionalErzTests(unittest.TestCase):
         def run(command, **kwargs):
             calls.append(command)
             if "scripts/update_realty.py" in command:
-                self.assertIn("--no-marts", command)
-                self.assertIn("--skip-optional-processed", command)
-                self.assertNotIn("erz-top", command)
-                self.assertNotIn("erz-cards", command)
-                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(self.status()))
+                self.assertIn("--collect-only", command)
+                self.assertIn("erz-top", command)
+                self.assertIn("erz-cards", command)
+                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(self.status(skipped=("erz-top", "erz-cards"))))
                 return subprocess.CompletedProcess(command, 0)
             return original(command, **kwargs)
         with patch.dict(os.environ, {"UPDATE_ERZ": "0"}), patch.object(p.subprocess, "run", side_effect=run), patch.object(p, "swap"):
@@ -179,18 +182,18 @@ class OptionalErzTests(unittest.TestCase):
         metadata = json.loads((next_release / "data/processed/publication_status.json").read_text())
         self.assertTrue(metadata["full_marts_built"])
         self.assertEqual(metadata["optional_sources"]["erz-top"]["state"], "unavailable")
-        self.assertEqual(len(calls), 4)  # Collector, candidate build, manifest check, API check.
+        self.assertEqual(len(calls), 5)  # Collector, private ETL/build, manifest check, API check.
         self.assertFalse((self.root / "data/marts/realty/manifest.json").exists())
 
     def test_failed_erz_keeps_existing_measurements_and_dates(self):
         self.build()
         files = list((self.root / "data/raw/realty/erzrf").iterdir())
         before = {file.name: (file.read_bytes(), file.stat().st_mtime_ns) for file in files}
-        status = self.status(SOURCES, ("erz-top", "erz-cards"))
-        p.require_success(status, None, time.time(), expected_sources=SOURCES, returncode=2)
-        metadata = p.publication_status(self.root, status, 2, full_marts_built=True)
+        status = self.status(SOURCES, skipped=("erz-top", "erz-cards"))
+        p.require_success(status, None, time.time(), expected_sources=SOURCES, returncode=0)
+        metadata = p.publication_status(self.root, status, 0, full_marts_built=True)
         self.assertEqual(metadata["status"], "degraded")
-        self.assertEqual(metadata["collector_status"], "failed")
+        self.assertEqual(metadata["collector_status"], "degraded")
         self.assertTrue(all(item["state"] == "retained" for item in metadata["optional_sources"].values()))
         validate_sources(self.access())
         self.assertEqual(before, {file.name: (file.read_bytes(), file.stat().st_mtime_ns) for file in files})
@@ -205,9 +208,10 @@ class OptionalErzTests(unittest.TestCase):
             def run(command, **kwargs):
                 if "scripts/update_realty.py" in command:
                     self.assertIn("erz-top", command)
-                    self.assertIn("--skip-optional-processed", command)
-                    (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(self.status(SOURCES, failures)))
-                    return subprocess.CompletedProcess(command, 2)
+                    self.assertIn("--collect-only", command)
+                    status = self.status(SOURCES, failures) if failures == ("fedstat",) else self.status(SOURCES, skipped=failures)
+                    (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(status))
+                    return subprocess.CompletedProcess(command, 2 if failures == ("fedstat",) else 0)
                 return original(command, **kwargs)
             with patch.dict(os.environ, {"UPDATE_ERZ": "1"}), patch.object(p.subprocess, "run", side_effect=run), patch.object(p, "swap"):
                 if failures == ("fedstat",):
@@ -218,8 +222,8 @@ class OptionalErzTests(unittest.TestCase):
                     p.run_action("update", self.root, runtime)
                     next_release = runtime / json.loads((runtime / "pending.json").read_text())["next"]
                     info = json.loads((next_release / "data/processed/publication_status.json").read_text())
-                    self.assertEqual(info["collector_returncode"], 2)
-                    self.assertEqual(info["collector_status"], "failed")
+                    self.assertEqual(info["collector_returncode"], 0)
+                    self.assertEqual(info["collector_status"], "degraded")
                     self.assertTrue(info["full_marts_built"])
 
     def test_new_top_old_cards_uses_previous_cohort_with_identical_bytes_dates_and_top_evidence(self):
@@ -231,12 +235,12 @@ class OptionalErzTests(unittest.TestCase):
         archive.mkdir()
         (archive / "cards_old.xlsx").write_bytes(b"recoverable history")
         working = self.erz_bytes(self.root)
-        status = self.status(SOURCES, ("erz-cards",))
+        status = self.status(SOURCES, skipped=("erz-cards",))
         with patch.object(p, "live_target", return_value="releases/old"), patch.object(p, "swap"):
-            p.publish(self.root, runtime, run_status=status, collector_returncode=2)
+            p.publish(self.root, runtime, run_status=status, collector_returncode=0)
         release, metadata = self.published(runtime)
-        self.assertEqual(metadata["erz_selection"]["selection"], "previous")
-        self.assertIn("verified target coverage", metadata["erz_selection"]["reason"])
+        self.assertEqual(metadata["sources"]["erz-top"]["state"], "retained")
+        self.assertEqual(metadata["sources"]["erz-cards"]["reason_code"], "provider_unavailable")
         self.assertEqual(metadata["status"], "degraded")
         self.assertTrue(all(row["state"] == "retained" for row in metadata["optional_sources"].values()))
         self.assertEqual(self.erz_bytes(release), old)
@@ -276,16 +280,16 @@ class OptionalErzTests(unittest.TestCase):
         original = subprocess.run
         def run(command, **kwargs):
             if "scripts/update_realty.py" in command:
-                self.assertNotIn("erz-top", command)
-                self.assertNotIn("erz-cards", command)
-                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(self.status()))
+                self.assertIn("erz-top", command)
+                self.assertIn("erz-cards", command)
+                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(self.status(skipped=("erz-cards",))))
                 return subprocess.CompletedProcess(command, 0)
             return original(command, **kwargs)
         with patch.dict(os.environ, {"UPDATE_ERZ": "0"}), patch.object(p.subprocess, "run", side_effect=run), \
                 patch.object(p, "live_target", return_value="releases/old"), patch.object(p, "swap"):
             p.run_action("update", self.root, runtime)
         release, metadata = self.published(runtime)
-        self.assertEqual(metadata["erz_selection"]["selection"], "previous")
+        self.assertEqual(metadata["sources"]["erz-cards"]["state"], "retained")
         self.assertEqual(self.erz_bytes(release), old)
         self.assertEqual(self.erz_bytes(self.root), working)
 

@@ -14,18 +14,20 @@ host_log="logs/docker-update_$(date -u +%Y%m%dT%H%M%S)_$$.log"
 exec > >(tee -a "$host_log") 2>&1
 
 event() { printf '%s step=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-}"; }
-backend_id() { timeout 15 docker compose ps -aq backend; }
+# Docker clients may ignore TERM while attached; always bound the final kill too.
+bounded() { timeout --kill-after=5s "$@"; }
+backend_id() { bounded 15 docker compose ps -aq backend; }
 backend_signature() {
   local id
   id="$(backend_id)" || return
   [[ -n "$id" ]] || return 0
-  timeout 15 docker inspect -f '{{.Id}}|{{.State.Status}}|{{.State.StartedAt}}' "$id"
+  bounded 15 docker inspect -f '{{.Id}}|{{.State.Status}}|{{.State.StartedAt}}' "$id"
 }
 backend_state() {
   local id details
   id="$(backend_id)" || { event backend_state 'inspect=unavailable'; return; }
   if [[ -z "$id" ]]; then event backend_state 'container=absent'; return; fi
-  details="$(timeout 15 docker inspect -f '{"id":{{json .Id}},"image":{{json .Config.Image}},"imageId":{{json .Image}},"status":{{json .State.Status}},"healthStatus":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"error":{{json .State.Error}},"restartCount":{{.RestartCount}}}' "$id")" || return
+  details="$(bounded 15 docker inspect -f '{"id":{{json .Id}},"image":{{json .Config.Image}},"imageId":{{json .Image}},"status":{{json .State.Status}},"healthStatus":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{.State.ExitCode}},"oomKilled":{{.State.OOMKilled}},"error":{{json .State.Error}},"restartCount":{{.RestartCount}}}' "$id")" || return
   event backend_state "$details"
 }
 finish() {
@@ -41,8 +43,8 @@ backend_state
 control() {
   case "$1" in
     recovery-info|activate-next|rollback|ack)
-      timeout 60 docker compose run --rm --no-deps updater python -m docker.publication "$1" ;;
-    *) docker compose run --rm --no-deps updater python -m docker.publication "$1" ;;
+      bounded 60 docker compose run --rm --no-deps -T --interactive=false updater python -m docker.publication "$1" </dev/null ;;
+    *) docker compose run --rm --no-deps -T --interactive=false updater python -m docker.publication "$1" </dev/null ;;
   esac
 }
 ready_once() {
@@ -52,16 +54,16 @@ ready_once() {
   if [[ "$scope" == identity ]]; then
     # The existing backend may still contain an older readiness CLI. Execute
     # host-owned stdlib code so migration does not depend on that image's files.
-    timeout "$bound" docker compose exec -T backend python -c '
+    bounded "$bound" docker compose exec -T --interactive=false backend python -c '
 import json, sys
 from urllib.request import urlopen
 with urlopen("http://127.0.0.1:8000/api/v1/health", timeout=15) as response:
     health = json.load(response)
 if health.get("status") != "ok" or health.get("release") != sys.argv[1]:
     raise SystemExit("Backend does not serve the expected healthy pinned release")
-' "/runtime/$target"
+' "/runtime/$target" </dev/null
   else
-    timeout "$bound" docker compose exec -T backend python docker/readiness.py "/runtime/$target"
+    bounded "$bound" docker compose exec -T --interactive=false backend python docker/readiness.py "/runtime/$target" </dev/null
   fi
 }
 ready_target() {
@@ -81,21 +83,26 @@ restart_backend() {
   local before after
   before="$(backend_signature)" || return
   event backend_start 'compose up; restart only if existing running container did not start anew'
-  timeout 120 docker compose up -d --no-deps backend || return
+  bounded 120 docker compose up -d --no-deps backend || return
   after="$(backend_signature)" || return
   if [[ -n "$before" && "$before" == "$after" && "$before" == *'|running|'* ]]; then
     event backend_restart 'same container and StartedAt; pin the new release once'
-    timeout 60 docker compose restart backend || return
+    bounded 60 docker compose restart backend || return
   fi
   backend_state
   ready_target "$(readlink runtime/live)" "${1:-full}"
 }
 
 recover() {
-  local info previous next live id
+  local info previous next live id status
   event recovery 'validate journal and live before mutation'
   info="$(control recovery-info)" || {
-    event recovery_blocked 'Unknown journal/live combination; keep all data and journal. Inspect runtime/pending.json and this host log.'
+    status=$?
+    if [[ "$status" == 124 || "$status" == 137 ]]; then
+      event recovery_blocked "reason=control_timeout exitCode=$status Recovery command timed out; journal/live consistency is unknown. Keep all data and journal; inspect Docker and this host log."
+    else
+      event recovery_blocked "reason=control_failed exitCode=$status Recovery command failed; keep all data and journal. Inspect runtime/pending.json and the command error above."
+    fi
     return 1
   }
   read -r previous next live <<< "$info"
@@ -159,7 +166,7 @@ event updater_start "mode=$mode"
 if [[ "$mode" == --publish-existing ]]; then
   run_updater() { control publish; }
 else
-  run_updater() { docker compose run --rm --no-deps updater; }
+  run_updater() { docker compose run --rm --no-deps -T --interactive=false updater </dev/null; }
 fi
 if ! run_updater; then
   if [[ -f runtime/pending.json || -L runtime/pending.json ]]; then
@@ -179,7 +186,7 @@ if ! restart_backend; then
   exit 1
 fi
 control ack
-docker compose up -d --no-deps web
+bounded 120 docker compose up -d --no-deps web
 # Archival errors cannot roll back a healthy acknowledged site.
 if ! control archive; then event archive_warning 'Healthy site retained; old releases remain available'; fi
 event complete "live=$(readlink runtime/live)"

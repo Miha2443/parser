@@ -251,6 +251,13 @@ docker compose ps -a
 docker compose logs --tail 100 backend
 ```
 
+Скрипты запускают updater и проверки backend без интерактивного ввода:
+`-T --interactive=false` и stdin из `/dev/null`. Это одинаково работает при
+вставке команд в SSH и из cron. Ограниченные по времени команды Docker после
+таймаута получают TERM, а ещё через 5 секунд — KILL, если клиент не завершился.
+`reason=control_timeout` означает таймаут команды восстановления, а не доказанное
+несоответствие журнала и `live`. Данные и `pending.json` при этом сохраняются.
+
 Каждый запуск автоматически сохраняет `logs/docker-update_<UTC-date>_<pid>.log`:
 время и этап, ID контейнера и фактического образа, `StartedAt`, состояние, статус healthcheck,
 `ExitCode`, `OOMKilled`,

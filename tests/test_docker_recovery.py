@@ -74,10 +74,16 @@ assert args[0]=='compose', args
 args=args[1:]; command=args[0]
 if command=='ps': print(state['id']); die(0)
 if command=='run':
+    assert '-T' in args and '--interactive=false' in args, 'Lifecycle must not attach an interactive terminal'
+    assert os.read(0,1)==b'', 'Lifecycle must not consume operator stdin'
     if 'docker.publication' in args:
         action=args[-1]; runtime=Path('runtime')
         try:
             if action=='recovery-info':
+                if state.get('hang_control'):
+                    import signal,time
+                    signal.signal(signal.SIGTERM,signal.SIG_IGN)
+                    time.sleep(600)
                 info=p.recovery_info(runtime); print(' '.join(info[k] or '-' for k in ('previous','next','live')))
             elif action=='archive': pass
             else: p.transaction(runtime,action)
@@ -85,6 +91,12 @@ if command=='run':
         die(0)
     state['downloads']+=1; die(1)
 if command=='exec':
+    assert '-T' in args and '--interactive=false' in args, 'Readiness must not attach an interactive terminal'
+    assert os.read(0,1)==b'', 'Readiness must not consume operator stdin'
+    if state.get('hang_probe'):
+        import signal,time
+        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+        time.sleep(600)
     if '-c' in args:
         # Execute the actual host-owned probe rather than guessing its flags.
         import io,urllib.request
@@ -199,7 +211,7 @@ class HostRecoveryTests(unittest.TestCase):
         (self.root / 'daemon.json').write_text(json.dumps(self.state))
         result = subprocess.run(['bash', 'docker/update.sh', *args], cwd=self.root,
             env={**os.environ, 'PATH': str(self.root / 'bin') + os.pathsep + os.environ['PATH'],
-                 'TEST_REPO': str(REPO), 'READINESS_TIMEOUT': '2'}, text=True, capture_output=True, timeout=35)
+                 'TEST_REPO': str(REPO), 'READINESS_TIMEOUT': '2'}, input='operator terminal input\n', text=True, capture_output=True, timeout=35)
         self.state = json.loads((self.root / 'daemon.json').read_text())
         self.assertNotIn('must-never-print', result.stdout + result.stderr)
         self.assertTrue(list((self.root / 'logs').glob('docker-update_*.log')))
@@ -297,6 +309,37 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertIn('"imageId": "sha256:simulated-old-image"', result.stdout)
         self.assertEqual((self.state['id'], self.state['started']), ('backend-1', 'original-start'))
         self.assertEqual((self.state['stops'], self.state['restarts'], self.state['downloads']), (0, 0, 0))
+
+    def test_probe_ignoring_term_is_killed_without_changing_the_site(self):
+        self.state.update(served='releases/new', hang_probe=True)
+        result = self.run_host()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('reason=live_identity_not_ready', result.stdout)
+        self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
+        self.assertEqual((self.state['started'], self.state['stops'], self.state['restarts'], self.state['downloads']),
+                         ('original-start', 0, 0, 0))
+
+    def test_control_timeout_does_not_claim_invalid_journal_or_mutate_it(self):
+        import shlex
+        self.journal(previous='')
+        original = (self.root / 'runtime/pending.json').read_bytes()
+        self.state.update(served='releases/new', hang_control=True)
+        # Shorten only the control deadline; retain GNU timeout's real TERM/KILL
+        # behaviour against a client that deliberately ignores TERM.
+        real_timeout = shutil.which('timeout')
+        wrapper = self.root / 'bin/timeout'
+        wrapper.write_text('#!/usr/bin/env bash\n'
+                           'if [[ "$2" == 60 ]]; then set -- "$1" 1 "${@:3}"; fi\n'
+                           f'exec {shlex.quote(real_timeout)} "$@"\n')
+        wrapper.chmod(0o755)
+        result = self.run_host('--recover')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('reason=control_timeout', result.stdout)
+        self.assertNotIn('Unknown journal/live combination', result.stdout)
+        self.assertEqual((self.root / 'runtime/pending.json').read_bytes(), original)
+        self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
+        self.assertEqual((self.state['started'], self.state['stops'], self.state['restarts'], self.state['downloads']),
+                         ('original-start', 0, 0, 0))
 
     def test_first_bootstrap_starts_only_once(self):
         self.journal(previous='')

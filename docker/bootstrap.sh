@@ -13,5 +13,5 @@ configured_gid="$(sed -n 's/^OP_GID=\([0-9]*\)[[:space:]]*$/\1/p' .env)"
 mkdir -p downloads data state logs config runtime/releases
 chmod 600 .env
 docker compose --profile updater build
-docker compose run --rm --no-deps updater python -m docker.publication seed
+timeout --kill-after=5s 120s docker compose run --rm --no-deps -T --interactive=false updater python -m docker.publication seed </dev/null
 echo 'Images and working directories ready. Run bash docker/update.sh; ERZ is skipped by default. Configure config/erzrf.json only with UPDATE_ERZ=1.'

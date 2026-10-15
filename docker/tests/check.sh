@@ -65,7 +65,8 @@ curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE NEW'
 # Crash recovery must acknowledge an already healthy new backend without restart.
 before_identity="$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")"
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture recovery next
-bash docker/update.sh --recover
+# An SSH paste can leave operator input attached; lifecycle clients must ignore it.
+printf 'operator terminal input\n' | bash docker/update.sh --recover
 [[ ! -f runtime/pending.json ]]
 [[ "$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")" == "$before_identity" ]]
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture recovery clear

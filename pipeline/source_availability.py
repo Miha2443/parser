@@ -45,18 +45,30 @@ class _Text(HTMLParser):
     def __init__(self):
         super().__init__()
         self.parts, self.hidden = [], 0
+        self.headings, self.heading_parts, self.heading_depth = [], [], 0
 
     def handle_starttag(self, tag, attrs):
         if tag in {"script", "style"}:
             self.hidden += 1
+        if tag in {"title", "h1"}:
+            self.heading_depth += 1
 
     def handle_endtag(self, tag):
         if tag in {"script", "style"}:
             self.hidden = max(0, self.hidden - 1)
+        if tag in {"title", "h1"} and self.heading_depth:
+            self.heading_depth -= 1
+            if not self.heading_depth:
+                heading = " ".join(" ".join(self.heading_parts).split())
+                if heading and len(heading) <= 300 and len(self.headings) < 4:
+                    self.headings.append(heading)
+                self.heading_parts.clear()
 
     def handle_data(self, data):
         if not self.hidden:
             self.parts.append(data)
+            if self.heading_depth:
+                self.heading_parts.append(data)
 
 
 def classify_check(check):
@@ -66,6 +78,12 @@ def classify_check(check):
     status = check.get("http_status")
     if status in {500, 502, 503, 504}:
         return "provider_unavailable"
+    headings = check.get("headings", [])
+    if isinstance(headings, list) and len(headings) <= 4 and any(
+            isinstance(heading, str) and len(heading) <= 300 and
+            (MAINTENANCE.match(heading) or re.fullmatch(r"технические работы[.!]?", heading, re.I))
+            for heading in headings):
+        return "provider_maintenance"
     text = check.get("text", "")
     if (isinstance(text, str) and len(text) <= 1500 and
             (MAINTENANCE.match(text) or re.search("ведутся технические работы", text, re.I)
@@ -96,6 +114,7 @@ def http_check(url, *, get=None):
                 parser.feed(bytes(body).decode("utf-8", errors="replace"))
                 text = " ".join(" ".join(parser.parts).split())
                 result["text"] = text if len(text) <= 1500 else ""
+                result["headings"] = parser.headings
     except requests.exceptions.ConnectTimeout:
         result["network_error"] = "connect_timeout"
     except requests.exceptions.SSLError:

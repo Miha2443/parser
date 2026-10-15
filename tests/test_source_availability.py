@@ -95,6 +95,24 @@ class EvidenceTests(unittest.TestCase):
         answers = iter([503, 200] * len(sa.URLS["fedstat"]))
         self.assertIsNone(sa.check_provider("fedstat", "r", check=lambda url: {"url": url, "http_status": next(answers)}))
 
+    def test_http_200_maintenance_heading_after_branding_is_not_a_future_news_item(self):
+        class Response:
+            status_code = 200
+            url = sa.URLS["erz-top"][0]
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+            def __init__(self, html): self.html = html
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def iter_content(self, size): yield self.html.encode("utf-8")
+        for heading, expected in (("Ведутся технические <span>работы</span>", "provider_maintenance"),
+                                  ("Технические работы", "provider_maintenance"),
+                                  ("Завтра ведутся технические работы", None),
+                                  ("Новости", None)):
+            html = "<header>" + "Логотип и навигация " * 100 + "</header><h1>" + heading + "</h1><p>Объявление: завтра ведутся технические работы</p>"
+            with self.subTest(heading=heading):
+                evidence = sa.http_check(Response.url, get=lambda *args, **kwargs: Response(html))
+                self.assertEqual(sa.classify_check(evidence), expected)
+
     def test_stale_forged_wrong_alias_and_parser_failure_cannot_authorize_publication(self):
         valid = run_status(["fedstat"])
         p.require_success(valid, None, sa.timestamp(valid["started_at"]), returncode=0)

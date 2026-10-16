@@ -241,6 +241,45 @@ class CollectorContract(unittest.TestCase):
                 report = ec._excel_contract(self.workbook(kind), kind)
                 self.assertEqual(report["rows"], 1)
 
+    def test_ten_actual_rf_moscow_workbook_schemas_including_project_columns(self):
+        from openpyxl import Workbook
+        schemas = json.loads((ROOT / "docker/tests/fixtures/erz_20261016/workbook_schemas.json").read_text(encoding="utf-8"))["exports"]
+        self.assertEqual(len(schemas), 10)
+        for case in schemas:
+            with self.subTest(sorting=case["sorting"], region=case["region"]):
+                path = self.base / f"actual-{case['sorting']}-{case['region']}.xlsx"
+                book = Workbook()
+                book.active.append(case["headers"])
+                for row in case["sample_rows"]:
+                    book.active.append(row)
+                book.save(path)
+                report = ec._excel_contract(path, case["sorting"])
+                self.assertEqual(report["rows"], 3)
+                self.assertEqual(report["columns"], [ec._normalise_label(value) for value in case["headers"]])
+                if case["region"] == "msk" and case["sorting"] in {"obyem_stroitelstva", "obyem_vvoda"}:
+                    self.assertEqual(len(report["project_columns"]), 19)
+                    self.assertEqual(report["empty_separator_columns"], [33])
+
+    def test_duplicate_measurements_and_populated_unnamed_columns_remain_invalid(self):
+        from openpyxl import Workbook
+        good = fixture_frame("obyem_stroitelstva")
+        for repeated in good.columns:
+            with self.subTest(repeated=repeated), self.assertRaisesRegex(ValueError, "duplicate TOP headers"):
+                book = Workbook()
+                book.active.append([*good.columns, repeated])
+                book.active.append([*good.iloc[0], good.iloc[0][repeated]])
+                path = self.base / "duplicate.xlsx"
+                book.save(path)
+                ec._excel_contract(path, "obyem_stroitelstva")
+        for value in (125, 0, False, "unknown measurement"):
+            with self.subTest(unnamed=value), self.assertRaisesRegex(ValueError, "unnamed TOP column"):
+                book = Workbook()
+                book.active.append([*good.columns, None, "Наименование ЖК", "Наименование ЖК"])
+                book.active.append([*good.iloc[0], value, "Project A", "Project B"])
+                path = self.base / "unnamed.xlsx"
+                book.save(path)
+                ec._excel_contract(path, "obyem_stroitelstva")
+
     def test_construction_and_input_schemas_require_both_deadline_columns(self):
         for kind in ("obyem_stroitelstva", "obyem_vvoda", "nakopl_vvod"):
             for missing in ("С переносом срока, м²", "Уточнение срока, мес."):
@@ -411,6 +450,15 @@ class CollectorContract(unittest.TestCase):
             self.download(driver)
         self.assertEqual(target.read_bytes(), b"previous-version-preserved")
         self.assertFalse(target.with_suffix(".xlsx.provenance.json").exists())
+        rejected = list((ec.DOWNLOAD_DIR.parent / "_debug").glob("erzrf_top_*_rejected_*.xlsx"))
+        self.assertEqual(len(rejected), 1)
+        proof = json.loads(rejected[0].with_suffix(".xlsx.json").read_text(encoding="utf-8"))
+        self.assertEqual(proof["sha256"], hashlib.sha256(rejected[0].read_bytes()).hexdigest())
+        self.assertEqual(proof["sorting"], self.request.sorting_key)
+        access = DataAccess(DataContext(self.base))
+        access.ERZRF_PATHS = [ec.DOWNLOAD_DIR.parent]
+        self.assertIn(target, access.source_files("erzrf_top"))
+        self.assertNotIn(rejected[0], access.source_files("erzrf_top"))
 
     def test_incomplete_full_list_workbook_is_not_published(self):
         driver = FakeDriver()

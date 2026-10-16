@@ -17,11 +17,10 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
-import pandas as pd
+from openpyxl import Workbook
 
 import erzrf_checker as ec
 from pipeline.selenium_utils import create_chrome
-from scripts.check_erzrf_collector_contract import fixture_frame
 
 
 FIXTURES = Path(__file__).parent / "fixtures/erz_20261016"
@@ -45,24 +44,32 @@ def source_rows(html):
     return result
 
 
-def workbook(html, kind):
-    frame = fixture_frame(kind)
+def workbook(html, kind, region):
+    schemas = json.loads((FIXTURES / "workbook_schemas.json").read_text(encoding="utf-8"))["exports"]
+    schema = next(case for case in schemas if case["sorting"] == kind and case["region"] == region)
+    headers = schema["headers"]
+    normalised = [ec._normalise_label(value) for value in headers]
+    name_column = next(i for i, value in enumerate(normalised) if value in {"наименование", "наименование, регион"})
     metric_column = {"obyem_stroitelstva": "Строится, м²", "obyem_vvoda": "Введено, м²",
                      "nakopl_vvod": "Введено, м²", "potreb_kachestva": "Средняя оценка",
                      "skorost": "Скорость строительства, дней/дом"}[kind]
-    records = []
+    book = Workbook()
+    book.active.append(headers)
+
+    def append(rank, name, metric):
+        values = schema["sample_rows"][0].copy()
+        values[normalised.index("место")] = rank
+        values[name_column] = name
+        values[normalised.index(ec._normalise_label(metric_column))] = metric
+        book.active.append(values)
+
     for row in source_rows(html):
-        record = frame.iloc[0].to_dict()
-        record.update({"Место": row["rank"], "Наименование, регион": row["name"], metric_column: row["metric"]})
-        records.append(record)
+        append(row["rank"], row["name"], row["metric"])
     # A valid full-list fixture deliberately differs from the UI counter.
     for rank in range(21, 25):
-        record = frame.iloc[0].to_dict()
-        record.update({"Место": rank, "Наименование, регион": f"Transport fixture {rank}",
-                       metric_column: 1 if kind == "skorost" else 0})
-        records.append(record)
+        append(rank, f"Transport fixture {rank}", 1 if kind == "skorost" else 0)
     output = BytesIO()
-    pd.DataFrame(records).to_excel(output, index=False)
+    book.save(output)
     return output.getvalue()
 
 
@@ -152,7 +159,7 @@ def check_download_replay():
                 case = f"{region}_{kind}_{year}"
                 html = pages[case]
                 if parsed.path == "/fixture-export":
-                    payload = workbook(html, kind)
+                    payload = workbook(html, kind, region)
                     exports.append(case)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -207,8 +214,18 @@ def check_download_replay():
             if path.suffix == ".xlsx":
                 proof = json.loads(path.with_suffix(".xlsx.provenance.json").read_text(encoding="utf-8"))
                 assert proof["request_correlation"]["matched_rows"] == 20, proof
+                if proof["region"] == "msk" and proof["sorting"] in {"obyem_stroitelstva", "obyem_vvoda"}:
+                    assert len(proof["workbook"]["project_columns"]) == 19, proof
+                    assert proof["workbook"]["empty_separator_columns"] == [33], proof
+        from pipeline.data_access import DataAccess, DataContext
+        access = DataAccess(DataContext(Path(tmp), use_marts=False))
+        access.ERZRF_PATHS = [raw]
+        payload = access.load_erzrf_top()
+        for kind in ec.TOP_TYPES:
+            for region in ("rf", "msk"):
+                assert len(payload[kind][region]) == 24, (kind, region)
         assert state["erzrf_top_attempt"]["complete"]
-        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, verified and published atomically", flush=True)
+        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, actual RF/Moscow workbook schemas, verified and published atomically; all ten tables loaded by DataAccess", flush=True)
 
 
 def check_provider_replay():

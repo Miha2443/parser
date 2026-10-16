@@ -233,8 +233,20 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             raise ValueError("expected exactly one TOP worksheet")
         rows = workbook.worksheets[0].iter_rows(values_only=True)
         headers = [_normalise_label(value) for value in next(rows, ())]
-        if not headers or "" in headers or len(set(headers)) != len(headers):
-            raise ValueError("missing, blank or duplicate TOP headers")
+        if not headers or not any(headers):
+            raise ValueError("missing TOP headers")
+        # Actual Moscow exports append one column per residential project, all
+        # named 'Наименование ЖК', with an entirely empty separator inside that
+        # block. This layout is present in the June/July source workbooks too.
+        # Only that repeated descriptive label is allowed. Rank/name/metric
+        # columns must remain unambiguous, and unnamed columns must be empty in
+        # every row; keep physical indexes and the original workbook unchanged.
+        duplicates = sorted({header for header in headers if header and
+                             header != "наименование жк" and headers.count(header) > 1})
+        if duplicates:
+            raise ValueError("duplicate TOP headers: " + repr(duplicates))
+        blank_columns = [i for i, header in enumerate(headers) if not header]
+        project_columns = [i for i, header in enumerate(headers) if header == "наименование жк"]
         name_headers = {"наименование", "наименование, регион"}
         name_columns = [i for i, header in enumerate(headers) if header in name_headers]
         if len(name_columns) != 1 or "место" not in headers:
@@ -282,6 +294,9 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
         for excel_row, row in enumerate(rows, 2):
             if all(value is None for value in row):
                 continue
+            for column in blank_columns:
+                if row[column] is not None and str(row[column]).strip():
+                    raise ValueError(f"row {excel_row}: unnamed TOP column {column + 1} contains data")
             name = row[name_columns[0]]
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"row {excel_row}: missing developer name")
@@ -329,6 +344,8 @@ def _excel_contract(path: Path, sorting_key: str) -> dict:
             else sorting_key
         )
         return {"rows": count, "columns": headers, "metric": metric_names[sorting_key],
+                "project_columns": [i + 1 for i in project_columns],
+                "empty_separator_columns": [i + 1 for i in blank_columns],
                 "rank_first": ranks[0], "rank_last": ranks[-1],
                 "rank_sequence_complete": True,
                 "row_preview": row_preview,
@@ -645,6 +662,25 @@ def _save_debug_snapshot(driver, tag: str) -> None:
         driver.save_screenshot(str(debug_dir / f"erzrf_{tag}_{ts}.png"))
     except (OSError, WebDriverException):
         pass
+
+
+def _save_rejected_top_excel(source: Path, request: TopExport, error: Exception) -> None:
+    """Keep the exact rejected download outside every discoverable TOP glob."""
+    try:
+        debug_dir = DOWNLOAD_DIR.parent / "_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        suffix = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+        target = debug_dir / f"erzrf_top_{request.region_key}_{request.sorting_key}_{request.year or 'current'}_rejected_{suffix}.xlsx"
+        shutil.copy2(source, target)
+        _write_json_atomic(target.with_suffix(".xlsx.json"), {
+            "requested_url": _build_top_url(request.region, request.sorting_key),
+            "region": request.region_key, "sorting": request.sorting_key, "year": request.year,
+            "error": f"{type(error).__name__}: {error}"[:600],
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        })
+        print(f"       Диагностика отклонённого Excel: {target}")
+    except OSError as exc:
+        print(f"       WARNING: failed to preserve rejected Excel: {type(exc).__name__}")
 
 
 def _click_download_excel(driver, target_label: str = "Весь список") -> dict:
@@ -1283,13 +1319,21 @@ def _download_top_export(driver, request: TopExport, date_str: str,
         raise TopExportError("table changed while export was downloading")
     # Run the semantic contract before publication; keep failures private until
     # the session closes and the staging directory is cleaned up.
-    contract = _excel_contract(source, request.sorting_key)
+    try:
+        contract = _excel_contract(source, request.sorting_key)
+    except (OSError, ValueError, BadZipFile, KeyError, IndexError) as exc:
+        _save_rejected_top_excel(source, request, exc)
+        raise
     ui_rows = evidence.pop("expected_rows")
     before_counts = evidence.pop("observed_ui_counts")
-    correlation = _assert_visible_prefix_matches_workbook(
-        visible_rows, contract, required_rows=min(20, ui_rows) if ui_rows is not None else 20, request=request,
-        ui_total_rows=ui_rows,
-    )
+    try:
+        correlation = _assert_visible_prefix_matches_workbook(
+            visible_rows, contract, required_rows=min(20, ui_rows) if ui_rows is not None else 20, request=request,
+            ui_total_rows=ui_rows,
+        )
+    except TopExportError as exc:
+        _save_rejected_top_excel(source, request, exc)
+        raise
     count_reconciliation = _row_count_reconciliation(
         request, contract["rows"], ui_rows, correlation
     )

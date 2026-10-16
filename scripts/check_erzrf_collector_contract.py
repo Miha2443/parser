@@ -47,7 +47,7 @@ def fixture_frame(kind: str) -> pd.DataFrame:
 
 def selection(request: ec.TopExport) -> dict:
     return {"url": ec._build_top_url(request.region, request.sorting_key),
-            "all_developers_shown": request.sorting_key == "potreb_kachestva",
+            "all_developers_shown": request.sorting_key in ec.ALL_DEVELOPERS_SORTINGS,
             "developer_totals": [1], "selects": [
         {"id": "sorting", "value": str(ec.TOP_TYPES[request.sorting_key]),
          "selected_text": next(item["label"] for item in ec.SORTINGS if item["key"] == request.sorting_key),
@@ -151,6 +151,23 @@ class CollectorContract(unittest.TestCase):
         self.assertNotIn("isAllDevelopersShown", parse_qs(urlparse(current["url"]).query))
         with patch.object(ec, "_read_top_selection", return_value=current):
             self.assertEqual(ec._top_request_evidence(None, request, ec.TOP_TYPES)["region"], "msk")
+
+    def test_speed_requires_full_rf_population_without_changing_moscow_scope(self):
+        request = ec.TopExport("rf", "skorost")
+        good = selection(request)
+        self.assertEqual(parse_qs(urlparse(good["url"]).query)["isAllDevelopersShown"], ["true"])
+        with patch.object(ec, "_read_top_selection", return_value=good):
+            ec._top_request_evidence(None, request, ec.TOP_TYPES)
+        with patch.object(ec, "_read_top_selection", return_value={**good, "all_developers_shown": False}), \
+                self.assertRaisesRegex(ec.TopExportError, "all developers"):
+            ec._top_request_evidence(None, request, ec.TOP_TYPES)
+        self.assertNotIn("isAllDevelopersShown", ec._build_top_url(ec.REGIONS[1], "skorost"))
+
+    def test_missing_primary_metric_cannot_use_a_later_numeric_column(self):
+        row = {"name": "Fixture", "cells": ["1", "0", "Fixture", "", "120", "5"], "metric": None}
+        self.assertIsNone(ec._visible_metric(row))
+        self.assertEqual(ec._visible_metric({**row, "metric": "0"}), 0)
+        self.assertEqual(ec._visible_metric({**row, "metric": "79.53"}), 79.53)
 
     def test_current_live_sorting_labels_are_recognised(self):
         current = selection(self.request)
@@ -355,14 +372,15 @@ class CollectorContract(unittest.TestCase):
                      "cells": ["1", "Fixture developer", "125"]}]
         def wait(predicate):
             self.assertFalse(predicate(browser))
+            self.assertFalse(predicate(browser))
             self.assertTrue(predicate(browser))
             return True
         with patch.object(ec, "WebDriverWait") as factory, \
                 patch.object(ec, "_read_top_selection", return_value={"developer_totals": [1]}), \
-                patch.object(ec, "_scrape_developers_from_table", side_effect=[[], rendered]) as scrape:
+                patch.object(ec, "_scrape_developers_from_table", side_effect=[[], rendered, rendered]) as scrape:
             factory.return_value.until.side_effect = wait
             self.assertTrue(ec._wait_for_top_content(browser))
-            self.assertEqual(scrape.call_count, 2)
+            self.assertEqual(scrape.call_count, 3)
 
     def test_ui_count_refresh_is_not_a_change_of_export_request(self):
         driver = FakeDriver()

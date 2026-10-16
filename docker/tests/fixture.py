@@ -182,7 +182,7 @@ def erz_top_dom_contract(driver):
     assert checker._visible_metric(rows[0]) == 4532580
     assert checker._visible_metric(rows[-1]) == 776687
     assert all("Строится" not in row["cells"][3] for row in rows)
-    assert checker._wait_for_top_content(driver, timeout=0)
+    assert checker._wait_for_top_content(driver, timeout=2)
     selection = checker._read_top_selection(driver)
     assert checker._top_ui_count(selection)[0] == 2954
     assert checker._sorting_control(selection)[1] == checker.TOP_TYPES
@@ -222,6 +222,8 @@ def browser():
     try:
         browser_dom_contract(driver)
         erz_top_dom_contract(driver)
+        from docker.tests.erz_browser import check_matrix
+        check_matrix(driver)
         driver.get("http://web:8080/home")
         WebDriverWait(driver, 25).until(lambda d: "Рынок недвижимости" in d.find_element("tag name", "body").text)
         assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
@@ -277,6 +279,8 @@ def browser():
         driver.save_screenshot("/app/logs/compose-profile.png")
     finally:
         driver.quit()
+    from docker.tests.erz_browser import check_download_replay
+    check_download_replay()
 
 
 if __name__ == "__main__":

@@ -91,6 +91,10 @@ SORTINGS = [
     {"key": "skorost",             "label": "По скорости строительства"},
 ]
 
+# These RF pages default to a restricted population of large developers.
+# The dashboard imports the full rating, so UI and XLSX must use that scope.
+ALL_DEVELOPERS_SORTINGS = {"potreb_kachestva", "skorost"}
+
 # URL-параметры регионов получены опытным путём пользователем 03.06.2026.
 # РФ:    /top-zastroyshchikov/rf?regionKey=0&...
 # Москва: /top-zastroyshchikov/moskva?regionKey=143443001&region=moskva&...
@@ -125,10 +129,8 @@ def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None
     return (
         f"{BASE}/top-zastroyshchikov/{region['path']}"
         f"?topType={top_type}&{region['extra_query']}"
-        # The quality page defaults to large developers, while "Весь список"
-        # exports all developers. Compare the same population (ERZ 09.10.2026).
         + ("&isAllDevelopersShown=true"
-           if sorting_key == "potreb_kachestva" and region["key"] == "rf" else "")
+           if sorting_key in ALL_DEVELOPERS_SORTINGS and region["key"] == "rf" else "")
     )
 
 
@@ -731,22 +733,34 @@ def _scrape_developers_from_table(driver) -> list[dict]:
                 return (copy.textContent || '').replace(/\\s+/g, ' ').trim();
             };
             return rankedRows.map(row => {
-                const columns = [...row.querySelectorAll('[class*="developer-td-"]')]
+                const columns = [...row.querySelectorAll('[class*="developer-td-"], [class*="developer-speed-td-"]')]
                     .filter(visible)
-                    .map(cell => ({cell, match: cell.className.match(/(?:^|\\s)developer-td-(\\d+)(?:\\s|$)/)}))
+                    .map(cell => ({cell, match: cell.className.match(
+                        /(?:^|\\s)(developer-speed-td|developer-td-q|developer-td)-(\\d+|last)(?:\\s|$)/)}))
                     .filter(item => item.match)
-                    .sort((a, b) => Number(a.match[1]) - Number(b.match[1]));
-                const nameCell = columns.find(item => item.match[1] === '3')?.cell;
+                    .sort((a, b) => (a.match[2] === 'last' ? Infinity : Number(a.match[2]))
+                        - (b.match[2] === 'last' ? Infinity : Number(b.match[2])));
+                const one = number => {
+                    const matches = columns.filter(item => item.match[2] === String(number));
+                    return matches.length === 1 ? matches[0].cell : null;
+                };
+                const nameCell = one(3);
                 const link = nameCell?.querySelector('a[href*="/zastroyschiki/"]');
-                const rankCell = columns.find(item => item.match[1] === '1')?.cell;
+                const rankCell = one(1);
+                const metricCell = one(4);
                 return {
                     place: rankCell ? text(rankCell) : '',
                     cells: columns.map(item => text(item.cell)),
                     card_url: link ? link.href : null,
                     name: link ? text(link) : '',
+                    metric: metricCell ? text(metricCell) : null,
                 };
             });
         }
+
+        // ERZ can serve an SEO/native table before bootstrapping Angular.
+        // Its year controls are not wired yet; wait for the application rows.
+        if (document.querySelector('app-root')) return [];
 
         // 1) настоящая <table>
         const tables = [...document.querySelectorAll('table')]
@@ -802,17 +816,32 @@ def _scrape_developers_from_table(driver) -> list[dict]:
 
 
 def _wait_for_top_content(driver, timeout: int = 30) -> bool:
-    """Wait for rendered ranked rows, not static labels in an Angular template."""
+    """Wait through SSR/Angular replacement until ranked rows remain stable."""
+    previous = None
     def rendered(browser):
+        nonlocal previous
         try:
             rows = _scrape_developers_from_table(browser)
-            count, _ = _top_ui_count(_read_top_selection(browser))
+            selection = _read_top_selection(browser)
+            count, _ = _top_ui_count(selection)
             required = min(20, count) if count is not None else 20
             ranked = [row for row in rows if row.get("name") and row.get("card_url")
                       and re.match(r"\s*\d+", str(row.get("place", "")))
                       and _visible_metric(row) is not None]
-            return len(ranked) >= required
+            browser._erzrf_top_readiness = {
+                "rows": len(rows), "measured_rows": len(ranked), "required_visible": required,
+                "cell_counts": sorted({len(row.get("cells") or []) for row in rows}),
+            }
+            if len(ranked) < required or len(ranked) != len(rows):
+                previous = None
+                return False
+            signature = json.dumps([rows, selection.get("url"), selection.get("selects")],
+                                   sort_keys=True, ensure_ascii=False)
+            stable = signature == previous
+            previous = signature
+            return stable
         except WebDriverException:
+            previous = None
             return False
     try:
         WebDriverWait(driver, timeout).until(rendered)
@@ -1028,6 +1057,14 @@ def _top_table_digest(driver) -> str:
 
 def _visible_metric(row: dict) -> float | None:
     """Read the first rating metric after the developer-name cell."""
+    if "metric" in row:
+        # Numbered Angular columns identify the primary metric exactly. A
+        # missing speed/grade/area must not be replaced by a later numeric cell.
+        value = str(row["metric"] or "").replace("\xa0", "").replace(" ", "")
+        if not re.fullmatch(r"\d+(?:[.,]\d+)?", value):
+            return None
+        number = float(value.replace(",", "."))
+        return number if math.isfinite(number) else None
     cells = row.get("cells") or []
     visible_name = _normalise_label(row.get("name", ""))
     name_index = None
@@ -1182,9 +1219,9 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
             or any(query.get(key) != value for key, value in wanted_query.items())):
         raise TopExportError("current URL differs from requested region/sorting")
-    if (request.sorting_key == "potreb_kachestva" and request.region_key == "rf"
+    if (request.sorting_key in ALL_DEVELOPERS_SORTINGS and request.region_key == "rf"
             and selection.get("all_developers_shown") is not True):
-        raise TopExportError("quality TOP must show all developers before Excel comparison")
+        raise TopExportError("quality/speed TOP must show all developers before Excel comparison")
     region_controls = [item for item in selection.get("selects", [])
                        if {"0", "143443001"}.issubset(
                            {str(option.get("value")) for option in item.get("options", [])})]
@@ -1233,7 +1270,8 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     candidates = [path for path in attempt.iterdir() if path.is_file()]
     if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
             or candidates[0].resolve() != source.resolve()):
-        raise TopExportError("ambiguous or unrelated export download")
+        raise TopExportError(f"ambiguous or unrelated export download: returned={source.name!r}; "
+                             f"files={[path.name for path in candidates]!r}")
     after = _top_request_evidence(driver, request, top_types)
     # UI totals can be missing, duplicated or refreshed independently of XLSX.
     # They describe the page; they do not identify the requested export.
@@ -1413,7 +1451,7 @@ def fetch_top(state: dict) -> TopFetchResult:
             driver = _authenticated_session(staging)
             driver.get(_build_top_url(REGIONS[0], "obyem_stroitelstva"))
             if not _wait_for_top_content(driver):
-                raise TopExportError("initial TOP content did not load")
+                raise TopExportError(f"initial TOP content did not load: {getattr(driver, '_erzrf_top_readiness', None)}")
             _, top_types = _sorting_control(_read_top_selection(driver))
             for request in plan:
                 url = _build_top_url(request.region, request.sorting_key, top_types)
@@ -1421,7 +1459,8 @@ def fetch_top(state: dict) -> TopFetchResult:
                 driver._erzrf_year_evidence = None
                 driver.get(url)
                 if not _wait_for_top_content(driver):
-                    raise TopExportError("TOP content did not load")
+                    raise TopExportError(f"TOP content did not load for {request.region_key}/{request.sorting_key}: "
+                                         f"{getattr(driver, '_erzrf_top_readiness', None)}")
                 if request.year is not None and not _switch_year_filter(driver, request.year):
                     raise TopExportError(f"year {request.year} could not be selected")
                 _download_top_export(
@@ -1593,6 +1632,17 @@ def _parse_card_html(html: str) -> dict:
 
             out["deliveries"][key] = data
 
+    # A new developer can have a genuine card without any commissioning table.
+    # Accept only ERZ's explicit notice and the ID printed on that same page;
+    # an empty Angular component, login form or error page is not this case.
+    if out["name"] and not out["deliveries"] and deadline_block is None:
+        page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+        ids = set(re.findall(r"\bID\s*(\d+)\b", page_text))
+        if (len(ids) == 1 and "нет рейтинга ерз" in page_text.casefold()
+                and "из-за отсутствия опыта ввода жилья" in page_text.casefold()):
+            from pipeline.erz_cards_contract import NO_HISTORY_EVIDENCE
+            out.update(history_status="not_published", history_evidence=NO_HISTORY_EVIDENCE,
+                       page_card_id=ids.pop(), page_sha256=hashlib.sha256(html.encode("utf-8")).hexdigest())
     return out
 
 
@@ -1618,8 +1668,22 @@ def _card_html_has_content(html: str) -> bool:
 
 
 def _wait_for_card_content(driver, timeout: int = 8) -> bool:
+    from pipeline.erz_cards_contract import number
+    previous = None
+    def measured(browser):
+        nonlocal previous
+        data = _scrape_card(browser)
+        if (not data.get("name") or (data.get("history_status") != "not_published"
+                and not any(number(period.get("sdano")) is not None
+                            for period in data.get("deliveries", {}).values()))):
+            previous = None
+            return False
+        signature = json.dumps(data, sort_keys=True, ensure_ascii=False)
+        stable = signature == previous
+        previous = signature
+        return stable
     try:
-        WebDriverWait(driver, timeout).until(lambda d: _card_html_has_content(d.page_source))
+        WebDriverWait(driver, timeout).until(measured)
         return True
     except TimeoutException:
         return False
@@ -1686,16 +1750,20 @@ def fetch_cards(state: dict) -> CardsFetchResult:
                     debug_saved = True
 
                 data = _scrape_card(driver)
-                from pipeline.erz_cards_contract import identity, number
+                from pipeline.erz_cards_contract import identity, number, confirmed_no_history
                 if identity(driver.current_url) != identity(card_url):
                     raise ValueError("card page does not match the requested source ID")
-                if not data.get("deliveries") or not data.get("name") or not any(
-                        number(period.get("sdano")) is not None for period in data.get("deliveries", {}).values()):
+                unavailable = confirmed_no_history(data, identity(card_url))
+                if (not data.get("name") or (not unavailable and not any(
+                        number(period.get("sdano")) is not None for period in data.get("deliveries", {}).values()))):
                     print(f"       ⚠️  пусто — не удалось распарсить")
                     failed.append({"slug": slug, "url": card_url, "reason": "empty parse"})
                     if len(failed) <= 3:
                         _save_debug_snapshot(driver, f"card_{slug.replace('/', '_')[:40]}_empty")
                     continue
+
+                if unavailable:
+                    print("       ℹ️  ЕРЗ сообщает об отсутствии опыта ввода; история не опубликована, значения оставлены пустыми")
 
                 rows.append(
                     {
@@ -1709,6 +1777,10 @@ def fetch_cards(state: dict) -> CardsFetchResult:
                         "regions_count": data.get("regions_count", ""),
                         "regions_as_of": data.get("regions_as_of", ""),
                         "deliveries": data.get("deliveries", {}),
+                        "history_status": data.get("history_status", "measured"),
+                        "history_evidence": data.get("history_evidence", ""),
+                        "page_card_id": data.get("page_card_id", ""),
+                        "page_sha256": data.get("page_sha256", ""),
                         "scraped_at": datetime.now().isoformat(timespec="seconds"),
                     }
                 )
@@ -1740,7 +1812,7 @@ def fetch_cards(state: dict) -> CardsFetchResult:
 
         # Wide-формат: одна строка на застройщика
         base_cols = ["place", "name_card", "name_table", "slug", "url", "page_url", "source_id",
-                     "regions_count", "regions_as_of"]
+                     "regions_count", "regions_as_of", "history_status", "history_evidence", "page_card_id", "page_sha256"]
         wide_rows = []
         for r in rows:
             row = {c: r.get(c, "") for c in base_cols}
@@ -1777,6 +1849,9 @@ def fetch_cards(state: dict) -> CardsFetchResult:
                     "schema_version": 1, "complete": True, "limited": False, "failed": [],
                     "targets_file": targets_file.name, "targets_sha256": targets_hash,
                     "selection": target_payload["selection"], "expected": result.expected,
+                    "unavailable": [{"source_id": row["source_id"], "reason": row["history_evidence"],
+                                     "page_sha256": row["page_sha256"]}
+                                    for row in wide_rows if row["history_status"] == "not_published"],
                     "confirmed": confirmed, "sha256": file_sha256(staged)})
                 if file_sha256(targets_file) != targets_hash:
                     raise ValueError("ERZ card target source changed during collection")

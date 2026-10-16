@@ -144,6 +144,55 @@ class CardsCoverageTests(unittest.TestCase):
         self.assertEqual(state["erzrf_cards_attempt"]["error"], result.error)
         self.assert_previous()
 
+    def test_explicit_identified_no_history_is_recorded_without_zero_and_passes_publication(self):
+        from pipeline.erz_cards_contract import NO_HISTORY_EVIDENCE
+        self.targets["developers"][1]["card_url"] = "https://erzrf.ru/zastroyschiki/brand/new-developer-101"
+        self.write_targets()
+        html = f"<app-org-table><h3>New developer</h3><div>ID101</div></app-org-table><p>{NO_HISTORY_EVIDENCE}</p>"
+        parsed = ec._parse_card_html(html)
+        self.assertEqual(parsed["history_status"], "not_published")
+        def data(driver):
+            return parsed if driver.current_url.endswith("-101") else self.data()
+        with patch.object(ec, "_scrape_card", side_effect=data):
+            result = ec.fetch_cards({})
+        self.assertTrue(result.complete)
+        rows, _ = validate_workbook(self.target, target_keys(self.targets["developers"]))
+        self.assertEqual(rows[1]["history_status"], "not_published")
+        self.assertEqual(rows[1]["Сдано_2025_м²"], "")
+        self.assertEqual(rows[1]["Строится_м²"], "")
+        proof = json.loads(self.proof.read_text(encoding="utf-8"))
+        self.assertEqual(len(proof["unavailable"]), 1)
+        from pipeline.data_access import DataAccess, DataContext
+        import shutil
+        root = self.root / "loader"
+        raw = root / "data/raw/realty/erzrf"
+        cards = raw / "cards"
+        cards.mkdir(parents=True)
+        shutil.copy2(self.targets_file, raw / self.targets_file.name)
+        shutil.copy2(self.target, cards / self.target.name)
+        shutil.copy2(self.proof, cards / self.proof.name)
+        access = DataAccess(DataContext(root, use_marts=False))
+        canonical = access.load_erzrf_cards()
+        import pandas as pd
+        self.assertTrue(pd.isna(canonical.iloc[1]["Сдано_2025_м²_num"]))
+        from docker.coverage import validate_erz_cards
+        validate_erz_cards(access, canonical)
+
+    def test_no_history_needs_notice_identity_and_hash_and_cannot_contain_invented_zero(self):
+        from pipeline.erz_cards_contract import NO_HISTORY_EVIDENCE, validate_rows
+        html = f"<app-org-table><h3>New</h3><div>ID101</div></app-org-table><p>{NO_HISTORY_EVIDENCE}</p>"
+        parsed = ec._parse_card_html(html)
+        url = "https://erzrf.ru/zastroyschiki/brand/new-101"
+        row = {**parsed, "name_card": parsed["name"], "url": url, "page_url": url, "source_id": "brand/new-101"}
+        expected = [{"source_id": "brand/new-101", "card_url": url}]
+        validate_rows([row], expected)
+        for change in ({"page_card_id": "102"}, {"page_sha256": ""}, {"history_evidence": ""},
+                       {"Сдано_2025_м²": 0}, {"history_status": "unknown"}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_rows([{**row, **change}], expected)
+        self.assertNotIn("history_status", ec._parse_card_html(html.replace(NO_HISTORY_EVIDENCE, "loading")))
+        self.assertNotIn("history_status", ec._parse_card_html(html.replace("ID101", "")))
+
     def test_source_target_change_or_second_artifact_replace_failure_preserves_previous(self):
         self.previous()
         def changed(driver):

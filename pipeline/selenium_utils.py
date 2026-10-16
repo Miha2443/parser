@@ -73,6 +73,11 @@ def create_chrome(
         opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    # Chrome component/model updates are unrelated to source downloads. With a
+    # browser-wide download directory they can otherwise appear in a collector's
+    # private attempt (observed as a CRX model named downloads.htm on Chrome 154).
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--disable-component-update")
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument(f"user-agent={USER_AGENT}")
     if download_dir is not None:

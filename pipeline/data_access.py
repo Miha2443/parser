@@ -1490,6 +1490,10 @@ class DataAccess:
                     or (cs.startswith("Перенос_") and cs.endswith("_м²"))\
                     or cs.startswith("Строится"):
                 df[f"{col}_num"] = df[col].apply(parse_num)
+        if "history_status" in df.columns:
+            missing_history = df["history_status"].eq("not_published")
+            for col in [column for column in df.columns if str(column).endswith("_num")]:
+                df.loc[missing_history, col] = float("nan")
         return df
 
 

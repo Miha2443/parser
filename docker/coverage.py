@@ -226,9 +226,17 @@ def validate_erz_cards(access, canonical):
             and coverage.get("expected") == expected and coverage.get("confirmed") == confirmed,
             "erz-cards verified target coverage is incomplete or does not match its sources")
     consumed = {str(row["source_id"]): row for row in canonical.to_dict("records")}
+    unavailable = [{"source_id": row["source_id"], "reason": row["history_evidence"],
+                    "page_sha256": row["page_sha256"]}
+                   for row in raw_rows if row.get("history_status") == "not_published"]
+    require(coverage.get("unavailable", []) == unavailable, "erz-cards unpublished history metadata differs from its source")
     for raw in raw_rows:
         row = consumed[str(raw["source_id"])]
         require(row.get("name_card") == raw["name_card"], "erz-cards canonical name differs from its source")
+        if raw.get("history_status") == "not_published":
+            require(all(str(row.get(key)).removesuffix(".0") == str(raw.get(key)).removesuffix(".0")
+                        for key in ("history_status", "history_evidence", "page_card_id", "page_sha256")),
+                    "erz-cards unpublished history evidence differs from its source")
         for column in measured_columns(raw):
             value = number(raw[column])
             if value is not None:

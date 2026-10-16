@@ -6,6 +6,19 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 
+NO_HISTORY_EVIDENCE = "Нет рейтинга ЕРЗ. Из-за отсутствия опыта ввода жилья"
+
+
+def confirmed_no_history(row, source_id):
+    """Only an identified ERZ page with an explicit published notice qualifies."""
+    source_number = re.search(r"-(\d+)$", source_id)
+    return (row.get("history_status") == "not_published"
+            and row.get("history_evidence") == NO_HISTORY_EVIDENCE
+            and re.fullmatch(r"[a-f0-9]{64}", str(row.get("page_sha256", ""))) is not None
+            and source_number is not None
+            and str(row.get("page_card_id", "")).removesuffix(".0") == source_number.group(1))
+
+
 def validate_selection(payload):
     if not isinstance(payload, dict) or payload.get("region") != "rf":
         raise ValueError("ERZ card targets need the RF current-construction TOP selection")
@@ -83,7 +96,10 @@ def validate_rows(rows, expected):
         page_url = row.get("page_url")
         if not page_url or identity(page_url) != source_id:
             raise ValueError("ERZ card page does not match the requested target")
-        if not any(number(row[column]) is not None for column in measured_columns(row)):
+        measured = any(number(row[column]) is not None for column in measured_columns(row))
+        if row.get("history_status") == "not_published" and (measured or not confirmed_no_history(row, source_id)):
+            raise ValueError("ERZ unavailable history has unverified evidence or invented measurements")
+        if not measured and not confirmed_no_history(row, source_id):
             raise ValueError("ERZ card has no measured construction/commissioning area")
         actual.append({"source_id": source_id, "card_url": url})
     def keys(items):

@@ -13,6 +13,7 @@ import Operational from './Operational';
 import Linear from './Linear';
 import Annual from './Annual';
 import Construction from './Construction';
+import ConstructionTree from './ConstructionTree';
 import { Home, Updates, Tdm } from './ServicePages';
 import Economics from './Economics';
 
@@ -69,14 +70,15 @@ export default function App() {
   const linear = path === '/commissioning/linear';
   const map = path === '/map';
   const annual = path === '/commissioning/annual', construction = path === '/construction';
+  const constructionTree = path === '/construction/tree';
   const home = path === '/home', updates = path === '/updates', tdm = path === '/tdm';
   const economics = path === '/economics/salary' ? 'salary' : path === '/economics/ipc' ? 'ipc' : path === '/economics/accounts' ? 'accounts' : null;
-  const title = economics ? { salary: 'Заработная плата', ipc: 'ИПЦ', accounts: 'ВРП и ВВП' }[economics] : home ? 'Главная' : updates ? 'Журнал обновлений' : tdm ? 'Отправка в TDM' : annual ? 'Годовой ввод' : construction ? 'Текущее строительство' : map ? 'Карта объектов' : operational ? 'Оперативный ввод' : linear ? 'Ввод линейных объектов' : sales ? 'Распроданность и стройготовность' : apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
+  const title = economics ? { salary: 'Заработная плата', ipc: 'ИПЦ', accounts: 'ВРП и ВВП' }[economics] : home ? 'Главная' : updates ? 'Журнал обновлений' : tdm ? 'Отправка в TDM' : annual ? 'Годовой ввод' : constructionTree ? 'Дерево текущего строительства' : construction ? 'Текущее строительство' : map ? 'Карта объектов' : operational ? 'Оперативный ввод' : linear ? 'Ввод линейных объектов' : sales ? 'Распроданность и стройготовность' : apartments ? detail ? 'Квартирография по девелоперу' : 'Квартирография' : 'Профиль застройщика';
   return <div className={`app-shell ${compact ? 'compact-shell' : ''}`}>
     <Sidebar open={menu} onClose={() => setMenu(false)} compact={compact} onCompact={() => { setCompact(!compact); localStorage.setItem('dashboard.compact', String(!compact)); }} path={path} onNavigate={navigate} />
     <div className="workspace">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMenu(true)} title="Открыть навигацию"><Menu size={20} /></button><span>Рынок недвижимости</span><ChevronRight size={13} /><strong>{title}</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div></header>
-      {economics ? <Economics key={economics} family={economics} theme={theme} query={query} change={change} /> : home ? <Home navigate={navigate} /> : updates ? <Updates query={query} change={change} /> : tdm ? <Tdm /> : annual ? <Annual theme={theme} query={query} change={change} /> : construction ? <Construction theme={theme} query={query} change={change} /> : map ? <Suspense fallback={<main><div className="load-state" role="status" aria-live="polite"><RefreshCw className="loading-icon" size={26} /><p>Загрузка карты…</p></div></main>}><MapPage theme={theme} query={query} change={change} /></Suspense> : operational ? <Operational theme={theme} query={query} change={change} /> : linear ? <Linear theme={theme} query={query} change={change} /> : sales ? <SalesPage theme={theme} query={query} change={change} /> : apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}
+      {economics ? <Economics key={economics} family={economics} theme={theme} query={query} change={change} /> : home ? <Home navigate={navigate} /> : updates ? <Updates query={query} change={change} /> : tdm ? <Tdm /> : annual ? <Annual theme={theme} query={query} change={change} /> : constructionTree ? <ConstructionTree /> : construction ? <Construction theme={theme} query={query} change={change} /> : map ? <Suspense fallback={<main><div className="load-state" role="status" aria-live="polite"><RefreshCw className="loading-icon" size={26} /><p>Загрузка карты…</p></div></main>}><MapPage theme={theme} query={query} change={change} /></Suspense> : operational ? <Operational theme={theme} query={query} change={change} /> : linear ? <Linear theme={theme} query={query} change={change} /> : sales ? <SalesPage theme={theme} query={query} change={change} /> : apartments ? <Apartments key={path} detail={detail} theme={theme} query={query} change={change} navigate={navigate} /> : <ProfilePage theme={theme} query={query} change={change} />}
     </div>
   </div>;
 }

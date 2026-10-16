@@ -11,6 +11,27 @@ consumer prices, national accounts, map, home, updates and TDM. Streamlit remain
 available separately for comparison and rollback. Analytics never change input
 files; TDM sends only after an explicit user action.
 
+## Ready Construction Tree
+
+`/construction/tree` displays the ready values from column `Итог` of worksheet
+`Дерево текущ стр во` in the latest monitoring workbook. It has no filters and
+does not recalculate OKS areas. Source adjustments are preserved; embedded
+nonresidential area appears on the right as a reference, not a second addition.
+
+The page requests `/api/v1/construction/tree`, polls every minute while visible,
+and refreshes when the tab becomes visible. The file download date is not a
+reporting date. The initially closed source panel contains all ten exact values,
+their cells, file/version metadata, and complete CSV. Errors remove the old tree;
+neither older workbooks nor a demonstration snapshot are substituted.
+
+Docker must publish a monitoring workbook containing this sheet. Code updates
+alone do not add it to an existing data release. The other construction pages
+and source calculations are unchanged in this increment.
+
+`node src/construction-tree.browser.cjs` checks 320/360/768/1280/1920 px, CSV,
+polling, null/zero, and failure recovery. Set `DASHBOARD_CHECK_LIVE=1` to add three
+live-data layouts and complete CSV checks. Results: `%TEMP%/dashboard-construction-tree`.
+
 ## Run
 
 - `pnpm install` (or `npm install`)

@@ -23,7 +23,7 @@ export default function Sidebar({ open, onClose, compact, onCompact, path, onNav
       <nav aria-label="Разделы аналитики">
         {local('Главная', '/home', <House size={17} />)}
         {group('market', 'Рынок недвижимости', <Building2 size={17} />, <>
-          {group('construction', 'Текущее строительство', null, <>{local('Оперативные данные', '/construction')}{local('Квартирография', '/apartments')}{local('Карта объектов', '/map')}{local('Распроданность', '/sales')}</>, true)}
+          {group('construction', 'Текущее строительство', null, <>{local('Дерево текущего строительства', '/construction/tree')}{local('Оперативные данные', '/construction')}{local('Квартирография', '/apartments')}{local('Карта объектов', '/map')}{local('Распроданность', '/sales')}</>, true)}
           {group('commissioning', 'Ввод недвижимости', null, <>{local('Оперативный ввод', '/commissioning/operational')}{local('Годовой ввод', '/commissioning/annual')}{local('Линейные объекты', '/commissioning/linear')}</>, true)}
           {group('profile', 'Профиль застройщика', null, <>{local('Профиль', '/', <UserRound size={15} />)}{local('Квартирография по застройщику', '/apartments/developer')}</>, true)}
         </>)}

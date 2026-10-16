@@ -910,14 +910,15 @@ def _collect_source(alias: str, env: dict, force: bool = False,
 def run_source(alias: str, env: dict, force: bool = False, keep: int = 1, do_archive: bool = True):
     from pipeline.source_availability import check_provider, outcome
     run_id = env.get("REALTY_RUN_ID", "")
-    unavailable = check_provider(alias, run_id)
+    report = lambda message: _print(f"[availability] {alias}: {message}")
+    unavailable = check_provider(alias, run_id, report=report)
     if unavailable:
         _print(f"[skipped] {alias}: {unavailable['reason']} ({unavailable['evidence'][0]['url']})")
         return unavailable
     failure = {}
     success = _collect_source(alias, env, force=force, keep=keep, do_archive=do_archive, failure_info=failure)
     if not success and (not failure or failure.get("reason_code") == "watchdog_timeout" or failure.get("reason_code", "").startswith("collector_exit_")):
-        confirmed = check_provider(alias, run_id)
+        confirmed = check_provider(alias, run_id, report=report)
         if confirmed:
             confirmed["phase"] = "postflight"
             confirmed["collector_reason_code"] = failure.get("reason_code", "collector_exit_unknown")
@@ -1388,6 +1389,9 @@ def _main():
                         help="Не включать необязательный ЕРЗ в общую processed-сборку; остальные источники проверяются")
     parser.add_argument("--collect-only", action="store_true",
                         help="Только сбор и статус; ETL и витрины выполняет publisher в частном кандидате")
+    parser.add_argument("--require-collected", action="store_true",
+                        help="Код 3, если запрошенный источник пропущен или сбор уже занят; "
+                             "защита ручной цепочки сбор && публикация")
     parser.add_argument("--plan", action="store_true",
                         help="Показать план источников/волн/витрин и выйти без запуска")
     parser.add_argument("--full-rasprod-history", action="store_true",
@@ -1440,7 +1444,7 @@ def _main():
 
     if not acquire_realty_update_lock():
         print(f"update_realty.py: another realty update is already running ({REALTY_UPDATE_LOCK})")
-        return 0
+        return 3 if args.require_collected else 0
     atexit.register(release_realty_update_lock)
 
     started = time.time()
@@ -1450,7 +1454,8 @@ def _main():
     _print(f"Прогон realty | старт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     _print(f"Источники: {', '.join(sources)}")
     versions = []
-    for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
+    for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py",
+                 "pipeline/source_availability.py", "scripts/update_realty.py"):
         try:
             version = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()[:12]
         except OSError:
@@ -1475,6 +1480,7 @@ def _main():
         "selenium_sleep_scale": env.get("SELENIUM_SLEEP_SCALE", "1"),
         "processed_scope": "required_sources_only" if args.skip_optional_processed else "requested_sources",
         "collect_only": args.collect_only,
+        "require_collected": args.require_collected,
         "source_outcomes": source_outcomes,
         "skipped": skipped,
     }
@@ -1722,13 +1728,18 @@ def _main():
         except Exception:  # noqa: BLE001
             pass
 
-    return realty_update_exit_code(
+    exit_code = realty_update_exit_code(
         failures=failures,
         marts_ok=marts_ok,
         processed_ok=processed_ok,
         final_archive_ok=final_archive_ok,
         status_ok=status_ok and not _STATUS_WRITE_ERRORS,
     )
+    if exit_code == 0 and args.require_collected and skipped:
+        _print("⛔ --require-collected: сбор пропущен для " + ", ".join(skipped) +
+               "; код 3, последующая команда через && не будет запущена")
+        return 3
+    return exit_code
 
 
 def main() -> int:

@@ -1,7 +1,8 @@
 """Evidence-bound provider outages and publication source declarations.
 
-A collector failure is never evidence of an outage. Only two ordinary HTTP
-checks of the same official entry point can authorize retaining older data.
+A collector failure is never evidence of an outage. Negative HTTP probes for
+browser collectors must be confirmed twice through the collector's Chrome
+transport before they can authorize retaining older data.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 
 SOURCES = frozenset({"monitoring", "kvart", "construction", "rasprod", "fedstat", "rosstat", "erz-top", "erz-cards"})
+BROWSER_SOURCES = SOURCES - {"monitoring"}
 NASHDOM = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 URLS = {
     "monitoring": ("https://docs.google.com/spreadsheets/d/19Z8y6EtoCNbygA9OIjZ7lHaPfeA9fV3Yl6Ned53gNcY/export?format=xlsx",),
@@ -98,7 +100,7 @@ def classify_check(check):
 def http_check(url, *, get=None):
     import requests
     get = get or requests.get
-    result = {"url": url, "checked_at": stamp(), "http_status": None, "network_error": None, "text": ""}
+    result = {"url": url, "checked_at": stamp(), "transport": "http", "http_status": None, "network_error": None, "text": ""}
     try:
         with get(url, timeout=(5, 8), verify=True, stream=True) as response:
             result["http_status"] = response.status_code
@@ -115,16 +117,76 @@ def http_check(url, *, get=None):
                 text = " ".join(" ".join(parser.parts).split())
                 result["text"] = text if len(text) <= 1500 else ""
                 result["headings"] = parser.headings
-    except requests.exceptions.ConnectTimeout:
+    except requests.exceptions.ConnectTimeout as exc:
         result["network_error"] = "connect_timeout"
-    except requests.exceptions.SSLError:
+        result["error_class"] = type(exc).__name__
+    except requests.exceptions.SSLError as exc:
         result["network_error"] = "tls_error"
-    except requests.exceptions.ReadTimeout:
+        result["error_class"] = type(exc).__name__
+    except requests.exceptions.ReadTimeout as exc:
         result["network_error"] = "read_timeout"
-    except requests.exceptions.ConnectionError:
+        result["error_class"] = type(exc).__name__
+    except requests.exceptions.ConnectionError as exc:
         result["network_error"] = "connection_unavailable"
-    except requests.exceptions.RequestException:
+        result["error_class"] = type(exc).__name__
+    except requests.exceptions.RequestException as exc:
         result["network_error"] = "unconfirmed_request_error"
+        result["error_class"] = type(exc).__name__
+    return result
+
+
+def browser_check(url):
+    """Bounded public-page probe using the same Chrome factory as collectors.
+
+    A driver failure, navigation timeout, TLS error or empty document is unknown,
+    not an outage. Only explicit Chrome network errors, HTTP status or a visible
+    maintenance notice can support a skip. No credentials or exception messages
+    (which can contain proxy secrets) are written into evidence.
+    """
+    from selenium.common.exceptions import WebDriverException
+    from pipeline.selenium_utils import create_chrome
+    result = {"url": url, "checked_at": stamp(), "transport": "browser",
+              "http_status": None, "network_error": None, "text": ""}
+    driver = None
+    navigation_error = None
+    try:
+        driver = create_chrome(page_load_strategy="eager")
+        driver.set_page_load_timeout(20)
+        driver.set_script_timeout(5)
+        try:
+            driver.get(url)
+        except WebDriverException as exc:
+            navigation_error = exc
+            result["error_class"] = type(exc).__name__
+        page = driver.execute_script("""
+            const body = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+            const headings = [document.title, ...Array.from(document.querySelectorAll('h1')).map(x => x.innerText)]
+                .map(x => (x || '').replace(/\\s+/g, ' ').trim()).filter(x => x && x.length <= 300).slice(0, 4);
+            return {href: location.href, status: performance.getEntriesByType('navigation')[0]?.responseStatus || null,
+                text: body.length <= 1500 ? body : '', headings};
+        """)
+        parts = urlsplit(page.get("href", ""))
+        result["final_url"] = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        # An interrupted navigation can expose the previous about:blank or a
+        # Chrome error page. Neither its content nor its status proves HTTP 503.
+        if parts.scheme in {"https", "http"} and navigation_error is None:
+            result.update(http_status=page.get("status"), text=page.get("text", ""), headings=page.get("headings", []))
+    except Exception as exc:
+        result["probe_error"] = type(exc).__name__
+    finally:
+        if navigation_error is not None:
+            match = re.search(r"net::(ERR_[A-Z_]+)", str(navigation_error))
+            if match:
+                result["browser_error"] = match[1]
+                if match[1] in {"ERR_CONNECTION_CLOSED", "ERR_CONNECTION_RESET", "ERR_CONNECTION_REFUSED",
+                                "ERR_CONNECTION_TIMED_OUT", "ERR_TIMED_OUT", "ERR_NAME_NOT_RESOLVED",
+                                "ERR_ADDRESS_UNREACHABLE", "ERR_NETWORK_UNREACHABLE", "ERR_INTERNET_DISCONNECTED"}:
+                    result["network_error"] = "connection_unavailable"
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
     return result
 
 
@@ -135,19 +197,39 @@ def outcome(alias, run_id, status, *, phase="collector", reason_code=None, reaso
             "checked_at": stamp(), "evidence": list(evidence)}
 
 
-def check_provider(alias, run_id, *, check=None):
+def check_provider(alias, run_id, *, check=None, report=None):
+    # HTTP is a cheap advisory probe. Requests/proxy failures do not establish
+    # that Chrome cannot load the source (the 16 Oct server regression).
+    injected_check = check
     check = check or http_check
     for url in URLS[alias]:
         first = check(url)
         code = classify_check(first)
         if not code:
             continue
-        second = check(url)
+        confirm = check
+        if injected_check is None and alias in BROWSER_SOURCES:
+            if report:
+                report("HTTP-проверка: " + str(first.get("error_class") or first.get("network_error") or first.get("http_status")) +
+                       "; перепроверяю через Chrome: " + url)
+            confirm = browser_check
+            first = confirm(url)
+            code = classify_check(first)
+            if not code:
+                if report:
+                    report("Chrome не подтвердил недоступность; HTTP=" + str(first.get("http_status")) +
+                           "; ошибка=" + str(first.get("browser_error") or first.get("probe_error") or first.get("error_class")) +
+                           "; пропуск источника не разрешён")
+                continue
+        second = confirm(url)
         if classify_check(second) == code:
             return outcome(alias, run_id, "skipped", phase="preflight", reason_code=code,
                            reason=("Сайт не ответил / недоступен с сервера" if code == "provider_unreachable" else
                                    "Технические работы на сайте" if code == "provider_maintenance" else
-                                   "Сайт вернул HTTP " + str(second.get("http_status"))) + ": подтверждено двумя проверками официальной страницы",
+                                   "Сайт вернул HTTP " + str(second.get("http_status"))) +
+                                  ": подтверждено двумя проверками официальной страницы; канал=" +
+                                  second.get("transport", "http") + "; код=" +
+                                  str(second.get("browser_error") or second.get("network_error") or second.get("http_status")),
                            evidence=[first, second])
     return None
 

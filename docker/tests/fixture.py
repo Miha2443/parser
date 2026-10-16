@@ -279,7 +279,8 @@ def browser():
         driver.save_screenshot("/app/logs/compose-profile.png")
     finally:
         driver.quit()
-    from docker.tests.erz_browser import check_download_replay
+    from docker.tests.erz_browser import check_download_replay, check_provider_replay
+    check_provider_replay()
     check_download_replay()
 
 

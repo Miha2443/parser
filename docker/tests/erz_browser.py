@@ -209,3 +209,65 @@ def check_download_replay():
                 assert proof["request_correlation"]["matched_rows"] == 20, proof
         assert state["erzrf_top_attempt"]["complete"]
         print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, verified and published atomically", flush=True)
+
+
+def check_provider_replay():
+    """Exercise run_source's preflight with real Chrome, not only fetch_top.
+
+    Reproduce 8.txt's requests connection error while Chrome can load the page;
+    the real child process must start. True maintenance/503 must still skip.
+    """
+    import os
+    from pipeline import source_availability as availability
+    from scripts import update_realty as update
+
+    requests_seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            path = urlparse(self.path).path
+            if path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return
+            requests_seen.append(path)
+            bodies = {"/healthy": "<h1>ТОП застройщиков РФ</h1>", "/maintenance": "<h1>Технические работы</h1>",
+                      "/unavailable": "<h1>Service unavailable</h1>", "/forbidden": "<h1>Forbidden</h1>", "/blank": ""}
+            payload = ("<!doctype html><html><body>" + bodies[path] + "</body></html>").encode("utf-8")
+            self.send_response(503 if path == "/unavailable" else 403 if path == "/forbidden" else 200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    with tempfile.TemporaryDirectory(prefix="provider-browser-replay-") as tmp, ExitStack() as stack:
+        root = Path(tmp)
+        marker = root / "child-started"
+        script = root / "child.py"
+        script.write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n", encoding="utf-8")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        Thread(target=server.serve_forever, daemon=True).start()
+        stack.callback(server.server_close)
+        stack.callback(server.shutdown)
+        stack.enter_context(patch.multiple(update, ROOT=root, REALTY_ROOT=root / "data/raw/realty"))
+        stack.enter_context(patch.dict(update.SOURCE_MAP, {"erz-top": (str(script), [])}))
+        stack.enter_context(patch.object(availability, "http_check", side_effect=lambda url: {
+            "url": url, "checked_at": availability.stamp(), "transport": "http",
+            "network_error": "connection_unavailable"}))
+        for path, expected in (("/healthy", "success"), ("/unavailable", "skipped"),
+                               ("/maintenance", "skipped"), ("/forbidden", "success"), ("/blank", "success")):
+            url = f"http://127.0.0.1:{server.server_port}{path}"
+            marker.unlink(missing_ok=True)
+            started = availability.stamp()
+            with patch.dict(availability.URLS, {"erz-top": (url,)}):
+                result = update.run_source("erz-top", {**os.environ, "REALTY_RUN_ID": "browser-replay"}, do_archive=False)
+                assert result["status"] == expected, result
+                availability.validate_outcome(result, "erz-top", "browser-replay", started, availability.stamp())
+            assert marker.exists() == (expected == "success"), result
+            if expected == "skipped":
+                assert {item["transport"] for item in result["evidence"]} == {"browser"}, result
+                assert requests_seen.count(path) == 2, requests_seen
+        print("Provider preflight replay: HTTP failure + real Chrome + real collector child; 503/maintenance confirmed twice; 403/blank defer to collector", flush=True)

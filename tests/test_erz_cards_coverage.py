@@ -192,6 +192,12 @@ class CardsCoverageTests(unittest.TestCase):
                 validate_rows([{**row, **change}], expected)
         self.assertNotIn("history_status", ec._parse_card_html(html.replace(NO_HISTORY_EVIDENCE, "loading")))
         self.assertNotIn("history_status", ec._parse_card_html(html.replace("ID101", "")))
+        for placeholder in ("<app-org-table-deadline></app-org-table-deadline>",
+                            "<app-org-table-deadline><div class='clmn'><p><b>Сдано в 2025</b></p><p>—</p></div></app-org-table-deadline>"):
+            with self.subTest(placeholder=placeholder):
+                value = ec._parse_card_html(html + placeholder)
+                self.assertEqual(value["history_status"], "not_published")
+                self.assertEqual(value["deliveries"], {})
 
     def test_source_target_change_or_second_artifact_replace_failure_preserves_previous(self):
         self.previous()

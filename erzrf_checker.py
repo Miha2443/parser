@@ -1635,13 +1635,15 @@ def _parse_card_html(html: str) -> dict:
     # A new developer can have a genuine card without any commissioning table.
     # Accept only ERZ's explicit notice and the ID printed on that same page;
     # an empty Angular component, login form or error page is not this case.
-    if out["name"] and not out["deliveries"] and deadline_block is None:
+    from pipeline.erz_cards_contract import number, NO_HISTORY_EVIDENCE
+    has_measurements = any(number(period.get("sdano")) is not None
+                           for period in out["deliveries"].values())
+    if out["name"] and not has_measurements:
         page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
         ids = set(re.findall(r"\bID\s*(\d+)\b", page_text))
         if (len(ids) == 1 and "нет рейтинга ерз" in page_text.casefold()
                 and "из-за отсутствия опыта ввода жилья" in page_text.casefold()):
-            from pipeline.erz_cards_contract import NO_HISTORY_EVIDENCE
-            out.update(history_status="not_published", history_evidence=NO_HISTORY_EVIDENCE,
+            out.update(deliveries={}, history_status="not_published", history_evidence=NO_HISTORY_EVIDENCE,
                        page_card_id=ids.pop(), page_sha256=hashlib.sha256(html.encode("utf-8")).hexdigest())
     return out
 

@@ -216,6 +216,11 @@ def erz_top_dom_contract(driver):
 def browser():
     from deploy.linux.tests import smoke
     smoke.browser()
+    # Keep provider transport/export verification independent of dashboard UI
+    # timing: a slow unrelated chart must not hide the ERZ replay result.
+    from docker.tests.erz_browser import check_download_replay, check_provider_replay
+    check_provider_replay()
+    check_download_replay()
     from pipeline.selenium_utils import create_chrome
     from selenium.webdriver.support.ui import WebDriverWait
     driver = create_chrome()
@@ -246,16 +251,28 @@ def browser():
         for route in ("/apartments", "/commissioning/operational", "/economics/salary", "/economics/ipc", "/economics/accounts"):
             driver.get("http://web:8080" + route)
             WebDriverWait(driver, 25).until(lambda d: d.find_elements("css selector", ".sources-section > details"))
+            if route.startswith("/economics/"):
+                # Evidence renders from the catalog before the report's charts
+                # arrive. Clicking while those charts are inserted can move
+                # the summary out from under the pointer (accounts has six).
+                WebDriverWait(driver, 25).until(lambda d:
+                    not d.find_elements("css selector", ".economics-chart-loading") and
+                    len(d.find_elements("css selector", ".economics-chart-section .chart-canvas canvas")) ==
+                    len(d.find_elements("css selector", ".economics-chart-section")) > 0)
             disclosure = driver.find_element("css selector", ".sources-section > details")
             assert not disclosure.get_attribute("open")
             assert not driver.find_elements("css selector", ".page-heading .snapshot-label")
             source_date = disclosure.find_element("css selector", "p")
             assert not source_date.is_displayed()
             assert driver.execute_script("return !document.querySelector('.sources-section').nextElementSibling?.querySelector('.chart-canvas')")
-            disclosure.find_element("css selector", "summary").click()
+            summary = disclosure.find_element("css selector", "summary")
+            driver.execute_script("arguments[0].scrollIntoView({block:'center', behavior:'instant'})", summary)
+            summary.click()
             try:
                 WebDriverWait(driver, 10).until(lambda d: disclosure.get_attribute("open") and source_date.is_displayed())
             except Exception as exc:
+                driver.save_screenshot("/app/logs/compose-sources-failed.png")
+                Path("/app/logs/compose-sources-failed.html").write_text(driver.page_source, encoding="utf-8")
                 raise AssertionError(f"Sources disclosure did not open after click: route={route}, url={driver.current_url}, "
                                      f"open={disclosure.get_attribute('open')}, date_visible={source_date.is_displayed()}") from exc
             assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
@@ -279,9 +296,6 @@ def browser():
         driver.save_screenshot("/app/logs/compose-profile.png")
     finally:
         driver.quit()
-    from docker.tests.erz_browser import check_download_replay, check_provider_replay
-    check_provider_replay()
-    check_download_replay()
 
 
 if __name__ == "__main__":

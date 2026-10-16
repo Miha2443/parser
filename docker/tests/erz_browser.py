@@ -101,6 +101,14 @@ def check_matrix(driver):
       <tr><th>Место</th><th>Изменение</th><th>Застройщик</th><th>Строится</th></tr>
       <tr><td>1</td><td>0</td><td><a href="https://erzrf.ru/zastroyschiki/brand/seo">SEO</a></td><td>125</td></tr></table>'''))
     assert ec._scrape_developers_from_table(driver) == []
+    captured_empty = (FIXTURES / "empty_rf_construction.html").read_text(encoding="utf-8")
+    driver.get("data:text/html;charset=utf-8," + quote(captured_empty))
+    assert ec._scrape_developers_from_table(driver) == []
+    assert ec._read_top_selection(driver).get("empty_state"), "captured ERZ empty notice was not detected"
+    assert not ec._wait_for_top_content(driver, timeout=1)
+    # Zero is not a successful population, even when an explicit counter exists.
+    driver.execute_script("document.body.insertAdjacentHTML('beforeend', '<p class=\"pagination__hint\">0 - 0 из 0 застройщиков</p>')")
+    assert not ec._wait_for_top_content(driver, timeout=0)
     expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
     for case in expected["top"]:
         html = (FIXTURES / (case["case"] + ".html")).read_text(encoding="utf-8")
@@ -137,6 +145,29 @@ def check_download_replay():
         location.href=url;
       });</script>'''
     exports, errors, navigations, unexpected_changes = [], [], [], []
+    # A fully rendered ERZ page can explicitly report no matching developers.
+    # Exercise the user's alternate-indicator/back workaround in the complete
+    # production flow, including historical years, all-developers and TOP-100.
+    empty_budgets = {
+        ("rf_obyem_stroitelstva_current", None): 5,
+        ("msk_obyem_vvoda_2022", None): 2,
+        ("rf_obyem_vvoda_2024", None): 1,
+        ("rf_obyem_stroitelstva_current", "3"): 2,
+        ("rf_potreb_kachestva_current", None): 1,
+    }
+    empty_served = {key: 0 for key in empty_budgets}
+    route_visits = []
+    empty_markup = (FIXTURES / "empty_rf_construction.html").read_text(encoding="utf-8")
+
+    def empty_table(html):
+        soup = BeautifulSoup(html, "html.parser")
+        for row in soup.select("li.developer"):
+            row.decompose()
+        for counter in soup.select(".pagination__hint"):
+            counter.decompose()
+        notice = BeautifulSoup(empty_markup, "html.parser").select_one("sws-loading")
+        soup.body.append(notice)
+        return str(soup)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -168,6 +199,7 @@ def check_download_replay():
                     self.send_header("Content-Disposition", 'attachment; filename="fixture.xlsx"')
                 else:
                     navigations.append(case)
+                    route_visits.append((case, query.get("page", [None])[0], query))
                     if kind == "obyem_stroitelstva" and "page" in query:
                         start = (int(query["page"][0]) - 1) * 20
                         html = paginated(html, expected["targets"][region][start:start + 20])
@@ -180,7 +212,17 @@ def check_download_replay():
                     # measured table even though location already contains date.
                     # Reloading 2026 is also valid without any table-digest change.
                     settled_content = str(container)
-                    if kind == "obyem_vvoda" and year != "2026":
+                    key = (case, query.get("page", [None])[0])
+                    is_empty = (query.get("fixturePermanentEmpty") == ["1"]
+                                or empty_served.get(key, 0) < empty_budgets.get(key, 0))
+                    if is_empty:
+                        if key in empty_served and query.get("fixturePermanentEmpty") != ["1"]:
+                            empty_served[key] += 1
+                        container.clear()
+                        for child in list(BeautifulSoup(empty_table(html), "html.parser").body.contents):
+                            container.append(child.extract())
+                        delayed = ""
+                    elif kind == "obyem_vvoda" and year != "2026":
                         stale = BeautifulSoup(pages[f"{region}_obyem_vvoda_2026"], "html.parser")
                         container.clear()
                         for child in list(stale.body.contents):
@@ -230,6 +272,14 @@ def check_download_replay():
         assert not errors, errors
         assert not unexpected_changes, unexpected_changes
         assert result.complete, (result.error, exports)
+        assert empty_served == empty_budgets, empty_served
+        for case, page, query in route_visits:
+            if "obyem_vvoda" in case:
+                assert query.get("date") == [case.rsplit("_", 1)[1]], (case, query)
+            if case.startswith("rf_") and any(key in case for key in ec.ALL_DEVELOPERS_SORTINGS):
+                assert query.get("isAllDevelopersShown") == ["true"], (case, query)
+        page3 = [item for item in route_visits if item[:2] == ("rf_obyem_stroitelstva_current", "3")]
+        assert len(page3) == 3, page3
         annual_cases = {f"{region}_obyem_vvoda_{year}" for region in ("rf", "msk") for year in range(2022, 2027)}
         assert annual_cases <= set(navigations), navigations
         assert len(exports) == 18 and set(exports) == set(pages), exports
@@ -259,9 +309,31 @@ def check_download_replay():
             for region in ("rf", "msk"):
                 assert len(payload[kind][region]) == 24, (kind, region)
         assert state["erzrf_top_attempt"]["complete"]
+        # A provider that stays empty gets exactly five recoveries. This must
+        # never click an export or mutate any already published source file.
+        before_files = {path: path.read_bytes() for path in raw.rglob("*") if path.is_file()}
+        before_exports = exports.copy()
+        recovery_driver = create_chrome(download_dir=Path(tmp) / "persistent-empty-downloads", page_load_strategy="eager")
+        try:
+            request = ec.TopExport("rf", "obyem_stroitelstva")
+            target = ec._build_top_url(request.region, request.sorting_key) + "&fixturePermanentEmpty=1"
+            recovery_driver.get(target)
+            before_visits = len(route_visits)
+            assert not ec._ensure_top_content(recovery_driver, request=request, target_url=target,
+                                              timeout=1, recovery_attempts=5)
+            visits = route_visits[before_visits:]
+            target_visits = [item for item in visits if item[2].get("fixturePermanentEmpty") == ["1"]]
+            assert len(target_visits) == 5, visits
+            assert len(visits) == 10, visits
+            assert recovery_driver.current_url == target
+            assert exports == before_exports
+            assert {path: path.read_bytes() for path in raw.rglob("*") if path.is_file()} == before_files
+            print("ERZ persistent-empty browser: exactly five alternate/back recoveries, no export or source changes", flush=True)
+        finally:
+            recovery_driver.quit()
         from docker.tests.erz_cards_browser import check_cards_replay
         check_cards_replay(raw, Path(tmp))
-        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, actual RF/Moscow workbook schemas, URL years with delayed default-year DOM and reverted change events, verified and published atomically; all ten tables loaded by DataAccess", flush=True)
+        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON; explicit empty tables recovered by alternate-indicator/back cycles (including fifth recovery), historical date, TOP-100 page 3 and all-developers restored; all ten tables loaded by DataAccess", flush=True)
 
 
 def check_provider_replay():

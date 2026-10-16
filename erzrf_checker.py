@@ -40,6 +40,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -50,7 +51,9 @@ from urllib.parse import parse_qs, urlparse
 from zipfile import BadZipFile
 
 from selenium.common.exceptions import (
+    InvalidSessionIdException,
     NoSuchElementException,
+    NoSuchWindowException,
     TimeoutException,
     WebDriverException,
 )
@@ -855,11 +858,17 @@ def _scrape_developers_from_table(driver) -> list[dict]:
 # ─────────────────────────────────────────────
 
 
-def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=None) -> bool:
+class _TopEmptyState(Exception):
+    """The rendered source explicitly reports no matching TOP developers."""
+
+
+def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=None,
+                          target_url: str | None = None) -> bool:
     """Wait for the requested route/selection and stable measured Angular rows."""
     previous = None
+    empty_since = None
     def rendered(browser):
-        nonlocal previous
+        nonlocal previous, empty_since
         try:
             rows = _scrape_developers_from_table(browser)
             selection = _read_top_selection(browser)
@@ -871,6 +880,9 @@ def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=
             browser._erzrf_top_readiness = {
                 "rows": len(rows), "measured_rows": len(ranked), "required_visible": required,
                 "cell_counts": sorted({len(row.get("cells") or []) for row in rows}),
+                "raw_rows": selection.get("raw_rows"),
+                "visible_rows": selection.get("visible_rows"),
+                "empty_state": selection.get("empty_state", False),
             }
             if request is not None:
                 browser._erzrf_top_readiness.update(requested_year=request.year, observed_url=selection.get("url"))
@@ -880,6 +892,24 @@ def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=
                     browser._erzrf_top_readiness["selection_error"] = str(exc)
                     previous = None
                     return False
+            if target_url is not None:
+                actual, wanted = urlparse(selection.get("url", "")), urlparse(target_url)
+                query, wanted_query = parse_qs(actual.query), parse_qs(wanted.query)
+                if ((actual.scheme, actual.netloc, actual.path.rstrip("/"))
+                        != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
+                        or any(query.get(key) != value for key, value in wanted_query.items())):
+                    browser._erzrf_top_readiness["selection_error"] = "current URL differs from exact requested TOP page"
+                    previous = None
+                    return False
+            if selection.get("empty_state"):
+                empty_since = empty_since if empty_since is not None else time.monotonic()
+                if time.monotonic() - empty_since >= 1:
+                    browser._erzrf_top_readiness["failure_reason"] = "explicit_empty_state"
+                    raise _TopEmptyState
+                previous = None
+                return False
+            else:
+                empty_since = None
             if len(ranked) < required or len(ranked) != len(rows):
                 previous = None
                 return False
@@ -888,14 +918,107 @@ def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=
             stable = signature == previous
             previous = signature
             return stable
-        except WebDriverException:
+        except (InvalidSessionIdException, NoSuchWindowException):
+            raise
+        except WebDriverException as exc:
+            browser._erzrf_top_readiness = {
+                "failure_reason": "webdriver_error", "exception_type": type(exc).__name__,
+            }
             previous = None
+            empty_since = None
             return False
     try:
         WebDriverWait(driver, timeout).until(rendered)
         return True
-    except TimeoutException:
+    except (_TopEmptyState, TimeoutException):
         return False
+
+
+def _ensure_top_content(driver, *, request: TopExport, top_types=None,
+                        target_url: str | None = None, timeout: int = 30,
+                        recovery_attempts: int = 5, navigate: bool = False) -> bool:
+    """Recover an unloaded TOP by switching another sorting and back, before export.
+
+    The initial visit is followed by at most five recovery cycles. Every return
+    uses the exact requested route, including annual year, page and full rating
+    flags. No download is attempted here, and uncertain downloads are never retried.
+    """
+    if type(recovery_attempts) is not int or not 0 <= recovery_attempts <= 5:
+        raise ValueError("TOP recovery attempts must be an integer in 0..5")
+    mapping = TOP_TYPES if top_types is None else top_types
+    target = target_url or _build_top_url(request.region, request.sorting_key, mapping, year=request.year)
+    recovery = {"attempts": 0, "recoveries": 0, "exhausted": False, "history": []}
+    driver._erzrf_top_recovery = recovery
+    driver._erzrf_year_evidence = None
+
+    def visit(url, visit_request, *, load):
+        driver._erzrf_top_readiness = {"failure_reason": "navigation_not_completed"}
+        try:
+            if load:
+                driver.get(url)
+            return _wait_for_top_content(
+                driver, timeout=timeout if url == target else min(timeout, 10),
+                request=visit_request, top_types=mapping, target_url=url,
+            )
+        except (InvalidSessionIdException, NoSuchWindowException):
+            raise
+        except WebDriverException as exc:
+            driver._erzrf_top_readiness = {
+                "failure_reason": "navigation_error", "exception_type": type(exc).__name__,
+            }
+            return False
+
+    if visit(target, request, load=navigate):
+        return True
+    recovery["history"].append({"stage": "initial", "readiness": dict(driver._erzrf_top_readiness)})
+    # ERZ can canonicalize an undated current TOP to its selected publication
+    # snapshot. Keep that date on return only when both the same route and the
+    # real selected date control independently identify it. Never copy an
+    # arbitrary redirected URL, another page, or a requested annual year.
+    if request.year is None and "date" not in parse_qs(urlparse(target).query):
+        try:
+            selection = _read_top_selection(driver)
+            _top_request_evidence(driver, request, mapping, selection=selection)
+            observed = urlparse(selection.get("url", ""))
+            wanted = urlparse(target)
+            query, wanted_query = parse_qs(observed.query), parse_qs(wanted.query)
+            date_values = query.get("date", [])
+            snapshot = date_values[0] if len(date_values) == 1 else ""
+            if re.fullmatch(r"\d{6}", snapshot):
+                date_label = datetime.strptime(snapshot, "%y%m%d").strftime("%d.%m.%Y")
+                controls = [control for control in selection.get("selects", [])
+                            if str(control.get("value")) == snapshot
+                            and control.get("selected_text", "").strip() == date_label]
+                if (len(controls) == 1
+                        and (observed.scheme, observed.netloc, observed.path.rstrip("/"))
+                        == (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
+                        and {key: value for key, value in query.items() if key != "date"} == wanted_query):
+                    target += f"&date={snapshot}"
+                    recovery["selected_snapshot"] = snapshot
+        except (InvalidSessionIdException, NoSuchWindowException):
+            raise
+        except (TopExportError, ValueError, WebDriverException):
+            pass  # Unverified snapshot: return to the caller's original route.
+    alternate_key = "nakopl_vvod" if request.sorting_key == "obyem_stroitelstva" else "obyem_stroitelstva"
+    alternate = TopExport(request.region_key, alternate_key)
+    alternate_url = _build_top_url(request.region, alternate_key, mapping)
+    for attempt in range(1, recovery_attempts + 1):
+        recovery["attempts"] = attempt
+        print(f"       ↻ TOP: переключение показателя и возврат {attempt}/{recovery_attempts} "
+              f"для {request.region_key}/{request.sorting_key}/{request.year or 'current'}")
+        alternate_ready = visit(alternate_url, alternate, load=True)
+        recovery["history"].append({"stage": "alternate", "attempt": attempt,
+                                    "ready": alternate_ready, "readiness": dict(driver._erzrf_top_readiness)})
+        ready = visit(target, request, load=True)
+        recovery["history"].append({"stage": "target", "attempt": attempt,
+                                    "ready": ready, "readiness": dict(driver._erzrf_top_readiness)})
+        if ready:
+            recovery["recoveries"] = attempt
+            print(f"       ✓ TOP: таблица восстановилась после {attempt} переключений")
+            return True
+    recovery["exhausted"] = True
+    print(f"       ✗ TOP: таблица не загрузилась после {recovery_attempts} переключений")
+    return False
 
 
 
@@ -910,9 +1033,8 @@ def _collect_top_n_developers(driver, region: dict, n: int) -> list[dict]:
     for page_num in range(1, pages_needed + 1):
         url = _build_top_url(region, "obyem_stroitelstva") + f"&page={page_num}"
         print(f"     · страница {page_num}/{pages_needed}: {url}")
-        driver.get(url)
-        selenium_sleep(4)
-        if not _wait_for_top_content(driver):
+        if not _ensure_top_content(driver, request=TopExport(region["key"], "obyem_stroitelstva"),
+                                   target_url=url, navigate=True):
             print(f"       ⚠️  страница {page_num} не загрузилась")
             _save_debug_snapshot(driver, f"top_{region['key']}_page{page_num}_timeout")
             break
@@ -1030,6 +1152,11 @@ def _read_top_selection(driver) -> dict:
         const allControls = [...document.querySelectorAll('input[type="checkbox"]')]
             .filter(e => /Все\s+застройщики/i.test(e.parentElement.textContent || ''));
         return {url: location.href, developer_totals: totals,
+            empty_state: [...document.querySelectorAll('sws-loading .algcenter')]
+                .some(e => e.offsetParent !== null && /^\s*По текущим условиям поиска записей не найдено\.?\s*$/i.test(e.textContent || '')),
+            raw_rows: document.querySelectorAll('.developers__list--top li.developer').length,
+            visible_rows: [...document.querySelectorAll('.developers__list--top li.developer')]
+                .filter(e => e.offsetParent !== null).length,
             all_developers_shown: allControls.length === 1 ? allControls[0].checked : null,
             selects: [...document.querySelectorAll('select')].map(s => ({
             id: s.id, value: s.value,
@@ -1502,16 +1629,19 @@ def fetch_top(state: dict) -> TopFetchResult:
         batch.mkdir()
         try:
             driver = _authenticated_session(staging)
-            driver.get(_build_top_url(REGIONS[0], "obyem_stroitelstva"))
-            if not _wait_for_top_content(driver):
+            first_request = plan[0]
+            first_url = _build_top_url(first_request.region, first_request.sorting_key, year=first_request.year)
+            if not _ensure_top_content(driver, request=first_request, target_url=first_url, navigate=True):
                 raise TopExportError(f"initial TOP content did not load: {getattr(driver, '_erzrf_top_readiness', None)}")
             _, top_types = _sorting_control(_read_top_selection(driver))
-            for request in plan:
+            for index, request in enumerate(plan):
                 url = _build_top_url(request.region, request.sorting_key, top_types, year=request.year)
                 print(f"  TOP {request.region_key}/{request.sorting_key}/{request.year or 'current'}: {url}")
                 driver._erzrf_year_evidence = None
-                driver.get(url)
-                if not _wait_for_top_content(driver, request=request, top_types=top_types):
+                # Reuse the verified bootstrap table instead of reloading its
+                # identical route and exposing the source's intermittent empty state.
+                if index and not _ensure_top_content(driver, request=request, top_types=top_types,
+                                                     target_url=url, navigate=True):
                     raise TopExportError(f"TOP content did not load for {request.region_key}/{request.sorting_key}: "
                                          f"{getattr(driver, '_erzrf_top_readiness', None)}")
                 if request.year is not None:

@@ -83,6 +83,9 @@ class FakeDriver:
         assert command == "Browser.setDownloadBehavior"
         self.destinations.append(Path(parameters["downloadPath"]))
 
+    def execute_script(self, script, *args):
+        return selection(self.request)
+
     def quit(self):
         self.closed = True
 
@@ -455,6 +458,126 @@ class CollectorContract(unittest.TestCase):
         proof = json.loads(target.with_suffix(".xlsx.provenance.json").read_text())
         self.assertEqual(proof["observed_ui_counts"], {"before": [1], "after": [2]})
 
+    def test_empty_top_succeeds_on_fifth_alternate_and_return_cycle(self):
+        driver = FakeDriver()
+        target_calls = []
+        def ready(browser, **kwargs):
+            if kwargs["request"] == self.request:
+                target_calls.append(kwargs["target_url"])
+                return len(target_calls) == 6
+            return True
+        with patch.object(ec, "_wait_for_top_content", side_effect=ready):
+            self.assertTrue(ec._ensure_top_content(driver, request=self.request, navigate=True))
+        self.assertEqual(len(target_calls), 6)
+        self.assertEqual(len(driver.visited), 11)
+        self.assertEqual(driver._erzrf_top_recovery["recoveries"], 5)
+        self.assertFalse(driver._erzrf_top_recovery["exhausted"])
+        self.assertEqual(driver.visited[::2], target_calls)
+
+    def test_persistent_empty_top_stops_after_five_cycles_without_export(self):
+        driver = FakeDriver()
+        driver._erzrf_top_readiness = {"failure_reason": "explicit_empty_state"}
+        with patch.object(ec, "_wait_for_top_content", return_value=False) as wait, \
+                patch.object(ec, "_click_download_excel") as click:
+            self.assertFalse(ec._ensure_top_content(driver, request=self.request))
+        self.assertEqual(wait.call_count, 11)
+        self.assertEqual(len(driver.visited), 10)
+        self.assertEqual(driver._erzrf_top_recovery["attempts"], 5)
+        self.assertTrue(driver._erzrf_top_recovery["exhausted"])
+        click.assert_not_called()
+        self.assertFalse(ec.DOWNLOAD_DIR.exists())
+
+    def test_top_recovery_restores_exact_year_region_page_and_full_population(self):
+        for request, suffix in ((ec.TopExport("msk", "obyem_vvoda", 2022), ""),
+                                (ec.TopExport("rf", "obyem_stroitelstva"), "&page=3"),
+                                (ec.TopExport("rf", "potreb_kachestva"), "")):
+            with self.subTest(request=request):
+                driver = FakeDriver()
+                target = ec._build_top_url(request.region, request.sorting_key, year=request.year) + suffix
+                with patch.object(ec, "_wait_for_top_content", side_effect=[False, True, True]) as wait:
+                    self.assertTrue(ec._ensure_top_content(driver, request=request, target_url=target))
+                self.assertEqual(driver.visited[-1], target)
+                self.assertNotEqual(parse_qs(urlparse(driver.visited[0]).query)["topType"],
+                                    parse_qs(urlparse(target).query)["topType"])
+                self.assertEqual(wait.call_args.kwargs["target_url"], target)
+                self.assertEqual(wait.call_args.kwargs["request"], request)
+
+    def test_top_navigation_exception_is_recorded_and_recovered_before_export(self):
+        driver = FakeDriver()
+        original_get = driver.get
+        attempts = []
+        def navigate(url):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise ec.WebDriverException("controlled transport failure")
+            original_get(url)
+        driver.get = navigate
+        with patch.object(ec, "_wait_for_top_content", return_value=True):
+            self.assertTrue(ec._ensure_top_content(driver, request=self.request, navigate=True))
+        failure = driver._erzrf_top_recovery["history"][0]["readiness"]
+        self.assertEqual(failure["failure_reason"], "navigation_error")
+        self.assertEqual(failure["exception_type"], "WebDriverException")
+        self.assertEqual(driver._erzrf_top_recovery["recoveries"], 1)
+
+    def test_top_recovery_rejects_unbounded_attempt_counts(self):
+        for attempts in (-1, 6, True, 5.0, "5"):
+            with self.subTest(attempts=attempts), self.assertRaises(ValueError):
+                ec._ensure_top_content(FakeDriver(), request=self.request, recovery_attempts=attempts)
+
+    def test_empty_current_top_preserves_only_independently_verified_snapshot_date(self):
+        target = selection(self.request)["url"]
+        current = selection(self.request)
+        current["url"] += "&date=261001"
+        current["selects"].append({"id": "select6", "value": "261001", "selected_text": "01.10.2026"})
+        unsafe_control = copy.deepcopy(current)
+        unsafe_control["selects"][-1]["value"] = "260901"
+        cases = ((current, True), ({**current, "url": current["url"] + "&unexpected=1"}, False),
+                 ({**current, "url": current["url"] + "&date=260901"}, False),
+                 (unsafe_control, False))
+        for observed, valid in cases:
+            with self.subTest(observed=observed, valid=valid):
+                driver = FakeDriver()
+                with patch.object(ec, "_wait_for_top_content", side_effect=[False, True, True]), \
+                        patch.object(ec, "_read_top_selection", return_value=observed):
+                    self.assertTrue(ec._ensure_top_content(driver, request=self.request))
+                self.assertEqual(driver.visited[-1], target + ("&date=261001" if valid else ""))
+                self.assertEqual(driver._erzrf_top_recovery.get("selected_snapshot"), "261001" if valid else None)
+
+    def test_dead_browser_session_is_terminal_and_never_retried(self):
+        from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException
+        for error in (InvalidSessionIdException, NoSuchWindowException):
+            with self.subTest(error=error):
+                driver = FakeDriver()
+                with patch.object(driver, "get", side_effect=error("controlled dead session")) as get, \
+                        self.assertRaises(error):
+                    ec._ensure_top_content(driver, request=self.request, navigate=True)
+                self.assertEqual(get.call_count, 1)
+                self.assertEqual(driver._erzrf_top_recovery["attempts"], 0)
+
+    def test_recovery_readiness_never_accepts_wrong_scope_year_page_or_missing_metric(self):
+        request = ec.TopExport("msk", "obyem_vvoda", 2022)
+        correct = selection(request)
+        visible = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                    "cells": ["1", "Fixture developer", "250"]}]
+        wrong_year = selection(ec.TopExport("msk", "obyem_vvoda", 2026))
+        wrong_region = selection(ec.TopExport("rf", "obyem_vvoda", 2022))
+        cases = ((wrong_year, visible, correct["url"]), (wrong_region, visible, correct["url"]),
+                 (correct, visible, correct["url"] + "&page=3"),
+                 (correct, [{**visible[0], "cells": ["1", "Fixture developer", "-"]}], correct["url"]))
+        for current, rows, target in cases:
+            with self.subTest(current=current["url"], target=target, rows=rows):
+                driver = FakeDriver()
+                def poll(predicate):
+                    self.assertFalse(predicate(driver))
+                    self.assertFalse(predicate(driver))
+                    raise ec.TimeoutException()
+                with patch.object(ec, "WebDriverWait") as factory, \
+                        patch.object(ec, "_read_top_selection", return_value=current), \
+                        patch.object(ec, "_scrape_developers_from_table", return_value=rows):
+                    factory.return_value.until.side_effect = poll
+                    self.assertFalse(ec._ensure_top_content(driver, request=request, target_url=target,
+                                                            recovery_attempts=0))
+
     def test_invalid_schema_does_not_replace_previous_file(self):
         driver = FakeDriver()
         self.browser_stubs(driver)
@@ -794,6 +917,27 @@ class CollectorContract(unittest.TestCase):
         self.assertEqual(state["erzrf_top"]["last_run"], "previous")
         self.assertEqual(waiter.call_count, 0)
         self.assertTrue(driver.closed)
+
+    def test_fully_empty_top_exhausts_recovery_and_preserves_previous_cohort(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        previous = ec.DOWNLOAD_DIR / "top_previous.xlsx"
+        previous.parent.mkdir(parents=True)
+        previous.write_bytes(b"previous verified source")
+        state = {"erzrf_top": {"last_run": "previous", "files": [previous.name]}}
+        with patch.object(ec, "_wait_for_top_content", return_value=False), \
+                patch.object(ec, "_click_download_excel") as click, \
+                patch.object(ec, "wait_for_download") as download:
+            result = ec.fetch_top(state)
+        self.assertFalse(result.complete)
+        self.assertEqual(driver._erzrf_top_recovery["attempts"], 5)
+        self.assertTrue(driver._erzrf_top_recovery["exhausted"])
+        self.assertEqual(previous.read_bytes(), b"previous verified source")
+        self.assertEqual(state["erzrf_top"]["last_run"], "previous")
+        self.assertFalse(state["erzrf_top_attempt"]["complete"])
+        self.assertTrue(driver.closed)
+        click.assert_not_called()
+        download.assert_not_called()
 
     def test_partial_export_failure_remains_retryable_and_keeps_previous_success(self):
         driver = FakeDriver()

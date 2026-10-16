@@ -199,6 +199,37 @@ class CardsCoverageTests(unittest.TestCase):
                 self.assertEqual(value["history_status"], "not_published")
                 self.assertEqual(value["deliveries"], {})
 
+    def test_unpublished_year_on_measured_card_remains_unknown_but_published_zero_is_zero(self):
+        """The union of workbook years must not invent another card's history."""
+        import pandas as pd
+        from pipeline.data_access import DataAccess, DataContext
+
+        def measured(driver):
+            value = self.data()
+            if driver.current_url.endswith("/a"):
+                value["deliveries"]["2024"] = {"sdano": "0", "perenos_m2": "0"}
+            else:
+                value["deliveries"]["2023"] = {"sdano": "70", "perenos_m2": "—"}
+            return value
+
+        with patch.object(ec, "_scrape_card", side_effect=measured):
+            result = ec.fetch_cards({})
+        self.assertTrue(result.complete)
+        access = DataAccess(DataContext(self.root, use_marts=False))
+        access.ERZRF_PATHS = [self.raw]
+        canonical = access.load_erzrf_cards().set_index("name_card")
+        self.assertEqual(canonical.loc["a", "Сдано_2024_м²_num"], 0)
+        self.assertTrue(pd.isna(canonical.loc["b", "Сдано_2024_м²_num"]))
+        self.assertTrue(pd.isna(canonical.loc["a", "Сдано_2023_м²_num"]))
+        self.assertTrue(pd.isna(canonical.loc["b", "Перенос_2023_м²_num"]))
+        from docker.coverage import validate_erz_cards
+        validate_erz_cards(access, canonical.reset_index())
+        for name, column, invented in (("a", "Сдано_2023_м²_num", 0), ("a", "Сдано_2024_м²_num", 1)):
+            corrupted = canonical.copy()
+            corrupted.loc[name, column] = invented
+            with self.subTest(name=name, column=column), self.assertRaises(RuntimeError):
+                validate_erz_cards(access, corrupted.reset_index())
+
     def test_source_target_change_or_second_artifact_replace_failure_preserves_previous(self):
         self.previous()
         def changed(driver):

@@ -114,7 +114,8 @@ REGIONS = [
 ]
 
 
-def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None) -> str:
+def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None,
+                   *, year: int | None = None) -> str:
     known_sortings = {item["key"] for item in SORTINGS}
     if sorting_key not in known_sortings:
         raise ValueError(f"unknown TOP sorting: {sorting_key}")
@@ -126,11 +127,14 @@ def _build_top_url(region: dict, sorting_key: str, top_types: dict | None = None
     top_type = mapping[sorting_key]
     if top_type < 0:
         raise ValueError("topType must be nonnegative")
+    if year is not None and (sorting_key != "obyem_vvoda" or type(year) is not int or not 2000 <= year <= 2099):
+        raise ValueError("an explicit annual year must be an integer in 2000..2099")
     return (
         f"{BASE}/top-zastroyshchikov/{region['path']}"
         f"?topType={top_type}&{region['extra_query']}"
         + ("&isAllDevelopersShown=true"
            if sorting_key in ALL_DEVELOPERS_SORTINGS and region["key"] == "rf" else "")
+        + (f"&date={year}" if year is not None else "")
     )
 
 
@@ -673,7 +677,7 @@ def _save_rejected_top_excel(source: Path, request: TopExport, error: Exception)
         target = debug_dir / f"erzrf_top_{request.region_key}_{request.sorting_key}_{request.year or 'current'}_rejected_{suffix}.xlsx"
         shutil.copy2(source, target)
         _write_json_atomic(target.with_suffix(".xlsx.json"), {
-            "requested_url": _build_top_url(request.region, request.sorting_key),
+            "requested_url": _build_top_url(request.region, request.sorting_key, year=request.year),
             "region": request.region_key, "sorting": request.sorting_key, "year": request.year,
             "error": f"{type(error).__name__}: {error}"[:600],
             "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
@@ -851,8 +855,8 @@ def _scrape_developers_from_table(driver) -> list[dict]:
 # ─────────────────────────────────────────────
 
 
-def _wait_for_top_content(driver, timeout: int = 30) -> bool:
-    """Wait through SSR/Angular replacement until ranked rows remain stable."""
+def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=None) -> bool:
+    """Wait for the requested route/selection and stable measured Angular rows."""
     previous = None
     def rendered(browser):
         nonlocal previous
@@ -868,6 +872,14 @@ def _wait_for_top_content(driver, timeout: int = 30) -> bool:
                 "rows": len(rows), "measured_rows": len(ranked), "required_visible": required,
                 "cell_counts": sorted({len(row.get("cells") or []) for row in rows}),
             }
+            if request is not None:
+                browser._erzrf_top_readiness.update(requested_year=request.year, observed_url=selection.get("url"))
+                try:
+                    _top_request_evidence(browser, request, top_types or TOP_TYPES, selection=selection)
+                except TopExportError as exc:
+                    browser._erzrf_top_readiness["selection_error"] = str(exc)
+                    previous = None
+                    return False
             if len(ranked) < required or len(ranked) != len(rows):
                 previous = None
                 return False
@@ -1002,12 +1014,9 @@ def _top_export_plan() -> list[TopExport]:
     for region in REGIONS:
         for sorting in SORTINGS:
             # The annual rating's default/current page is just the currently
-            # selected year. Downloading it once without an explicit filter and
-            # then again as 2026 is redundant. More importantly, ERZ can return
-            # an export from stale server-side filter state immediately after
-            # navigation. Every annual export therefore follows an observed
-            # year switch; the latest explicit year is also used as "current"
-            # by DataAccess.
+            # selected year. Each annual route carries the site's actual date
+            # parameter, then waits for that selected year and measured table.
+            # The latest explicit year also serves as "current" in DataAccess.
             years = PER_YEAR_RANGE if sorting["key"] in PER_YEAR_SORTINGS else [None]
             plan.extend(TopExport(region["key"], sorting["key"], year) for year in years)
     return plan
@@ -1240,15 +1249,15 @@ def _row_count_reconciliation(
     )
 
 
-def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
-    selection = _read_top_selection(driver)
+def _top_request_evidence(driver, request: TopExport, top_types: dict, *, selection=None) -> dict:
+    selection = _read_top_selection(driver) if selection is None else selection
     control, observed_mapping = _sorting_control(selection)
     if observed_mapping != top_types:
         raise TopExportError("sorting mapping changed during collection")
     if (_sorting_from_label(control.get("selected_text", "")) != request.sorting_key
             or str(control.get("value")) != str(top_types[request.sorting_key])):
         raise TopExportError("selected sorting differs from requested sorting")
-    wanted_url = _build_top_url(request.region, request.sorting_key, top_types)
+    wanted_url = _build_top_url(request.region, request.sorting_key, top_types, year=request.year)
     actual, wanted = urlparse(selection.get("url", "")), urlparse(wanted_url)
     query, wanted_query = parse_qs(actual.query), parse_qs(wanted.query)
     if ((actual.scheme, actual.netloc, actual.path.rstrip("/"))
@@ -1498,15 +1507,19 @@ def fetch_top(state: dict) -> TopFetchResult:
                 raise TopExportError(f"initial TOP content did not load: {getattr(driver, '_erzrf_top_readiness', None)}")
             _, top_types = _sorting_control(_read_top_selection(driver))
             for request in plan:
-                url = _build_top_url(request.region, request.sorting_key, top_types)
+                url = _build_top_url(request.region, request.sorting_key, top_types, year=request.year)
                 print(f"  TOP {request.region_key}/{request.sorting_key}/{request.year or 'current'}: {url}")
                 driver._erzrf_year_evidence = None
                 driver.get(url)
-                if not _wait_for_top_content(driver):
+                if not _wait_for_top_content(driver, request=request, top_types=top_types):
                     raise TopExportError(f"TOP content did not load for {request.region_key}/{request.sorting_key}: "
                                          f"{getattr(driver, '_erzrf_top_readiness', None)}")
-                if request.year is not None and not _switch_year_filter(driver, request.year):
-                    raise TopExportError(f"year {request.year} could not be selected")
+                if request.year is not None:
+                    _top_request_evidence(driver, request, top_types)
+                    driver._erzrf_year_evidence = {
+                        "year": request.year, "selection_mode": "url_date",
+                        "navigation_url": url, "table_stable": True,
+                    }
                 _download_top_export(
                     driver, request, date_str, staging, top_types, output_dir=batch
                 )

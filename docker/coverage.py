@@ -239,8 +239,11 @@ def validate_erz_cards(access, canonical):
                     "erz-cards unpublished history evidence differs from its source")
         for column in measured_columns(raw):
             value = number(raw[column])
-            if value is not None:
-                require(number(row.get(column)) == value, "erz-cards canonical measurement differs from its source")
+            require(number(row.get(column)) == value, "erz-cards canonical measurement differs from its source")
+            numeric_column = column + "_num"
+            if numeric_column in row:
+                require(number(row[numeric_column]) == value,
+                        "erz-cards numeric measurement differs from its source: " + column)
 
 
 def validate_kvart_sources(access, kvart):

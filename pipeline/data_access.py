@@ -1475,14 +1475,14 @@ class DataAccess:
 
         def parse_num(v):
             if v is None or pd.isna(v) or v == "" or v == "-":
-                return 0.0
+                return float("nan")
             if isinstance(v, (int, float)):
                 return float(v)
             s = str(v).replace("\xa0", "").replace(" ", "").replace(",", ".")
             try:
                 return float(s)
             except ValueError:
-                return 0.0
+                return float("nan")
 
         for col in df.columns:
             cs = str(col)

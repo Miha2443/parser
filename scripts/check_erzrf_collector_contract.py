@@ -46,7 +46,7 @@ def fixture_frame(kind: str) -> pd.DataFrame:
 
 
 def selection(request: ec.TopExport) -> dict:
-    return {"url": ec._build_top_url(request.region, request.sorting_key),
+    return {"url": ec._build_top_url(request.region, request.sorting_key, year=request.year),
             "all_developers_shown": request.sorting_key in ec.ALL_DEVELOPERS_SORTINGS,
             "developer_totals": [1], "selects": [
         {"id": "sorting", "value": str(ec.TOP_TYPES[request.sorting_key]),
@@ -65,12 +65,16 @@ class FakeDriver:
         self.request = ec.TopExport("rf", "obyem_stroitelstva")
         self.closed = False
         self.destinations = []
+        self.visited = []
 
     def get(self, url):
+        self.visited.append(url)
         parsed = urlparse(url)
         kind = next(key for key, value in ec.TOP_TYPES.items()
                     if str(value) == parse_qs(parsed.query)["topType"][0])
-        self.request = ec.TopExport("msk" if "moskva" in parsed.path else "rf", kind)
+        query = parse_qs(parsed.query)
+        self.request = ec.TopExport("msk" if "moskva" in parsed.path else "rf", kind,
+                                    int(query["date"][0]) if "date" in query else None)
 
     def set_page_load_timeout(self, timeout):
         pass
@@ -123,6 +127,17 @@ class CollectorContract(unittest.TestCase):
             ec._build_top_url({**ec.REGIONS[0], "path": "moskva"}, "obyem_stroitelstva")
         with self.assertRaises(ValueError):
             ec._build_top_url(ec.REGIONS[0], "nakopl_vvod", {"obyem_stroitelstva": 0})
+
+    def test_annual_urls_encode_every_requested_region_and_year(self):
+        for region in ec.REGIONS:
+            for year in range(2022, 2027):
+                url = ec._build_top_url(region, "obyem_vvoda", year=year)
+                self.assertEqual(parse_qs(urlparse(url).query)["date"], [str(year)])
+        for year in (True, 1999, 2100, "2022", 2022.5):
+            with self.subTest(year=year), self.assertRaises(ValueError):
+                ec._build_top_url(ec.REGIONS[0], "obyem_vvoda", year=year)
+        with self.assertRaises(ValueError):
+            ec._build_top_url(ec.REGIONS[0], "nakopl_vvod", year=2022)
 
     def test_verified_mapping_and_dynamic_options(self):
         self.assertEqual(ec.TOP_TYPES, {"obyem_stroitelstva": 0, "obyem_vvoda": 1,
@@ -207,6 +222,10 @@ class CollectorContract(unittest.TestCase):
             bad = copy.deepcopy(good)
             bad["selects"][index]["value"] = value
             cases.append(bad)
+        for wrong_url in (good["url"].replace("&date=2024", ""),
+                          good["url"].replace("date=2024", "date=2025"),
+                          good["url"] + "&date=2025"):
+            cases.append({**good, "url": wrong_url})
         for suffix in ["&topType=0", "&regionKey=0"]:
             bad = copy.deepcopy(good)
             bad["url"] += suffix
@@ -787,13 +806,9 @@ class CollectorContract(unittest.TestCase):
             path = folder / "site.xlsx"
             fixture_frame(driver.request.sorting_key).to_excel(path, index=False)
             return path
-        def switch(browser, year):
-            browser.request = ec.TopExport(browser.request.region_key, browser.request.sorting_key, year)
-            browser._erzrf_year_evidence = {"year": year, "table_changed": True}
-            return True
         state = {"erzrf_top": {"last_run": "previous"}}
         with patch.object(ec, "wait_for_download", side_effect=wait), \
-                patch.object(ec, "_switch_year_filter", side_effect=switch):
+                patch.object(ec, "_switch_year_filter", side_effect=AssertionError("annual exports must navigate explicit date URLs")):
             result = ec.fetch_top(state)
         self.assertEqual(len(result.files), 0)
         self.assertFalse(result.complete)
@@ -934,18 +949,19 @@ class CollectorContract(unittest.TestCase):
             path = folder / "site.xlsx"
             fixture_frame(driver.request.sorting_key).to_excel(path, index=False)
             return path
-        def switch(browser, year):
-            browser.request = ec.TopExport(browser.request.region_key, browser.request.sorting_key, year)
-            browser._erzrf_year_evidence = {"year": year, "table_changed": True}
-            return True
         developers = [{"name": f"Fixture {i}", "card_url": f"https://erzrf.ru/zastroyschiki/fixture-{i}"}
                       for i in range(100)]
         state = {}
         with patch.object(ec, "wait_for_download", side_effect=wait), \
-                patch.object(ec, "_switch_year_filter", side_effect=switch), \
+                patch.object(ec, "_switch_year_filter", side_effect=AssertionError("annual exports must navigate explicit date URLs")), \
                 patch.object(ec, "_collect_top_n_developers", return_value=developers):
             result = ec.fetch_top(state)
-        self.assertTrue(result.complete)
+        self.assertTrue(result.complete, result.error)
+        annual_visits = [url for url in driver.visited if "date=" in url]
+        self.assertEqual(len(annual_visits), 2 * len(ec.PER_YEAR_RANGE))
+        self.assertEqual({("msk" if "moskva" in url else "rf", int(parse_qs(urlparse(url).query)["date"][0]))
+                          for url in annual_visits},
+                         {(region["key"], year) for region in ec.REGIONS for year in ec.PER_YEAR_RANGE})
         expected_exports = len(ec._top_export_plan())
         expected_files = expected_exports + len(ec.REGIONS)
         self.assertEqual(len(result.files), expected_files)

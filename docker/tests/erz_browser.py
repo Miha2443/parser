@@ -1,7 +1,7 @@
 """Captured ERZ markup: all ratings/years, real Chromium downloads and TOP-100.
 
 Only HTTP transport and authentication are replaced in the replay. Production
-DOM JavaScript, year switching, export clicks, Chrome downloads, XLSX checks,
+DOM JavaScript, explicit year navigation, export clicks, Chrome downloads, XLSX checks,
 provenance and transactional TOP publication run unchanged in a private folder.
 No production data or live authenticated session is used by this test.
 """
@@ -124,22 +124,19 @@ def check_download_replay():
     expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
     pages = {case["case"]: (FIXTURES / (case["case"] + ".html")).read_text(encoding="utf-8")
              for case in expected["top"]}
+    # Reproduce Select2/Angular ignoring or reverting synthetic change events.
+    # Route date is the server input; no fixture-only event mutates the result.
     script = '''<script>
-      document.addEventListener('change', async e=>{
+      document.addEventListener('change', e=>{
         if(!e.target.matches('select[data-fixture-year]'))return;
-        const url=new URL(location.href);url.searchParams.set('fixture_year',e.target.value);
-        const html=await(await fetch(url)).text();
-        document.getElementById('fixture-content').innerHTML=
-          new DOMParser().parseFromString(html,'text/html').getElementById('fixture-content').innerHTML;
+        e.target.value='2026';fetch('/fixture-unexpected-year-change');
       });
       document.addEventListener('click', e=>{
         if(!e.target.matches('.fixture-export'))return;
         const url=new URL(location.href);url.pathname='/fixture-export';
-        const year=document.querySelector('select[data-fixture-year]');
-        if(year)url.searchParams.set('fixture_year',year.value);
         location.href=url;
       });</script>'''
-    exports, errors = [], []
+    exports, errors, navigations, unexpected_changes = [], [], [], []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -148,6 +145,11 @@ def check_download_replay():
         def do_GET(self):
             try:
                 parsed = urlparse(self.path)
+                if parsed.path == "/fixture-unexpected-year-change":
+                    unexpected_changes.append(self.path)
+                    self.send_response(204)
+                    self.end_headers()
+                    return
                 if parsed.path == "/favicon.ico":
                     self.send_response(204)
                     self.end_headers()
@@ -155,7 +157,7 @@ def check_download_replay():
                 query = parse_qs(parsed.query)
                 region = "msk" if query.get("regionKey") == ["143443001"] else "rf"
                 kind = next(key for key, value in ec.TOP_TYPES.items() if str(value) == query["topType"][0])
-                year = query.get("fixture_year", ["2026"])[0] if kind == "obyem_vvoda" else "current"
+                year = query.get("date", ["2026"])[0] if kind == "obyem_vvoda" else "current"
                 case = f"{region}_{kind}_{year}"
                 html = pages[case]
                 if parsed.path == "/fixture-export":
@@ -165,6 +167,7 @@ def check_download_replay():
                     self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                     self.send_header("Content-Disposition", 'attachment; filename="fixture.xlsx"')
                 else:
+                    navigations.append(case)
                     if kind == "obyem_stroitelstva" and "page" in query:
                         start = (int(query["page"][0]) - 1) * 20
                         html = paginated(html, expected["targets"][region][start:start + 20])
@@ -173,9 +176,21 @@ def check_download_replay():
                     for child in list(soup.body.contents):
                         container.append(child.extract())
                     soup.body.append(container)
+                    # Angular may initially retain the default year's complete,
+                    # measured table even though location already contains date.
+                    # Reloading 2026 is also valid without any table-digest change.
+                    settled_content = str(container)
+                    if kind == "obyem_vvoda" and year != "2026":
+                        stale = BeautifulSoup(pages[f"{region}_obyem_vvoda_2026"], "html.parser")
+                        container.clear()
+                        for child in list(stale.body.contents):
+                            container.append(child.extract())
+                        delayed = "<script>setTimeout(()=>{document.getElementById('fixture-content').outerHTML=" + json.dumps(settled_content) + ";},650);</script>"
+                    else:
+                        delayed = ""
                     # Export controls retain the site's exact label and title.
                     html = str(soup).replace("</body>", '''<span title="нажмите для формирования и скачивания файла">
-                      <span class="pointer fixture-export">Весь список</span></span></body>''') + script
+                      <span class="pointer fixture-export">Весь список</span></span></body>''') + script + delayed
                     payload = html.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -196,6 +211,16 @@ def check_download_replay():
         base = f"http://127.0.0.1:{server.server_port}"
         def session(directory):
             driver = create_chrome(download_dir=directory, page_load_strategy="eager")
+            # An already selected current year need not change the measured
+            # table digest after a genuine navigation/reload acknowledgement.
+            request = ec.TopExport("rf", "obyem_vvoda", 2026)
+            url = ec._build_top_url(request.region, request.sorting_key, year=request.year)
+            driver.get(url)
+            assert ec._wait_for_top_content(driver, timeout=5, request=request, top_types=ec.TOP_TYPES)
+            before = ec._top_table_digest(driver)
+            driver.get(url)
+            assert ec._wait_for_top_content(driver, timeout=5, request=request, top_types=ec.TOP_TYPES)
+            assert before == ec._top_table_digest(driver)
             return driver
         stack.enter_context(patch.multiple(ec, BASE=base, DOWNLOAD_DIR=raw, PER_YEAR_RANGE=list(range(2022, 2027))))
         stack.enter_context(patch.object(ec, "_authenticated_session", side_effect=session))
@@ -203,7 +228,10 @@ def check_download_replay():
         state = {}
         result = ec.fetch_top(state)
         assert not errors, errors
+        assert not unexpected_changes, unexpected_changes
         assert result.complete, (result.error, exports)
+        annual_cases = {f"{region}_obyem_vvoda_{year}" for region in ("rf", "msk") for year in range(2022, 2027)}
+        assert annual_cases <= set(navigations), navigations
         assert len(exports) == 18 and set(exports) == set(pages), exports
         assert len(result.files) == 20
         for region in ("rf", "msk"):
@@ -214,6 +242,12 @@ def check_download_replay():
             if path.suffix == ".xlsx":
                 proof = json.loads(path.with_suffix(".xlsx.provenance.json").read_text(encoding="utf-8"))
                 assert proof["request_correlation"]["matched_rows"] == 20, proof
+                if proof["sorting"] == "obyem_vvoda":
+                    requested_year = proof["requested_year"]
+                    assert parse_qs(urlparse(proof["observed_url"]).query)["date"] == [str(requested_year)], proof
+                    assert proof["selected_year"] == requested_year, proof
+                    assert proof["year_selection_evidence"]["year"] == requested_year, proof
+                    assert proof["year_selection_evidence"]["selection_mode"] == "url_date", proof
                 if proof["region"] == "msk" and proof["sorting"] in {"obyem_stroitelstva", "obyem_vvoda"}:
                     assert len(proof["workbook"]["project_columns"]) == 19, proof
                     assert proof["workbook"]["empty_separator_columns"] == [33], proof
@@ -225,7 +259,9 @@ def check_download_replay():
             for region in ("rf", "msk"):
                 assert len(payload[kind][region]) == 24, (kind, region)
         assert state["erzrf_top_attempt"]["complete"]
-        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, actual RF/Moscow workbook schemas, verified and published atomically; all ten tables loaded by DataAccess", flush=True)
+        from docker.tests.erz_cards_browser import check_cards_replay
+        check_cards_replay(raw, Path(tmp))
+        print("ERZ browser download replay: 18 Chrome XLSX downloads + 2 TOP-100 JSON, actual RF/Moscow workbook schemas, URL years with delayed default-year DOM and reverted change events, verified and published atomically; all ten tables loaded by DataAccess", flush=True)
 
 
 def check_provider_replay():

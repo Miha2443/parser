@@ -413,7 +413,7 @@ def delay_data(top, card, rv, oks, key):
                             "clarifiedM2": card.get(f"Уточн_{year}_м²_num")} for year in card_years],
         "cardRow": clean(card.to_dict()) if card is not None else None,
         "sourceNote": "Six actual displayed KPI cards, not the obsolete docstring's stacked delay chart. "
-                      "annualCardRows are supporting source inputs; card loader converts blank/unparseable cells to zero."}
+                      "annualCardRows are supporting source inputs; blank/unparseable measurements remain unknown."}
 
 
 def escrow_data(frame, key):

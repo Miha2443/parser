@@ -423,7 +423,7 @@ class CollectorContract(unittest.TestCase):
             fixture_frame("obyem_stroitelstva").to_excel(target, index=False)
             return target
         with patch.object(ec, "_read_top_selection", return_value=current), \
-                patch.object(ec, "wait_for_download", side_effect=download), self.assertRaisesRegex(ec.TopExportError, "too few rows"):
+                patch.object(ec, "wait_for_download", side_effect=download), self.assertRaisesRegex(ec.TopExportError, "partial table|too few rows"):
             self.download(driver)
         self.assertFalse(ec.DOWNLOAD_DIR.exists())
 
@@ -452,7 +452,12 @@ class CollectorContract(unittest.TestCase):
             target = folder / "site.xlsx"
             fixture_frame("obyem_stroitelstva").to_excel(target, index=False)
             return target
+        visible = [{"place": str(rank), "name": "Fixture developer" if rank == 1 else "Fixture second developer",
+                    "card_url": f"https://erzrf.ru/zastroyschiki/fixture-{rank}",
+                    "cells": [str(rank), "Fixture developer" if rank == 1 else "Fixture second developer", "125"]}
+                   for rank in (1, 2)]
         with patch.object(ec, "_read_top_selection", side_effect=[before, after]), \
+                patch.object(ec, "_scrape_developers_from_table", return_value=visible), \
                 patch.object(ec, "wait_for_download", side_effect=download):
             target = self.download(driver)
         proof = json.loads(target.with_suffix(".xlsx.provenance.json").read_text())
@@ -791,6 +796,226 @@ class CollectorContract(unittest.TestCase):
             return folder / "two.xlsx"
         with patch.object(ec, "wait_for_download", side_effect=wait), self.assertRaises(ec.TopExportError):
             self.download()
+
+    def test_late_empty_before_capture_and_after_download_recover_on_fifth_without_reclick(self):
+        rows = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                 "cells": ["1", "Fixture developer", "125"]}]
+        for stage in ("before", "after"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory(dir=self.base) as temporary:
+                driver = FakeDriver()
+                self.browser_stubs(driver)
+                downloaded = []
+                def snapshot(browser):
+                    failing = (not downloaded) if stage == "before" else bool(downloaded)
+                    if failing and getattr(browser, "_erzrf_top_recovery", {}).get("attempts", 0) < 5:
+                        raise ec.TopTableUnavailableError("controlled late empty")
+                    return rows, "original-digest"
+                def wait(folder, **kwargs):
+                    path = folder / "site.xlsx"
+                    fixture_frame("obyem_stroitelstva").to_excel(path, index=False)
+                    downloaded.append(path.read_bytes())
+                    return path
+                with patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                        patch.object(ec, "wait_for_download", side_effect=wait), \
+                        patch.object(ec, "_click_download_excel", return_value={"clicked": True}) as click:
+                    target = ec._download_top_export(driver, self.request, "20261016", Path(temporary), ec.TOP_TYPES,
+                                                     output_dir=Path(temporary) / "out")
+                self.assertEqual(target.read_bytes(), downloaded[0])
+                self.assertEqual(click.call_count, 1)
+                self.assertEqual(driver._erzrf_top_recovery["recoveries"], 5)
+
+    def test_late_empty_permanent_failure_preserves_old_file_before_and_after_click(self):
+        rows = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                 "cells": ["1", "Fixture developer", "125"]}]
+        for stage in ("before", "after"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory(dir=self.base) as temporary:
+                driver = FakeDriver()
+                self.browser_stubs(driver)
+                target = ec.DOWNLOAD_DIR / self.request.filename("20261016")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"old verified cohort")
+                downloaded = []
+                def snapshot(browser):
+                    if stage == "before" or downloaded:
+                        raise ec.TopTableUnavailableError("controlled permanent late empty")
+                    return rows, "original-digest"
+                def wait(folder, **kwargs):
+                    path = folder / "site.xlsx"
+                    fixture_frame("obyem_stroitelstva").to_excel(path, index=False)
+                    downloaded.append(path.read_bytes())
+                    return path
+                with patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                        patch.object(ec, "wait_for_download", side_effect=wait), \
+                        patch.object(ec, "_click_download_excel", return_value={"clicked": True}) as click, \
+                        self.assertRaises(ec.TopExportError):
+                    ec._download_top_export(driver, self.request, "20261016", Path(temporary), ec.TOP_TYPES)
+                self.assertEqual(driver._erzrf_top_recovery["attempts"], 5)
+                self.assertEqual(click.call_count, int(stage == "after"))
+                self.assertEqual(target.read_bytes(), b"old verified cohort")
+                if stage == "after":
+                    candidates = list((ec.DOWNLOAD_DIR.parent / "_debug").glob("*rejected*.xlsx"))
+                    self.assertTrue(candidates)
+                    self.assertIn(downloaded[0], [path.read_bytes() for path in candidates])
+
+    def test_changed_rows_after_empty_recovery_reject_same_download_and_preserve_candidate(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        rows = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                 "cells": ["1", "Fixture developer", "125"]}]
+        downloaded = []
+        def snapshot(browser):
+            if not downloaded:
+                return rows, "original-digest"
+            if not getattr(browser, "_erzrf_top_recovery", {}).get("attempts"):
+                raise ec.TopTableUnavailableError("controlled post-download empty")
+            return [{**rows[0], "cells": ["1", "Fixture developer", "126"]}], "changed-digest"
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            fixture_frame("obyem_stroitelstva").to_excel(path, index=False)
+            downloaded.append(path.read_bytes())
+            return path
+        with patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                patch.object(ec, "wait_for_download", side_effect=wait), \
+                patch.object(ec, "_click_download_excel", return_value={"clicked": True}) as click, \
+                self.assertRaisesRegex(ec.TopExportError, "table changed"):
+            self.download(driver)
+        self.assertEqual(click.call_count, 1)
+        diagnostics = list((ec.DOWNLOAD_DIR.parent / "_debug").glob("*rejected*.xlsx"))
+        self.assertTrue(diagnostics)
+        self.assertIn(downloaded[0], [path.read_bytes() for path in diagnostics])
+
+    def test_wrong_year_after_postdownload_empty_recovery_is_not_accepted(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        self.request = driver.request = ec.TopExport("rf", "obyem_vvoda", 2024)
+        driver._erzrf_year_evidence = {"year": 2024}
+        downloaded = []
+        rows = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                 "cells": ["1", "Fixture developer", "250"]}]
+        def observed(browser):
+            if downloaded and getattr(browser, "_erzrf_top_recovery", {}).get("attempts"):
+                return selection(ec.TopExport("rf", "obyem_vvoda", 2026))
+            return selection(browser.request)
+        def snapshot(browser):
+            if downloaded:
+                raise ec.TopTableUnavailableError("controlled post-download empty")
+            return rows, "original-digest"
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            fixture_frame("obyem_vvoda").to_excel(path, index=False)
+            downloaded.append(path.read_bytes())
+            return path
+        with patch.object(ec, "_read_top_selection", side_effect=observed), \
+                patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                patch.object(ec, "wait_for_download", side_effect=wait), \
+                patch.object(ec, "_click_download_excel", return_value={"clicked": True}) as click, \
+                self.assertRaises(ec.TopExportError):
+            self.download(driver)
+        self.assertEqual(click.call_count, 1)
+        diagnostics = list((ec.DOWNLOAD_DIR.parent / "_debug").glob("*rejected*.xlsx"))
+        self.assertIn(downloaded[0], [path.read_bytes() for path in diagnostics])
+
+    def test_atomic_click_guard_retries_only_proven_not_attempted_empty_state(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            fixture_frame("obyem_stroitelstva").to_excel(path, index=False)
+            return path
+        not_clicked = {"clicked": False, "not_attempted": True, "retryable_empty": True}
+        with patch.object(ec, "_click_download_excel", side_effect=[not_clicked, {"clicked": True}]) as click, \
+                patch.object(ec, "wait_for_download", side_effect=wait) as download:
+            self.download(driver)
+        self.assertEqual(click.call_count, 2)
+        self.assertEqual(download.call_count, 1)
+        self.assertEqual(driver._erzrf_top_recovery["recoveries"], 1)
+
+    def test_atomic_guard_uses_one_shared_five_cycle_budget(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        not_clicked = {"clicked": False, "not_attempted": True, "retryable_empty": True}
+        with patch.object(ec, "_click_download_excel", return_value=not_clicked) as click, \
+                patch.object(ec, "wait_for_download") as download, self.assertRaises(ec.TopExportError):
+            self.download(driver)
+        self.assertEqual(len(driver.visited), 10)
+        self.assertEqual(click.call_count, 6)
+        download.assert_not_called()
+
+    def test_uncertain_click_failure_never_starts_recovery_or_second_click(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        with patch.object(ec, "_click_download_excel", side_effect=ec.WebDriverException("uncertain click")) as click, \
+                patch.object(ec, "_ensure_top_content", wraps=ec._ensure_top_content) as recover, \
+                patch.object(ec, "wait_for_download") as download, self.assertRaises(ec.WebDriverException):
+            self.download(driver)
+        self.assertEqual(click.call_count, 1)
+        recover.assert_not_called()
+        download.assert_not_called()
+
+    def test_top100_capture_recovers_stale_adjacent_page_even_when_url_is_correct(self):
+        driver = FakeDriver()
+        request = ec.TopExport("rf", "obyem_stroitelstva")
+        target = ec._build_top_url(request.region, request.sorting_key) + "&page=3"
+        current = selection(request)
+        current.update(url=target, developer_totals=[100])
+        def snapshot(browser):
+            start = 41 if getattr(browser, "_erzrf_top_recovery", {}).get("attempts") else 1
+            rows = [{"place": str(rank), "name": f"Developer {rank}",
+                     "card_url": f"https://erzrf.ru/zastroyschiki/fixture-{rank}",
+                     "cells": [str(rank), f"Developer {rank}", "125"], "metric": "125"}
+                    for rank in range(start, start + 20)]
+            return rows, f"digest-{start}"
+        with patch.object(ec, "_read_top_selection", return_value=current), \
+                patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                patch.object(ec, "_wait_for_top_content", return_value=True):
+            captured = ec._capture_top_state(driver, request, ec.TOP_TYPES, target_url=target,
+                                            stage="top100_page_3")
+        self.assertEqual([int(row["place"]) for row in captured["rows"]], list(range(41, 61)))
+        self.assertEqual(driver._erzrf_top_recovery["recoveries"], 1)
+        self.assertEqual(driver.visited[-1], target)
+
+    def test_postdownload_empty_recovery_accepts_identical_query_with_reordered_keys(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        downloaded = []
+        rows = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                 "cells": ["1", "Fixture developer", "125"]}]
+        def observed(browser):
+            current = selection(self.request)
+            if downloaded and getattr(browser, "_erzrf_top_recovery", {}).get("attempts"):
+                current["url"] = current["url"].replace("topType=0&regionKey=0", "regionKey=0&topType=0")
+            return current
+        def snapshot(browser):
+            if downloaded and not getattr(browser, "_erzrf_top_recovery", {}).get("attempts"):
+                raise ec.TopTableUnavailableError("controlled post-download empty")
+            return rows, "original-digest"
+        def wait(folder, **kwargs):
+            path = folder / "site.xlsx"
+            fixture_frame("obyem_stroitelstva").to_excel(path, index=False)
+            downloaded.append(path.read_bytes())
+            return path
+        with patch.object(ec, "_read_top_selection", side_effect=observed), \
+                patch.object(ec, "_top_table_snapshot", side_effect=snapshot), \
+                patch.object(ec, "wait_for_download", side_effect=wait), \
+                patch.object(ec, "_click_download_excel", return_value={"clicked": True}) as click:
+            target = self.download(driver)
+        self.assertEqual(target.read_bytes(), downloaded[0])
+        self.assertEqual(click.call_count, 1)
+
+    def test_export_identity_keeps_query_values_duplicates_value_order_and_blanks(self):
+        root = "https://erzrf.ru/top-zastroyshchikov/rf?"
+        query = "topType=0&regionKey=0&date=261001&trace=a&trace=b&blank="
+        original = {"observed_url": root + query, "requested_year": None, "selected_region": "РФ",
+                    "expected_rows": 20, "observed_ui_counts": [20]}
+        reordered = {**original, "observed_url": root + "blank=&trace=a&trace=b&date=261001&regionKey=0&topType=0",
+                     "expected_rows": 21, "observed_ui_counts": [21]}
+        self.assertEqual(ec._top_export_identity(original), ec._top_export_identity(reordered))
+        for changed in (query.replace("261001", "260901"), query + "&topType=0",
+                        query.replace("trace=a&trace=b", "trace=b&trace=a"), query.replace("&blank=", ""),
+                        query.replace("regionKey=0", "regionKey=143443001")):
+            with self.subTest(query=changed):
+                self.assertNotEqual(ec._top_export_identity(original),
+                                    ec._top_export_identity({**original, "observed_url": root + changed}))
 
     def test_postclick_selection_change_is_rejected(self):
         driver = FakeDriver()

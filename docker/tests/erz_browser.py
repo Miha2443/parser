@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import json
+import inspect
 from pathlib import Path
 import re
 import tempfile
@@ -141,6 +142,10 @@ def check_download_replay():
       });
       document.addEventListener('click', e=>{
         if(!e.target.matches('.fixture-export'))return;
+        if(document.body.dataset.fixturePostEmpty==='1'){
+          document.querySelectorAll('li.developer').forEach(row=>row.remove());
+          document.body.insertAdjacentHTML('beforeend','<sws-loading><div class="algcenter">По текущим условиям поиска записей не найдено.</div></sws-loading>');
+        }
         const url=new URL(location.href);url.pathname='/fixture-export';
         location.href=url;
       });</script>'''
@@ -157,6 +162,10 @@ def check_download_replay():
     }
     empty_served = {key: 0 for key in empty_budgets}
     route_visits = []
+    race_budgets, race_served, race_injected = {}, {}, set()
+    scenarios_started, scenario_clicks = set(), []
+    focused_scenario = {}
+    scenario_payloads = {}
     empty_markup = (FIXTURES / "empty_rf_construction.html").read_text(encoding="utf-8")
 
     def empty_table(html):
@@ -191,9 +200,19 @@ def check_download_replay():
                 year = query.get("date", ["2026"])[0] if kind == "obyem_vvoda" else "current"
                 case = f"{region}_{kind}_{year}"
                 html = pages[case]
+                scenario = query.get("fixtureScenario", [None])[0]
+                if not scenario and focused_scenario.get("case") == case:
+                    scenario = focused_scenario["name"]
                 if parsed.path == "/fixture-export":
                     payload = workbook(html, kind, region)
                     exports.append(case)
+                    if scenario:
+                        scenarios_started.add(scenario)
+                        scenario_clicks.append(scenario)
+                        scenario_payloads[scenario] = payload
+                    if case == "rf_nakopl_vvod_current":
+                        race_budgets[(case, None)] = 4
+                        race_served[(case, None)] = 0
                     self.send_response(200)
                     self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                     self.send_header("Content-Disposition", 'attachment; filename="fixture.xlsx"')
@@ -213,14 +232,30 @@ def check_download_replay():
                     # Reloading 2026 is also valid without any table-digest change.
                     settled_content = str(container)
                     key = (case, query.get("page", [None])[0])
+                    scenario_active = scenario in scenarios_started
                     is_empty = (query.get("fixturePermanentEmpty") == ["1"]
-                                or empty_served.get(key, 0) < empty_budgets.get(key, 0))
+                                or empty_served.get(key, 0) < empty_budgets.get(key, 0)
+                                or race_served.get(key, 0) < race_budgets.get(key, 0)
+                                or (scenario_active and scenario in {"pre-permanent", "post-permanent"}))
                     if is_empty:
                         if key in empty_served and query.get("fixturePermanentEmpty") != ["1"]:
                             empty_served[key] += 1
+                        if race_served.get(key, 0) < race_budgets.get(key, 0):
+                            race_served[key] += 1
                         container.clear()
                         for child in list(BeautifulSoup(empty_table(html), "html.parser").body.contents):
                             container.append(child.extract())
+                        delayed = ""
+                    elif scenario_active and scenario == "post-wrong-year":
+                        container.clear()
+                        wrong_year = BeautifulSoup(pages[f"{region}_obyem_vvoda_2026"], "html.parser")
+                        for child in list(wrong_year.body.contents):
+                            container.append(child.extract())
+                        delayed = ""
+                    elif scenario_active and scenario == "post-changed":
+                        metric = container.select_one("li.developer .developer-td-4 b")
+                        assert metric is not None
+                        metric.string = str(int(metric.get_text().replace(" ", "")) + 1)
                         delayed = ""
                     elif kind == "obyem_vvoda" and year != "2026":
                         stale = BeautifulSoup(pages[f"{region}_obyem_vvoda_2026"], "html.parser")
@@ -230,6 +265,8 @@ def check_download_replay():
                         delayed = "<script>setTimeout(()=>{document.getElementById('fixture-content').outerHTML=" + json.dumps(settled_content) + ";},650);</script>"
                     else:
                         delayed = ""
+                    if case == "rf_nakopl_vvod_current" or (scenario and scenario.startswith("post-")):
+                        soup.body["data-fixture-post-empty"] = "1"
                     # Export controls retain the site's exact label and title.
                     html = str(soup).replace("</body>", '''<span title="нажмите для формирования и скачивания файла">
                       <span class="pointer fixture-export">Весь список</span></span></body>''') + script + delayed
@@ -251,6 +288,47 @@ def check_download_replay():
         stack.callback(server.shutdown)
         raw = Path(tmp) / "raw/erzrf"
         base = f"http://127.0.0.1:{server.server_port}"
+        class ReadRaceBrowser:
+            """Mutation probes use genuine Chrome DOM reads, never fake parser output."""
+            def __init__(self, driver):
+                object.__setattr__(self, "driver", driver)
+
+            def __getattr__(self, name):
+                return getattr(self.driver, name)
+
+            def __setattr__(self, name, value):
+                setattr(self.driver, name, value)
+
+            def execute_script(self, script, *args):
+                callers = {frame.function for frame in inspect.stack()[1:8]}
+                parsed = urlparse(self.driver.current_url)
+                query = parse_qs(parsed.query)
+                region = "msk" if query.get("regionKey") == ["143443001"] else "rf"
+                key = None
+                if (query.get("fixtureScenario") == ["pre-permanent"]
+                        and "pre-permanent" not in scenarios_started
+                        and "_capture_top_state" in callers and "_wait_for_top_content" not in callers):
+                    scenarios_started.add("pre-permanent")
+                    self.driver.execute_script('''document.querySelectorAll('li.developer').forEach(row=>row.remove());
+                      document.body.insertAdjacentHTML('beforeend','<sws-loading><div class="algcenter">По текущим условиям поиска записей не найдено.</div></sws-loading>');''')
+                if (region == "msk" and query.get("topType") == ["4"]
+                        and "_download_top_export" in callers and "_capture_top_state" in callers
+                        and "_wait_for_top_content" not in callers):
+                    key = ("msk_nakopl_vvod_current", None)
+                elif (region == "msk" and query.get("page") == ["4"]
+                        and "_collect_top_n_developers" in callers
+                        and "_wait_for_top_content" not in callers):
+                    key = ("msk_obyem_stroitelstva_current", "4")
+                elif (region == "msk" and query.get("topType") == ["2"]
+                        and "_click_download_excel" in callers):
+                    key = ("msk_potreb_kachestva_current", None)
+                if key and key not in race_injected:
+                    race_injected.add(key)
+                    race_budgets[key], race_served[key] = 4, 0
+                    self.driver.execute_script('''document.querySelectorAll('li.developer').forEach(row=>row.remove());
+                      document.body.insertAdjacentHTML('beforeend','<sws-loading><div class="algcenter">По текущим условиям поиска записей не найдено.</div></sws-loading>');''')
+                return self.driver.execute_script(script, *args)
+
         def session(directory):
             driver = create_chrome(download_dir=directory, page_load_strategy="eager")
             # An already selected current year need not change the measured
@@ -263,7 +341,7 @@ def check_download_replay():
             driver.get(url)
             assert ec._wait_for_top_content(driver, timeout=5, request=request, top_types=ec.TOP_TYPES)
             assert before == ec._top_table_digest(driver)
-            return driver
+            return ReadRaceBrowser(driver)
         stack.enter_context(patch.multiple(ec, BASE=base, DOWNLOAD_DIR=raw, PER_YEAR_RANGE=list(range(2022, 2027))))
         stack.enter_context(patch.object(ec, "_authenticated_session", side_effect=session))
         stack.enter_context(patch.dict("os.environ", {"SELENIUM_SLEEP_SCALE": "0"}))
@@ -272,6 +350,10 @@ def check_download_replay():
         assert not errors, errors
         assert not unexpected_changes, unexpected_changes
         assert result.complete, (result.error, exports)
+        assert race_injected == {("msk_nakopl_vvod_current", None), ("msk_obyem_stroitelstva_current", "4"),
+                                 ("msk_potreb_kachestva_current", None)}, race_injected
+        assert race_served == race_budgets, (race_served, race_budgets)
+        assert race_budgets[("rf_nakopl_vvod_current", None)] == 4
         assert empty_served == empty_budgets, empty_served
         for case, page, query in route_visits:
             if "obyem_vvoda" in case:
@@ -329,6 +411,55 @@ def check_download_replay():
             assert exports == before_exports
             assert {path: path.read_bytes() for path in raw.rglob("*") if path.is_file()} == before_files
             print("ERZ persistent-empty browser: exactly five alternate/back recoveries, no export or source changes", flush=True)
+            guarded = ReadRaceBrowser(recovery_driver)
+            original_ensure = ec._ensure_top_content
+            def bounded_ensure(*args, **kwargs):
+                kwargs["timeout"] = 1
+                return original_ensure(*args, **kwargs)
+            for scenario in ("pre-permanent", "post-permanent", "post-changed", "post-wrong-year"):
+                request = ec.TopExport("rf", "obyem_vvoda", 2024) if scenario == "post-wrong-year" else ec.TopExport("rf", "obyem_stroitelstva")
+                focused_scenario.update(name=scenario, case=f"rf_{request.sorting_key}_{request.year or 'current'}")
+                target = ec._build_top_url(request.region, request.sorting_key, year=request.year) + f"&fixtureScenario={scenario}"
+                guarded.get(target)
+                assert ec._wait_for_top_content(guarded, timeout=5, request=request, target_url=target)
+                if request.year:
+                    guarded._erzrf_year_evidence = {"year": request.year, "selection_mode": "url_date"}
+                scenario_dir = Path(tmp) / scenario
+                scenario_dir.mkdir()
+                before_clicks = len(scenario_clicks)
+                before_all_exports = len(exports)
+                with patch.object(ec, "_ensure_top_content", side_effect=bounded_ensure):
+                    try:
+                        ec._download_top_export(guarded, request, "20261016", scenario_dir, ec.TOP_TYPES,
+                                                output_dir=scenario_dir / "must-not-publish")
+                    except ec.TopExportError as exc:
+                        expected_reason = "table changed" if scenario == "post-changed" else "capture failed after five recovery cycles"
+                        assert expected_reason in str(exc), (scenario, str(exc))
+                    else:
+                        raise AssertionError(f"unsafe scenario accepted: {scenario}")
+                assert len(scenario_clicks) - before_clicks == int(scenario != "pre-permanent"), scenario_clicks
+                assert len(exports) - before_all_exports == int(scenario != "pre-permanent"), (scenario, exports)
+                assert not (scenario_dir / "must-not-publish").exists(), scenario
+                assert {path: path.read_bytes() for path in raw.rglob("*") if path.is_file()} == before_files
+                if scenario.startswith("post-"):
+                    diagnostics = list((raw.parent / "_debug").glob(f"erzrf_top_rf_{request.sorting_key}_*rejected*.xlsx"))
+                    assert diagnostics, scenario
+                    assert scenario_payloads[scenario] in [path.read_bytes() for path in diagnostics], scenario
+            print("ERZ late-empty browser failures: bounded pre/post-export exhaustion, changed rows and wrong year reject without a second click; completed XLSX retained and prior cohort unchanged", flush=True)
+            # ERZ removes the export footer on its empty page. The atomic guard
+            # must still distinguish a proven unattempted click from ambiguity.
+            focused_scenario.clear()
+            request = ec.TopExport("rf", "obyem_stroitelstva")
+            target = ec._build_top_url(request.region, request.sorting_key)
+            guarded.get(target)
+            assert ec._wait_for_top_content(guarded, timeout=5, request=request)
+            captured = ec._capture_top_state(guarded, request, ec.TOP_TYPES)
+            recovery_driver.execute_script("document.querySelectorAll('li.developer,.fixture-export').forEach(node=>node.remove());")
+            before_exports = exports.copy()
+            outcome = ec._click_download_excel(guarded, expected_state=captured)
+            assert outcome.get("not_attempted") is True and outcome.get("retryable_empty") is True, outcome
+            assert outcome.get("clicked") is False and exports == before_exports
+            print("ERZ missing-footer browser guard: empty table without export control is recoverable and never clicks", flush=True)
         finally:
             recovery_driver.quit()
         from docker.tests.erz_cards_browser import check_cards_replay

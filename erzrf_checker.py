@@ -690,7 +690,7 @@ def _save_rejected_top_excel(source: Path, request: TopExport, error: Exception)
         print(f"       WARNING: failed to preserve rejected Excel: {type(exc).__name__}")
 
 
-def _click_download_excel(driver, target_label: str = "Весь список") -> dict:
+def _click_download_excel(driver, target_label: str = "Весь список", *, expected_state=None) -> dict:
     """Кликает кнопку скачивания xlsx (по умолчанию «Весь список»).
 
     HTML 03.06.2026:
@@ -709,7 +709,33 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
     return driver.execute_script(
         """
         const TARGET_LABEL = arguments[0];
+        const EXPECTED = arguments[1];
         const visible = e => e.offsetParent !== null;
+        const stable = value => Array.isArray(value) ? value.map(stable)
+            : value && typeof value === 'object'
+                ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+        const guardedClick = target => {
+            if (EXPECTED) {
+                const rows = (() => {""" + _TOP_TABLE_SCRIPT + """})();
+                const selection = (() => {""" + _TOP_SELECTION_SCRIPT + """})();
+                if (!rows.length || selection.empty_state || rows.some(row =>
+                    !row.name || !row.card_url || !row.cells?.length || row.metric == null || !String(row.metric).trim())) {
+                    return {clicked: false, not_attempted: true, retryable_empty: true,
+                        reason: 'TOP table unavailable immediately before click', rows: rows.length};
+                }
+                const identity = value => ({url: value.url, selects: value.selects,
+                    all_developers_shown: value.all_developers_shown});
+                if (JSON.stringify(stable(identity(selection))) !== JSON.stringify(stable(identity(EXPECTED.selection)))
+                        || JSON.stringify(stable(rows)) !== JSON.stringify(stable(EXPECTED.rows))) {
+                    return {clicked: false, not_attempted: true, retryable_empty: false,
+                        reason: 'TOP request/table changed immediately before click'};
+                }
+            }
+            if (!target) return {clicked: false, not_attempted: true, retryable_empty: false,
+                reason: 'export button was not found'};
+            target.click();
+            return {clicked: true};
+        };
 
         // 1) основной путь: родитель с title содержит «формирования|скачивания»,
         // ребёнок — span/кнопка с точным текстом target
@@ -721,7 +747,8 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
                 .find(c => visible(c) && (c.innerText || '').trim() === TARGET_LABEL);
             if (target) {
                 target.scrollIntoView({block: 'center'});
-                target.click();
+                const clicked = guardedClick(target);
+                if (!clicked.clicked) return clicked;
                 return {
                     clicked: true,
                     matched: 'title-parent>' + TARGET_LABEL,
@@ -738,7 +765,8 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
             .find(s => visible(s) && (s.innerText || '').trim() === TARGET_LABEL);
         if (fallback) {
             fallback.scrollIntoView({block: 'center'});
-            fallback.click();
+            const clicked = guardedClick(fallback);
+            if (!clicked.clicked) return clicked;
             return {
                 clicked: true,
                 matched: 'fallback:' + TARGET_LABEL,
@@ -748,21 +776,14 @@ def _click_download_excel(driver, target_label: str = "Весь список") -
             };
         }
 
-        return {clicked: false, matched: 'none'};
+        return {...guardedClick(null), matched: 'none'};
         """,
         target_label,
+        expected_state,
     )
 
 
-def _scrape_developers_from_table(driver) -> list[dict]:
-    """Снимает таблицу ТОП в формате list[dict].
-
-    Устойчив к разным разметкам: настоящая <table>, [role="table"],
-    или Angular-список с нумерованными developer-td-N. Ссылки и метрики
-    должны принадлежать одной строке; номер места берётся из самой таблицы.
-    """
-    return driver.execute_script(
-        """
+_TOP_TABLE_SCRIPT = """
         const visible = e => e.offsetParent !== null;
 
         // Angular TOP: li > app-developer-item > .progress__wrap > spans.
@@ -850,6 +871,17 @@ def _scrape_developers_from_table(driver) -> list[dict]:
         }
         return out;
         """
+
+
+def _scrape_developers_from_table(driver) -> list[dict]:
+    """Снимает таблицу ТОП в формате list[dict].
+
+    Устойчив к разным разметкам: настоящая <table>, [role="table"],
+    или Angular-список с нумерованными developer-td-N. Ссылки и метрики
+    должны принадлежать одной строке; номер места берётся из самой таблицы.
+    """
+    return driver.execute_script(
+        _TOP_TABLE_SCRIPT
     )
 
 
@@ -913,6 +945,15 @@ def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=
             if len(ranked) < required or len(ranked) != len(rows):
                 previous = None
                 return False
+            if target_url is not None:
+                page = parse_qs(urlparse(target_url).query).get("page")
+                if page is not None:
+                    expected_start = (int(page[0]) - 1) * 20 + 1
+                    places = [int(re.match(r"\s*(\d+)", str(row["place"])).group(1)) for row in rows]
+                    if places != list(range(expected_start, expected_start + len(rows))):
+                        browser._erzrf_top_readiness["failure_reason"] = "stale_page_ranks"
+                        previous = None
+                        return False
             signature = json.dumps([rows, selection.get("url"), selection.get("selects")],
                                    sort_keys=True, ensure_ascii=False)
             stable = signature == previous
@@ -936,7 +977,9 @@ def _wait_for_top_content(driver, timeout: int = 30, *, request=None, top_types=
 
 def _ensure_top_content(driver, *, request: TopExport, top_types=None,
                         target_url: str | None = None, timeout: int = 30,
-                        recovery_attempts: int = 5, navigate: bool = False) -> bool:
+                        recovery_attempts: int = 5, navigate: bool = False,
+                        capture=None, stage: str = "table_load", recovery_budget=None,
+                        force_recovery: bool = False) -> bool:
     """Recover an unloaded TOP by switching another sorting and back, before export.
 
     The initial visit is followed by at most five recovery cycles. Every return
@@ -947,8 +990,11 @@ def _ensure_top_content(driver, *, request: TopExport, top_types=None,
         raise ValueError("TOP recovery attempts must be an integer in 0..5")
     mapping = TOP_TYPES if top_types is None else top_types
     target = target_url or _build_top_url(request.region, request.sorting_key, mapping, year=request.year)
-    recovery = {"attempts": 0, "recoveries": 0, "exhausted": False, "history": []}
+    recovery = recovery_budget if recovery_budget is not None else {}
+    for key, value in {"attempts": 0, "recoveries": 0, "exhausted": False, "history": []}.items():
+        recovery.setdefault(key, value)
     driver._erzrf_top_recovery = recovery
+    driver._erzrf_top_capture = None
     driver._erzrf_year_evidence = None
 
     def visit(url, visit_request, *, load):
@@ -956,10 +1002,18 @@ def _ensure_top_content(driver, *, request: TopExport, top_types=None,
         try:
             if load:
                 driver.get(url)
-            return _wait_for_top_content(
+            ready = _wait_for_top_content(
                 driver, timeout=timeout if url == target else min(timeout, 10),
                 request=visit_request, top_types=mapping, target_url=url,
             )
+            if ready and url == target and capture is not None:
+                try:
+                    driver._erzrf_top_capture = capture()
+                except TopTableUnavailableError as exc:
+                    driver._erzrf_top_readiness = {"failure_reason": "capture_unavailable",
+                                                   "stage": stage, "detail": str(exc)}
+                    return False
+            return ready
         except (InvalidSessionIdException, NoSuchWindowException):
             raise
         except WebDriverException as exc:
@@ -968,9 +1022,9 @@ def _ensure_top_content(driver, *, request: TopExport, top_types=None,
             }
             return False
 
-    if visit(target, request, load=navigate):
+    if not force_recovery and visit(target, request, load=navigate):
         return True
-    recovery["history"].append({"stage": "initial", "readiness": dict(driver._erzrf_top_readiness)})
+    recovery["history"].append({"stage": "initial", "readiness": dict(getattr(driver, "_erzrf_top_readiness", {}))})
     # ERZ can canonicalize an undated current TOP to its selected publication
     # snapshot. Keep that date on return only when both the same route and the
     # real selected date control independently identify it. Never copy an
@@ -1002,9 +1056,9 @@ def _ensure_top_content(driver, *, request: TopExport, top_types=None,
     alternate_key = "nakopl_vvod" if request.sorting_key == "obyem_stroitelstva" else "obyem_stroitelstva"
     alternate = TopExport(request.region_key, alternate_key)
     alternate_url = _build_top_url(request.region, alternate_key, mapping)
-    for attempt in range(1, recovery_attempts + 1):
+    for attempt in range(recovery["attempts"] + 1, recovery_attempts + 1):
         recovery["attempts"] = attempt
-        print(f"       ↻ TOP: переключение показателя и возврат {attempt}/{recovery_attempts} "
+        print(f"       ↻ TOP [{stage}]: переключение показателя и возврат {attempt}/{recovery_attempts} "
               f"для {request.region_key}/{request.sorting_key}/{request.year or 'current'}")
         alternate_ready = visit(alternate_url, alternate, load=True)
         recovery["history"].append({"stage": "alternate", "attempt": attempt,
@@ -1014,10 +1068,10 @@ def _ensure_top_content(driver, *, request: TopExport, top_types=None,
                                     "ready": ready, "readiness": dict(driver._erzrf_top_readiness)})
         if ready:
             recovery["recoveries"] = attempt
-            print(f"       ✓ TOP: таблица восстановилась после {attempt} переключений")
+            print(f"       ✓ TOP [{stage}]: таблица восстановилась после {attempt} переключений")
             return True
     recovery["exhausted"] = True
-    print(f"       ✗ TOP: таблица не загрузилась после {recovery_attempts} переключений")
+    print(f"       ✗ TOP [{stage}]: таблица не загрузилась после {recovery_attempts} переключений")
     return False
 
 
@@ -1038,10 +1092,10 @@ def _collect_top_n_developers(driver, region: dict, n: int) -> list[dict]:
             print(f"       ⚠️  страница {page_num} не загрузилась")
             _save_debug_snapshot(driver, f"top_{region['key']}_page{page_num}_timeout")
             break
-        page_devs = _scrape_developers_from_table(driver)
-        if not page_devs:
-            print(f"       ⚠️  страница {page_num} пустая")
-            break
+        page_devs = _capture_top_state(
+            driver, TopExport(region["key"], "obyem_stroitelstva"), TOP_TYPES,
+            target_url=url, stage=f"TOP100_{region['key']}_page{page_num}",
+        )["rows"]
         # На второй+ странице JS-скрейпер может вернуть тех же 20 что
         # уже взяты. Дедуплицируем по card_url.
         seen_urls = {d.get("card_url") for d in devs}
@@ -1131,6 +1185,10 @@ class TopExportError(ValueError):
     """An uncertain export ends the browser session before another download."""
 
 
+class TopTableUnavailableError(TopExportError):
+    """Empty or incompletely rendered TOP DOM; never a successful empty export."""
+
+
 def _top_export_plan() -> list[TopExport]:
     plan = []
     for region in REGIONS:
@@ -1144,8 +1202,7 @@ def _top_export_plan() -> list[TopExport]:
     return plan
 
 
-def _read_top_selection(driver) -> dict:
-    return driver.execute_script(r"""
+_TOP_SELECTION_SCRIPT = r"""
         const totals = [...(document.body.innerText || '').matchAll(
             /из\s+([\d\s\u00a0\u202f]+)\s+застройщик(?:ов|а)?/gi
         )].map(m => Number(m[1].replace(/\s/g, '')));
@@ -1163,7 +1220,11 @@ def _read_top_selection(driver) -> dict:
             selected_text: s.selectedOptions.length === 1 ? s.selectedOptions[0].textContent.trim() : '',
             options: [...s.options].map(o => ({value: o.value, text: o.textContent.trim()}))
         }))};
-    """)
+    """
+
+
+def _read_top_selection(driver) -> dict:
+    return driver.execute_script(_TOP_SELECTION_SCRIPT)
 
 
 def _top_ui_count(selection: dict) -> tuple[int | None, list[int]]:
@@ -1215,8 +1276,11 @@ def _year_control(selection: dict) -> dict:
 
 def _top_table_snapshot(driver) -> tuple[list[dict], str]:
     rows = _scrape_developers_from_table(driver)
-    if not rows or not all(row.get("name") and row.get("card_url") and row.get("cells") for row in rows):
-        raise TopExportError("cannot establish nonempty developer table contents")
+    missing = {key: sum(not row.get(key) for row in rows) for key in ("name", "card_url", "cells")}
+    missing["metric"] = sum(_visible_metric(row) is None for row in rows)
+    missing["rank"] = sum(not re.match(r"\s*\d+", str(row.get("place", ""))) for row in rows)
+    if not rows or any(missing.values()):
+        raise TopTableUnavailableError(f"TOP table DOM unavailable: rows={len(rows)}, missing={missing}")
     digest = hashlib.sha256(
         json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -1419,83 +1483,158 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict, *, select
             "expected_rows": ui_count, "observed_ui_counts": valid_totals}
 
 
+def _capture_top_state(driver, request: TopExport, top_types: dict, *,
+                       target_url: str | None = None, stage: str = "before_export",
+                       recovery_budget=None, force_recovery: bool = False) -> dict:
+    """Capture checked request/rows, recovering only a disappearing TOP DOM."""
+    def capture():
+        selection = _read_top_selection(driver)
+        evidence = _top_request_evidence(driver, request, top_types, selection=selection)
+        if target_url is not None:
+            actual, wanted = urlparse(selection.get("url", "")), urlparse(target_url)
+            query, wanted_query = parse_qs(actual.query), parse_qs(wanted.query)
+            if ((actual.scheme, actual.netloc, actual.path.rstrip("/"))
+                    != (wanted.scheme, wanted.netloc, wanted.path.rstrip("/"))
+                    or any(query.get(key) != value for key, value in wanted_query.items())):
+                raise TopExportError(f"TOP [{stage}]: request URL changed before table capture")
+        if selection.get("empty_state"):
+            raise TopTableUnavailableError(f"TOP [{stage}]: explicit empty state during table capture")
+        rows, digest = _top_table_snapshot(driver)
+        count = evidence.get("expected_rows")
+        required = min(20, count) if count is not None else 20
+        if len(rows) < required:
+            raise TopTableUnavailableError(f"TOP [{stage}]: partial table rows={len(rows)}, required={required}")
+        if target_url is not None:
+            page = parse_qs(urlparse(target_url).query).get("page")
+            if page is not None:
+                expected_start = (int(page[0]) - 1) * 20 + 1
+                places = [int(re.match(r"\s*(\d+)", str(row["place"])).group(1)) for row in rows]
+                if places != list(range(expected_start, expected_start + len(rows))):
+                    raise TopTableUnavailableError(f"TOP [{stage}]: stale page ranks; expected first rank={expected_start}")
+        return {"rows": rows, "digest": digest, "evidence": evidence, "selection": selection}
+
+    if not force_recovery:
+        try:
+            return capture()
+        except TopTableUnavailableError as exc:
+            print(f"       ↻ TOP [{stage}]: {exc}; восстанавливаем таблицу без повторной выгрузки")
+    if not _ensure_top_content(driver, request=request, top_types=top_types,
+                               target_url=target_url, capture=capture, stage=stage,
+                               recovery_budget=recovery_budget, force_recovery=force_recovery):
+        raise TopTableUnavailableError(f"TOP [{stage}]: table capture failed after five recovery cycles: "
+                                       f"{getattr(driver, '_erzrf_top_readiness', None)}")
+    if request.year is not None:
+        driver._erzrf_year_evidence = {"year": request.year, "selection_mode": "url_date",
+                                      "navigation_url": driver._erzrf_top_capture["evidence"]["observed_url"],
+                                      "table_stable": True}
+    return driver._erzrf_top_capture
+
+
+def _top_export_identity(evidence: dict) -> dict:
+    """Compare the same export while allowing Angular to reorder query keys."""
+    identity = {key: value for key, value in evidence.items()
+                if key not in {"expected_rows", "observed_ui_counts"}}
+    observed = urlparse(identity["observed_url"])
+    query = parse_qs(observed.query, keep_blank_values=True)
+    identity["observed_url"] = (
+        observed.scheme, observed.netloc, observed.path, observed.params,
+        tuple(sorted((key, tuple(values)) for key, values in query.items())), observed.fragment,
+    )
+    return identity
+
+
 def _download_top_export(driver, request: TopExport, date_str: str,
                          staging: Path, top_types: dict,
                          output_dir: Path | None = None) -> Path:
     """A private attempt directory plus session abort prevents late-file reuse."""
-    evidence = _top_request_evidence(driver, request, top_types)
     year_evidence = getattr(driver, "_erzrf_year_evidence", None)
     if request.year is not None and (not year_evidence or year_evidence.get("year") != request.year):
         raise TopExportError("explicit year has no observed selection/render acknowledgement")
-    visible_rows, table_digest = _top_table_snapshot(driver)
+    pre_click_budget = {}
+    print(f"       TOP [before_click]: проверка таблицы {request.region_key}/{request.sorting_key}/{request.year or 'current'}")
+    captured = _capture_top_state(driver, request, top_types, stage="before_click", recovery_budget=pre_click_budget)
     attempt = staging / request.filename(date_str).removesuffix(".xlsx")
     attempt.mkdir()  # Never reuse a previous attempt directory.
     driver.execute_cdp_cmd("Browser.setDownloadBehavior", {
         "behavior": "allow", "downloadPath": str(attempt.resolve()),
     })
-    click_info = _click_download_excel(driver, target_label="Весь список")
-    if not click_info.get("clicked"):
-        raise TopExportError("export button was not found")
+    while True:
+        evidence = captured["evidence"]
+        visible_rows, table_digest = captured["rows"], captured["digest"]
+        year_evidence = getattr(driver, "_erzrf_year_evidence", None)
+        if request.year is not None and (not year_evidence or year_evidence.get("year") != request.year):
+            raise TopExportError("explicit year lost its selection/render acknowledgement before click")
+        click_info = _click_download_excel(driver, target_label="Весь список", expected_state=captured)
+        if click_info.get("clicked"):
+            break
+        if click_info.get("not_attempted") is not True or click_info.get("retryable_empty") is not True:
+            raise TopExportError(f"TOP [before_click]: export was not attempted: {click_info.get('reason', 'button not found')}")
+        print("       ↻ TOP [before_click_guard]: таблица исчезла до нажатия; скачивание ещё не запускалось")
+        captured = _capture_top_state(
+            driver, request, top_types, target_url=evidence["observed_url"],
+            stage="before_click_guard", recovery_budget=pre_click_budget, force_recovery=True,
+        )
+    print("       TOP [download]: «Весь список» нажат один раз; ожидание файла")
     source = wait_for_download(attempt, before_snapshot=set(), timeout=180)
     if source is None:
         raise TopExportError("export timed out; browser session must be closed")
-    candidates = [path for path in attempt.iterdir() if path.is_file()]
-    if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
-            or candidates[0].resolve() != source.resolve()):
-        raise TopExportError(f"ambiguous or unrelated export download: returned={source.name!r}; "
-                             f"files={[path.name for path in candidates]!r}")
-    after = _top_request_evidence(driver, request, top_types)
-    # UI totals can be missing, duplicated or refreshed independently of XLSX.
-    # They describe the page; they do not identify the requested export.
-    count_fields = {"expected_rows", "observed_ui_counts"}
-    if ({key: value for key, value in after.items() if key not in count_fields}
-            != {key: value for key, value in evidence.items() if key not in count_fields}):
-        raise TopExportError("selected request changed while export was downloading")
-    if _top_table_digest(driver) != table_digest:
-        raise TopExportError("table changed while export was downloading")
-    # Run the semantic contract before publication; keep failures private until
-    # the session closes and the staging directory is cleaned up.
     try:
+        candidates = [path for path in attempt.iterdir() if path.is_file()]
+        if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
+                or candidates[0].resolve() != source.resolve()):
+            raise TopExportError(f"ambiguous or unrelated export download: returned={source.name!r}; "
+                                 f"files={[path.name for path in candidates]!r}")
+        print("       TOP [after_download]: проверка исходной таблицы без повторного скачивания")
+        after_capture = _capture_top_state(
+            driver, request, top_types, target_url=evidence["observed_url"], stage="after_download",
+        )
+        after = after_capture["evidence"]
+        # UI totals can be missing, duplicated or refreshed independently of XLSX.
+        # They describe the page; they do not identify the requested export.
+        if _top_export_identity(after) != _top_export_identity(evidence):
+            raise TopExportError("selected request changed while export was downloading")
+        if after_capture["digest"] != table_digest:
+            raise TopExportError("table changed while export was downloading")
+        # Run the semantic contract before publication; keep failures private until
+        # the session closes and the staging directory is cleaned up.
         contract = _excel_contract(source, request.sorting_key)
-    except (OSError, ValueError, BadZipFile, KeyError, IndexError) as exc:
-        _save_rejected_top_excel(source, request, exc)
-        raise
-    ui_rows = evidence.pop("expected_rows")
-    before_counts = evidence.pop("observed_ui_counts")
-    try:
+        ui_rows = evidence.pop("expected_rows")
+        before_counts = evidence.pop("observed_ui_counts")
         correlation = _assert_visible_prefix_matches_workbook(
             visible_rows, contract, required_rows=min(20, ui_rows) if ui_rows is not None else 20, request=request,
             ui_total_rows=ui_rows,
         )
-    except TopExportError as exc:
+        count_reconciliation = _row_count_reconciliation(
+            request, contract["rows"], ui_rows, correlation
+        )
+        evidence.update({
+            "ui_developer_count": ui_rows,
+            "workbook_developer_count": contract["rows"],
+            "row_count_discrepancy": contract["rows"] - ui_rows if ui_rows is not None else None,
+            "observed_ui_counts": {"before": before_counts, "after": after["observed_ui_counts"]},
+            "completeness_evidence": "continuous unique workbook ranks 1..N; " + count_reconciliation,
+            "count_reconciliation": count_reconciliation,
+            "request_correlation": correlation,
+        })
+        if ui_rows is None:
+            print("       ℹ️  Счётчик застройщиков не определён; выгрузка подтверждена по 20 видимым лидерам и структуре Excel")
+        evidence.update({"schema_version": 3, "received_at": datetime.now().isoformat(timespec="seconds"),
+                         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                         "workbook": contract,
+                         "visible_table_sha256": table_digest,
+                         "year_selection_evidence": year_evidence,
+                         "period_verified": False,
+                         "period_evidence": "selected_year is a UI selection, not an independently verified response period"})
+    except Exception as exc:
+        # The one completed download is evidence even when the later page,
+        # selected request, digest or workbook contract cannot be verified.
         _save_rejected_top_excel(source, request, exc)
         raise
-    count_reconciliation = _row_count_reconciliation(
-        request, contract["rows"], ui_rows, correlation
-    )
-    evidence.update({
-        "ui_developer_count": ui_rows,
-        "workbook_developer_count": contract["rows"],
-        "row_count_discrepancy": contract["rows"] - ui_rows if ui_rows is not None else None,
-        "observed_ui_counts": {"before": before_counts, "after": after["observed_ui_counts"]},
-        "completeness_evidence": "continuous unique workbook ranks 1..N; " + count_reconciliation,
-        "count_reconciliation": count_reconciliation,
-        "request_correlation": correlation,
-    })
-    if ui_rows is None:
-        print("       ℹ️  Счётчик застройщиков не определён; выгрузка подтверждена по 20 видимым лидерам и структуре Excel")
-    evidence.update({"schema_version": 3, "received_at": datetime.now().isoformat(timespec="seconds"),
-                     "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                     "workbook": contract,
-                     "visible_table_sha256": table_digest,
-                     "year_selection_evidence": year_evidence,
-                     "period_verified": False,
-                     "period_evidence": "selected_year is a UI selection, not an independently verified response period"})
     target = (DOWNLOAD_DIR if output_dir is None else output_dir) / request.filename(date_str)
     target.parent.mkdir(parents=True, exist_ok=True)
     source.replace(target)
     _write_json_atomic(target.with_suffix(".xlsx.provenance.json"), evidence)
-    print(f"       ✓ проверен и подготовлен {target.name} ({contract['rows']} rows)")
+    print(f"       ✓ скачан с ЕРЗ и проверен {target.name} ({contract['rows']} rows)")
     return target
 
 

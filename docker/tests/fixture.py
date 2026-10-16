@@ -167,6 +167,52 @@ def browser_dom_contract(driver):
     assert checker._kvart_popup_action(driver, "click", "Fixture developer")
     assert driver.execute_script("return document.body.dataset.choice") == "developer"
 
+def erz_top_dom_contract(driver):
+    """Execute the collector JS against sanitized markup from a real failure."""
+    import erzrf_checker as checker
+    from urllib.parse import quote
+    html = (Path(__file__).parent / "fixtures/erzrf_top_20261016.html").read_text(encoding="utf-8")
+    driver.get("data:text/html;charset=utf-8," + quote(html))
+    rows = checker._scrape_developers_from_table(driver)
+    assert len(rows) == 20
+    assert [row["place"] for row in rows] == [str(index) for index in range(1, 21)]
+    assert all(len(row["cells"]) == 15 for row in rows)
+    assert rows[0]["name"] == "ГК Самолет"
+    assert "/zastroyschiki/brand/" in rows[0]["card_url"]
+    assert checker._visible_metric(rows[0]) == 4532580
+    assert checker._visible_metric(rows[-1]) == 776687
+    assert all("Строится" not in row["cells"][3] for row in rows)
+    assert checker._wait_for_top_content(driver, timeout=0)
+    selection = checker._read_top_selection(driver)
+    assert checker._top_ui_count(selection)[0] == 2954
+    assert checker._sorting_control(selection)[1] == checker.TOP_TYPES
+    # The global site region is Moscow, while the TOP/filter regions are RF.
+    assert next(s for s in selection["selects"] if s["id"] == "select7")["value"] == "143443001"
+    assert all(s["value"] == "0" for s in selection["selects"] if s["id"] in {"select1", "select4"})
+    digest = checker._top_table_digest(driver)
+    driver.execute_script("document.querySelector('li.developer .developer-td-4 b').textContent='4 532 581'")
+    assert checker._top_table_digest(driver) != digest
+    # DOM order and hidden template cells must not change column identities.
+    driver.execute_script('''const row=document.querySelector('li.developer .progress__wrap');
+      const metric=row.querySelector('.developer-td-4'); row.prepend(metric);
+      const hidden=metric.cloneNode(true); hidden.style.display='none'; row.append(hidden);''')
+    rows = checker._scrape_developers_from_table(driver)
+    assert len(rows[0]["cells"]) == 15 and checker._visible_metric(rows[0]) == 4532581
+    driver.execute_script("document.querySelector('li.developer').style.display='none'")
+    assert len(checker._scrape_developers_from_table(driver)) == 19
+    assert not checker._wait_for_top_content(driver, timeout=0)
+    driver.get("data:text/html;charset=utf-8," + quote(html))
+    driver.execute_script("document.querySelector('li.developer .developer-td-1').remove()")
+    assert checker._scrape_developers_from_table(driver)[0]["place"] == ""
+    assert not checker._wait_for_top_content(driver, timeout=0)
+    driver.get("data:text/html;charset=utf-8," + quote('''<table><tr><th>Место</th><th>Изменение</th>
+      <th>Застройщик</th><th>Строится</th></tr><tr><td>1</td><td>0</td>
+      <td><a href="https://erzrf.ru/zastroyschiki/brand/fixture-1">Fixture</a></td><td>125</td></tr></table>'''))
+    rows = checker._scrape_developers_from_table(driver)
+    assert len(rows) == 1 and checker._visible_metric(rows[0]) == 125
+    print("ERZ actual Angular TOP DOM: 20 rows, ranks, metrics, selectors and rejection checks passed")
+
+
 def browser():
     from deploy.linux.tests import smoke
     smoke.browser()
@@ -175,6 +221,7 @@ def browser():
     driver = create_chrome()
     try:
         browser_dom_contract(driver)
+        erz_top_dom_contract(driver)
         driver.get("http://web:8080/home")
         WebDriverWait(driver, 25).until(lambda d: "Рынок недвижимости" in d.find_element("tag name", "body").text)
         assert driver.execute_script("return document.documentElement.dataset.theme") == "light"

@@ -713,12 +713,40 @@ def _scrape_developers_from_table(driver) -> list[dict]:
     """Снимает таблицу ТОП в формате list[dict].
 
     Устойчив к разным разметкам: настоящая <table>, [role="table"],
-    или div-сетка. Финальный fallback — собрать все ссылки
-    /zastroyschiki/<slug> на странице.
+    или Angular-список с нумерованными developer-td-N. Ссылки и метрики
+    должны принадлежать одной строке; номер места берётся из самой таблицы.
     """
     return driver.execute_script(
         """
         const visible = e => e.offsetParent !== null;
+
+        // Angular TOP: li > app-developer-item > .progress__wrap > spans.
+        // Direct li.children contains ONE component, not the rating columns.
+        const rankedRows = [...document.querySelectorAll('.developers__list--top li.developer')]
+            .filter(visible);
+        if (rankedRows.length) {
+            const text = e => {
+                const copy = e.cloneNode(true);
+                copy.querySelectorAll('.developer-td__title').forEach(label => label.remove());
+                return (copy.textContent || '').replace(/\\s+/g, ' ').trim();
+            };
+            return rankedRows.map(row => {
+                const columns = [...row.querySelectorAll('[class*="developer-td-"]')]
+                    .filter(visible)
+                    .map(cell => ({cell, match: cell.className.match(/(?:^|\\s)developer-td-(\\d+)(?:\\s|$)/)}))
+                    .filter(item => item.match)
+                    .sort((a, b) => Number(a.match[1]) - Number(b.match[1]));
+                const nameCell = columns.find(item => item.match[1] === '3')?.cell;
+                const link = nameCell?.querySelector('a[href*="/zastroyschiki/"]');
+                const rankCell = columns.find(item => item.match[1] === '1')?.cell;
+                return {
+                    place: rankCell ? text(rankCell) : '',
+                    cells: columns.map(item => text(item.cell)),
+                    card_url: link ? link.href : null,
+                    name: link ? text(link) : '',
+                };
+            });
+        }
 
         // 1) настоящая <table>
         const tables = [...document.querySelectorAll('table')]
@@ -757,7 +785,7 @@ def _scrape_developers_from_table(driver) -> list[dict]:
                 ? [...row.children].map(c => (c.innerText || '').trim())
                 : [];
             out.push({
-                place: cells[0] || String(seen.size),
+                place: cells[0] || '',
                 cells: cells,
                 card_url: href,
                 name: a.innerText.trim(),

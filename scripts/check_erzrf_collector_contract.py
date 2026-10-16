@@ -103,6 +103,7 @@ class CollectorContract(unittest.TestCase):
         self.stack.enter_context(patch.object(ec, "create_chrome", return_value=driver))
         self.stack.enter_context(patch.object(ec, "_ensure_logged_in", return_value=True))
         self.stack.enter_context(patch.object(ec, "_wait_for_top_content", return_value=True))
+        self.stack.enter_context(patch.object(ec, "_save_debug_snapshot"))
         self.stack.enter_context(patch.object(ec, "_read_top_selection", side_effect=lambda d: selection(d.request)))
         self.stack.enter_context(patch.object(ec, "_click_download_excel", return_value={"clicked": True}))
         self.stack.enter_context(patch.object(ec, "_scrape_developers_from_table", return_value=[
@@ -298,6 +299,85 @@ class CollectorContract(unittest.TestCase):
         self.assertEqual(evidence["sha256"], hashlib.sha256(target.read_bytes()).hexdigest())
         self.assertFalse(evidence["period_verified"])
         self.assertEqual(evidence["workbook"]["rows"], 1)
+
+    def test_missing_or_ambiguous_ui_count_uses_twenty_real_visible_leaders(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        frame = pd.concat([fixture_frame("obyem_stroitelstva")] * 25, ignore_index=True)
+        frame["Место"] = range(1, 26)
+        frame["Наименование, регион"] = [f"Developer {i}, регион" for i in range(1, 26)]
+        visible = [{"place": str(i), "name": f"Developer {i}",
+                    "card_url": f"https://erzrf.ru/zastroyschiki/dev{i}",
+                    "cells": [str(i), f"Developer {i}", "125"]} for i in range(1, 21)]
+        def download(folder, **kwargs):
+            target = folder / "site.xlsx"
+            frame.to_excel(target, index=False)
+            return target
+        for totals in ([], [100, 200], [0], [None]):
+            current = {**selection(driver.request), "developer_totals": totals}
+            with self.subTest(totals=totals), tempfile.TemporaryDirectory(dir=self.base) as temporary, \
+                    patch.object(ec, "_read_top_selection", return_value=current), \
+                    patch.object(ec, "_scrape_developers_from_table", return_value=visible), \
+                    patch.object(ec, "wait_for_download", side_effect=download):
+                staging = Path(temporary)
+                target = ec._download_top_export(driver, self.request, "20261016", staging, ec.TOP_TYPES, output_dir=staging / "out")
+                proof = json.loads(target.with_suffix(".xlsx.provenance.json").read_text())
+                self.assertIsNone(proof["ui_developer_count"])
+                self.assertIsNone(proof["row_count_discrepancy"])
+                self.assertEqual(proof["workbook_developer_count"], 25)
+                self.assertEqual(proof["request_correlation"]["matched_rows"], 20)
+                self.assertTrue(proof["workbook"]["rank_sequence_complete"])
+
+        frame.loc[19, "Наименование, регион"] = "Different developer, регион"
+        with tempfile.TemporaryDirectory(dir=self.base) as temporary, \
+                patch.object(ec, "_read_top_selection", return_value={**selection(driver.request), "developer_totals": []}), \
+                patch.object(ec, "_scrape_developers_from_table", return_value=visible), \
+                patch.object(ec, "wait_for_download", side_effect=download):
+            with self.assertRaisesRegex(ec.TopExportError, "differs from the visible table"):
+                ec._download_top_export(driver, self.request, "20261016", Path(temporary), ec.TOP_TYPES)
+
+    def test_unknown_ui_count_cannot_accept_a_partial_or_wrong_visible_ranking(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        current = {**selection(driver.request), "developer_totals": []}
+        def download(folder, **kwargs):
+            target = folder / "site.xlsx"
+            fixture_frame("obyem_stroitelstva").to_excel(target, index=False)
+            return target
+        with patch.object(ec, "_read_top_selection", return_value=current), \
+                patch.object(ec, "wait_for_download", side_effect=download), self.assertRaisesRegex(ec.TopExportError, "too few rows"):
+            self.download(driver)
+        self.assertFalse(ec.DOWNLOAD_DIR.exists())
+
+    def test_render_wait_ignores_static_headers_until_ranked_data_arrives(self):
+        browser = type("Browser", (), {"page_source": "Застройщик Место в ПИК"})()
+        rendered = [{"place": "1", "name": "Fixture developer", "card_url": "https://erzrf.ru/zastroyschiki/fixture",
+                     "cells": ["1", "Fixture developer", "125"]}]
+        def wait(predicate):
+            self.assertFalse(predicate(browser))
+            self.assertTrue(predicate(browser))
+            return True
+        with patch.object(ec, "WebDriverWait") as factory, \
+                patch.object(ec, "_read_top_selection", return_value={"developer_totals": [1]}), \
+                patch.object(ec, "_scrape_developers_from_table", side_effect=[[], rendered]) as scrape:
+            factory.return_value.until.side_effect = wait
+            self.assertTrue(ec._wait_for_top_content(browser))
+            self.assertEqual(scrape.call_count, 2)
+
+    def test_ui_count_refresh_is_not_a_change_of_export_request(self):
+        driver = FakeDriver()
+        self.browser_stubs(driver)
+        before, after = selection(driver.request), selection(driver.request)
+        after["developer_totals"] = [2]
+        def download(folder, **kwargs):
+            target = folder / "site.xlsx"
+            fixture_frame("obyem_stroitelstva").to_excel(target, index=False)
+            return target
+        with patch.object(ec, "_read_top_selection", side_effect=[before, after]), \
+                patch.object(ec, "wait_for_download", side_effect=download):
+            target = self.download(driver)
+        proof = json.loads(target.with_suffix(".xlsx.provenance.json").read_text())
+        self.assertEqual(proof["observed_ui_counts"], {"before": [1], "after": [2]})
 
     def test_invalid_schema_does_not_replace_previous_file(self):
         driver = FakeDriver()

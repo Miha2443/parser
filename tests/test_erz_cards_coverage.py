@@ -131,6 +131,19 @@ class CardsCoverageTests(unittest.TestCase):
             browser.assert_not_called()
             self.assert_previous()
 
+    def test_missing_top_targets_prints_the_actual_reason_without_starting_browser(self):
+        self.previous()
+        self.targets_file.unlink()
+        output = StringIO()
+        state = {}
+        with redirect_stdout(output), patch.object(ec, "_authenticated_session") as browser:
+            result = ec.fetch_cards(state)
+        self.assertFalse(result.complete)
+        browser.assert_not_called()
+        self.assertIn("ERZ cards need a current RF TOP developer target file", output.getvalue())
+        self.assertEqual(state["erzrf_cards_attempt"]["error"], result.error)
+        self.assert_previous()
+
     def test_source_target_change_or_second_artifact_replace_failure_preserves_previous(self):
         self.previous()
         def changed(driver):

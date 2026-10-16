@@ -620,7 +620,7 @@ def _ensure_logged_in(driver) -> bool:
             print("  ✅ Авторизация прошла")
             return True
         except TimeoutException:
-            print("  ⚠️  Модалка не закрылась после сабмита — возможно неверные креды.")
+            print("  ⚠️  Форма входа осталась открытой; причина не подтверждена. Сохранён снимок страницы.")
             _save_debug_snapshot(driver, "login_failed")
             return False
 
@@ -774,25 +774,23 @@ def _scrape_developers_from_table(driver) -> list[dict]:
 
 
 def _wait_for_top_content(driver, timeout: int = 30) -> bool:
-    """Ждёт появления данных в таблице ТОП.
-
-    erzrf может рендерить таблицу как настоящий <table>, как [role="table"]
-    или как набор div'ов. Поэтому ждём по контенту — строку «Застройщик»
-    или «Место в».
-    """
+    """Wait for rendered ranked rows, not static labels in an Angular template."""
+    def rendered(browser):
+        try:
+            rows = _scrape_developers_from_table(browser)
+            count, _ = _top_ui_count(_read_top_selection(browser))
+            required = min(20, count) if count is not None else 20
+            ranked = [row for row in rows if row.get("name") and row.get("card_url")
+                      and re.match(r"\s*\d+", str(row.get("place", "")))
+                      and _visible_metric(row) is not None]
+            return len(ranked) >= required
+        except WebDriverException:
+            return False
     try:
-        WebDriverWait(driver, timeout).until(
-            lambda d: (
-                "Застройщик" in d.page_source
-                or "Место в" in d.page_source
-                or "ГК Самолет" in d.page_source
-                or "ПИК" in d.page_source
-            )
-        )
+        WebDriverWait(driver, timeout).until(rendered)
         return True
     except TimeoutException:
         return False
-
 
 
 
@@ -939,6 +937,13 @@ def _read_top_selection(driver) -> dict:
     """)
 
 
+def _top_ui_count(selection: dict) -> tuple[int | None, list[int]]:
+    totals = selection.get("developer_totals", [])
+    valid = [total for total in totals if type(total) is int and total > 0] if isinstance(totals, list) else []
+    count = valid[0] if valid and len(valid) == len(totals) and len(set(valid)) == 1 else None
+    return count, valid
+
+
 def _sorting_control(selection: dict) -> tuple[dict, dict]:
     candidates = []
     observed = []
@@ -1067,7 +1072,6 @@ def _assert_visible_prefix_matches_workbook(
     if not (request and request.sorting_key == "obyem_vvoda"
             and request.year == datetime.now().year
             and required_rows >= 20
-            and type(ui_total_rows) is int and ui_total_rows > 0
             and type(workbook_rows) is int
             and workbook_rows >= required_rows):
         raise TopExportError(f"workbook differs from the visible table: {first_mismatch}")
@@ -1115,15 +1119,18 @@ def _assert_visible_prefix_matches_workbook(
         "matched_rows": len(matches),
         "strict_metric_increases": strict_increases,
         "exact_metric_anchors": exact_metric_anchors,
-        "row_count_ratio": workbook_rows / ui_total_rows,
+        "row_count_ratio": workbook_rows / ui_total_rows if ui_total_rows else None,
         "matches": matches,
         "first_exact_prefix_mismatch": first_mismatch,
     }
 
 
 def _row_count_reconciliation(
-        request: TopExport, workbook_rows: int, ui_rows: int, correlation: dict) -> str:
+        request: TopExport, workbook_rows: int, ui_rows: int | None, correlation: dict) -> str:
     """Record ERZ's independent UI and Excel counts without rejecting the export."""
+    if ui_rows is None:
+        return (f"UI developer count unavailable or ambiguous; Excel has {workbook_rows} rows; "
+                f"request correlation: {correlation.get('mode', 'unknown')}")
     if workbook_rows == ui_rows:
         return "Excel and UI row counts match"
     return (
@@ -1164,10 +1171,7 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             raise TopExportError("selected year differs from requested year")
     elif request.year is not None:
         raise TopExportError("year cannot be requested for this sorting")
-    totals = selection.get("developer_totals", [])
-    if (not totals or any(type(total) is not int or total <= 0 for total in totals)
-            or len(set(totals)) != 1):
-        raise TopExportError("full-list developer count is missing or ambiguous")
+    ui_count, valid_totals = _top_ui_count(selection)
     return {"requested_url": wanted_url, "observed_url": selection["url"],
             "sorting": request.sorting_key, "top_type": top_types[request.sorting_key],
             "selected_sorting": control["selected_text"], "region": request.region_key,
@@ -1175,7 +1179,7 @@ def _top_request_evidence(driver, request: TopExport, top_types: dict) -> dict:
             "region_control_ids": [item.get("id", "") for item in region_controls],
             "requested_year": request.year, "selected_year": selected_year,
             "all_developers_shown": selection.get("all_developers_shown"),
-            "expected_rows": totals[0]}
+            "expected_rows": ui_count, "observed_ui_counts": valid_totals}
 
 
 def _download_top_export(driver, request: TopExport, date_str: str,
@@ -1202,7 +1206,12 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     if (source.resolve().parent != attempt.resolve() or len(candidates) != 1
             or candidates[0].resolve() != source.resolve()):
         raise TopExportError("ambiguous or unrelated export download")
-    if _top_request_evidence(driver, request, top_types) != evidence:
+    after = _top_request_evidence(driver, request, top_types)
+    # UI totals can be missing, duplicated or refreshed independently of XLSX.
+    # They describe the page; they do not identify the requested export.
+    count_fields = {"expected_rows", "observed_ui_counts"}
+    if ({key: value for key, value in after.items() if key not in count_fields}
+            != {key: value for key, value in evidence.items() if key not in count_fields}):
         raise TopExportError("selected request changed while export was downloading")
     if _top_table_digest(driver) != table_digest:
         raise TopExportError("table changed while export was downloading")
@@ -1210,8 +1219,9 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     # the session closes and the staging directory is cleaned up.
     contract = _excel_contract(source, request.sorting_key)
     ui_rows = evidence.pop("expected_rows")
+    before_counts = evidence.pop("observed_ui_counts")
     correlation = _assert_visible_prefix_matches_workbook(
-        visible_rows, contract, required_rows=min(20, ui_rows), request=request,
+        visible_rows, contract, required_rows=min(20, ui_rows) if ui_rows is not None else 20, request=request,
         ui_total_rows=ui_rows,
     )
     count_reconciliation = _row_count_reconciliation(
@@ -1220,11 +1230,14 @@ def _download_top_export(driver, request: TopExport, date_str: str,
     evidence.update({
         "ui_developer_count": ui_rows,
         "workbook_developer_count": contract["rows"],
-        "row_count_discrepancy": contract["rows"] - ui_rows,
+        "row_count_discrepancy": contract["rows"] - ui_rows if ui_rows is not None else None,
+        "observed_ui_counts": {"before": before_counts, "after": after["observed_ui_counts"]},
         "completeness_evidence": "continuous unique workbook ranks 1..N; " + count_reconciliation,
         "count_reconciliation": count_reconciliation,
         "request_correlation": correlation,
     })
+    if ui_rows is None:
+        print("       ℹ️  Счётчик застройщиков не определён; выгрузка подтверждена по 20 видимым лидерам и структуре Excel")
     evidence.update({"schema_version": 3, "received_at": datetime.now().isoformat(timespec="seconds"),
                      "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                      "workbook": contract,
@@ -1414,6 +1427,8 @@ def fetch_top(state: dict) -> TopFetchResult:
         except Exception as exc:  # An uncertain download must end this session.
             result.error = f"{type(exc).__name__}: {exc}"
             print(f"  ERROR TOP: {result.error}")
+            if driver is not None:
+                _save_debug_snapshot(driver, "top_failed")
         finally:
             if driver is not None:
                 try:
@@ -1599,6 +1614,8 @@ def fetch_cards(state: dict) -> CardsFetchResult:
     result = CardsFetchResult()
     def finish(error=""):
         result.error = result.error or error
+        if result.error:
+            print(f"  ❌ ERZ cards: {result.error}")
         confirmed_ids = {row["source_id"] for row in result.confirmed}
         state["erzrf_cards_attempt"] = {"attempted_at": datetime.now().isoformat(timespec="seconds"),
             "complete": result.complete, "expected": result.expected, "confirmed": result.confirmed,
@@ -1622,7 +1639,6 @@ def fetch_cards(state: dict) -> CardsFetchResult:
     try:
         driver = _authenticated_session(CARDS_DIR)
     except TopExportError as exc:
-        print(f"  ❌ ERZ cards: {exc}")
         return finish(str(exc))
     try:
         for dev in developers[:limit] if limit else developers:

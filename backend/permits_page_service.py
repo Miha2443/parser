@@ -146,7 +146,7 @@ class PermitsPageService:
             raise SourceUnavailable("Permit loader reported a source error")
         if not forecast["rows"]:
             issues.append({"level": "warning", "message": "Прогноз недоступен; см. forecast.notes."})
-        payload = {"schemaVersion": 1, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
+        payload = {"schemaVersion": 1, "contractRevision": 2, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
                    "generatedAt": datetime.now(timezone.utc).isoformat(),
                    "source": {"date": _date(path), "files": [self._relative(item) for item in files],
                               "fileEvidence": "selected", "issues": issues},

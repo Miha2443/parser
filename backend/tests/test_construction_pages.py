@@ -184,7 +184,8 @@ class ConstructionPagesTests(unittest.TestCase):
 
     def test_permit_contract_forecast_basis_full_precision_and_no_actual_inflation(self):
         payload = self.permits.report("total", 1)
-        self.assertEqual(set(payload), {"schemaVersion", "version", "generatedAt", "source", "selection", "controls",
+        self.assertEqual(payload["contractRevision"], 2)
+        self.assertEqual(set(payload), {"schemaVersion", "contractRevision", "version", "generatedAt", "source", "selection", "controls",
                                        "permits", "forecast", "breakdowns", "notes"})
         self.assertEqual([row["id"] for row in payload["controls"]["permitKinds"]], ["housing", "nonresidential", "total"])
         self.assertEqual(payload["source"]["fileEvidence"], "selected")

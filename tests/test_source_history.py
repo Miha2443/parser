@@ -48,6 +48,16 @@ class SourceHistoryTests(unittest.TestCase):
     def records(self, archive=None):
         return list(sh._records(archive or self.history.archive))
 
+    def test_domrf_private_checkpoints_are_not_reported_as_downloaded_data(self):
+        nashdom = self.root / "nashdom"
+        nashdom.mkdir()
+        (nashdom / ".construction_history").mkdir()
+        (nashdom / ".construction_history/observation.json").write_text("private")
+        (nashdom / ".construction_history.lock").write_text("lock")
+        (nashdom / "construction_history.json").write_text("published")
+        rows = ur.snapshot_files(roots=[(nashdom, "realty", "nashdom/")])
+        self.assertEqual(set(rows), {"realty:nashdom/construction_history.json"})
+
     def test_same_name_replacement_preserves_bytes_and_original_receipt(self):
         old = self.workbook("current.xlsx", 1)
         record_download(old, source_id="31074_часть1", remote_date="12.10.2026")

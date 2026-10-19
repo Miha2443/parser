@@ -21,6 +21,7 @@ export type PermitForecastRow = { year: number; cells: Record<string, string> } 
 export type PermitBreakdownRow = { year: number; periodComplete?: boolean; annualComplete?: boolean } & Record<string, number | null | boolean | undefined>;
 export type PermitBreakdown = { id: string; title: string; unit: 'тыс. м²'; periodLabel: string; aggregateField: string; columns: { id: string; label: string }[]; rows: PermitBreakdownRow[]; series: { id: string; name: string; points: { x: string; y: number | null }[] }[]; notes: string[] };
 export type PermitsData = ConstructionPagesMetadata & {
+  contractRevision: 2;
   selection: PermitSelection;
   controls: { permitKinds: { id: PermitKind; label: string }[]; monthsByKind: Record<PermitKind, number[]>; structure: { modes: { id: 'period' | 'annual'; label: string }[]; years: number[]; months: number[]; coverage: PermitCoverage[] } };
   permits: ConstructionReport['permits'] & { presentation: { rows: PermitPresentationRow[] } };
@@ -39,6 +40,7 @@ export type DomRfData = ConstructionPagesMetadata & {
 
 type Obj = Record<string, unknown>;
 const invalid = () => new Error('Ответ API строительства не соответствует схеме версии 1.');
+const deploymentMismatch = () => new Error('Версия frontend новее backend. Нужно завершить обновление backend, затем обновить страницу.');
 function obj(v: unknown): Obj { if (!v || typeof v !== 'object' || Array.isArray(v)) throw invalid(); return v as Obj; }
 function str(v: unknown): string { if (typeof v !== 'string') throw invalid(); return v; }
 function id(v: unknown): string { const s = str(v); if (!s.trim()) throw invalid(); return s; }
@@ -105,11 +107,55 @@ export function domRfUrl(region: ConstructionRegion, version?: string) {
   if (version !== undefined) { if (!version) throw invalid(); p.set('required_version', version); }
   return `/api/v1/construction/domrf${version === undefined ? '' : '/export'}?${p}`;
 }
+function readPermitTable(p: Obj) {
+  if (p.region !== 'Москва' || p.unit !== 'тыс. м²') throw invalid();
+  const table = readReportTable({ ...p, id: p.id ?? 'permits', title: p.title ?? 'Разрешения на строительство' });
+  let chart: PermitChart | null = null;
+  if (p.chart !== null) {
+    const raw = obj(p.chart), x = list(raw.x, str);
+    const points = (v: unknown) => { const a = list(v, v => ({ value: num(obj(v).value) })); if (a.length !== x.length) throw invalid(); return a; };
+    chart = { x, period: points(raw.period), remainder: points(raw.remainder), totals: points(raw.totals), growth: points(raw.growth) };
+    if (x.length !== table.rows.length || x.some((x, i) => x !== String(table.rows[i]['Год']))) throw invalid();
+  }
+  return { ...table, region: p.region, unit: p.unit, periodLabel: str(p.periodLabel), chart };
+}
+function readPermitForecast(value: unknown): PermitsData['forecast'] {
+  const f = obj(value), fs = obj(f.source);
+  if (f.unit !== 'тыс. м²' || f.unitBasis !== 'assumed_thousand_m2' || fs.sheet !== 'Прогнозы') throw invalid();
+  const rows = distinct(list(f.rows, value => {
+    const row = obj(value), fields = Object.fromEntries(forecastFields.map(key => [key, num(row[key])])) as Record<typeof forecastFields[number], number | null>;
+    return { year: int(row.year), ...fields, cells: Object.fromEntries(Object.entries(obj(row.cells)).map(([k, v]) => [k, str(v)])) };
+  }), row => row.year);
+  return { unit: f.unit, unitBasis: f.unitBasis, source: { file: fs.file === null ? null : str(fs.file), sheet: fs.sheet }, rows, notes: list(f.notes, str) };
+}
+function previousPermitsApi(v: Obj): boolean {
+  try {
+    const s = obj(v.selection), c = obj(v.controls), p = obj(v.permits);
+    if (v.schemaVersion !== 1 || v.contractRevision !== undefined && v.contractRevision !== 1
+      || Object.hasOwn(s, 'structure') || Object.hasOwn(c, 'structure') || Object.hasOwn(p, 'presentation')) return false;
+    // Recognize the previous endpoint, not arbitrary missing fields or an older schema version.
+    metadata(v);
+    const kind = permitKind(s.permitKind), month = int(s.month, 1, 12);
+    const kinds = list(c.permitKinds, value => { const k = obj(value); str(k.label); return permitKind(k.id); });
+    if (kinds.join() !== 'housing,nonresidential,total') return false;
+    const months = obj(c.monthsByKind);
+    for (const k of kinds) distinct(list(months[k], value => int(value, 1, 12)), n => n);
+    if (!list(months[kind], value => int(value, 1, 12)).includes(month)) return false;
+    readPermitTable(p);
+    readPermitForecast(v.forecast);
+    list(v.notes, str);
+    return list(v.breakdowns, value => { const b = obj(value); return !Object.hasOwn(b, 'aggregateField')
+      && b.unit === 'тыс. м²' && Array.isArray(b.rows) && Array.isArray(b.columns) && Array.isArray(b.series); }).every(Boolean);
+  } catch { return false; }
+}
 export function readPermitsData(value: unknown, expected?: PermitFilters): PermitsData {
   const bool = (v: unknown) => { if (typeof v !== 'boolean') throw invalid(); return v; };
   const mode = (v: unknown): PermitStructureSelection['mode'] => { if (v !== 'period' && v !== 'annual') throw invalid(); return v; };
   const monthList = (v: unknown) => distinct(list(v, v => int(v, 1, 12)), n => n);
-  const v = obj(value), s = obj(v.selection), ss = obj(s.structure);
+  const v = obj(value);
+  if (previousPermitsApi(v)) throw deploymentMismatch();
+  if (v.contractRevision !== 2) throw invalid();
+  const s = obj(v.selection), ss = obj(s.structure);
   const structure = { mode: mode(ss.mode), monthFrom: int(ss.monthFrom, 1, 12), monthTo: int(ss.monthTo, 1, 12), yearFrom: int(ss.yearFrom), yearTo: int(ss.yearTo) };
   if (structure.monthFrom > structure.monthTo || structure.yearFrom > structure.yearTo) throw invalid();
   const selection = { permitKind: permitKind(s.permitKind), month: int(s.month, 1, 12), structure };
@@ -129,16 +175,7 @@ export function readPermitsData(value: unknown, expected?: PermitFilters): Permi
     }), row => `${row.blockId}:${row.year}`),
   };
   if (!structureControls.modes.some(m => m.id === structure.mode) || structureControls.years.length && (!structureControls.years.includes(structure.yearFrom) || !structureControls.years.includes(structure.yearTo))) throw invalid();
-  const p = obj(v.permits);
-  if (p.region !== 'Москва' || p.unit !== 'тыс. м²') throw invalid();
-  const table = readReportTable({ ...p, id: p.id ?? 'permits', title: p.title ?? 'Разрешения на строительство' });
-  let chart: PermitChart | null = null;
-  if (p.chart !== null) {
-    const raw = obj(p.chart), x = list(raw.x, str);
-    const points = (v: unknown) => { const a = list(v, v => ({ value: num(obj(v).value) })); if (a.length !== x.length) throw invalid(); return a; };
-    chart = { x, period: points(raw.period), remainder: points(raw.remainder), totals: points(raw.totals), growth: points(raw.growth) };
-    if (x.length !== table.rows.length || x.some((x, i) => x !== String(table.rows[i]['Год']))) throw invalid();
-  }
+  const p = obj(v.permits), table = readPermitTable(p);
   const presentation = { rows: distinct(list(obj(p.presentation).rows, (value): PermitPresentationRow => {
     const row = obj(value), basis = row.basis;
     if (basis !== 'forecast' && basis !== 'annual_observed' && basis !== 'none') throw invalid();
@@ -147,12 +184,7 @@ export function readPermitsData(value: unknown, expected?: PermitFilters): Permi
     if (basis !== (annualForecast !== null ? 'forecast' : annualActual !== null && annualComplete ? 'annual_observed' : 'none')) throw invalid();
     return { year: int(row.year), selected: num(row.selected), annualActual, annualForecast, basis, difference: num(row.difference), remainder: num(row.remainder), growth: num(row.growth), periodComplete: bool(row.periodComplete), annualComplete, observedThrough: sourceDate(row.observedThrough), evidence: list(row.evidence, str) };
   }), row => row.year) };
-  const f = obj(v.forecast), fs = obj(f.source);
-  if (f.unit !== 'тыс. м²' || f.unitBasis !== 'assumed_thousand_m2' || fs.sheet !== 'Прогнозы') throw invalid();
-  const forecastRows = distinct(list(f.rows, value => {
-    const row = obj(value), fields = Object.fromEntries(forecastFields.map(key => [key, num(row[key])])) as Record<typeof forecastFields[number], number | null>;
-    return { year: int(row.year), ...fields, cells: Object.fromEntries(Object.entries(obj(row.cells)).map(([k, v]) => [k, str(v)])) };
-  }), row => row.year);
+  const forecast = readPermitForecast(v.forecast);
   const breakdowns = distinct(list(v.breakdowns, value => {
     const b = obj(value); if (b.unit !== 'тыс. м²') throw invalid();
     const columns = distinct(list(b.columns, value => { const col = obj(value); return { id: id(col.id), label: str(col.label) }; }), c => c.id);
@@ -169,7 +201,7 @@ export function readPermitsData(value: unknown, expected?: PermitFilters): Permi
     }), s => s.id);
     return { id: id(b.id), title: str(b.title), unit: 'тыс. м²' as const, periodLabel: str(b.periodLabel), aggregateField, columns, rows, series, notes: list(b.notes, str) };
   }), b => b.id);
-  return { ...metadata(v), selection, controls: { permitKinds: kinds, monthsByKind, structure: structureControls }, permits: { ...table, region: p.region, unit: p.unit, periodLabel: str(p.periodLabel), chart, presentation }, forecast: { unit: f.unit, unitBasis: f.unitBasis, source: { file: fs.file === null ? null : str(fs.file), sheet: fs.sheet }, rows: forecastRows, notes: list(f.notes, str) }, breakdowns, notes: list(v.notes, str) };
+  return { ...metadata(v), contractRevision: 2, selection, controls: { permitKinds: kinds, monthsByKind, structure: structureControls }, permits: { ...table, presentation }, forecast, breakdowns, notes: list(v.notes, str) };
 }
 function readPeriod(value: unknown): DomRfPeriod | null { if (value === null) return null; const p = obj(value); return { id: p.id === null ? null : periodId(p.id), label: str(p.label), reportDate: sourceDate(p.reportDate) }; }
 export function readDomRfData(value: unknown, expected: ConstructionRegion): DomRfData {

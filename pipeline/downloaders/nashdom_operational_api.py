@@ -1,18 +1,25 @@
 """The two official DOM.RF operational dashboards, with response identity checks."""
 from __future__ import annotations
 
+import json
 import math
 import re
+import sys
 import time
+import uuid
+from collections import deque
 from datetime import datetime, timezone
-from urllib.parse import quote, urlencode
+from pathlib import Path
+from urllib.parse import quote, urlencode, urlsplit
 
+import requests
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 
 BASE = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 API = "/" + quote("аналитика") + "/api"
 PATHS = {"construction": API + "/consolidated/housing_constructor", "sales": API + "/rpp"}
-PAGES = {"construction": "показатели_жилищного_строительства", "sales": "реализация_строящихся_квартир"}
+MAX_RESPONSE_BYTES = 1024 * 1024
 MONTHS = ("Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
           "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь")
 SALES_FIELDS = {
@@ -145,73 +152,198 @@ def normalize(block, month, responses, *, collected_at, report_date=""):
 
 
 class OfficialClient:
-    """One browser, serial bounded requests, no maps or third-party telemetry."""
+    """Public API first; at most one same-origin browser, without UI hydration."""
     def __init__(self, raw_dir, *, delay=0.5):
-        self.raw_dir, self.delay, self.driver = raw_dir, delay, None
+        self.raw_dir, self.delay, self.driver = Path(raw_dir), delay, None
+        self.session = None
+        self.browser_attempted = False
+        self.events = deque(maxlen=6)
         self.report_dates = {}
         self.page_periods = {}
         self.bounds = {}
 
     def __enter__(self):
-        from pipeline.selenium_utils import create_chrome
-        self.driver = create_chrome(download_dir=self.raw_dir, headless=True, page_load_strategy="none")
-        d = self.driver
-        d.execute_cdp_cmd("Network.enable", {})
-        d.execute_cdp_cmd("Network.setBlockedURLs", {"urls": [
-            "*yandex*", "*maps*", "*tile*", "*mail.ru*", "*vk.com*", "*sendsay*", "*tag-manager*"]})
-        # The shared helper advertises Chrome 124; use the installed browser's UA.
-        product = d.execute_cdp_cmd("Browser.getVersion", {})["product"]
-        d.execute_cdp_cmd("Network.setUserAgentOverride", {"userAgent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            f"(KHTML, like Gecko) {product} Safari/537.36"})
         try:
+            self.session = requests.Session()
+            self.session.headers.update({"Accept": "application/json", "Referer": BASE + "/"})
             for block in ("sales", "construction"):
-                self.open_page(block)
-                meta = self.get(PATHS[block] + "/actualDate")["data"]
-                if not isinstance(meta, dict) or meta.get("complete") is not True:
-                    raise ReportError("latest official period is not complete")
+                meta = self.get(PATHS[block] + "/actualDate").get("data")
+                if (not isinstance(meta, dict) or meta.get("complete") is not True
+                        or type(meta.get("year")) is not int or type(meta.get("month")) is not int):
+                    raise ReportError(f"invalid/incomplete latest official period: {block}")
                 self.bounds[block] = period(f"{meta['year']:04d}-{meta['month']:02d}")
             return self
         except BaseException:
             self.__exit__(None, None, None)
             raise
 
-    def open_page(self, block):
-        self.driver.get(BASE + "/" + quote("аналитика/" + PAGES[block]))
-        WebDriverWait(self.driver, 40).until(lambda d: d.execute_script(
-            "return !!window.webpackJsonp_N_E && document.body.innerText.includes('Отчетный период')"))
-        body = self.driver.execute_script("return document.body.innerText")
-        from nashdom_checker import _parse_russian_date
-        report = re.search(r"Отчёт по данным на[^\n]+", body)
-        self.report_dates[block] = _parse_russian_date(report.group(0)) if report else ""
-        selected = re.search(r"Отчетный период\s+([А-Яа-яЁё]+\s+\d{4})", body)
-        self.page_periods[block] = period(selected.group(1)) if selected else None
+    @staticmethod
+    def _error(exc):
+        message = exc.msg if isinstance(exc, WebDriverException) else str(exc)
+        return f"{type(exc).__name__}: {str(message or '').strip() or '<empty message>'}"[:1024]
 
-    def get(self, url):
-        self.driver.set_script_timeout(30)
+    def _diagnostic(self, stage, url, exc):
+        evidence = {"at": utc_now(), "stage": stage, "url": BASE + url,
+                    "error": self._error(exc), "events": list(self.events)}
+        if self.driver is not None:
+            try:
+                evidence["browser"] = self.driver.execute_script("""
+                    return {url:location.href.slice(0,1024), title:document.title.slice(0,512),
+                      readyState:document.readyState,
+                      body:(document.body ? document.body.innerText : '').slice(0,2048),
+                      html:(document.documentElement ? document.documentElement.outerHTML : '').slice(0,4096)};
+                """)
+            except Exception as snapshot_error:
+                evidence["browser_error"] = self._error(snapshot_error)
+        try:
+            directory = self.raw_dir / ".construction_history" / "diagnostics"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / f"transport_{time.time_ns()}_{uuid.uuid4().hex}.json"
+            # All text fields and the event ring are bounded; retain only five files.
+            path.write_text(json.dumps(evidence, ensure_ascii=True, indent=2), encoding="utf-8")
+            for old in sorted(directory.glob("transport_*.json"), reverse=True)[5:]:
+                old.unlink(missing_ok=True)
+            return f"diagnostics={path}"
+        except OSError as diagnostic_error:
+            return f"diagnostics unavailable: {self._error(diagnostic_error)}"
+
+    @staticmethod
+    def _payload(body, url):
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError) as exc:
+            raise TransportError(f"non-JSON response: {url}") from exc
+        if not isinstance(payload, dict) or str(payload.get("errcode")) != "0":
+            raise ReportError(f"API error envelope: {url}")
+        return payload
+
+    def _http_get(self, url):
+        last = None
         for attempt in range(2):
             time.sleep(self.delay if not attempt else max(2, self.delay))
-            response = self.driver.execute_async_script("""
+            started = time.monotonic()
+            try:
+                with self.session.get(BASE + url, timeout=(5, 20), stream=True,
+                                      allow_redirects=False) as response:
+                    event = {"transport": "http", "url": url, "attempt": attempt + 1,
+                             "status": response.status_code,
+                             "content_type": response.headers.get("Content-Type", "")[:128]}
+                    self.events.append(event)
+                    if response.status_code != 200:
+                        # Read only a small preview of an error page, never its full body.
+                        preview = next(response.iter_content(chunk_size=2048), b"")
+                        event["preview"] = preview[:2048].decode("utf-8", errors="replace")
+                        raise TransportError(f"HTTP status {response.status_code}: {url}")
+                    content = bytearray()
+                    for chunk in response.iter_content(chunk_size=16384):
+                        if len(content) + len(chunk) > MAX_RESPONSE_BYTES:
+                            raise TransportError(f"HTTP response exceeds byte limit: {url}")
+                        content.extend(chunk)
+                        if time.monotonic() - started > 25:
+                            raise TransportError(f"HTTP response exceeds time limit: {url}")
+                    event["preview"] = content[:2048].decode("utf-8", errors="replace")
+                    return self._payload(content, url)
+            except (requests.RequestException, TransportError) as exc:
+                last = exc
+                self.events.append({"transport": "http", "url": url, "attempt": attempt + 1,
+                                    "error": self._error(exc)})
+        raise TransportError(f"HTTP transport failed: {url}: {self._error(last)}") from last
+
+    def _start_browser(self, url):
+        from pipeline.selenium_utils import create_chrome
+
+        self.browser_attempted = True
+        try:
+            self.driver = create_chrome(download_dir=self.raw_dir, headless=True, page_load_strategy="none")
+            d = self.driver
+            d.set_page_load_timeout(15)
+            d.set_script_timeout(25)
+            d.execute_cdp_cmd("Network.enable", {})
+            # The shared helper hardcodes Windows/Chrome 124. Match the real OS/version.
+            product = d.execute_cdp_cmd("Browser.getVersion", {})["product"].replace("HeadlessChrome/", "Chrome/")
+            platform = ("X11; Linux x86_64" if sys.platform.startswith("linux") else
+                        "Macintosh; Intel Mac OS X 10_15_7" if sys.platform == "darwin" else
+                        "Windows NT 10.0; Win64; x64")
+            d.execute_cdp_cmd("Network.setUserAgentOverride", {"userAgent":
+                f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) {product} Safari/537.36"})
+            # A public JSON endpoint establishes the origin without loading any dashboard.
+            try:
+                d.get(BASE + url)
+            except TimeoutException as exc:
+                self.events.append({"transport": "browser_navigation", "error": self._error(exc)})
+                d.execute_script("window.stop();")
+            WebDriverWait(d, 10).until(lambda driver: driver.execute_script(
+                "return location.origin === arguments[0]", BASE))
+        except Exception as exc:
+            detail = self._diagnostic("browser_initialization", url, exc)
+            self._close_browser()
+            raise TransportError(f"browser initialization failed: {self._error(exc)}; {detail}") from exc
+
+    def _browser_get(self, url):
+        if self.driver is None:
+            raise TransportError("browser transport is unavailable after an earlier failure")
+        last = None
+        for attempt in range(2):
+            time.sleep(self.delay if not attempt else max(2, self.delay))
+            try:
+                response = self.driver.execute_async_script("""
                 const done=arguments[arguments.length-1], url=arguments[0];
                 const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),20000);
-                fetch(url,{credentials:'same-origin',cache:'no-store',signal:controller.signal})
-                  .then(async r=>done({status:r.status,body:await r.text()}))
+                fetch(url,{credentials:'same-origin',cache:'no-store',redirect:'error',
+                           headers:{Accept:'application/json'},signal:controller.signal})
+                  .then(async r=>{
+                    const reader=r.body.getReader(), decoder=new TextDecoder();
+                    let body='', size=0;
+                    while(true) {
+                      const {done:ended,value}=await reader.read();
+                      if(ended) break;
+                      size+=value.byteLength;
+                      if(size>arguments[1]) { controller.abort(); throw Error('response exceeds byte limit'); }
+                      body+=decoder.decode(value,{stream:true});
+                    }
+                    body+=decoder.decode();
+                    done({status:r.status,body,content_type:r.headers.get('content-type')});
+                  })
                   .catch(e=>done({error:String(e)})).finally(()=>clearTimeout(timer));
-            """, url)
-            if isinstance(response, dict) and response.get("status") == 200:
-                import json
-                try:
-                    payload = json.loads(response["body"])
-                except (ValueError, KeyError) as exc:
-                    raise TransportError(f"non-JSON response: {url}") from exc
-                if not isinstance(payload, dict) or str(payload.get("errcode")) != "0":
-                    raise ReportError(f"API error: {url}")
-                return payload
-            if attempt:
-                raise TransportError(f"blocked/failed source: {url}: {response.get('status', response.get('error'))}")
-        raise TransportError(url)
+                """, url, MAX_RESPONSE_BYTES)
+                if not isinstance(response, dict):
+                    raise TransportError(f"invalid browser transport response: {type(response).__name__}")
+                body = response.get("body", "")
+                if not isinstance(body, str) or len(body.encode("utf-8")) > MAX_RESPONSE_BYTES:
+                    raise TransportError("invalid/oversized browser response body")
+                self.events.append({"transport": "browser", "url": url, "attempt": attempt + 1,
+                                    "status": response.get("status"),
+                                    "content_type": str(response.get("content_type", ""))[:128],
+                                    "error": str(response.get("error", ""))[:1024], "preview": body[:2048]})
+                if response.get("status") != 200:
+                    raise TransportError(f"browser fetch failed: status={response.get('status')} "
+                                         f"error={str(response.get('error', ''))[:1024]}")
+                return self._payload(body, url)
+            except (WebDriverException, TransportError) as exc:
+                last = exc
+                self.events.append({"transport": "browser", "url": url, "attempt": attempt + 1,
+                                    "error": self._error(exc)})
+        detail = self._diagnostic("browser_fetch", url, last)
+        raise TransportError(f"browser transport failed: {url}: {self._error(last)}; {detail}") from last
+
+    def get(self, url):
+        parsed = urlsplit(url)
+        allowed = {path + suffix for path in PATHS.values() for suffix in ("/actualDate", "/total", "/region")}
+        if parsed.scheme or parsed.netloc or parsed.fragment or parsed.path not in allowed:
+            raise ReportError("only official operational API paths are allowed")
+        if not self.browser_attempted:
+            try:
+                return self._http_get(url)
+            except TransportError as exc:
+                detail = self._diagnostic("http_fallback", url, exc)
+                print(f"operational HTTP fallback: {exc}; {detail}", flush=True)
+                self._start_browser(url)
+        return self._browser_get(url)
 
     def collect(self, block, month):
+        month = period(month)
+        if month > self.bounds[block]:
+            raise ReportError(f"requested {month} exceeds official {block} bound {self.bounds[block]}")
         responses = {}
         for region in ("rf", "msk"):
             url = request_url(block, month, region)
@@ -226,7 +358,16 @@ class OfficialClient:
         return {"schemaVersion": 1, "block": block, "period": month,
                 "collected_at": stamp, "rows": rows, "responses": responses}
 
+    def _close_browser(self):
+        driver, self.driver = self.driver, None
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
     def __exit__(self, *args):
-        if self.driver:
-            self.driver.quit()
-            self.driver = None
+        self._close_browser()
+        if self.session is not None:
+            session, self.session = self.session, None
+            session.close()

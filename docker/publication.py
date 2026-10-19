@@ -197,7 +197,8 @@ def build_candidate_processed(root, sources):
         if not reusable:
             selected.append(identifier)
     if selected:
-        environment = {**os.environ, "PARSER_ROOT": str(root), "PARSER_DOWNLOADS": str(root / "downloads"), "TDM_DISABLED": "1"}
+        environment = {**os.environ, "PARSER_ROOT": str(root), "PARSER_DOWNLOADS": str(root / "downloads"),
+                       "PARSER_USE_REALTY_MARTS": "0", "PARSER_REQUIRE_REALTY_MARTS": "0", "TDM_DISABLED": "1"}
         subprocess.run([sys.executable, "pipeline/orchestrator.py", "--skip-download", "--no-notify", "--only", *selected],
                        cwd=Path(__file__).resolve().parents[1], env=environment, check=True)
 
@@ -394,6 +395,9 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
         else:
             selection = select_candidate_erz(candidate, runtime / previous if previous else None)
             metadata = publication_status(candidate, run_status, collector_returncode)
+            # An offline import can contain newer downloads than its pickles.
+            # Repair only the private candidate, then keep the normal proofs.
+            build_candidate_processed(candidate, {"fedstat", "rosstat"})
         build_candidate(candidate)
         metadata["full_marts_built"] = True
         if selection is not None:

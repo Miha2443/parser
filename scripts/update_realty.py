@@ -555,6 +555,7 @@ SNAPSHOT_DIRS = [
 ]
 SNAPSHOT_TEMP_SUFFIXES = {".crdownload", ".download", ".part", ".tmp"}
 SNAPSHOT_TEMP_NAME_PREFIXES = ("~$",)
+SNAPSHOT_PRIVATE_PARTS = {"_archive", ".fedstat_resume", ".construction_history", ".construction_history.lock"}
 _SNAPSHOT_DIGEST_CACHE: dict[str, tuple[tuple[int, int, int], str]] = {}
 
 
@@ -596,7 +597,7 @@ def snapshot_files(
         if not base.exists():
             continue
         for f in base.rglob("*"):
-            if not f.is_file() or "_archive" in f.parts or ".fedstat_resume" in f.parts:
+            if not f.is_file() or SNAPSHOT_PRIVATE_PARTS.intersection(f.parts):
                 continue
             if f.name.startswith(SNAPSHOT_TEMP_NAME_PREFIXES):
                 continue

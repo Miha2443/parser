@@ -63,6 +63,7 @@ statefile=Path('daemon.json'); state=json.loads(statefile.read_text()); args=sys
 def save(): statefile.write_text(json.dumps(state))
 def die(code): save(); sys.exit(code)
 if args[0]=='inspect':
+    if args[2]=='{{.Image}}': print('sha256:previous-image'); die(0)
     if '|{{.State.Status}}|' in args[2]: print(state['id']+'|'+state['status']+'|'+state['started'])
     else:
         details={'id':state['id'],'status':state['status'],'startedAt':state['started'],'exitCode':0,'oomKilled':False}
@@ -70,8 +71,12 @@ if args[0]=='inspect':
         if '"imageId":{{json .Image}}' in args[2]: details['imageId']='sha256:simulated-old-image'
         print(json.dumps(details))
     die(0)
+if args[:2]==['image','tag']:
+    state['image_tags']=state.get('image_tags',0)+1; die(0)
 assert args[0]=='compose', args
 args=args[1:]; command=args[0]
+if args[:2]==['--profile','updater']: args=args[2:]; command=args[0]
+if command=='build': state['builds']=state.get('builds',0)+1; die(0)
 if command=='ps': print(state['id']); die(0)
 if command=='run':
     assert '-T' in args and '--interactive=false' in args, 'Lifecycle must not attach an interactive terminal'
@@ -86,10 +91,15 @@ if command=='run':
                     time.sleep(600)
                 info=p.recovery_info(runtime); print(' '.join(info[k] or '-' for k in ('previous','next','live')))
             elif action=='archive': pass
+            elif action=='publish':
+                state['publications']=state.get('publications',0)+1
+                target='releases/history-new'; (runtime/target).mkdir(exist_ok=True)
+                (runtime/'pending.json').write_text(json.dumps({'previous':os.readlink(runtime/'live'),'next':target}))
+                p.swap(runtime,target)
             else: p.transaction(runtime,action)
         except Exception as exc: print(str(exc),file=sys.stderr); die(1)
         die(0)
-    state['downloads']+=1; die(1)
+    state['downloads']+=1; die(0 if state.get('collected_success') else 1)
 if command=='exec':
     assert '-T' in args and '--interactive=false' in args, 'Readiness must not attach an interactive terminal'
     assert os.read(0,1)==b'', 'Readiness must not consume operator stdin'
@@ -110,7 +120,7 @@ if command=='exec':
     die(0 if state['id'] and state['status']=='running' and args[-1]=='/runtime/'+state['served'] and state.get('full_ready',True) else 1)
 if command=='stop': state['stops']+=1; state['status']='exited'; die(0)
 if command in ('up','restart'):
-    if args[-1]=='web': die(0)
+    if args[-1]=='web': state['web_starts']=state.get('web_starts',0)+1; die(0)
     if command=='restart': state['restarts']+=1
     if not state['id'] or state['status']!='running' or command=='restart':
         state['starts']+=1; state['id']=state['id'] or 'backend-1'; state['status']='running'
@@ -267,6 +277,83 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)  # Simulated source failure.
         self.assertEqual(self.state['downloads'], 1)
         self.assertEqual((self.state['started'], self.state['stops'], self.state['restarts']), ('original-start', 0, 0))
+
+    def test_construction_history_failure_cannot_publish_or_start_new_web(self):
+        self.state['served'] = 'releases/new'
+        result = self.run_host('--construction-history')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['downloads'], 1)
+        self.assertEqual(self.state.get('publications', 0), 0)
+        self.assertEqual(self.state.get('web_starts', 0), 0)
+        self.assertEqual((self.state['started'], self.state['stops'], self.state['restarts']), ('original-start', 0, 0))
+        self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
+
+    def test_construction_history_success_publishes_then_restarts_and_starts_web(self):
+        self.state.update(served='releases/new', collected_success=True)
+        result = self.run_host('--construction-history')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['downloads'], 1)
+        self.assertEqual(self.state['publications'], 1)
+        self.assertEqual(self.state['web_starts'], 1)
+        self.assertEqual((self.state['stops'], self.state['restarts']), (0, 1))
+        self.assertEqual(self.state['served'], 'releases/history-new')
+        self.assertFalse((self.root / 'runtime/pending.json').exists())
+
+    def test_code_upgrade_proves_backend_before_web_without_source_collection(self):
+        self.state['served'] = 'releases/new'
+        result = self.run_host('--upgrade-code')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['image_tags'], 2)
+        self.assertEqual(self.state['builds'], 1)
+        self.assertEqual(self.state['web_starts'], 1)
+        self.assertEqual(self.state['downloads'], 0)
+        self.assertEqual(self.state.get('publications', 0), 0)
+        self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
+        self.assertIn('code_upgrade_complete', result.stdout)
+
+    def test_code_upgrade_incompatible_backend_never_activates_web(self):
+        self.state.update(served='releases/new', full_ready=False)
+        result = self.run_host('--upgrade-code')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['image_tags'], 2)
+        self.assertEqual(self.state.get('web_starts', 0), 0)
+        self.assertEqual(self.state['downloads'], 0)
+        self.assertEqual(self.state.get('publications', 0), 0)
+        self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
+        self.assertIn('code_upgrade_failed', result.stdout)
+
+    def test_new_modes_keep_missing_live_and_pending_recovery_guards(self):
+        (self.root / 'runtime/live').unlink()
+        for mode in ('--construction-history', '--upgrade-code'):
+            with self.subTest(mode=mode, guard='missing-live'):
+                result = self.run_host(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('reason=live_missing', result.stdout)
+        (self.root / 'runtime/live').symlink_to('releases/new')
+        (self.root / 'runtime/pending.json').write_text(json.dumps({'previous': None, 'next': 'releases/new'}))
+        for mode in ('--construction-history', '--upgrade-code'):
+            with self.subTest(mode=mode, guard='pending-recovery'):
+                result = self.run_host(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('recovery_blocked', result.stdout)
+        self.assertEqual((self.state['starts'], self.state['stops'], self.state['downloads']), (0, 0, 0))
+        self.assertEqual(self.state.get('builds', 0), 0)
+        self.assertEqual(self.state.get('web_starts', 0), 0)
+
+    def test_new_modes_share_the_host_lock_with_scheduled_updates(self):
+        import fcntl
+        (self.root / 'state').mkdir()
+        (self.root / 'logs').mkdir()
+        (self.root / 'logs/docker-update_previous.log').write_text('previous run')
+        with (self.root / 'state/.docker-update.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for mode in ('--construction-history', '--upgrade-code'):
+                with self.subTest(mode=mode):
+                    result = self.run_host(mode)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Another Docker update is running', result.stderr)
+        self.assertEqual((self.state['starts'], self.state['stops'], self.state['downloads']), (0, 0, 0))
+        self.assertEqual(self.state.get('builds', 0), 0)
 
     def test_legacy_without_pending_cannot_start_mutable_downloads(self):
         self.state['served'] = '/app'

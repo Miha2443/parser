@@ -63,6 +63,11 @@ def read_forecast(book, source_file):
         notes.append(f"Лист «{FORECAST_SHEET}» отсутствует; прогноз недоступен.")
         return result
     cells = list(book[FORECAST_SHEET].iter_rows(min_row=2, max_row=12, min_col=4, max_col=13))
+    if not cells:
+        notes.append("Прогнозы!D2:M12: диапазон отсутствует; прогноз недоступен.")
+        return result
+    if len(cells) < 11:
+        notes.append("Прогнозы!D2:M12: диапазон неполон; отсутствующие значения оставлены null.")
     seen = set()
     for column in range(10):
         letter = get_column_letter(column + 4)
@@ -73,8 +78,8 @@ def read_forecast(book, source_file):
         seen.add(year)
         row = {"year": int(year), "cells": {"year": f"{letter}2"}}
         for offset, field in enumerate(FORECAST_FIELDS, start=1):
-            cell = cells[offset][column]
-            row[field] = _cell_number(cell, notes)
+            cell = cells[offset][column] if offset < len(cells) else None
+            row[field] = _cell_number(cell, notes) if cell is not None else None
             row["cells"][field] = f"{letter}{offset + 2}"
         result["rows"].append(row)
     if not result["rows"]:
@@ -104,7 +109,7 @@ def _housing_history(book, notes):
         notes.append(f"Лист «{HOUSING_SHEET}» отсутствует; историческая структура жилья недоступна.")
         return {}
     rows = list(book[HOUSING_SHEET].iter_rows(min_row=1, max_row=146, min_col=2, max_col=4))
-    if normalized(rows[2][1].value) != "общая" or normalized(rows[2][2].value) != "жилая":
+    if len(rows) < 3 or normalized(rows[2][1].value) != "общая" or normalized(rows[2][2].value) != "жилая":
         notes.append("Вспомогат1!C3:D3: заголовки ОБЩАЯ/ЖИЛАЯ не подтверждены; историческая структура недоступна.")
         return {}
     result, year = {}, None
@@ -138,7 +143,7 @@ def _nonres_history(book, notes):
                 "промышленные", "торговые", "социальные", "гостиницы", "прочие")
     # Whitespace in wrapped labels is presentation, not a different taxonomy.
     clean = lambda value: normalized(value).replace("- ", "-").replace(", ", ",")
-    if [clean(cell.value) for cell in rows[0]] != [clean(value) for value in expected]:
+    if not rows or [clean(cell.value) for cell in rows[0]] != [clean(value) for value in expected]:
         notes.append("Данные с 2011 года!F114:O114: заголовки исторических категорий не подтверждены; разрез недоступен.")
         return {}
     result = {}
@@ -171,11 +176,11 @@ def read_breakdown_sources(book):
         modern_notes.append("Реестр ОКС отсутствует; структура с 2022 года недоступна.")
     else:
         rows = book[OKS_SHEET].iter_rows(min_row=1, max_col=46)
-        headers = next(rows)
+        headers = next(rows, ())
         expected = {1: "Назначение", 3: "Срок выдачи РС", 5: "Год выдачи",
                     16: "Общая площадь", 17: "Жилая площадь"}
-        valid = all(normalized(headers[col].value) == normalized(label) for col, label in expected.items())
-        classification = normalized(headers[45].value) == normalized("ФНО для Минстроя России")
+        valid = len(headers) >= 46 and all(normalized(headers[col].value) == normalized(label) for col, label in expected.items())
+        classification = len(headers) >= 46 and normalized(headers[45].value) == normalized("ФНО для Минстроя России")
         if not valid:
             modern_notes.append("Заголовки B/D/F/Q/R реестра ОКС не подтверждены; современная структура недоступна.")
         else:

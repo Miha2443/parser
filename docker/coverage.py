@@ -5,9 +5,11 @@ measurement; missing frames, populations or measurements are not.
 """
 from __future__ import annotations
 
+from datetime import datetime
 import math
 import json
 import hashlib
+import re
 from numbers import Real
 from urllib.parse import urlencode
 
@@ -532,6 +534,185 @@ def validate_sources(access, *, require_erz=False):
     validate_economic_sources(access, aliases={"fedstat", "rosstat"} - absent)
 
 
+def _api_object(value, label):
+    require(isinstance(value, dict), label + " must be an object")
+    return value
+
+
+def _api_date(value, label):
+    if value is None:
+        return
+    require(isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}(?:$|T)", value), label + " has an invalid date")
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError("Incomplete dashboard coverage: " + label + " has an invalid date") from exc
+
+
+def _api_numbers(row, fields, label):
+    require(all(field in row and (row[field] is None or finite(row[field])) for field in fields),
+            label + " has missing/non-numeric measurements")
+
+
+def _construction_page_metadata(payload, label):
+    _api_object(payload, label)
+    require(type(payload.get("schemaVersion")) is int and payload["schemaVersion"] == 1
+            and isinstance(payload.get("version"), str) and payload["version"].strip(), label + " has invalid schema/version")
+    generated = payload.get("generatedAt")
+    require(isinstance(generated, str) and "T" in generated, label + " has no generation timestamp")
+    _api_date(generated, label)
+    source = _api_object(payload.get("source"), label + "/source")
+    require("date" in source, label + " lacks source date")
+    _api_date(source["date"], label + "/source")
+    files = source.get("files")
+    require(isinstance(files, list) and files and all(isinstance(f, str) and f.strip() for f in files),
+            label + " lacks source files")
+    require(source.get("fileEvidence", "selected") in {"selected", "candidates"}, label + " has invalid file evidence")
+    issues = source.get("issues")
+    require(isinstance(issues, list) and all(
+        isinstance(row, dict) and all(isinstance(row.get(k), str) for k in ("level", "message"))
+        or isinstance(row, list) and len(row) == 2 and all(isinstance(v, str) for v in row) for row in issues),
+        label + " has invalid source issues")
+    require(isinstance(payload.get("notes"), list) and all(isinstance(n, str) for n in payload["notes"]),
+            label + " has invalid notes")
+    return files
+
+
+def validate_permits_page(payload, kind):
+    """Probe the new presentation contract, without deriving any legacy totals."""
+    from pipeline.permit_page_calculations import FORECAST_FIELDS
+    label = "construction/permits/" + kind
+    _construction_page_metadata(payload, label)
+    require(type(payload.get("contractRevision")) is int and payload["contractRevision"] == 2,
+            label + " requires permits contractRevision 2 (complete the backend upgrade)")
+    selection = _api_object(payload.get("selection"), label + "/selection")
+    require(selection.get("permitKind") == kind and type(selection.get("month")) is int
+            and 1 <= selection["month"] <= 12, label + " has invalid selection")
+    structure = _api_object(selection.get("structure"), label + "/selection.structure")
+    require(structure.get("mode") in {"period", "annual"}
+            and all(type(structure.get(k)) is int for k in ("monthFrom", "monthTo", "yearFrom", "yearTo"))
+            and 1 <= structure["monthFrom"] <= structure["monthTo"] <= 12
+            and 1 <= structure["yearFrom"] <= structure["yearTo"] <= 9999, label + " has invalid structure selection")
+    controls = _api_object(payload.get("controls"), label + "/controls")
+    kinds = controls.get("permitKinds")
+    require(isinstance(kinds, list) and [row.get("id") for row in kinds if isinstance(row, dict)]
+            == ["housing", "nonresidential", "total"], label + " has invalid permit kinds")
+    months = _api_object(controls.get("monthsByKind"), label + "/monthsByKind")
+    for key in ("housing", "nonresidential", "total"):
+        values = months.get(key)
+        require(isinstance(values, list) and all(type(m) is int and 1 <= m <= 12 for m in values)
+                and len(set(values)) == len(values), label + " has invalid months")
+    require(selection["month"] in months[kind], label + " selects an unavailable month")
+    options = _api_object(controls.get("structure"), label + "/controls.structure")
+    require(isinstance(options.get("modes"), list) and any(isinstance(m, dict) and m.get("id") == structure["mode"]
+            for m in options["modes"]), label + " lacks structure modes")
+    for key, lower, upper in (("years", 1, 9999), ("months", 1, 12)):
+        values = options.get(key)
+        require(isinstance(values, list) and all(type(v) is int and lower <= v <= upper for v in values)
+                and len(set(values)) == len(values), label + " has invalid structure " + key)
+    require(not options["years"] or {structure["yearFrom"], structure["yearTo"]} <= set(options["years"]),
+            label + " selects unavailable structure years")
+    coverage = options.get("coverage")
+    require(isinstance(coverage, list), label + " lacks structure coverage")
+    for row in coverage:
+        _api_object(row, label + "/coverage")
+        require(isinstance(row.get("blockId"), str) and row["blockId"] and type(row.get("year")) is int
+                and type(row.get("annualComplete")) is bool, label + " has invalid coverage identity/completion")
+        for key in ("months", "completeMonths"):
+            require(isinstance(row.get(key), list) and all(type(m) is int and 1 <= m <= 12 for m in row[key])
+                    and len(set(row[key])) == len(row[key]), label + " has invalid coverage months")
+        require(set(row["completeMonths"]) <= set(row["months"])
+                and (not row["annualComplete"] or len(row["completeMonths"]) == 12), label + " overstates coverage")
+    permits = _api_object(payload.get("permits"), label + "/permits")
+    require(permits.get("region") == "Москва" and permits.get("unit") == "тыс. м²"
+            and isinstance(permits.get("rows"), list)
+            and isinstance(permits.get("columns"), list), label + " lacks Moscow permit rows/units")
+    presentation = _api_object(permits.get("presentation"), label + "/permits.presentation")
+    rows = presentation.get("rows")
+    require(isinstance(rows, list), label + " lacks presentation rows")
+    years = set()
+    for row in rows:
+        _api_object(row, label + "/presentation")
+        require(type(row.get("year")) is int and row["year"] not in years, label + " has invalid/duplicate presentation years")
+        years.add(row["year"])
+        _api_numbers(row, ("selected", "annualActual", "annualForecast", "difference", "remainder", "growth"), label)
+        require(all(type(row.get(k)) is bool for k in ("periodComplete", "annualComplete"))
+                and (row["annualActual"] is None or row["annualComplete"]), label + " overstates annual completion")
+        basis = "forecast" if row["annualForecast"] is not None else "annual_observed" if row["annualActual"] is not None else "none"
+        require(row.get("basis") == basis, label + " has invalid annual basis")
+        require("observedThrough" in row and isinstance(row.get("evidence"), list)
+                and all(isinstance(e, str) for e in row["evidence"]), label + " lacks presentation evidence")
+        _api_date(row["observedThrough"], label)
+    # A kind can be genuinely absent. The legacy total report below still checks
+    # primary permit coverage; never manufacture zero rows for an empty kind.
+    forecast = _api_object(payload.get("forecast"), label + "/forecast")
+    source = _api_object(forecast.get("source"), label + "/forecast.source")
+    require(forecast.get("unit") == "тыс. м²" and forecast.get("unitBasis") == "assumed_thousand_m2"
+            and source.get("sheet") == "Прогнозы" and "file" in source
+            and (source["file"] is None or isinstance(source["file"], str))
+            and isinstance(forecast.get("rows"), list), label + " has invalid forecast contract")
+    for row in forecast["rows"]:
+        _api_object(row, label + "/forecast row")
+        _api_numbers(row, ("value", *FORECAST_FIELDS), label + "/forecast")
+        require(type(row.get("year")) is int and isinstance(row.get("cells"), dict)
+                and all(isinstance(v, str) for v in row["cells"].values()), label + " lacks forecast cell provenance")
+    require(isinstance(payload.get("breakdowns"), list), label + " lacks breakdowns")
+    for block in payload["breakdowns"]:
+        _api_object(block, label + "/breakdown")
+        require(block.get("unit") == "тыс. м²" and isinstance(block.get("aggregateField"), str)
+                and isinstance(block.get("columns"), list) and any(isinstance(c, dict) and c.get("id") == block["aggregateField"]
+                for c in block["columns"]) and isinstance(block.get("rows"), list) and isinstance(block.get("series"), list),
+                label + " has invalid breakdown aggregate/rows")
+
+
+def validate_domrf_page(payload, region):
+    """Only observed history is required; no bootstrap range or point count."""
+    label = "construction/domrf/" + region
+    files = _construction_page_metadata(payload, label)
+    selected_region = _api_object(payload.get("region"), label + "/region")
+    require(selected_region.get("id") == region and isinstance(selected_region.get("label"), str), label + " has incorrect region")
+    measured = False
+    for key in ("construction", "sales"):
+        block_label = label + "/" + key
+        block = _api_object(payload.get(key), block_label)
+        require("metrics" in block, block_label + " lacks metrics")
+        metrics = block.get("metrics")
+        if key == "construction" or metrics is not None:
+            _api_object(metrics, block_label + "/metrics")
+            _api_numbers(metrics, ("living", "total") if key == "construction" else metrics.keys(), block_label)
+            fields = ("living", "total") if key == "construction" else CONSTRUCTION_SALES_FIELDS
+            measured |= any(finite(metrics.get(field)) for field in fields)
+        require("period" in block and isinstance(block.get("history"), list), block_label + " lacks period/history")
+        periods = {}
+        for row in block["history"]:
+            _api_object(row, block_label + "/history")
+            period = row.get("period")
+            require(isinstance(period, str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period)
+                    and period not in periods, block_label + " has invalid/duplicate history period")
+            require(isinstance(row.get("sourceFile"), str) and row["sourceFile"] in files
+                    and isinstance(row.get("label"), str) and "reportDate" in row, block_label + " lacks observation provenance")
+            _api_date(row["reportDate"], block_label)
+            values = row if key == "construction" else _api_object(row.get("metrics"), block_label + "/history.metrics")
+            _api_numbers(values, ("living", "total") if key == "construction" else values.keys(), block_label + "/history")
+            periods[period] = row
+        period = block["period"]
+        if period is None:
+            require(not periods and (metrics is None or all(v is None for v in metrics.values())),
+                    block_label + " has observations without a current period")
+            continue
+        _api_object(period, block_label + "/period")
+        require(isinstance(period.get("label"), str) and "id" in period and "reportDate" in period,
+                block_label + " has invalid period")
+        _api_date(period["reportDate"], block_label)
+        if period["id"] is not None:
+            require(isinstance(period["id"], str) and period["id"] in periods, block_label + " current period is not observed")
+            current = periods[period["id"]]
+            values = {k: current[k] for k in ("living", "total")} if key == "construction" else current["metrics"]
+            require(metrics == values and all(period[k] == current[k] for k in ("label", "reportDate")),
+                    block_label + " current snapshot differs from its observation")
+    require(measured, label + " lacks measured source observations")
+
+
 def validate_pages(get, *, source_states=None):
     """Use the same meaningful API reports before and after a release switch."""
     from pipeline.source_availability import route_sources
@@ -553,7 +734,14 @@ def validate_pages(get, *, source_states=None):
     if developer:
         profile = get("/api/v1/profile?" + urlencode({"developer": developer["developerKey"], "region": "msk"}))
         require(profile.get("profiles") or bool(route_sources("/api/v1/profile") & absent), "developer profile is empty")
+    for kind in ("housing", "nonresidential", "total"):
+        permits = get("/api/v1/construction/permits?permit_kind=" + kind)
+        if "monitoring" not in absent:
+            validate_permits_page(permits, kind)
     for region in ("msk", "rf"):
+        domrf = get("/api/v1/construction/domrf?region=" + region)
+        if "construction" not in absent:
+            validate_domrf_page(domrf, region)
         apartments = get("/api/v1/apartments?region=" + region)
         if "kvart" not in absent:
             require(apartments.get("apartments") and apartments.get("distribution") and apartments.get("developers"),

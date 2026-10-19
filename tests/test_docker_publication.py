@@ -81,7 +81,7 @@ class PublicationTests(unittest.TestCase):
                 (runtime / "live").symlink_to("releases/old", target_is_directory=True)
             except OSError:
                 self.skipTest("Host does not allow directory symlinks")
-            with patch.object(p, "build_candidate"), patch.object(p, "validate", side_effect=RuntimeError("stale mart")):
+            with patch.object(p, "build_candidate_processed"), patch.object(p, "build_candidate"), patch.object(p, "validate", side_effect=RuntimeError("stale mart")):
                 with self.assertRaises(RuntimeError):
                     p.publish(working, runtime)
             self.assertEqual(os.readlink(runtime / "live"), "releases/old")

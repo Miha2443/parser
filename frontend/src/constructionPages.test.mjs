@@ -15,12 +15,54 @@ function permitsFixture() {
   const rows = [{ 'Год': 2011, 'За год, тыс. м²': 1234.567890123, 'С начала года, тыс. м²': null, 'Изменение, %': null }, { 'Год': 2026, 'За год, тыс. м²': null, 'С начала года, тыс. м²': 0, 'Изменение, %': -100 }];
   const blocks = breakdowns(), allMonths = Array.from({ length: 12 }, (_, i) => i + 1);
   const presentation = { rows: [{ year: 2011, selected: null, annualActual: 1234.567890123, annualForecast: null, basis: 'annual_observed', difference: null, remainder: null, growth: null, periodComplete: true, annualComplete: true, observedThrough: '2011-12-31', evidence: ['Confirmed annual'] }, { year: 2026, selected: 0, annualActual: null, annualForecast: 9876.543210123, basis: 'forecast', difference: 9876.543210123, remainder: 9876.543210123, growth: null, periodComplete: false, annualComplete: false, observedThrough: '2026-09-15', evidence: ['Partial September <source>'] }] };
-  return { ...metadata(), selection: { permitKind: 'housing', month: 9, structure: { mode: 'period', monthFrom: 1, monthTo: 9, yearFrom: 2011, yearTo: 2026 } }, controls: { permitKinds: [{ id: 'housing', label: 'Жильё' }, { id: 'nonresidential', label: 'Нежильё' }, { id: 'total', label: 'Всего' }], monthsByKind: { housing: [1, 9], nonresidential: [9], total: [1, 9] }, structure: { modes: [{ id: 'period', label: 'Выбранные месяцы' }, { id: 'annual', label: 'Полный год' }], years: Array.from({ length: 16 }, (_, i) => 2011 + i), months: allMonths, coverage: blocks.flatMap(b => [2011, 2026].map(year => ({ blockId: b.id, year, months: year === 2011 ? allMonths : allMonths.slice(0, 9), completeMonths: year === 2011 ? allMonths : allMonths.slice(0, 8), annualComplete: year === 2011, observedThrough: year === 2011 ? '2011-12-31' : '2026-09-15', evidence: ['Coverage evidence'] }))) } }, permits: { region: 'Москва', unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', columns: Object.keys(rows[0]).map(id => ({ id, label: id })), rows, chart: { x: ['2011', '2026'], period: [{ value: null }, { value: 0 }], remainder: [{ value: 1234.567890123 }, { value: null }], totals: [{ value: 1234.567890123 }, { value: 0 }], growth: [{ value: null }, { value: -100 }] }, presentation }, forecast: { unit: 'тыс. м²', unitBasis: 'assumed_thousand_m2', source: { file: 'selected/forecast.xlsx', sheet: 'Прогнозы' }, rows: [2026, 2027].map((year, i) => ({ year, ...Object.fromEntries(forecastFields.map((f, j) => [f, i ? null : j === 0 ? 9876.543210123 : j === 1 ? 0 : null])), cells: { year: 'D2', housing_living: 'D3' } })), notes: ['No explicit unit header.'] }, breakdowns: blocks, notes: ['Main notes'] };
+  return { ...metadata(), contractRevision: 2, selection: { permitKind: 'housing', month: 9, structure: { mode: 'period', monthFrom: 1, monthTo: 9, yearFrom: 2011, yearTo: 2026 } }, controls: { permitKinds: [{ id: 'housing', label: 'Жильё' }, { id: 'nonresidential', label: 'Нежильё' }, { id: 'total', label: 'Всего' }], monthsByKind: { housing: [1, 9], nonresidential: [9], total: [1, 9] }, structure: { modes: [{ id: 'period', label: 'Выбранные месяцы' }, { id: 'annual', label: 'Полный год' }], years: Array.from({ length: 16 }, (_, i) => 2011 + i), months: allMonths, coverage: blocks.flatMap(b => [2011, 2026].map(year => ({ blockId: b.id, year, months: year === 2011 ? allMonths : allMonths.slice(0, 9), completeMonths: year === 2011 ? allMonths : allMonths.slice(0, 8), annualComplete: year === 2011, observedThrough: year === 2011 ? '2011-12-31' : '2026-09-15', evidence: ['Coverage evidence'] }))) } }, permits: { region: 'Москва', unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', columns: Object.keys(rows[0]).map(id => ({ id, label: id })), rows, chart: { x: ['2011', '2026'], period: [{ value: null }, { value: 0 }], remainder: [{ value: 1234.567890123 }, { value: null }], totals: [{ value: 1234.567890123 }, { value: 0 }], growth: [{ value: null }, { value: -100 }] }, presentation }, forecast: { unit: 'тыс. м²', unitBasis: 'assumed_thousand_m2', source: { file: 'selected/forecast.xlsx', sheet: 'Прогнозы' }, rows: [2026, 2027].map((year, i) => ({ year, ...Object.fromEntries(forecastFields.map((f, j) => [f, i ? null : j === 0 ? 9876.543210123 : j === 1 ? 0 : null])), cells: { year: 'D2', housing_living: 'D3' } })), notes: ['No explicit unit header.'] }, breakdowns: blocks, notes: ['Main notes'] };
 }
 function domrfFixture(region = 'msk') {
   const metrics = { total_living_thousand_m2: 10001.123456789, sales_open_thousand_m2: 7500.25, sold_thousand_m2: 1234.567890123, sold_pct: 12, unsold_thousand_m2: 0, unsold_pct: 0, sales_not_open_thousand_m2: null, sales_not_open_pct: null, price_per_m2_rub: 441306.789, funds_million_rub: 3250869.123 };
   return { ...metadata(), region: { id: region, label: region }, construction: { period: { id: '2026-10', label: 'Октябрь 2026', reportDate: '2026-10-01' }, metrics: { living: 15000.123456789, total: 0 }, history: [{ period: '2026-10', label: 'Октябрь 2026', reportDate: '2026-10-01', living: 15000.123456789, total: 0, sourceFile: 'construction.json' }] }, sales: { period: { id: '2026-08', label: 'Август 2026', reportDate: '2026-09-11' }, metrics, history: [{ period: '2026-08', label: 'Август 2026', reportDate: '2026-09-11', metrics: { ...metrics }, sourceFile: 'sales.json' }] }, notes: ['Independent construction/sales reporting periods.'] };
 }
+
+function previousPermitsFixture() {
+  const raw = permitsFixture();
+  delete raw.contractRevision;
+  delete raw.selection.structure; delete raw.controls.structure; delete raw.permits.presentation;
+  for (const block of raw.breakdowns) {
+    delete block.aggregateField;
+    for (const row of block.rows) { delete row.periodComplete; delete row.annualComplete; }
+  }
+  return raw;
+}
+
+test('previous permits API is rejected with a deployment mismatch, without inventing current fields', async () => {
+  const raw = previousPermitsFixture(), before = structuredClone(raw);
+  const mismatch = /frontend новее backend.*завершить обновление backend/;
+  assert.throws(() => readPermitsData(raw), mismatch);
+  assert.deepEqual(raw, before);
+  assert.throws(() => readPermitsData({ ...raw, contractRevision: 1 }), mismatch);
+  const original = globalThis.fetch, calls = [], controller = new AbortController();
+  try {
+    globalThis.fetch = async url => { calls.push(url); return new Response(JSON.stringify(raw)); };
+    await assert.rejects(loadPermitsSelection({ permitKind: 'housing', month: 9 }, controller.signal), mismatch);
+    assert.deepEqual(calls, ['/api/v1/construction/permits?permit_kind=housing&month=9']);
+  } finally { globalThis.fetch = original; }
+});
+
+test('malformed permits responses retain the generic schema error, not a deployment diagnosis', () => {
+  const generic = { message: 'Ответ API строительства не соответствует схеме версии 1.' };
+  for (const value of [null, {}, [], { schemaVersion: 1, selection: {}, controls: {}, permits: {} }]) {
+    assert.throws(() => readPermitsData(value), generic);
+  }
+  for (const edit of [r => delete r.contractRevision, r => r.contractRevision = 1, r => r.contractRevision = 3,
+    r => delete r.selection.structure, r => delete r.controls.structure, r => delete r.permits.presentation,
+    r => r.selection.structure = null, r => r.permits.presentation = {}, r => r.permits.presentation.rows[0].selected = '1']) {
+    const raw = permitsFixture(); edit(raw); assert.throws(() => readPermitsData(raw), generic);
+  }
+  for (const edit of [r => r.schemaVersion = 2, r => r.contractRevision = 2, r => r.version = '', r => r.selection.month = 13,
+    r => r.controls.permitKinds = [], r => r.permits.region = 'РФ', r => r.source.date = '2026-02-30', r => r.forecast = null,
+    r => r.permits.chart = {}, r => r.permits.rows[0]['Год'] = true, r => r.forecast.rows[0].value = NaN, r => r.notes = [1]]) {
+    const raw = previousPermitsFixture(); edit(raw); assert.throws(() => readPermitsData(raw), generic);
+  }
+});
 
 test('new metadata accepts backend issue objects and legacy pairs, selected evidence is optional', () => {
   for (const raw of [permitsFixture(), domrfFixture()]) {
@@ -36,6 +78,7 @@ test('new metadata accepts backend issue objects and legacy pairs, selected evid
 
 test('permits schema preserves raw values, null/zero, cells and independent breakdown provenance', () => {
   const raw = permitsFixture(), before = structuredClone(raw), data = readPermitsData(raw, raw.selection);
+  assert.equal(data.contractRevision, 2); assert.equal(data.schemaVersion, 1);
   assert.deepEqual(raw, before);
   assert.deepEqual(data.permits.chart, raw.permits.chart);
   assert.deepEqual(data.permits.rows, raw.permits.rows);

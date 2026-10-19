@@ -35,6 +35,10 @@ live-data layouts and complete CSV checks. Results: `%TEMP%/dashboard-constructi
 
 The five menu entries are tree, permits, DOM.RF, apartments, and map, in that
 order. `/construction/permits` separates Moscow permits from DOM.RF statistics;
+the permits response uses `schemaVersion: 1` plus application `contractRevision: 2`.
+An older known response produces a deployment compatibility error, not guessed
+annual totals or a relaxed schema. Upgrade through `bash docker/update.sh --upgrade-code`
+before running `bash docker/update.sh --construction-history` on the server.
 `/construction/domrf` combines the former construction and sales blocks.
 Old `/construction` and `/sales` bookmarks open the DOM.RF page. Existing API
 routes and their calculations remain available for compatibility.

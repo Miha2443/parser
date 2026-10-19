@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 test -f .env || { echo '.env is required' >&2; exit 1; }
 mode="${1:-update}"
-[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --recover ]] || {
-  echo 'Usage: bash docker/update.sh [--publish-existing|--recover]' >&2; exit 1;
+[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-history || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
+  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-history|--upgrade-code|--recover]' >&2; exit 1;
 }
 mkdir -p state logs runtime/releases
 exec 9>state/.docker-update.lock
@@ -148,7 +148,7 @@ if [[ "$mode" == --recover ]]; then
 fi
 
 before_update="$(backend_signature)"
-if [[ "$mode" == update && -n "$before_update" ]]; then
+if [[ "$mode" != --publish-existing && -n "$before_update" ]]; then
   if [[ ! -L runtime/live ]]; then
     if [[ -e runtime/live ]]; then
       event preflight_blocked 'reason=live_not_symlink Existing runtime/live is not a published release symlink; no download/restart/stop performed. Inspect its contents and backend mounts before resolving this path conflict. Preserve the existing path: --publish-existing refuses an ordinary directory/file, and --recover without a pending journal does not migrate.'
@@ -162,9 +162,39 @@ if [[ "$mode" == update && -n "$before_update" ]]; then
     exit 1
   fi
 fi
+if [[ "$mode" == --upgrade-code ]]; then
+  [[ -L runtime/live ]] || { event code_upgrade_blocked 'A published runtime/live release is required; use the bootstrap procedure for a new installation'; exit 1; }
+  # Keep previous application images addressable; data recovery does not
+  # restore an older image after compose replaces a container.
+  backup_id="$(date -u +%Y%m%dT%H%M%S)-$$"
+  for service in backend web; do
+    id="$(bounded 15 docker compose ps -aq "$service")"
+    if [[ -n "$id" ]]; then
+      old_image="$(bounded 15 docker inspect -f '{{.Image}}' "$id")"
+      backup_image="parser-dashboard-previous-$service:$backup_id"
+      bounded 30 docker image tag "$old_image" "$backup_image"
+      event code_image_preserved "service=$service image=$backup_image"
+    fi
+  done
+  bounded 1800 docker compose --profile updater build
+  if ! restart_backend; then
+    event code_upgrade_failed 'New backend compatibility was not proven; web was not updated. Previous image tags are logged above. Data pointer was not changed; application-image rollback is separate.'
+    exit 1
+  fi
+  bounded 120 docker compose up -d --no-deps web
+  event code_upgrade_complete "live=$(readlink runtime/live) downloads=none data_publication=none"
+  exit 0
+fi
+
 event updater_start "mode=$mode"
 if [[ "$mode" == --publish-existing ]]; then
   run_updater() { control publish; }
+elif [[ "$mode" == --construction-history ]]; then
+  run_updater() {
+    event construction_history 'collect missing months from 2020; publication requires collector success'
+    docker compose run --rm --no-deps -T --interactive=false updater python -u scripts/update_realty.py construction --retries 0 --collect-only --require-collected </dev/null || return
+    control publish
+  }
 else
   run_updater() { docker compose run --rm --no-deps -T --interactive=false updater </dev/null; }
 fi

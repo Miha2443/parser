@@ -22,7 +22,7 @@ TREES = ("downloads", "data/processed", "data/marts", "data/derived",
          "data/raw/realty", "logs")
 from docker.coverage import SOURCES, OPTIONAL_SOURCES, REQUIRED_SOURCES
 EXCLUDED = {"_archive", "archive", "archives", "__pycache__", "temp", "tmp",
-            ".fedstat_resume", "_debug"}
+            ".fedstat_resume", ".construction_history", ".construction_history.lock", "_debug"}
 
 
 @contextmanager

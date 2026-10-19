@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import json
+import hashlib
 from numbers import Real
 from urllib.parse import urlencode
 
@@ -350,6 +351,30 @@ def validate_construction_sources(access, construction, *, require_permits=True)
         require_construction_sales(row, "construction/sales/" + str(row.get("region_key")))
     if require_permits:
         require_frame(construction.get("permits"), "construction/permits", numeric=("value_thousand_m2",))
+    history_files = access.source_files("construction_history")
+    if history_files:
+        from backend.domrf_service import DomrfService
+        require(len(history_files) == 1, "construction history is ambiguous")
+        payload = json.loads(history_files[0].read_text(encoding="utf-8"))
+        require(payload.get("schemaVersion") == 1 and payload.get("complete") is True
+                and not payload.get("errors") and not payload.get("current_publication_error"),
+                "construction history bootstrap or current publication is incomplete")
+        digest = hashlib.sha256(json.dumps({b: payload[b] for b in ("construction", "sales")},
+                                          ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")).hexdigest()
+        require(payload.get("content_sha256") == digest, "construction history checksum differs")
+        service = DomrfService(access.context)
+        for region in ("msk", "rf"):
+            report = service.report(region)
+            for block in ("construction", "sales"):
+                coverage = payload.get("coverage", {}).get(block, {})
+                require(coverage.get("start") == "2020-01" and not coverage.get("missing_months")
+                        and coverage.get("collected_months") == coverage.get("expected_months")
+                        and isinstance(coverage.get("expected_months"), int) and coverage["expected_months"] > 0,
+                        "construction history coverage is incomplete: " + block)
+                rows = report[block]["history"]
+                require(len(rows) == coverage["expected_months"] and rows[0]["period"] == coverage["start"]
+                        and rows[-1]["period"] == coverage.get("end") == coverage.get("latest_available"),
+                        "construction history periods do not match coverage: " + region + "/" + block)
 
 
 def validate_economic_sources(access, *, aliases=frozenset({"fedstat", "rosstat"}), processed=True):

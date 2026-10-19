@@ -3783,7 +3783,7 @@ def _parse_apartment_sales_html(html: str, region: str) -> dict:
 
 
 def _operational_number(value) -> float | None:
-    match = re.search(r"-?[\d\s\u00a0]+(?:[,.]\d+)?", str(value or ""))
+    match = re.search(r"-?[\d\s\u00a0]+(?:[,.]\d+)?", str(value if value is not None else ""))
     if not match:
         return None
     try:
@@ -3836,56 +3836,33 @@ def _validate_construction_operational_result(result: dict) -> None:
 
 
 def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
-    """Collect current construction and apartment-sales snapshots for RF/Moscow."""
-    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    result = {"source": "construction_operational", "scraped_at": datetime.now().isoformat(timespec="seconds"),
-              "construction": [], "sales": []}
-    driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+    """Bootstrap missing actual months, refresh recent months, retain current data."""
+    from pipeline.downloaders.nashdom_operational_history import download_history
     try:
-        for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
-            driver, ready = _load_operational_region(driver, _build_construction_indicators_url(), "construction", label)
-            if not ready:
-                raise ValueError(f"construction region did not switch: {label}")
-            for mode_label in ("Жилая", "Общая"):
-                if not _click_area_mode(driver, mode_label):
-                    raise ValueError(f"construction area mode did not switch: {mode_label}")
-                snap = _read_construction_snapshot(driver)
-                snap["region_key"] = region_key
-                result["construction"].append(snap)
-
-        for region_key, label, search in (("rf", "Все", ""), ("msk", "Город Москва", "Москва")):
-            driver, ready = _load_operational_region(driver, _build_apartment_sales_url(), "sales", label)
-            if not ready:
-                raise ValueError(f"sales region did not switch: {label}")
-            snap = _parse_apartment_sales_html(driver.page_source, label)
-            snap["region_key"] = region_key
-            result["sales"].append(snap)
-    except (TimeoutException, WebDriverException, ValueError) as exc:
-        print(f"  ❌ construction_operational: {exc}")
+        result = download_history(DOWNLOAD_DIR)
+    except (OSError, ValueError, RuntimeError, TimeoutException, WebDriverException) as exc:
+        print(f"  construction_operational failed: {exc}")
         return [], False
-    finally:
-        try:
-            driver.quit()
-        except WebDriverException:
-            pass
-
-    try:
-        _validate_construction_operational_result(result)
-    except ValueError as exc:
-        print(f"  ❌ construction_operational: {exc}")
-        return [], False
-    date_str = datetime.now().strftime("%Y%m%d")
-    target = DOWNLOAD_DIR / f"construction_operational_{date_str}.json"
-    _write_json_atomic(target, result)
-    report_dates = [row.get("report_date", "") for row in result["construction"] + result["sales"]]
+    if not result["collected"]:
+        return result["new_files"], False
+    previous = state.get("construction_operational") or {}
     state["construction_operational"] = {
-        "report_date": max((date for date in report_dates if date), default=""),
-        "filename": target.name,
-        "scraped_at": result["scraped_at"],
-        "complete": True,
+        **previous,
+        "filename": Path(result["current_file"]).name if result["current_file"] else previous.get("filename", ""),
+        "history_file": Path(result["history_file"]).name if result["history_file"] else "",
+        "history_coverage": result["coverage"],
+        "last_checked_at": datetime.now().isoformat(timespec="seconds"),
+        "complete": result["complete"],
+        "collected": result["collected"],
+        "errors": result["errors"],
+        "current_publication_error": result["current_publication_error"],
     }
-    print(f"  ✅ {target.name}: строительство РФ/Москва + реализация РФ/Москва")
-    return [target], True
+    if result["current_file"]:
+        payload = json.loads(Path(result["current_file"]).read_text(encoding="utf-8"))
+        dates = [row.get("report_date") for block in ("construction", "sales") for row in payload[block]]
+        dates = [date for date in dates if date]
+        state["construction_operational"]["report_date"] = max(dates, key=lambda d: datetime.strptime(d, "%d.%m.%Y")) if dates else ""
+    return result["new_files"], result["complete"]
 
 
 

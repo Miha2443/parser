@@ -28,7 +28,7 @@ class PublicationTests(unittest.TestCase):
             (source / "_archive").mkdir()
             (source / "_archive/old.xlsx").write_bytes(b"archive")
             (source / "partial.crdownload").write_bytes(b"partial")
-            for directory in (".fedstat_resume", ".source-staging-interrupted", "_debug"):
+            for directory in (".fedstat_resume", ".construction_history", ".source-staging-interrupted", "_debug"):
                 (source / directory).mkdir()
                 (source / directory / "working.xlsx").write_bytes(b"private working data")
             (source / ".download_receipts").mkdir()
@@ -39,7 +39,7 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual((target / original.name).read_bytes(), b"old workbook")
             self.assertFalse((target / "_archive").exists())
             self.assertFalse((target / "partial.crdownload").exists())
-            for directory in (".fedstat_resume", ".source-staging-interrupted", "_debug"):
+            for directory in (".fedstat_resume", ".construction_history", ".source-staging-interrupted", "_debug"):
                 self.assertFalse((target / directory).exists())
             self.assertEqual((target / ".download_receipts/input.xlsx.json").read_text(), "confirmed provenance")
 

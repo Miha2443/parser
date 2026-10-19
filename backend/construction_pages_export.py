@@ -43,14 +43,29 @@ def export_workbook(payload):
     sheet("Notes", ["Note"], [[note] for note in payload["notes"]])
     if "permits" in payload:
         selection = payload["selection"]
-        sheet("Selection", ["Field", "Value"], list(selection.items()))
+        sheet("Selection", ["Field", "Value"], [[path.lstrip("/").replace("/", "."), value]
+                                                  for path, _, value in _leaves(selection)])
+        sheet("Controls", ["JSON pointer", "Type", "Value"], list(_leaves(payload["controls"])))
         table = payload["permits"]
-        sheet("Permits", [col["label"] for col in table["columns"]] or ["No data"],
+        sheet("Permits", ["Исходный итог, не обязательно полный год" if col["id"] == "За год, тыс. м²" else col["label"]
+                          for col in table["columns"]] or ["No data"],
               [[row.get(col["id"]) for col in table["columns"]] for row in table["rows"]])
         chart = table["chart"]
-        sheet("Permit Chart", ["Year", "Period", "Remainder", "Total", "Growth pct"],
+        sheet("Permit Chart (Legacy)", ["Year", "Raw period", "Legacy remainder (not presentation)",
+                                          "Raw source total (may be partial)", "Raw growth pct"],
               [[year] + [chart[field][index]["value"] for field in ("period", "remainder", "totals", "growth")]
                for index, year in enumerate(chart["x"])] if chart else [])
+        presentation = table["presentation"]["rows"]
+        presentation_fields = ["year", "selected", "annualActual", "annualForecast", "basis", "difference", "remainder",
+                               "growth", "periodComplete", "annualComplete", "observedThrough"]
+        sheet("Permit Presentation", presentation_fields, [[row.get(field) for field in presentation_fields] for row in presentation])
+        sheet("Permit Evidence", ["Year", "Evidence"], [[row["year"], ref] for row in presentation for ref in row["evidence"]])
+        coverage = payload["controls"]["structure"]["coverage"]
+        sheet("Structure Coverage", ["Block", "Year", "Months", "Complete months", "Full year", "Observed through"],
+              [[row["blockId"], row["year"], ",".join(map(str, row["months"])), ",".join(map(str, row["completeMonths"])),
+                row["annualComplete"], row["observedThrough"]] for row in coverage])
+        sheet("Structure Evidence", ["Block", "Year", "Evidence"],
+              [[row["blockId"], row["year"], ref] for row in coverage for ref in row["evidence"]])
         forecast = payload["forecast"]
         fields = ["year", "value", "housing_living", "housing_total", "mop_embedded", "nonresidential",
                   "offices", "industry", "social", "trade", "hotels", "other"]
@@ -61,10 +76,11 @@ def export_workbook(payload):
         sheet("Forecast Notes", ["Field", "Value"], [["unit", forecast["unit"]], ["unitBasis", forecast["unitBasis"]]] +
               [["note", note] for note in forecast["notes"]])
         for index, block in enumerate(payload["breakdowns"], 1):
-            sheet(f"Breakdown {index}", [column["label"] for column in block["columns"]],
-                  [[row.get(column["id"]) for column in block["columns"]] for row in block["rows"]])
+            sheet(f"Breakdown {index}", [column["label"] for column in block["columns"]] + ["periodComplete", "annualComplete"],
+                  [[row.get(column["id"]) for column in block["columns"]] + [row["periodComplete"], row["annualComplete"]]
+                   for row in block["rows"]])
             sheet(f"Breakdown {index} Notes", ["Field", "Value"],
-                  [[key, block[key]] for key in ("id", "title", "unit", "periodLabel")] + [["note", note] for note in block["notes"]])
+                  [[key, block[key]] for key in ("id", "title", "unit", "periodLabel", "aggregateField")] + [["note", note] for note in block["notes"]])
     else:
         sheet("Region", ["Field", "Value"], list(payload["region"].items()))
         for block in ("construction", "sales"):

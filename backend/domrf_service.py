@@ -57,6 +57,19 @@ def _reject_constant(value):
     raise ValueError(f"Nonfinite JSON constant: {value}")
 
 
+def _collected_ns(row, payload, fallback):
+    for value in (row.get("collected_at"), payload.get("scraped_at")):
+        if not isinstance(value, str):
+            continue
+        try:
+            collected = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if collected.tzinfo is not None:
+                return int(collected.timestamp() * 1_000_000_000)
+        except (ValueError, OverflowError, OSError):
+            pass
+    return fallback
+
+
 class DomrfService:
     def __init__(self, context: DataContext, check_interval: float = 5):
         self.context = context
@@ -69,7 +82,8 @@ class DomrfService:
     def _inputs(self):
         access = DataAccess(self.context)
         files = sorted({path for path in access.source_files("construction_operational")
-                        if path.suffix.lower() == ".json" and path.name.startswith("construction_operational_")})
+                        if path.suffix.lower() == ".json" and path.name.startswith("construction_operational_")}
+                       | set(access.source_files("construction_history")))
         signatures = tuple(file_signature(path) for path in files)
         if not files or any(signature[1] is None for signature in signatures):
             raise SourceUnavailable("DOM.RF JSON snapshots are missing")
@@ -114,7 +128,8 @@ class DomrfService:
                 raise SourceUnavailable("Duplicate sales snapshot within one file")
             snapshot = grouped.setdefault(key, {"period": period, "label": label, "dates": set(),
                                                 "metrics": {}, "sourceFile": self._relative(path),
-                                                "mtime": signature[2]})
+                                                "mtime": signature[2], "freshness": _collected_ns(row, payload, signature[2])})
+            snapshot["freshness"] = max(snapshot["freshness"], _collected_ns(row, payload, signature[2]))
             date = _report_date(row.get("report_date"))
             snapshot["dates"].add(date)
             reference = f"{self._relative(path)}: {block}/{region}/{label}"
@@ -153,8 +168,8 @@ class DomrfService:
         latest = max(observed, key=lambda row: row["period"]) if observed else None
         unknown = [row for row in snapshots if row["period"] is None]
         # A newly published block without a period cannot silently inherit old chronology.
-        if unknown and (latest is None or max(row["mtime"] for row in unknown) > latest["mtime"]):
-            latest = max(unknown, key=lambda row: (row["mtime"], row["sourceFile"]))
+        if unknown and (latest is None or max(row["freshness"] for row in unknown) > latest["freshness"]):
+            latest = max(unknown, key=lambda row: (row["freshness"], row["sourceFile"]))
         history = []
         for row in sorted(observed, key=lambda row: row["period"]):
             item = {key: row[key] for key in ("period", "label", "reportDate", "sourceFile")}
@@ -179,10 +194,11 @@ class DomrfService:
             for block in ("construction", "sales"):
                 for region, snapshot in self._snapshots(payload, block, path, signature, issues):
                     current = snapshots[region][block].get(snapshot["period"])
-                    if current is None or (snapshot["mtime"], snapshot["sourceFile"]) > (current["mtime"], current["sourceFile"]):
+                    if current is None or (snapshot["freshness"], snapshot["sourceFile"]) > (current["freshness"], current["sourceFile"]):
                         snapshots[region][block][snapshot["period"]] = snapshot
-        latest_path = max(zip(files, signatures), key=lambda pair: (pair[1][2], str(pair[0])))[0]
-        match = re.fullmatch(r"construction_operational_(\d{8})", latest_path.stem)
+        current_files = [(path, sig) for path, sig in zip(files, signatures) if re.fullmatch(r"construction_operational_\d{8}", path.stem)]
+        latest_path = max(current_files, key=lambda pair: (pair[1][2], str(pair[0])))[0] if current_files else None
+        match = re.fullmatch(r"construction_operational_(\d{8})", latest_path.stem) if latest_path else None
         source_date = None
         if match:
             try:
@@ -192,14 +208,15 @@ class DomrfService:
         metadata = {"schemaVersion": 1, "version": hashlib.sha256(repr(signatures).encode()).hexdigest(),
                     "generatedAt": datetime.now(timezone.utc).isoformat(),
                     "source": {"date": source_date, "files": [self._relative(path) for path in files],
-                               "fileEvidence": "selected", "issues": issues}}
+                               "fileEvidence": "selected", "issues": issues,
+                               "dateEvidence": "Дата файла относится к текущему срезу. Исторические наблюдения имеют собственные отчётные периоды и даты; время обновления накопительного файла не меняет их свежесть."}}
         generation = {}
         for region, blocks in snapshots.items():
             generation[region] = {**metadata, "region": {"id": region, "label": REGIONS[region]},
                                   **{block: self._block(list(rows.values()), block) for block, rows in blocks.items()},
                                   "notes": ["История содержит только наблюдавшиеся периоды зарегистрированных JSON; "
                                             "период определяется report_period, а не датой отчёта.",
-                                            "Одинаковый период: выбран полный снимок с последним mtime; поля разных "
+                                            "Одинаковый период: выбран полный снимок с последним временем сбора записи, иначе mtime; поля разных "
                                             "файлов не смешиваются. construction и sales имеют независимые периоды и даты.",
                                             "Площади construction living/total и sales *_thousand_m2: тыс. м²; *_pct: "
                                             "исходные проценты; price_per_m2_rub: руб./м²; funds_million_rub: млн руб. "

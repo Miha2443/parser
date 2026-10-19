@@ -2,18 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { ApiError, request } from './data.ts';
-import { permitChartOption } from './annualConstructionData.ts';
 import { breakdownChart, breakdownOption, constructionHistoryChart, constructionHistoryRows, constructionRegion, domRfForecastSelection, domRfUrl, forecastBasisNote, forecastFields, legacySalesForecastSeed, loadDomRfData, loadPermitsData, loadPermitsSelection, observedRange, permitKindChange, permitRequestFilters, permitsMainOption, permitsMainRows, permitsUrl, readDomRfData, readPermitsData, readinessChartOption, realizationDonutOption, realizationHistoryOption, realizationHistoryRows } from './constructionPagesData.ts';
+import { breakdownReconciliation, permitAnnualBasis, permitBreakdownRows, permitCoverageComplete, permitGrowth, permitRemainder } from './permitPresentation.ts';
 
 const metadata = () => ({ schemaVersion: 1, version: 'unit-test + version', generatedAt: '2026-10-19T08:00:00.123456+03:00', source: { date: '2026-10-16', files: ['selected/source.xlsx'], fileEvidence: 'selected', issues: [{ level: 'warning', message: 'Source warning <not markup>' }] } });
 function block(id, fields) {
-  const rows = [{ year: 2011, ...Object.fromEntries(fields.map((field, i) => [field, i === 0 ? 0 : i === 1 ? null : 1234.567890123])) }, { year: 2026, ...Object.fromEntries(fields.map((field, i) => [field, 1000 + i])) }];
-  return { id, title: id, unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', columns: [{ id: 'year', label: 'Год' }, ...fields.map(id => ({ id, label: id }))], rows, series: fields.map(id => ({ id, name: id === 'mop_embedded' ? 'МОП и встроенное нежильё' : id, points: rows.map(row => ({ x: String(row.year), y: row[id] })) })), notes: ['Independent historical basis, not equal to monthly main report.'] };
+  const rows = [{ year: 2011, periodComplete: true, annualComplete: true, ...Object.fromEntries(fields.map((field, i) => [field, i === 0 ? 0 : i === 1 ? null : 1234.567890123])) }, { year: 2026, periodComplete: false, annualComplete: false, ...Object.fromEntries(fields.map((field, i) => [field, 1000 + i])) }];
+  return { id, title: id, unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', aggregateField: id === 'housing_components' ? 'housing_total' : id === 'area_composition' ? 'total' : 'nonresidential', columns: [{ id: 'year', label: 'Год' }, ...fields.map(id => ({ id, label: id }))], rows, series: fields.map(id => ({ id, name: id === 'mop_embedded' ? 'МОП и встроенное нежильё' : id, points: rows.map(row => ({ x: String(row.year), y: row[id] })) })), notes: ['Independent historical basis, not equal to monthly main report.'] };
 }
 const breakdowns = () => [block('housing_components', ['living', 'mop_embedded', 'housing_total']), block('nonresidential_historical', ['nonresidential', 'offices', 'industry', 'social', 'trade', 'hotels', 'other']), block('nonresidential_native', ['nonresidential', 'native_a', 'native_b', 'unknown']), block('area_composition', ['living', 'mop_embedded', 'nonresidential', 'total'])];
 function permitsFixture() {
   const rows = [{ 'Год': 2011, 'За год, тыс. м²': 1234.567890123, 'С начала года, тыс. м²': null, 'Изменение, %': null }, { 'Год': 2026, 'За год, тыс. м²': null, 'С начала года, тыс. м²': 0, 'Изменение, %': -100 }];
-  return { ...metadata(), selection: { permitKind: 'housing', month: 9 }, controls: { permitKinds: [{ id: 'housing', label: 'Жильё' }, { id: 'nonresidential', label: 'Нежильё' }, { id: 'total', label: 'Всего' }], monthsByKind: { housing: [1, 9], nonresidential: [9], total: [1, 9] } }, permits: { region: 'Москва', unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', columns: Object.keys(rows[0]).map(id => ({ id, label: id })), rows, chart: { x: ['2011', '2026'], period: [{ value: null }, { value: 0 }], remainder: [{ value: 1234.567890123 }, { value: null }], totals: [{ value: 1234.567890123 }, { value: 0 }], growth: [{ value: null }, { value: -100 }] } }, forecast: { unit: 'тыс. м²', unitBasis: 'assumed_thousand_m2', source: { file: 'selected/forecast.xlsx', sheet: 'Прогнозы' }, rows: [2026, 2027].map((year, i) => ({ year, ...Object.fromEntries(forecastFields.map((f, j) => [f, i ? null : j === 0 ? 9876.543210123 : j === 1 ? 0 : null])), cells: { year: 'D2', housing_living: 'D3' } })), notes: ['No explicit unit header.'] }, breakdowns: breakdowns(), notes: ['Main notes'] };
+  const blocks = breakdowns(), allMonths = Array.from({ length: 12 }, (_, i) => i + 1);
+  const presentation = { rows: [{ year: 2011, selected: null, annualActual: 1234.567890123, annualForecast: null, basis: 'annual_observed', difference: null, remainder: null, growth: null, periodComplete: true, annualComplete: true, observedThrough: '2011-12-31', evidence: ['Confirmed annual'] }, { year: 2026, selected: 0, annualActual: null, annualForecast: 9876.543210123, basis: 'forecast', difference: 9876.543210123, remainder: 9876.543210123, growth: null, periodComplete: false, annualComplete: false, observedThrough: '2026-09-15', evidence: ['Partial September <source>'] }] };
+  return { ...metadata(), selection: { permitKind: 'housing', month: 9, structure: { mode: 'period', monthFrom: 1, monthTo: 9, yearFrom: 2011, yearTo: 2026 } }, controls: { permitKinds: [{ id: 'housing', label: 'Жильё' }, { id: 'nonresidential', label: 'Нежильё' }, { id: 'total', label: 'Всего' }], monthsByKind: { housing: [1, 9], nonresidential: [9], total: [1, 9] }, structure: { modes: [{ id: 'period', label: 'Выбранные месяцы' }, { id: 'annual', label: 'Полный год' }], years: Array.from({ length: 16 }, (_, i) => 2011 + i), months: allMonths, coverage: blocks.flatMap(b => [2011, 2026].map(year => ({ blockId: b.id, year, months: year === 2011 ? allMonths : allMonths.slice(0, 9), completeMonths: year === 2011 ? allMonths : allMonths.slice(0, 8), annualComplete: year === 2011, observedThrough: year === 2011 ? '2011-12-31' : '2026-09-15', evidence: ['Coverage evidence'] }))) } }, permits: { region: 'Москва', unit: 'тыс. м²', periodLabel: 'Январь–сентябрь', columns: Object.keys(rows[0]).map(id => ({ id, label: id })), rows, chart: { x: ['2011', '2026'], period: [{ value: null }, { value: 0 }], remainder: [{ value: 1234.567890123 }, { value: null }], totals: [{ value: 1234.567890123 }, { value: 0 }], growth: [{ value: null }, { value: -100 }] }, presentation }, forecast: { unit: 'тыс. м²', unitBasis: 'assumed_thousand_m2', source: { file: 'selected/forecast.xlsx', sheet: 'Прогнозы' }, rows: [2026, 2027].map((year, i) => ({ year, ...Object.fromEntries(forecastFields.map((f, j) => [f, i ? null : j === 0 ? 9876.543210123 : j === 1 ? 0 : null])), cells: { year: 'D2', housing_living: 'D3' } })), notes: ['No explicit unit header.'] }, breakdowns: blocks, notes: ['Main notes'] };
 }
 function domrfFixture(region = 'msk') {
   const metrics = { total_living_thousand_m2: 10001.123456789, sales_open_thousand_m2: 7500.25, sold_thousand_m2: 1234.567890123, sold_pct: 12, unsold_thousand_m2: 0, unsold_pct: 0, sales_not_open_thousand_m2: null, sales_not_open_pct: null, price_per_m2_rub: 441306.789, funds_million_rub: 3250869.123 };
@@ -37,6 +39,7 @@ test('permits schema preserves raw values, null/zero, cells and independent brea
   assert.deepEqual(raw, before);
   assert.deepEqual(data.permits.chart, raw.permits.chart);
   assert.deepEqual(data.permits.rows, raw.permits.rows);
+  assert.deepEqual(data.permits.presentation, raw.permits.presentation);
   assert.deepEqual(data.forecast, raw.forecast);
   assert.deepEqual(data.breakdowns, raw.breakdowns);
   assert.equal(data.forecast.rows[0].housing_living, 0);
@@ -53,36 +56,38 @@ test('permits schema rejects malformed controls, scope, units and nonfinite/miss
   }
 });
 
-test('separate annual forecast category leaves actuals, totals, growth and old hover unchanged', () => {
-  const data = readPermitsData(permitsFixture()), before = structuredClone(data), old = permitChartOption(data.permits, 'light'), option = permitsMainOption(data, 'light');
+test('annual forecast shares the actual year stack and ignores misleading legacy totals', () => {
+  const data = readPermitsData(permitsFixture()), before = structuredClone(data), option = permitsMainOption(data, 'light');
   assert.deepEqual(data, before);
-  assert.deepEqual(option.xAxis.data, ['2011', '2026', '2026 · прогноз']);
-  assert.equal(option.xAxis.data.includes('2027 · прогноз'), false);
-  assert.deepEqual(option.series[0].data, [...old.series[0].data, null]);
-  assert.deepEqual(option.series[1].data, [...old.series[1].data, null]);
-  assert.deepEqual(option.series[2].data, [null, null, 9876.543210123]);
-  assert.equal(option.series[2].stack, undefined);
-  assert.equal(option.series[2].itemStyle.color, 'transparent');
-  assert.equal(option.series[2].itemStyle.borderType, 'dashed');
-  const point = { name: '2026', seriesName: 'Факт', value: 0, dataIndex: 1, seriesIndex: 0 };
-  assert.equal(option.tooltip.formatter(point), old.tooltip.formatter(point));
-  const tooltip = option.tooltip.formatter({ ...point, name: '<2026> · прогноз', value: 9876.543210123, dataIndex: 2, seriesIndex: 2 });
-  assert.ok(tooltip.includes('assumed_thousand_m2') && tooltip.includes('нет явного заголовка') && tooltip.includes('&lt;2026&gt;'));
+  assert.deepEqual(option.xAxis.data, ['2011', '2026']);
+  assert.equal(option.series.length, 2);
+  assert.deepEqual(option.series[0].data, [null, 0]);
+  assert.deepEqual(option.series[1].data, [null, 9876.543210123]);
+  assert.equal(option.series[0].stack, option.series[1].stack);
+  assert.equal(option.series[1].itemStyle.color, '#b9bfc7');
+  assert.equal(option.series[1].itemStyle.borderType, undefined);
+  const tooltip = option.tooltip.formatter([{ dataIndex: 1 }]);
+  assert.ok(tooltip.includes('assumed_thousand_m2') && tooltip.includes('нет явного заголовка') && tooltip.includes('&lt;source&gt;'));
   assert.ok(forecastBasisNote.includes('не пересчитывается'));
+  data.permits.chart.totals[1].value = 999999999;
+  data.forecast.rows[0].value = 999999999;
   data.selection.month = 1;
-  assert.equal(permitsMainOption(data, 'dark').series[2].data.at(-1), 9876.543210123);
-  data.forecast.rows[0].value = 0;
-  assert.equal(permitsMainOption(data, 'light').series[2].data.at(-1), 0);
-  data.forecast.rows[0].value = null;
-  assert.equal(permitsMainOption(data, 'light').series.length, 2);
+  assert.equal(permitsMainOption(data, 'dark').series[1].data.at(-1), 9876.543210123);
+  data.permits.presentation.rows[1].annualForecast = 0;
+  assert.equal(permitsMainOption(data, 'light').series[1].data.at(-1), 0);
+  data.permits.presentation.rows[1].annualForecast = null;
+  assert.equal(permitsMainOption(data, 'light').series.length, 1);
 });
 
-test('permit CSV retains all actual fields and all forecast raw fields including empty years', () => {
+test('permit CSV exports explicit presentation, completion, provenance and version, never legacy annual sums', () => {
   const data = readPermitsData(permitsFixture()), rows = permitsMainRows(data);
-  assert.equal(rows.length, 1 + 2 * 5 + 2 * forecastFields.length);
-  assert.ok(rows.some(row => row[0] === 'Факт' && row[2] === 'Исходное значение периода' && row[3] === null));
-  assert.ok(rows.some(row => row[0] === 'Прогноз' && row[1] === 2027 && row[2] === 'value' && row[3] === null));
-  assert.ok(rows.some(row => row[2] === 'housing_living' && row[3] === 0 && row[5] === 'assumed_thousand_m2'));
+  assert.equal(rows.length, 3);
+  assert.equal(rows[2][1], 0); assert.equal(rows[2][2], null); assert.equal(rows[2][3], 9876.543210123);
+  assert.equal(rows[2][8], 'Нет'); assert.equal(rows[2][9], 'Нет'); assert.equal(rows[2][10], '2026-09-15');
+  assert.equal(rows[2][12], 'assumed_thousand_m2'); assert.equal(rows[2][13], data.version);
+  assert.ok(!rows[0].some(cell => cell === 'За год, тыс. м²'));
+  assert.ok(rows[0][2].includes('Подтверждённый январь–декабрь'));
+  assert.deepEqual(data.permits.rows, permitsFixture().permits.rows);
 });
 
 test('breakdown stacks exclude aggregate series even if a provider includes them; source rows remain complete', () => {
@@ -91,12 +96,108 @@ test('breakdown stacks exclude aggregate series even if a provider includes them
     const before = structuredClone(b), chart = breakdownChart(b), option = breakdownOption(b, 'light');
     assert.deepEqual(chart.series.map(s => s.id), expected[i]);
     assert.equal(option.series.length, expected[i].length);
-    assert.ok(option.series.every(s => s.stack === b.id));
+    assert.ok(option.series.every(s => s.stack === 'permit-area'));
+    assert.ok(!option.series.some(s => s.id === b.aggregateField));
     assert.deepEqual(b, before);
     assert.ok(b.columns.length > chart.series.length);
-    assert.equal(option.tooltip.trigger, 'item');
-    assert.ok(option.tooltip.formatter({ seriesIndex: 0, name: '2011', seriesName: '<test>', value: 1 }).includes('тыс. м²'));
+    assert.equal(option.tooltip.trigger, 'axis');
+    assert.ok(option.tooltip.formatter({ dataIndex: 0 }).includes('тыс. м²'));
   });
+});
+
+test('permit remainder needs a known annual basis AND selected observation, prefers forecast, and never clips overplan', () => {
+  const data = readPermitsData(permitsFixture()), row = data.permits.presentation.rows[1];
+  row.selected = 120; row.annualForecast = 100;
+  row.annualActual = 200; row.annualComplete = true;
+  assert.equal(permitAnnualBasis(row).kind, 'forecast'); assert.equal(permitRemainder(row), 0);
+  let option = permitsMainOption(data, 'light');
+  assert.equal(option.series[0].data[1], 120); assert.equal(option.series[1].data[1], 0);
+  assert.ok(option.tooltip.formatter({ dataIndex: 1 }).includes('Превышение годового ориентира: 20'));
+  row.annualForecast = null;
+  assert.equal(permitRemainder(row), 80); assert.equal(permitAnnualBasis(row).kind, 'annual_observed');
+  assert.ok(permitsMainOption(data, 'light').tooltip.formatter({ dataIndex: 1 }).includes('Подтверждённый итог января–декабря'));
+  row.annualComplete = false;
+  assert.equal(permitRemainder(row), null);
+  option = permitsMainOption(data, 'light');
+  assert.equal(option.series.length, 1); assert.equal(option.series[0].data[1], 120);
+  assert.ok(option.tooltip.formatter({ dataIndex: 1 }).includes('остаток не определён'));
+  row.selected = null; row.annualForecast = 100;
+  assert.equal(permitRemainder(row), null); assert.equal(permitsMainOption(data, 'light').graphic.length, 0);
+  const raw = permitsFixture(); raw.permits.presentation.rows[1].annualActual = 100;
+  assert.throws(() => readPermitsData(raw));
+});
+
+test('permit presentation adds forecast-only years only if supplied by presentation and never interprets them as observed selected', () => {
+  const data = readPermitsData(permitsFixture()), row = data.permits.presentation.rows[1];
+  data.permits.presentation.rows = [{ ...row, year: 2026, selected: null }];
+  const option = permitsMainOption(data, 'light');
+  assert.deepEqual(option.xAxis.data, ['2026']); assert.deepEqual(option.series[0].data, [null]);
+  assert.equal(option.series.length, 1); assert.ok(option.tooltip.formatter({ dataIndex: 0 }).replace(/\s/g, '').includes('9876'));
+  assert.equal(permitsMainRows(data).length, 2);
+});
+
+test('permit growth is shown only for complete same-interval adjacent years with a nonzero previous value', () => {
+  const row = permitsFixture().permits.presentation.rows[1], previous = { ...row, year: 2025, selected: 100, periodComplete: true };
+  row.selected = 150; row.periodComplete = true; row.growth = 50;
+  assert.equal(permitGrowth([previous, row], row), 50);
+  previous.periodComplete = false; assert.equal(permitGrowth([previous, row], row), null);
+  previous.periodComplete = true; previous.year = 2024; assert.equal(permitGrowth([previous, row], row), null);
+  previous.year = 2025; previous.selected = 0; assert.equal(permitGrowth([previous, row], row), null);
+  previous.selected = 100; row.periodComplete = false; assert.equal(permitGrowth([previous, row], row), null);
+});
+
+test('permit structure coverage supports arbitrary inclusive month ranges, independent of main month and annual mode', () => {
+  const raw = permitsFixture(), coverage = raw.controls.structure.coverage.find(c => c.year === 2026);
+  assert.equal(permitCoverageComplete(coverage, 'period', 3, 5), true);
+  assert.equal(permitCoverageComplete(coverage, 'period', 8, 9), false);
+  assert.equal(permitCoverageComplete(coverage, 'annual', 3, 5), false);
+  assert.equal(permitCoverageComplete(undefined, 'period', 3, 5), false);
+  assert.equal(permitCoverageComplete(coverage, 'period', 5, 3), false);
+  raw.selection.month = 1;
+  raw.selection.structure = { mode: 'period', monthFrom: 3, monthTo: 5, yearFrom: 2020, yearTo: 2022 };
+  const data = readPermitsData(raw, raw.selection);
+  assert.equal(data.selection.month, 1); assert.deepEqual(data.selection.structure, raw.selection.structure);
+  assert.equal(data.breakdowns[0].rows[1].periodComplete, false);
+  const csv = permitBreakdownRows(data.breakdowns[0], data.version);
+  assert.ok(csv[0].some(cell => cell.includes('итог источника'))); assert.equal(csv[2].at(-3), 'Нет'); assert.equal(csv[2].at(-1), data.version);
+  const defaults = permitsFixture(); defaults.selection.month = 1; defaults.selection.structure.monthTo = 10;
+  assert.deepEqual(permitRequestFilters(new URLSearchParams('month=1')), { permitKind: 'housing', month: 1 });
+  assert.equal(readPermitsData(defaults, { permitKind: 'housing', month: 1 }).selection.structure.monthTo, 10);
+});
+
+test('permit structure source aggregate stays a label, discrepancies are disclosed without fake balancing', () => {
+  const block = breakdowns()[3], option = breakdownOption(block, 'light', {}, permitsFixture().controls.structure.coverage);
+  const totals = breakdownReconciliation(block, 1);
+  assert.equal(totals.total, 1003); assert.equal(totals.sum, 3003); assert.equal(totals.difference, -2000);
+  assert.equal(option.graphic[1].children[0].style.text.replace(/\s/g, ''), '1003,0');
+  assert.ok(option.tooltip.formatter({ dataIndex: 1 }).includes('Расхождение итога и суммы компонентов'));
+  assert.ok(option.tooltip.formatter({ dataIndex: 1 }).includes('Неполный') || option.tooltip.formatter({ dataIndex: 1 }).includes('Период неполный'));
+  assert.ok(!option.series.some(s => /balance|total/.test(s.id)));
+});
+
+test('permit labels stay on responsive plot, omit inside values that cannot fit, and survive every series hidden', () => {
+  const data = readPermitsData(permitsFixture());
+  data.permits.presentation.rows = Array.from({ length: 16 }, (_, i) => ({ ...data.permits.presentation.rows[1], year: 2011 + i, selected: 1000 + i }));
+  for (const width of [160, 240, 320, 375, 768, 1280, 1920]) {
+    const option = permitsMainOption(data, 'light', { width, height: 390 });
+    assert.equal(option.xAxis.axisLabel.interval, 0); assert.equal(option.dataZoom, undefined);
+    assert.equal(option.graphic.length, 16); assert.equal(option.series.length, 2);
+    assert.ok(option.graphic.every(g => g.x > 0 && g.x < width && g.y > 0 && g.y < 390));
+    const hidden = permitsMainOption(data, 'light', { width, height: 390, hidden: option.series.map(s => s.name) });
+    assert.equal(hidden.graphic.length, 16); assert.equal(hidden.yAxis.max, option.yAxis.max);
+    assert.equal(hidden.series.length, 2); assert.equal(hidden.graphic[0].children[0].style.text, option.graphic[0].children[0].style.text);
+    assert.equal(option.series[0].label.formatter({ value: 0 }), '');
+    if (width <= 375) assert.equal(option.series[0].label.formatter({ value: 1000 }), '');
+    if (width === 768) assert.equal(option.series[0].label.formatter({ value: 1000.2 }), '1000');
+  }
+});
+
+test('permit parser rejects invalid structure ranges, coverage, presentation flags, basis and aggregate fields', () => {
+  for (const edit of [r => r.selection.structure.monthFrom = 10, r => r.selection.structure.yearFrom = 2027, r => r.controls.structure.coverage[0].completeMonths.push(12), r => r.controls.structure.coverage[0].annualComplete = 'true', r => r.controls.structure.coverage[0].observedThrough = '2026-10', r => r.permits.presentation.rows[1].basis = 'annual_observed', r => r.permits.presentation.rows[1].selected = undefined, r => r.permits.presentation.rows[1].growth = Infinity, r => r.permits.presentation.rows[1].annualComplete = 0, r => r.breakdowns[0].aggregateField = 'missing', r => r.breakdowns[0].rows[0].periodComplete = 1]) {
+    const raw = permitsFixture(); edit(raw); assert.throws(() => readPermitsData(raw));
+  }
+  const raw = permitsFixture();
+  assert.throws(() => readPermitsData(raw, { permitKind: 'housing', month: 9, structure: { monthFrom: 3 } }));
 });
 
 test('DOM.RF parser keeps region, source units, independent dates and only observed periods', () => {
@@ -203,7 +304,7 @@ test('permit 404 reconciliation discovers the current default once and preserves
     assert.equal(params.get('month'), '12');
     params.set('month', String(data.selection.month));
     assert.equal(params.get('table'), 'kept'); assert.equal(params.get('note'), 'a+b');
-    assert.equal(permitsUrl(data.selection), '/api/v1/construction/permits?permit_kind=housing&month=9');
+    assert.equal(new URL(permitsUrl(data.selection), 'http://localhost').searchParams.get('structure_month_to'), '9');
   } finally { globalThis.fetch = original; }
 });
 
@@ -219,10 +320,68 @@ test('persistent permit 404 stops after one discovery request, and default disco
   } finally { globalThis.fetch = original; }
 });
 
+test('permit structure scope appears in requests, canonical cache keys and pinned exports independently of main month', () => {
+  const query = new URLSearchParams('permit_kind=total&month=1&structure_mode=annual&structure_month_from=3&structure_month_to=5&structure_year_from=2020&structure_year_to=2022&note=keep');
+  const filters = permitRequestFilters(query), expected = { permitKind: 'total', month: 1, structure: { mode: 'annual', monthFrom: 3, monthTo: 5, yearFrom: 2020, yearTo: 2022 } };
+  assert.deepEqual(filters, expected);
+  const url = new URL(permitsUrl(filters, 'v + x'), 'http://localhost');
+  assert.equal(url.searchParams.get('month'), '1'); assert.equal(url.searchParams.get('structure_month_from'), '3');
+  assert.equal(url.searchParams.get('structure_month_to'), '5'); assert.equal(url.searchParams.get('structure_year_from'), '2020');
+  assert.equal(url.searchParams.get('structure_year_to'), '2022'); assert.equal(url.searchParams.get('structure_mode'), 'annual');
+  assert.equal(url.searchParams.get('required_version'), 'v + x'); assert.equal(url.searchParams.get('note'), null);
+  assert.notEqual(permitsUrl(filters), permitsUrl({ ...filters, structure: { ...filters.structure, monthFrom: 4 } }));
+  assert.deepEqual(permitKindChange(permitsFixture().controls, 1, 'total'), { permit_kind: 'total', month: '1' });
+  assert.equal(query.get('note'), 'keep');
+});
+
+test('unavailable structure year without main month gets exactly one unfiltered discovery and one compatible-view request', async () => {
+  const original = globalThis.fetch, controller = new AbortController(), calls = [];
+  const params = new URLSearchParams('permit_kind=housing&structure_mode=annual&structure_month_from=3&structure_month_to=5&structure_year_from=1900&structure_year_to=2022&note=a%2Bb');
+  try {
+    globalThis.fetch = async (url, options) => {
+      calls.push([url, options]);
+      if (calls.length === 1) return new Response('unavailable year', { status: 404 });
+      const raw = permitsFixture();
+      if (calls.length === 3) raw.selection.structure = { mode: 'annual', monthFrom: 3, monthTo: 5, yearFrom: 2011, yearTo: 2022 };
+      return new Response(JSON.stringify(raw));
+    };
+    const data = await loadPermitsSelection(permitRequestFilters(params), controller.signal);
+    assert.equal(calls.length, 3); assert.equal(calls[1][0], '/api/v1/construction/permits?permit_kind=housing');
+    assert.deepEqual(data.selection.structure, { mode: 'annual', monthFrom: 3, monthTo: 5, yearFrom: 2011, yearTo: 2022 });
+    assert.equal(data.selection.month, 9); assert.equal(params.get('note'), 'a+b');
+    assert.ok(calls.every(call => call[1].signal === controller.signal));
+    assert.equal(calls[2][0], permitsUrl(data.selection));
+  } finally { globalThis.fetch = original; }
+});
+
+test('structure 404 recovery retains supported main January and valid structural filters, but stops after a failed final view', async () => {
+  const original = globalThis.fetch, calls = [], controller = new AbortController();
+  try {
+    globalThis.fetch = async url => {
+      calls.push(url);
+      if (calls.length === 1) return new Response('unavailable year', { status: 404 });
+      const raw = permitsFixture();
+      if (calls.length === 3) { raw.selection.month = 1; raw.selection.structure = { mode: 'period', monthFrom: 3, monthTo: 5, yearFrom: 2020, yearTo: 2026 }; }
+      return new Response(JSON.stringify(raw));
+    };
+    const filters = { permitKind: 'housing', month: 1, structure: { mode: 'period', monthFrom: 3, monthTo: 5, yearFrom: 2020, yearTo: 2099 } };
+    const data = await loadPermitsSelection(filters, controller.signal);
+    assert.equal(calls.length, 3); assert.equal(data.selection.month, 1); assert.equal(data.selection.structure.monthFrom, 3); assert.equal(data.selection.structure.yearFrom, 2020);
+    calls.length = 0;
+    globalThis.fetch = async url => { calls.push(url); return calls.length === 2 ? new Response(JSON.stringify(permitsFixture())) : new Response('still unavailable', { status: 404 }); };
+    await assert.rejects(loadPermitsSelection(filters, controller.signal), error => error instanceof ApiError && error.status === 404);
+    assert.equal(calls.length, 3);
+    calls.length = 0;
+    globalThis.fetch = async url => { calls.push(url); return new Response('missing', { status: 404 }); };
+    await assert.rejects(loadPermitsSelection({ permitKind: 'housing', structure: { yearFrom: 1900 } }, controller.signal), error => error.status === 404);
+    assert.deepEqual(calls, ['/api/v1/construction/permits?permit_kind=housing&structure_year_from=1900', '/api/v1/construction/permits?permit_kind=housing']);
+  } finally { globalThis.fetch = original; }
+});
+
 test('permit recovery never masks non-404 HTTP, network, schema or abort failures', async () => {
   const original = globalThis.fetch;
   try {
-    for (const fail of [() => new Response('unavailable', { status: 503 }), () => new Response('conflict', { status: 409 }), () => { throw new Error('offline'); }, () => new Response('{}')]) {
+    for (const fail of [() => new Response('unavailable', { status: 503 }), () => new Response('conflict', { status: 409 }), () => new Response('reversed interval', { status: 422 }), () => { throw new Error('offline'); }, () => new Response('{}')]) {
       let calls = 0; const controller = new AbortController();
       globalThis.fetch = async () => { calls++; return fail(); };
       await assert.rejects(loadPermitsSelection({ permitKind: 'housing', month: 12 }, controller.signal));

@@ -11,7 +11,7 @@
   1. nashdom_checker monitoring_2_0   (~1 мин, requests)
   2. nashdom_checker rasprodannost    (инкрементально; полный обход ~15-30 мин)
   3. nashdom_checker kvartirografia   (~5 мин агрегаты + ~90 мин per-dev обход)
-  4. nashdom_checker construction_operational (~2 мин)
+  4. nashdom_checker construction_operational (первый запуск: история с 2020 года)
   5. erzrf_checker top                (~5 мин)
   6. erzrf_checker cards              (~10 мин, по топ-100)
   → ПОСЛЕ всего: архивируется устаревшее в data/raw/realty/_archive/<date>/
@@ -107,7 +107,7 @@ SOURCE_TIMEOUT_MIN = {
     "monitoring":  5,
     "rasprod":     180,
     "kvart":       180,
-    "construction": 15,
+    "construction": 180,
     "erz-top":     15,
     "erz-cards":   30,
     "fedstat":     45,
@@ -129,7 +129,7 @@ SOURCE_PREFIXES = {
     "monitoring":  ["monitoring_2_0_"],
     "rasprod":     ["rasprodannost_"],
     "kvart":       ["kvartirografia_"],
-    "construction": ["construction_operational_"],
+    "construction": ["construction_operational_", "construction_history.json"],
     "erz-top":     ["top_obyem_", "top_developers_", "top_nakopl_",
                     "top_skorost_", "top_potreb_"],
     "erz-cards":   ["cards_", "card_"],
@@ -638,6 +638,8 @@ def classify_file(rel_with_prefix: str) -> str | None:
         ("monitoring_2_0", "Мониторинг 2.0"),
         ("kvartirografia", "Квартирография"),
         ("rasprodannost", "Распроданность"),
+        ("construction_history", "История ДОМ.РФ"),
+        ("construction_operational", "Строительство и реализация ДОМ.РФ"),
         ("top_obyem_vvoda", "ERZ ввод"),
         ("top_obyem_stroitelstva", "ERZ строительство"),
         ("top_nakopl_vvod", "ERZ накопл. ввод"),

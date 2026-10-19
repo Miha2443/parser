@@ -855,6 +855,8 @@ class DataAccess:
                     ["static_vvod_rs_*.xlsx"],
                 )
             )
+        if mart == "construction_history":
+            return self._raw_files(self.CONSTRUCTION_OPERATIONAL_PATHS, ["construction_history.json"])
         if mart == "vvod_static":
             # These loaders intentionally choose the first existing VVOD root.
             # Registry/freshness must describe that same input selection, not a

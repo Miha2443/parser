@@ -1,4 +1,4 @@
-"""Parser for the current-construction operational Nashdom snapshot."""
+"""Parser for current snapshots and independently dated operational history."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ from pipeline.parsers.common import DATA_COLUMNS, MONTHS
 
 
 def _num(value) -> float | None:
-    match = re.search(r"-?[\d\s\u00a0]+(?:[,.]\d+)?", str(value or ""))
+    match = re.search(r"-?[\d\s\u00a0]+(?:[,.]\d+)?", str(value if value is not None else ""))
     if not match:
         return None
     try:

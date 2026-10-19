@@ -54,7 +54,7 @@ async function download(page, button, filename) {
 async function hoverSeries(page, chart, names) {
   await chart.scrollIntoViewIfNeeded();
   const rect = await chart.boundingBox(), found = new Set();
-  for (let x = 0.12; x < 0.96 && found.size < names.length; x += 0.08) {
+  for (let x = 0.07; x < 1 && found.size < names.length; x += 0.04) {
     for (let y = 0.2; y < 0.92 && found.size < names.length; y += 0.08) {
       await page.mouse.move(rect.x + rect.width * x, rect.y + rect.height * y);
       await page.waitForTimeout(35);
@@ -65,6 +65,11 @@ async function hoverSeries(page, chart, names) {
   for (const name of names) assert.ok(found.has(name), `Missing segment hover ${name}`);
   await page.mouse.move(0, 0);
   checks.push({ hover: [...found] });
+}
+async function permitSelect(page, label, value) {
+  await page.getByLabel(label, { exact: true }).selectOption(String(value));
+  await page.locator('.permit-main canvas').waitFor({ timeout: 120000 });
+  await page.waitForFunction(() => !document.querySelector('.permits-page .cp-state'), undefined, { timeout: 120000 });
 }
 
 (async () => {
@@ -84,6 +89,10 @@ async function hoverSeries(page, chart, names) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await ready(page, '/home');
     assert.equal(await page.locator('main h1').innerText(), 'Аналитика строительной отрасли Москвы');
+    assert.equal(await page.locator('.home-industry > h2').innerText(), 'Отраслевые показатели');
+    assert.deepEqual(await page.locator('.home-industry [aria-label="Росстат"] a').evaluateAll(a => a.map(e => e.getAttribute('href'))), ['/economics/salary', '/economics/ipc', '/economics/accounts']);
+    assert.equal(await page.locator('.home-industry [aria-label="ЦБ РФ"] [aria-disabled="true"]').count(), 2);
+    assert.equal(await page.locator('.home-industry [aria-label="ЦБ РФ"] a').count(), 0);
     const group = page.locator('.nav-subgroup').filter({ has: page.getByRole('button', { name: 'Текущее строительство', exact: true }) });
     const button = group.getByRole('button', { name: 'Текущее строительство', exact: true });
     if (await button.getAttribute('aria-expanded') !== 'true') await button.click();
@@ -131,12 +140,39 @@ async function hoverSeries(page, chart, names) {
         await layout(page, `permits-${kind}-${width}`);
       }
     }
-    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Остаток до итога года']);
+    await permitSelect(page, 'Месяц разрешений', 5);
+    const structureTo = await page.getByLabel('Структура: месяц по', { exact: true }).inputValue();
+    await permitSelect(page, 'Структура: год с', 2020);
+    await permitSelect(page, 'Структура: год по', 2022);
+    await permitSelect(page, 'Структура: месяц с', 3);
+    await permitSelect(page, 'Структура: месяц по', 5);
+    assert.equal(await page.getByLabel('Месяц разрешений', { exact: true }).inputValue(), '5');
+    const currentQuery = new URL(page.url()).search;
+    const report = await (await page.request.get(base + '/api/v1/construction/permits' + currentQuery)).json();
+    const actualYear = report.permits.presentation.rows.find(r => r.year === 2026);
+    assert.equal(actualYear.basis, 'forecast');
+    assert.equal(actualYear.remainder, Math.max(0, actualYear.annualForecast - actualYear.selected));
+    assert.ok(report.breakdowns.every(b => b.rows.every(r => r.year >= 2020 && r.year <= 2022)));
+    assert.equal(report.selection.structure.monthFrom, 3);
+    assert.equal(report.selection.structure.monthTo, 5);
+    await permitSelect(page, 'Месяц разрешений', 1);
+    assert.equal(await page.getByLabel('Структура: месяц с', { exact: true }).inputValue(), '3');
+    assert.equal(await page.getByLabel('Структура: месяц по', { exact: true }).inputValue(), '5');
+    await permitSelect(page, 'Режим структуры', 'annual');
+    assert.equal(await page.getByLabel('Структура: месяц с', { exact: true }).isDisabled(), true);
+    await layout(page, 'permits-annual-2020-2022');
+    await permitSelect(page, 'Структура: год по', 2026);
+    await permitSelect(page, 'Структура: год с', 2026);
+    assert.equal(await page.locator('.permit-breakdowns .chart-canvas').count(), 0, 'Partial current year cannot be an annual total');
+    assert.ok((await page.locator('.permit-breakdowns').innerText()).includes('Полный год не подтверждён'));
+    await ready(page, '/construction/permits?permit_kind=housing&month=5');
+    assert.equal(await page.getByLabel('Структура: месяц по', { exact: true }).inputValue(), structureTo);
+    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Годовой прогноз', 'Остаток:']);
     const first = page.locator('.permit-main .chart-block');
     await first.locator('.data-toggle').click();
     const csv = await download(page, first.getByRole('button', { name: 'CSV', exact: true }), 'permits.csv');
     const csvText = fs.readFileSync(csv, 'utf8');
-    assert.ok(csvText.includes('Прогноз') && csvText.includes('Факт') && csvText.includes('assumed_thousand_m2'));
+    assert.ok(csvText.toLowerCase().includes('прогноз') && csvText.includes('Факт') && csvText.includes('assumed_thousand_m2'));
     await download(page, first.getByRole('button', { name: 'PNG', exact: true }), 'permits.png');
     const excel = await download(page, page.getByRole('button', { name: 'Скачать разрешения Excel', exact: true }), 'permits.xlsx');
     assert.equal(fs.readFileSync(excel).subarray(0, 2).toString(), 'PK');
@@ -188,8 +224,10 @@ async function hoverSeries(page, chart, names) {
     assert.equal(await page.locator('.domrf-realization [role="alert"]').count(), 0);
     await page.unroute('**/api/v1/sales**');
     const snapshot = await (await page.request.get(base + '/api/v1/construction/domrf?region=msk')).json();
-    snapshot.construction.history.unshift({ ...snapshot.construction.history[0], period: '2026-09', label: 'Fixture September', living: 0, total: null, reportDate: '2026-09-03' });
-    snapshot.sales.history.unshift({ ...snapshot.sales.history[0], period: '2026-07', label: 'Fixture July', reportDate: '2026-08-04', metrics: { ...snapshot.sales.history[0].metrics, sold_thousand_m2: 0, sold_pct: 0, price_per_m2_rub: 0 } });
+    const constructionFixture = { ...snapshot.construction.history[0], period: '2026-09', label: 'Fixture September', living: 0, total: null, reportDate: '2026-09-03' };
+    const salesFixture = { ...snapshot.sales.history[0], period: '2026-07', label: 'Fixture July', reportDate: '2026-08-04', metrics: { ...snapshot.sales.history[0].metrics, sold_thousand_m2: 0, sold_pct: 0, price_per_m2_rub: 0 } };
+    snapshot.construction.history = [constructionFixture, ...snapshot.construction.history.filter(h => h.period !== constructionFixture.period)];
+    snapshot.sales.history = [salesFixture, ...snapshot.sales.history.filter(h => h.period !== salesFixture.period)];
     await page.route('**/api/v1/construction/domrf?**', async r => {
       if (new URL(r.request().url()).searchParams.get('region') === 'rf') {
         await new Promise(resolve => setTimeout(resolve, 900));
@@ -213,7 +251,7 @@ async function hoverSeries(page, chart, names) {
     assert.equal(await page.getByLabel('Регион показателей', { exact: true }).inputValue(), 'msk');
     assert.ok((await page.locator('.domrf-construction').innerText()).includes('Город Москва'));
     await page.unroute('**/api/v1/construction/domrf?**');
-    checks.push({ independentProviders: true, independentPeriods: true, legacyPeriod: true, permits404: true, validMonthRetained: true, nullAndZero: true, abortedRegion: true, exports: 4, conflict409: true });
+    checks.push({ annualForecastRemainder: true, arbitraryMonthInterval: true, independentStructure: true, incompleteAnnualHidden: true, independentProviders: true, independentPeriods: true, legacyPeriod: true, permits404: true, validMonthRetained: true, nullAndZero: true, abortedRegion: true, exports: 4, conflict409: true });
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify({ checks, errors }, null, 2));
     console.log(JSON.stringify({ layouts: checks.filter(c => c.label).length, checks, errors, output }));

@@ -1,6 +1,5 @@
 import { ApiError, request } from './data.ts';
 import { number } from './format.ts';
-import { permitChartOption, permitChartRows } from './annualConstructionData.ts';
 import { readReportTable } from './commissioningData.ts';
 import { salesChartOption } from './salesData.ts';
 import type { ConstructionReport, PermitChart } from './annualConstructionData';
@@ -12,14 +11,19 @@ import type { Theme } from './types';
 export type PermitKind = 'housing' | 'nonresidential' | 'total';
 export type ConstructionRegion = 'msk' | 'rf';
 export type ConstructionPagesMetadata = { schemaVersion: 1; version: string; generatedAt: string; source: { date: string | null; files: string[]; issues: [string, string][]; fileEvidence?: 'selected' | 'candidates'; dateEvidence?: string } };
-export type PermitSelection = { permitKind: PermitKind; month: number };
+export type PermitStructureSelection = { mode: 'period' | 'annual'; monthFrom: number; monthTo: number; yearFrom: number; yearTo: number };
+export type PermitSelection = { permitKind: PermitKind; month: number; structure: PermitStructureSelection };
+export type PermitFilters = { permitKind: PermitKind; month?: number; structure?: Partial<PermitStructureSelection> };
+export type PermitCoverage = { blockId: string; year: number; months: number[]; completeMonths: number[]; annualComplete: boolean; observedThrough: string | null; evidence: string[] };
+export type PermitPresentationRow = { year: number; selected: number | null; annualActual: number | null; annualForecast: number | null; basis: 'forecast' | 'annual_observed' | 'none'; difference: number | null; remainder: number | null; growth: number | null; periodComplete: boolean; annualComplete: boolean; observedThrough: string | null; evidence: string[] };
 export const forecastFields = ['value', 'housing_living', 'housing_total', 'mop_embedded', 'nonresidential', 'offices', 'industry', 'social', 'trade', 'hotels', 'other'] as const;
 export type PermitForecastRow = { year: number; cells: Record<string, string> } & Record<typeof forecastFields[number], number | null>;
-export type PermitBreakdown = { id: string; title: string; unit: 'тыс. м²'; periodLabel: string; columns: { id: string; label: string }[]; rows: Record<string, number | null>[]; series: { id: string; name: string; points: { x: string; y: number | null }[] }[]; notes: string[] };
+export type PermitBreakdownRow = { year: number; periodComplete?: boolean; annualComplete?: boolean } & Record<string, number | null | boolean | undefined>;
+export type PermitBreakdown = { id: string; title: string; unit: 'тыс. м²'; periodLabel: string; aggregateField: string; columns: { id: string; label: string }[]; rows: PermitBreakdownRow[]; series: { id: string; name: string; points: { x: string; y: number | null }[] }[]; notes: string[] };
 export type PermitsData = ConstructionPagesMetadata & {
   selection: PermitSelection;
-  controls: { permitKinds: { id: PermitKind; label: string }[]; monthsByKind: Record<PermitKind, number[]> };
-  permits: ConstructionReport['permits'];
+  controls: { permitKinds: { id: PermitKind; label: string }[]; monthsByKind: Record<PermitKind, number[]>; structure: { modes: { id: 'period' | 'annual'; label: string }[]; years: number[]; months: number[]; coverage: PermitCoverage[] } };
+  permits: ConstructionReport['permits'] & { presentation: { rows: PermitPresentationRow[] } };
   forecast: { unit: 'тыс. м²'; unitBasis: 'assumed_thousand_m2'; source: { file: string | null; sheet: 'Прогнозы' }; rows: PermitForecastRow[]; notes: string[] };
   breakdowns: PermitBreakdown[]; notes: string[];
 };
@@ -64,9 +68,17 @@ function metadata(v: Obj): ConstructionPagesMetadata {
 }
 export function permitKind(v: unknown): PermitKind { if (v !== 'housing' && v !== 'nonresidential' && v !== 'total') throw invalid(); return v; }
 export function constructionRegion(params: URLSearchParams): ConstructionRegion { return params.get('region') === 'rf' ? 'rf' : 'msk'; }
-export function permitRequestFilters(params: URLSearchParams): { permitKind: PermitKind; month?: number } {
+export const permitStructureParams = { mode: 'structure_mode', monthFrom: 'structure_month_from', monthTo: 'structure_month_to', yearFrom: 'structure_year_from', yearTo: 'structure_year_to' } as const;
+export function permitRequestFilters(params: URLSearchParams): PermitFilters {
   const kind = params.get('permit_kind'), month = params.get('month');
-  return { permitKind: kind === 'nonresidential' || kind === 'total' ? kind : 'housing', ...(/^(?:[1-9]|1[0-2])$/.test(month ?? '') ? { month: Number(month) } : {}) };
+  const structure: Partial<PermitStructureSelection> = {};
+  const mode = params.get(permitStructureParams.mode);
+  if (mode === 'period' || mode === 'annual') structure.mode = mode;
+  for (const key of ['monthFrom', 'monthTo', 'yearFrom', 'yearTo'] as const) {
+    const value = params.get(permitStructureParams[key]);
+    if ((key.startsWith('month') ? /^(?:[1-9]|1[0-2])$/ : /^[1-9]\d{0,3}$/).test(value ?? '')) structure[key] = Number(value);
+  }
+  return { permitKind: kind === 'nonresidential' || kind === 'total' ? kind : 'housing', ...(/^(?:[1-9]|1[0-2])$/.test(month ?? '') ? { month: Number(month) } : {}), ...(Object.keys(structure).length ? { structure } : {}) };
 }
 export function permitKindChange(controls: PermitsData['controls'], month: number, nextKind: PermitKind): Record<string, string | null> {
   return { permit_kind: nextKind, month: controls.monthsByKind[nextKind].includes(month) ? String(month) : null };
@@ -79,9 +91,12 @@ export function domRfForecastSelection(params: URLSearchParams, seed: ReturnType
   const pending = seed?.region === constructionRegion(params) && !params.has('forecast_period') ? seed : null;
   return { period: params.get('forecast_period') || pending?.period || null, seed: pending };
 }
-export function permitsUrl(selection: { permitKind: PermitKind; month?: number }, version?: string) {
+export function permitsUrl(selection: PermitFilters, version?: string) {
   const p = new URLSearchParams({ permit_kind: selection.permitKind });
   if (selection.month !== undefined) p.set('month', String(selection.month));
+  for (const key of Object.keys(permitStructureParams) as (keyof PermitStructureSelection)[]) {
+    if (selection.structure?.[key] !== undefined) p.set(permitStructureParams[key], String(selection.structure[key]));
+  }
   if (version !== undefined) { if (!version || selection.month === undefined) throw invalid(); p.set('required_version', version); }
   return `/api/v1/construction/permits${version === undefined ? '' : '/export'}?${p}`;
 }
@@ -90,13 +105,30 @@ export function domRfUrl(region: ConstructionRegion, version?: string) {
   if (version !== undefined) { if (!version) throw invalid(); p.set('required_version', version); }
   return `/api/v1/construction/domrf${version === undefined ? '' : '/export'}?${p}`;
 }
-export function readPermitsData(value: unknown, expected?: { permitKind: PermitKind; month?: number }): PermitsData {
-  const v = obj(value), s = obj(v.selection), selection = { permitKind: permitKind(s.permitKind), month: int(s.month, 1, 12) };
+export function readPermitsData(value: unknown, expected?: PermitFilters): PermitsData {
+  const bool = (v: unknown) => { if (typeof v !== 'boolean') throw invalid(); return v; };
+  const mode = (v: unknown): PermitStructureSelection['mode'] => { if (v !== 'period' && v !== 'annual') throw invalid(); return v; };
+  const monthList = (v: unknown) => distinct(list(v, v => int(v, 1, 12)), n => n);
+  const v = obj(value), s = obj(v.selection), ss = obj(s.structure);
+  const structure = { mode: mode(ss.mode), monthFrom: int(ss.monthFrom, 1, 12), monthTo: int(ss.monthTo, 1, 12), yearFrom: int(ss.yearFrom), yearTo: int(ss.yearTo) };
+  if (structure.monthFrom > structure.monthTo || structure.yearFrom > structure.yearTo) throw invalid();
+  const selection = { permitKind: permitKind(s.permitKind), month: int(s.month, 1, 12), structure };
   if (expected && (expected.permitKind !== selection.permitKind || expected.month !== undefined && expected.month !== selection.month)) throw invalid();
+  if (expected?.structure && (Object.keys(expected.structure) as (keyof PermitStructureSelection)[]).some(key => expected.structure![key] !== structure[key])) throw invalid();
   const c = obj(v.controls), kinds = list(c.permitKinds, value => { const k = obj(value); return { id: permitKind(k.id), label: str(k.label) }; });
   if (kinds.map(k => k.id).join() !== 'housing,nonresidential,total') throw invalid();
   const rawMonths = obj(c.monthsByKind), monthsByKind = Object.fromEntries(kinds.map(k => [k.id, distinct(list(rawMonths[k.id], v => int(v, 1, 12)), n => n)])) as Record<PermitKind, number[]>;
   if (monthsByKind[selection.permitKind].length && !monthsByKind[selection.permitKind].includes(selection.month)) throw invalid();
+  const sc = obj(c.structure), structureControls = {
+    modes: distinct(list(sc.modes, value => { const m = obj(value); return { id: mode(m.id), label: str(m.label) }; }), m => m.id),
+    years: distinct(list(sc.years, v => int(v)), n => n), months: monthList(sc.months),
+    coverage: distinct(list(sc.coverage, value => {
+      const row = obj(value), months = monthList(row.months), completeMonths = monthList(row.completeMonths), annualComplete = bool(row.annualComplete);
+      if (completeMonths.some(m => !months.includes(m)) || annualComplete && completeMonths.length !== 12) throw invalid();
+      return { blockId: id(row.blockId), year: int(row.year), months, completeMonths, annualComplete, observedThrough: sourceDate(row.observedThrough), evidence: list(row.evidence, str) };
+    }), row => `${row.blockId}:${row.year}`),
+  };
+  if (!structureControls.modes.some(m => m.id === structure.mode) || structureControls.years.length && (!structureControls.years.includes(structure.yearFrom) || !structureControls.years.includes(structure.yearTo))) throw invalid();
   const p = obj(v.permits);
   if (p.region !== 'Москва' || p.unit !== 'тыс. м²') throw invalid();
   const table = readReportTable({ ...p, id: p.id ?? 'permits', title: p.title ?? 'Разрешения на строительство' });
@@ -107,6 +139,14 @@ export function readPermitsData(value: unknown, expected?: { permitKind: PermitK
     chart = { x, period: points(raw.period), remainder: points(raw.remainder), totals: points(raw.totals), growth: points(raw.growth) };
     if (x.length !== table.rows.length || x.some((x, i) => x !== String(table.rows[i]['Год']))) throw invalid();
   }
+  const presentation = { rows: distinct(list(obj(p.presentation).rows, (value): PermitPresentationRow => {
+    const row = obj(value), basis = row.basis;
+    if (basis !== 'forecast' && basis !== 'annual_observed' && basis !== 'none') throw invalid();
+    const annualActual = num(row.annualActual), annualForecast = num(row.annualForecast), annualComplete = bool(row.annualComplete);
+    if (annualActual !== null && !annualComplete) throw invalid();
+    if (basis !== (annualForecast !== null ? 'forecast' : annualActual !== null && annualComplete ? 'annual_observed' : 'none')) throw invalid();
+    return { year: int(row.year), selected: num(row.selected), annualActual, annualForecast, basis, difference: num(row.difference), remainder: num(row.remainder), growth: num(row.growth), periodComplete: bool(row.periodComplete), annualComplete, observedThrough: sourceDate(row.observedThrough), evidence: list(row.evidence, str) };
+  }), row => row.year) };
   const f = obj(v.forecast), fs = obj(f.source);
   if (f.unit !== 'тыс. м²' || f.unitBasis !== 'assumed_thousand_m2' || fs.sheet !== 'Прогнозы') throw invalid();
   const forecastRows = distinct(list(f.rows, value => {
@@ -116,15 +156,20 @@ export function readPermitsData(value: unknown, expected?: { permitKind: PermitK
   const breakdowns = distinct(list(v.breakdowns, value => {
     const b = obj(value); if (b.unit !== 'тыс. м²') throw invalid();
     const columns = distinct(list(b.columns, value => { const col = obj(value); return { id: id(col.id), label: str(col.label) }; }), c => c.id);
-    const rows = distinct(list(b.rows, value => { const row = numericRecord(value); int(row.year); if (columns.some(c => !Object.hasOwn(row, c.id))) throw invalid(); return row; }), row => row.year!);
+    const aggregateField = id(b.aggregateField);
+    if (!columns.some(c => c.id === aggregateField)) throw invalid();
+    const rows = distinct(list(b.rows, value => {
+      const raw = obj(value), row = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, key === 'periodComplete' || key === 'annualComplete' ? bool(value) : num(value)])) as PermitBreakdownRow;
+      int(row.year); if (columns.some(c => !Object.hasOwn(row, c.id) || typeof row[c.id] === 'boolean')) throw invalid(); return row;
+    }), row => row.year);
     const series = distinct(list(b.series, value => {
       const s = obj(value), key = id(s.id), points = list(s.points, value => { const p = obj(value); return { x: str(p.x), y: num(p.y) }; });
       if (!columns.some(c => c.id === key) || points.length !== rows.length || points.some((p, i) => p.x !== String(rows[i].year) || p.y !== rows[i][key])) throw invalid();
       return { id: key, name: str(s.name), points };
     }), s => s.id);
-    return { id: id(b.id), title: str(b.title), unit: 'тыс. м²' as const, periodLabel: str(b.periodLabel), columns, rows, series, notes: list(b.notes, str) };
+    return { id: id(b.id), title: str(b.title), unit: 'тыс. м²' as const, periodLabel: str(b.periodLabel), aggregateField, columns, rows, series, notes: list(b.notes, str) };
   }), b => b.id);
-  return { ...metadata(v), selection, controls: { permitKinds: kinds, monthsByKind }, permits: { ...table, region: p.region, unit: p.unit, periodLabel: str(p.periodLabel), chart }, forecast: { unit: f.unit, unitBasis: f.unitBasis, source: { file: fs.file === null ? null : str(fs.file), sheet: fs.sheet }, rows: forecastRows, notes: list(f.notes, str) }, breakdowns, notes: list(v.notes, str) };
+  return { ...metadata(v), selection, controls: { permitKinds: kinds, monthsByKind, structure: structureControls }, permits: { ...table, region: p.region, unit: p.unit, periodLabel: str(p.periodLabel), chart, presentation }, forecast: { unit: f.unit, unitBasis: f.unitBasis, source: { file: fs.file === null ? null : str(fs.file), sheet: fs.sheet }, rows: forecastRows, notes: list(f.notes, str) }, breakdowns, notes: list(v.notes, str) };
 }
 function readPeriod(value: unknown): DomRfPeriod | null { if (value === null) return null; const p = obj(value); return { id: p.id === null ? null : periodId(p.id), label: str(p.label), reportDate: sourceDate(p.reportDate) }; }
 export function readDomRfData(value: unknown, expected: ConstructionRegion): DomRfData {
@@ -134,13 +179,30 @@ export function readDomRfData(value: unknown, expected: ConstructionRegion): Dom
   const salesHistory = distinct(list(s.history, value => { const h = obj(value); return { period: periodId(h.period), label: str(h.label), reportDate: sourceDate(h.reportDate), metrics: numericRecord(h.metrics), sourceFile: str(h.sourceFile) }; }), h => h.period);
   return { ...metadata(v), region: { id: expected, label: str(r.label) }, construction: { period: readPeriod(c.period), metrics: { living: num(cm.living), total: num(cm.total) }, history: constructionHistory }, sales: { period: readPeriod(s.period), metrics: s.metrics === null ? null : numericRecord(s.metrics), history: salesHistory }, notes: list(v.notes, str) };
 }
-export async function loadPermitsData(selection: { permitKind: PermitKind; month?: number }, signal: AbortSignal) { return readPermitsData(await (await request(permitsUrl(selection), signal)).json(), selection); }
-export async function loadPermitsSelection(selection: { permitKind: PermitKind; month?: number }, signal: AbortSignal): Promise<PermitsData> {
+export async function loadPermitsData(selection: PermitFilters, signal: AbortSignal) { return readPermitsData(await (await request(permitsUrl(selection), signal)).json(), selection); }
+export function reconcilePermitFilters(selection: PermitFilters, discovery: PermitsData): PermitSelection {
+  const defaults = discovery.selection, controls = discovery.controls.structure, requested = selection.structure;
+  const structure = { ...defaults.structure };
+  if (requested) {
+    if (controls.modes.some(m => m.id === requested.mode)) structure.mode = requested.mode!;
+    for (const key of ['monthFrom', 'monthTo', 'yearFrom', 'yearTo'] as const) {
+      const values = key.startsWith('month') ? controls.months : controls.years;
+      if (requested[key] !== undefined && values.includes(requested[key]!)) structure[key] = requested[key]!;
+    }
+    if (structure.monthFrom > structure.monthTo) { structure.monthFrom = defaults.structure.monthFrom; structure.monthTo = defaults.structure.monthTo; }
+    if (structure.yearFrom > structure.yearTo) { structure.yearFrom = defaults.structure.yearFrom; structure.yearTo = defaults.structure.yearTo; }
+  }
+  return { permitKind: selection.permitKind, month: selection.month !== undefined && discovery.controls.monthsByKind[selection.permitKind].includes(selection.month) ? selection.month : defaults.month, structure };
+}
+export async function loadPermitsSelection(selection: PermitFilters, signal: AbortSignal): Promise<PermitsData> {
   try { return await loadPermitsData(selection, signal); }
   catch (error) {
-    if (signal.aborted || !(error instanceof ApiError) || error.status !== 404 || selection.month === undefined) throw error;
-    // One discovery request only. Its report already matches the canonical URL.
-    return loadPermitsData({ permitKind: selection.permitKind }, signal);
+    if (signal.aborted || !(error instanceof ApiError) || error.status !== 404 || selection.month === undefined && !selection.structure) throw error;
+    // Discover once, then fetch the compatible view directly, never recursively.
+    const discovery = await loadPermitsData({ permitKind: selection.permitKind }, signal);
+    if (signal.aborted) throw error;
+    const canonical = reconcilePermitFilters(selection, discovery);
+    return permitsUrl(canonical) === permitsUrl(discovery.selection) ? discovery : loadPermitsData(canonical, signal);
   }
 }
 export async function loadDomRfData(region: ConstructionRegion, signal: AbortSignal) { return readDomRfData(await (await request(domRfUrl(region), signal)).json(), region); }
@@ -148,33 +210,7 @@ export async function loadDomRfData(region: ConstructionRegion, signal: AbortSig
 export const exactNumber = (n: number | null | undefined) => n == null ? '—' : n.toLocaleString('ru-RU', { maximumFractionDigits: 20 });
 export const forecastBasisNote = 'Единица прогноза принята как тыс. м² (assumed_thousand_m2): на листе «Прогнозы» нет явного заголовка единицы. Прогноз годовой и не пересчитывается по выбранному месяцу.';
 export const escapeHtml = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-export function permitsMainOption(data: PermitsData, theme: Theme): EChartsCoreOption {
-  const base = permitChartOption(data.permits, theme), forecast = data.forecast.rows.filter(r => r.value !== null), n = data.permits.chart!.x.length;
-  if (!forecast.length) return base;
-  const actual = base.series as { data: unknown[]; label: { formatter: (p: { dataIndex: number; value: number }) => string } }[];
-  const oldTooltip = (base.tooltip as { formatter: (p: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => string }).formatter;
-  return { ...base,
-    xAxis: { ...(base.xAxis as object), data: [...data.permits.chart!.x, ...forecast.map(r => `${r.year} · прогноз`)] },
-    tooltip: { ...(base.tooltip as object), formatter: (p: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => p.seriesIndex < actual.length && p.dataIndex < n ? oldTooltip(p) : `<strong>${escapeHtml(p.name)}</strong><br/>${exactNumber(p.value)} тыс. м²<br/>${escapeHtml(forecastBasisNote)}` },
-    series: [...actual.map(s => ({ ...s, data: [...s.data, ...forecast.map(() => null)], label: { ...s.label, formatter: (p: { dataIndex: number; value: number }) => p.dataIndex < n ? s.label.formatter(p) : '' } })),
-      { type: 'bar', name: 'Годовой прогноз', barMaxWidth: 48, barGap: '-100%', data: [...Array(n).fill(null), ...forecast.map(r => r.value)], itemStyle: { color: 'transparent', borderColor: theme === 'light' ? '#187d7c' : '#58bcb5', borderWidth: 2, borderType: 'dashed' }, emphasis: { itemStyle: { color: theme === 'light' ? '#e4f3f0' : '#254541' } } }],
-  };
-}
-export function permitsMainRows(data: PermitsData): Cell[][] {
-  return [['Тип', 'Год', 'Период / показатель', 'Значение', 'Единица', 'Основание'], ...permitChartRows(data.permits).slice(1).flatMap(r => [
-    ['Факт', r[0], data.permits.periodLabel, r[1], data.permits.unit, ''], ['Факт', r[0], 'Остаток до итога года', r[2], data.permits.unit, ''], ['Факт', r[0], 'Итог / доступный период', r[3], data.permits.unit, ''], ['Факт', r[0], 'Изменение', r[4], '%', ''], ['Факт', r[0], 'Исходное значение периода', r[5], data.permits.unit, ''],
-  ] as Cell[][]), ...data.forecast.rows.flatMap(r => forecastFields.map(key => ['Прогноз', r.year, key, r[key], data.forecast.unit, data.forecast.unitBasis] as Cell[]))];
-}
-export function breakdownChart(data: PermitBreakdown): SalesChart {
-  // Aggregate columns remain in source tables/CSV; only disjoint components stack.
-  const ids: Record<string, string[]> = { housing_components: ['living', 'housing_living', 'mop_embedded'], nonresidential_historical: ['offices', 'industry', 'social', 'trade', 'hotels', 'other'], area_composition: ['living', 'housing_living', 'mop_embedded', 'nonresidential'] };
-  const series = data.series.filter(s => ids[data.id] ? ids[data.id].includes(s.id) : data.id === 'nonresidential_native' ? s.id !== 'nonresidential' && s.id !== 'total' : !['total', 'housing_total'].includes(s.id));
-  return { id: data.id, title: data.title, kind: 'bar', unit: data.unit, series: series.map(s => ({ ...s, unit: data.unit })) };
-}
-export function breakdownOption(data: PermitBreakdown, theme: Theme): EChartsCoreOption {
-  const option = salesChartOption(breakdownChart(data), theme);
-  return { ...option, series: (option.series as object[]).map(s => ({ ...s, stack: data.id })) };
-}
+export { permitsMainOption, permitsMainRows, breakdownChart, breakdownOption } from './permitPresentation.ts';
 export function observedRange<T extends { period: string }>(history: T[], from: string | null, to: string | null) {
   const sorted = [...history].sort((a, b) => a.period.localeCompare(b.period));
   const start = sorted.some(h => h.period === from) ? from! : sorted[0]?.period ?? '';

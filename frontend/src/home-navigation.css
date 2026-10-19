@@ -7,6 +7,13 @@
 .home-page .home-market-panel a span { min-width: 0; overflow-wrap: anywhere; }
 .home-page .home-market-panel a svg { flex-shrink: 0; color: var(--muted); }
 .home-page .home-market-panel a:hover { color: var(--accent); }
+.home-page .home-industry { padding-top: 26px; border-top: 1px solid var(--line); }
+.home-page .home-industry-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.home-page .home-pending-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.home-page .home-pending-link > span { min-width: 0; overflow-wrap: anywhere; }
+.home-page .home-pending-link > small { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.home-page .home-service { padding-top: 26px; border-top: 1px solid var(--line); }
+.home-page .home-service > nav { max-width: 620px; }
 .home-page .home-support-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 22px; border-top: 1px solid var(--line); }
 .dashboard-navigation .nav-group > .nav-heading { font-size: 16px; font-weight: 700; }
 .dashboard-navigation .nav-subgroup > .nav-heading { font-size: 14px; font-weight: 700; color: var(--text); padding-top: 12px; padding-bottom: 12px; }
@@ -24,6 +31,7 @@
   .home-page .home-market-panels { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
+  .home-page .home-industry-panels { grid-template-columns: minmax(0, 1fr); }
   .home-page .home-support-sections { grid-template-columns: minmax(0, 1fr); }
   .home-page .home-market-panel { padding: 18px; }
 }

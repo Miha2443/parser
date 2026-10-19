@@ -30,7 +30,7 @@ URLS = {
 FAMILIES = {"monitoring": "monitoring_2_0", "kvart": "kvartirografia", "rasprod": "rasprodannost",
             "construction": "construction_operational", "erz-top": "erzrf_top", "erz-cards": "erzrf_cards"}
 PREFIXES = {"monitoring": ("monitoring_2_0_",), "kvart": ("kvartirografia_",),
-            "rasprod": ("rasprodannost_",), "construction": ("construction_operational_",)}
+            "rasprod": ("rasprodannost_",), "construction": ("construction_operational_", "construction_history.json")}
 MAINTENANCE = re.compile(r"ведутся технические работы|сайт временно недоступен|сайт находится на техническом обслуживании|"
                          r"temporarily unavailable|under maintenance|scheduled maintenance|service unavailable", re.I)
 
@@ -422,6 +422,7 @@ def source_files(root, alias):
     else:
         files = set(access.source_files(FAMILIES[alias]))
         if alias == "construction":
+            files.update(access.source_files("construction_history"))
             files = {file for file in files if file.name.startswith(PREFIXES[alias])}
         if alias == "rasprod":
             files |= {file.with_suffix(suffix) for file in list(files)

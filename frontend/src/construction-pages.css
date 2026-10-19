@@ -68,7 +68,18 @@
 .cp-page .sales-segment-table th, .cp-page .sales-segment-table td { max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
 .cp-page .chart-canvas { width: 100%; max-width: 100%; min-width: 0; }
 .cp-page .chart-legend button { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
-.permit-main .chart-legend button:last-child i { border: 1px dashed #187d7c; }
+.permit-chart .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.permit-chart .chart-legend button { display: inline-flex; align-items: center; text-align: left; line-height: 1.6; white-space: normal; }
+.permit-chart .chart-legend button i { flex: 0 0 9px; }
+.permit-structure-controls > label { flex: 1 1 130px; width: 150px; }
+.permit-structure-controls > label:first-child { flex-basis: 200px; }
+.permit-controls select, .permit-structure-controls select { width: 100%; min-width: 0; max-width: 100%; }
+.permit-recovery { display: flex; justify-content: center; padding: 0 0 24px; }
+.permit-recovery button { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px 12px; font-size: 12px; white-space: normal; }
+.permit-overplan, .cp-note.permit-overplan { color: #c34e58; }
+.permits-page .chart-canvas { overflow: visible; }
+.permits-page .chart-data-panel .table-wrap { max-height: none; }
+.permits-page .chart-data-panel table { min-width: 720px; }
 .cp-page .chart-data-panel td, .cp-page .chart-data-panel th { max-width: 320px; white-space: normal; overflow-wrap: anywhere; }
 .cp-page .chart-data-panel .table-wrap { max-height: 420px; }
 .cp-page .chart-data-panel .table-wrap th { position: sticky; top: 0; }

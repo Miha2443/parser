@@ -39,17 +39,28 @@ order. `/construction/permits` separates Moscow permits from DOM.RF statistics;
 Old `/construction` and `/sales` bookmarks open the DOM.RF page. Existing API
 routes and their calculations remain available for compatibility.
 
-Permits retain the old main annual/YTD calculation. The object/month controls
-sit immediately above that chart. Additional composition charts identify their
-own historical sources; these are not rescaled to match corrected main totals.
-The annual outline forecast uses cached cells of monitoring sheet `Прогнозы`,
-not actual permits or a calculated remainder. Its unit is explicitly an assumed
-thousand square meters because the worksheet does not label it. Blank future
-years remain null. Missing separate MOP/embedded observations are not invented.
+Permits retain the original selected facts, but use `permits.presentation` for
+the corrected chart/KPIs. One bar per year contains the selected fact and gray
+remainder to its annual forecast, otherwise a confirmed full-year observation.
+An eight-/ten-month source sum is never a full-year reference. Without a reference
+there is no gray segment. Signed differences remain in tooltips/exports when
+actuals exceed the reference. Cached forecast cells of monitoring sheet `Прогнозы`
+are not recalculated. Their unit is explicitly an assumed thousand square meters
+because the worksheet does not label it; blank future years remain null.
+
+Composition has independent annual/period mode, year bounds and inclusive start/
+end months. March-May is March+April+May, not YTD. Full-year mode does not annualize
+the incomplete current year. These controls do not change the main chart's month.
+Source totals appear above bars; component labels appear inside when they fit.
+Aggregate totals are not stacked again. Historical sources remain identified
+and are never rescaled to force agreement with corrected main totals. Unknown
+month/year-only observations are not invented as January measurements.
 
 DOM.RF construction and realization use separate source periods and dates.
-Monthly realization bars contain only available JSON snapshots, not historical
-areas inferred from rounded percentages. The existing sales API supplies its
+Monthly construction and realization now include the actual historical monthly
+API observations from `construction_history.json`, beginning January 2020. The
+collector bootstraps missing months and refreshes recent months; it does not infer
+areas from rounded percentages. The existing sales API supplies its
 original history, readiness, forecast and six segment tables independently:
 one provider failing does not remove the other provider's blocks. Price and
 funds retain their original source values and units. Range/period controls are
@@ -65,8 +76,11 @@ scope once, then readiness and forecast periods remain independently selectable.
 For Docker deployment rebuild both backend and web after pulling `linux-docker`:
 `docker compose up -d --build backend web`. This does not download new source
 data. Use the existing `docker/update.sh` publication workflow separately when
-the runtime data release also needs updating. Tree, map, apartments and industry
-pages are not redesigned by this increment.
+the runtime data release also needs updating. Rebuild updater as well for the new
+history collector; the isolated collection/publication command is in the root
+README. Raw downloads are intentionally not in Git. Tree, map, apartments and
+Rosstat calculations are unchanged. Home now has Industry panels for Rosstat and
+an explicitly unconnected Central Bank placeholder, without fake links or values.
 
 Focused browser checks: `node src/construction-pages.browser.cjs` against the
 production preview (`DASHBOARD_TEST_URL`, default port 5180). They use live API
@@ -332,11 +346,12 @@ hover, canvas pixels, chart scrolling and cropped axis labels. Screenshots and
 `COMMISSIONING_OUTPUT`. Calculation parity and workbook content remain backend
 checks; these frontend checks verify API preservation and browser behavior.
 
-## Annual Commissioning And Current Construction
+## Annual Commissioning And Legacy Construction API
 
-Local routes `/commissioning/annual` and `/construction` use only the live
-versioned API. `/` remains the existing developer profile. The parent-owned
-map and service pages are integrated at `/map`, `/home`, `/updates`, and `/tdm`.
+`/commissioning/annual` uses the live versioned API. The construction API below
+is retained for compatibility; the new permits/DOM.RF pages and their corrected
+presentation are described above. `/` remains the developer profile. Map and
+service pages are integrated at `/map`, `/home`, `/updates`, and `/tdm`.
 
 - Annual catalog/report: `/api/v1/commissioning/annual/catalog` and
   `/api/v1/commissioning/annual?region=msk|rf`. The page preserves all seven

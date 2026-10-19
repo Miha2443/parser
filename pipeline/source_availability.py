@@ -372,6 +372,10 @@ def route_sources(path):
         return {"monitoring", "kvart", "rasprod"}
     if path.rstrip("/") == "/api/v1/construction/tree":
         return {"monitoring"}
+    if path.rstrip("/") == "/api/v1/construction/permits" or path.startswith("/api/v1/construction/permits/"):
+        return {"monitoring"}
+    if path.rstrip("/") == "/api/v1/construction/domrf" or path.startswith("/api/v1/construction/domrf/"):
+        return {"construction"}
     for prefix, aliases in (("/api/v1/apartments", {"kvart"}), ("/api/v1/sales", {"rasprod"}),
                             ("/api/v1/construction", {"construction"}), ("/api/v1/map", {"monitoring"}),
                             ("/api/v1/commissioning/operational", {"monitoring"}),

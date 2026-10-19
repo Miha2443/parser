@@ -25,12 +25,52 @@ their cells, file/version metadata, and complete CSV. Errors remove the old tree
 neither older workbooks nor a demonstration snapshot are substituted.
 
 Docker must publish a monitoring workbook containing this sheet. Code updates
-alone do not add it to an existing data release. The other construction pages
-and source calculations are unchanged in this increment.
+alone do not add it to an existing data release.
 
 `node src/construction-tree.browser.cjs` checks 320/360/768/1280/1920 px, CSV,
 polling, null/zero, and failure recovery. Set `DASHBOARD_CHECK_LIVE=1` to add three
 live-data layouts and complete CSV checks. Results: `%TEMP%/dashboard-construction-tree`.
+
+## Current Construction Pages (linux-docker)
+
+The five menu entries are tree, permits, DOM.RF, apartments, and map, in that
+order. `/construction/permits` separates Moscow permits from DOM.RF statistics;
+`/construction/domrf` combines the former construction and sales blocks.
+Old `/construction` and `/sales` bookmarks open the DOM.RF page. Existing API
+routes and their calculations remain available for compatibility.
+
+Permits retain the old main annual/YTD calculation. The object/month controls
+sit immediately above that chart. Additional composition charts identify their
+own historical sources; these are not rescaled to match corrected main totals.
+The annual outline forecast uses cached cells of monitoring sheet `Прогнозы`,
+not actual permits or a calculated remainder. Its unit is explicitly an assumed
+thousand square meters because the worksheet does not label it. Blank future
+years remain null. Missing separate MOP/embedded observations are not invented.
+
+DOM.RF construction and realization use separate source periods and dates.
+Monthly realization bars contain only available JSON snapshots, not historical
+areas inferred from rounded percentages. The existing sales API supplies its
+original history, readiness, forecast and six segment tables independently:
+one provider failing does not remove the other provider's blocks. Price and
+funds retain their original source values and units. Range/period controls are
+local to the relevant block; source/data panels start closed. Both new APIs
+provide complete Excel pinned to the displayed version; HTTP 409 downloads
+nothing and offers refresh.
+
+Unavailable permit months reconcile through one default-month discovery request;
+persistent 404s remain visible rather than looping. Switching permit kind keeps
+a compatible selected month. Old `/sales?period=...` links seed forecast/segment
+scope once, then readiness and forecast periods remain independently selectable.
+
+For Docker deployment rebuild both backend and web after pulling `linux-docker`:
+`docker compose up -d --build backend web`. This does not download new source
+data. Use the existing `docker/update.sh` publication workflow separately when
+the runtime data release also needs updating. Tree, map, apartments and industry
+pages are not redesigned by this increment.
+
+Focused browser checks: `node src/construction-pages.browser.cjs` against the
+production preview (`DASHBOARD_TEST_URL`, default port 5180). They use live API
+responses plus isolated failure fixtures; map tiles and TDM sends are excluded.
 
 ## Run
 

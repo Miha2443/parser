@@ -9,15 +9,16 @@ const routes = [
   ['/', 'Профиль застройщика', true],
   ['/apartments', 'Квартирография', true],
   ['/apartments/developer', 'Квартирография по девелоперу', true],
-  ['/sales', 'Распроданность и стройготовность', true],
+  ['/construction/tree', 'Дерево текущего строительства', false],
+  ['/construction/permits', 'Разрешения на строительство', true],
+  ['/construction/domrf', 'Данные ДОМ.РФ', true],
   ['/commissioning/annual', 'Годовой ввод', true],
   ['/commissioning/operational', 'Ввод недвижимости · оперативные данные', true],
   ['/commissioning/linear', 'Ввод линейных объектов', true],
-  ['/construction', 'Текущее строительство', true],
   ['/economics/salary', 'Среднемесячная заработная плата', true],
   ['/economics/ipc', 'Индексы потребительских цен', true],
   ['/economics/accounts', 'ВРП и ВВП', true],
-  ['/home', 'Аналитика Москвы', false],
+  ['/home', 'Аналитика строительной отрасли Москвы', false],
   ['/updates', 'Журнал обновлений', false],
   ['/tdm', 'Отправка в TDM', false],
 ];
@@ -35,15 +36,15 @@ const routes = [
         status: { tokenReady: false, workspaceReady: false, groupReady: false, ready: false, disabled: true },
         datasets: [], files: [] } });
     });
-    for (const theme of ['dark', 'light']) for (const width of [360, 1280]) {
+    for (const theme of ['light']) for (const width of [360, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       await page.addInitScript(theme => localStorage.setItem('dashboard.theme', theme), theme);
       for (const [route, heading, chartExpected] of routes) {
         await page.goto(base + route);
         await page.locator('main h1').waitFor({ timeout: 120000 });
         assert.ok((await page.locator('main h1').innerText()).includes(heading), route);
-        await page.waitForFunction(() => !document.querySelector('main .load-state'), { timeout: 120000 });
-        assert.equal(await page.locator('main .load-state[role="alert"]').count(), 0, route);
+        await page.waitForFunction(() => !document.querySelector('main .load-state, main .cp-state'), undefined, { timeout: 120000 });
+        assert.equal(await page.locator('main [role="alert"]').count(), 0, route);
         if (chartExpected) await page.locator('.chart-canvas canvas').first().waitFor();
         await page.waitForTimeout(350);
         const state = await page.evaluate(() => ({

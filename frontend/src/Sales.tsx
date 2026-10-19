@@ -13,7 +13,7 @@ import type { Theme } from './types';
 echarts.use([LineChart]);
 type Change = (values: Record<string, string | null>, replace?: boolean) => void;
 function Empty({ text = 'Нет данных.' }: { text?: string }) { return <div className="empty-state"><Database size={20} /><span>{text}</span></div>; }
-function SalesExport({ region, period, version }: { region: string; period: string; version: string }) {
+export function SalesExport({ region, period, version }: { region: string; period: string; version: string }) {
   const active = useRef<AbortController>();
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   useEffect(() => { setBusy(false); setError(''); return () => active.current?.abort(); }, [region, period, version]);
@@ -32,7 +32,7 @@ function SalesExport({ region, period, version }: { region: string; period: stri
   }
   return <div className="profile-export sales-export"><button className="icon-button" title="Скачать распроданность Excel" aria-label="Скачать распроданность Excel" disabled={busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span role="alert" className="warning-text">{error}</span>}</div>;
 }
-function SegmentTable({ table, params, change, filename }: { table: SalesTable; params: URLSearchParams; change: Change; filename: string }) {
+export function SegmentTable({ table, params, change, filename }: { table: SalesTable; params: URLSearchParams; change: Change; filename: string }) {
   const scope = `sales${table.id}`, searchKey = `${scope}Search`, pageKey = `${scope}Page`, sizeKey = `${scope}Size`;
   const query = params.get(searchKey) ?? '', view = salesTablePage(table, query, params.get(pageKey), params.get(sizeKey));
   useEffect(() => {

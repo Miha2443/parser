@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pipeline.download_provenance import record_download
 from pipeline.downloaders.nashdom_operational_api import (
-    BASE, OPTIONAL_SALES, SALES_FIELDS, EmptyReport, OfficialClient, ReportError, TransportError, normalize,
+    BASE, OPTIONAL_SALES, SALES_FIELDS, AccessVerificationRequired, EmptyReport, OfficialClient, ReportError, TransportError, normalize,
     numeric, period, request_url, utc_now,
 )
 from pipeline.paths import DATA_RAW
@@ -348,11 +348,12 @@ def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
                         files.append(bundle)
                 except (ReportError, OSError, KeyError, TypeError) as exc:
                     errors.append({"block": block, "period": month, "error": str(exc),
-                                   "kind": "source_empty" if isinstance(exc, EmptyReport) else
+                                   "kind": "access_verification" if isinstance(exc, AccessVerificationRequired) else
+                                           "source_empty" if isinstance(exc, EmptyReport) else
                                            "transport" if isinstance(exc, TransportError) else "validation_or_io"})
                     progress({"event": "error", **errors[-1]})
                     consecutive_transport = consecutive_transport + 1 if isinstance(exc, TransportError) else 0
-                    if consecutive_transport >= 3:
+                    if isinstance(exc, AccessVerificationRequired) or consecutive_transport >= 3:
                         break
                     continue
                 # A stricter current-only contract must not discard a valid

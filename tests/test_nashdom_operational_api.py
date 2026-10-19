@@ -79,7 +79,7 @@ class HttpSession:
 
 class Browser:
     """No webpack and no dashboard controls, even after navigation."""
-    def __init__(self, payloads=None, *, origin=True, fetch_error=None):
+    def __init__(self, payloads=None, *, origin=True, fetch_error=None, states=None, diagnostic=None):
         self.payloads = payloads or replies()
         self.origin = origin
         self.fetch_error = fetch_error
@@ -90,6 +90,11 @@ class Browser:
         self.execute_cdp_cmd = Mock(side_effect=self.cdp)
         self.scripts = []
         self.fetches = []
+        self.document_reads = 0
+        self.states = states or [{"origin": api.BASE if origin else "null",
+                                  "path": api.PATHS["sales"] + "/actualDate", "readyState": "complete",
+                                  "captchaVisible": False, "challenge": False, "denied": False}]
+        self.diagnostic = diagnostic
 
     def cdp(self, command, params):
         if command == "Browser.getVersion":
@@ -98,9 +103,15 @@ class Browser:
 
     def execute_script(self, script, *args):
         self.scripts.append(script)
+        if "captchaVisible:" in script:
+            state = dict(self.states[min(self.document_reads, len(self.states) - 1)])
+            self.document_reads += 1
+            return {"queryMatches": state.pop("query", "") == args[0], **state}
         if "location.origin ===" in script:
             return self.origin
         if "readyState:document.readyState" in script:
+            if self.diagnostic is not None:
+                return dict(self.diagnostic)
             return {"url": api.BASE + "/", "title": "Loading", "readyState": "interactive",
                     "body": "", "html": "<html><body></body></html>"}
         if script == "window.stop();":
@@ -119,7 +130,7 @@ class Browser:
 
 
 class ImmediateWait:
-    def __init__(self, driver, timeout):
+    def __init__(self, driver, timeout, **kwargs):
         self.driver = driver
 
     def until(self, predicate):
@@ -196,6 +207,15 @@ class OperationalTransportTests(unittest.TestCase):
         browser.quit.assert_called_once()
         self.assertTrue(session.closed)
 
+    def test_http_denial_checks_one_browser_without_repeating_the_http_denial(self):
+        session = HttpSession(error=lambda: HttpResponse(status=403, body=b"Forbidden"))
+        browser = Browser()
+        client, factory = self.client(session, browser)
+        with client:
+            self.assertTrue(client.bounds)
+        self.assertEqual(len(session.calls), 1)
+        factory.assert_called_once()
+
     def test_blank_origin_wait_has_typed_diagnostic_and_closes_resources(self):
         session = HttpSession(error=lambda: HttpResponse(status=403, body=b"Forbidden"))
         browser = Browser(origin=False)
@@ -207,8 +227,7 @@ class OperationalTransportTests(unittest.TestCase):
         self.assertTrue(session.closed)
         evidence = json.loads(self.diagnostics()[-1].read_text())
         self.assertEqual(evidence["stage"], "browser_initialization")
-        self.assertEqual(evidence["browser"]["title"], "Loading")
-        self.assertEqual(evidence["browser"]["body"], "")
+        self.assertEqual(evidence["browser"], {"url": api.BASE + "/", "readyState": "interactive"})
         self.assertTrue(any(event.get("status") == 403 for event in evidence["events"]))
         self.assertNotIn("WAF", json.dumps(evidence))
 
@@ -219,8 +238,228 @@ class OperationalTransportTests(unittest.TestCase):
         client, _ = self.client(session, browser)
         with client:
             self.assertEqual(client.bounds["sales"], "2026-09")
-        self.assertIn("window.stop();", browser.scripts)
+        self.assertNotIn("window.stop();", browser.scripts)
+        self.assertEqual(browser.document_reads, 1)
         browser.quit.assert_called_once()
+
+    def test_loading_and_verification_documents_finish_before_any_api_fetch(self):
+        base = {"origin": api.BASE, "path": api.PATHS["sales"] + "/actualDate",
+                "readyState": "complete", "captchaVisible": False, "challenge": False, "denied": False}
+        states = [{**base, "readyState": "loading", "challenge": True},
+                  {**base, "path": "/verification/", "challenge": True}, base]
+        browser = Browser(states=states)
+        session = HttpSession(error=requests.ConnectionError("offline"))
+        client, _ = self.client(session, browser)
+
+        class PollingWait(ImmediateWait):
+            def until(self, predicate):
+                for _ in range(4):
+                    if predicate(self.driver):
+                        return True
+                    self_outer.assertEqual(self.driver.fetches, [])
+                raise TimeoutException("")
+
+        self_outer = self
+        with patch.object(api, "WebDriverWait", PollingWait), client:
+            self.assertEqual(client.bounds["construction"], "2026-10")
+        self.assertEqual(browser.document_reads, 3)
+        self.assertEqual(len(browser.fetches), 2)
+        browser.get.assert_called_once()
+        self.assertFalse(any("window.stop" in script for script in browser.scripts))
+
+    def test_visible_captcha_stops_without_fetching_or_interacting(self):
+        state = {"origin": api.BASE, "path": "/verification/", "readyState": "loading",
+                 "captchaVisible": True, "challenge": True, "denied": False}
+        browser = Browser(states=[state])
+        client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+        with self.assertRaisesRegex(api.AccessVerificationRequired, "visible CAPTCHA"):
+            client.__enter__()
+        self.assertEqual(browser.fetches, [])
+        browser.get.assert_called_once()
+        browser.quit.assert_called_once()
+        self.assertIsNone(client.session)
+        self.assertEqual(json.loads(self.diagnostics()[-1].read_text())["stage"], "browser_access_verification")
+
+    def test_navigation_context_change_waits_for_the_next_healthy_document(self):
+        browser = Browser()
+        execute = browser.execute_script
+        changed = False
+
+        def snapshot(script, *args):
+            nonlocal changed
+            if "captchaVisible:" in script and not changed:
+                changed = True
+                raise WebDriverException("execution context was destroyed")
+            return execute(script, *args)
+
+        class PollingWait(ImmediateWait):
+            def until(self, predicate):
+                for _ in range(3):
+                    if predicate(self.driver):
+                        return True
+                    self_outer.assertEqual(self.driver.fetches, [])
+                raise TimeoutException("")
+
+        self_outer = self
+        browser.execute_script = Mock(side_effect=snapshot)
+        client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+        with patch.object(api, "WebDriverWait", PollingWait), client:
+            self.assertTrue(client.bounds)
+        browser.get.assert_called_once()
+        self.assertEqual(len(browser.fetches), 2)
+        self.assertTrue(any(event.get("event") == "document_context_changed" for event in client.events))
+
+    def test_repeated_context_changes_use_one_fixed_readiness_deadline(self):
+        browser = Browser()
+        execute = browser.execute_script
+        timeouts = []
+
+        def snapshot(script, *args):
+            if "captchaVisible:" in script:
+                raise WebDriverException("cannot find context with specified id")
+            return execute(script, *args)
+
+        class PollingWait(ImmediateWait):
+            def __init__(self, driver, timeout, **kwargs):
+                super().__init__(driver, timeout)
+                timeouts.append(timeout)
+
+            def until(self, predicate):
+                for _ in range(4):
+                    if predicate(self.driver):
+                        return True
+                raise TimeoutException("")
+
+        browser.execute_script = Mock(side_effect=snapshot)
+        client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+        with patch.object(api, "WebDriverWait", PollingWait), self.assertRaises(api.TransportError):
+            client.__enter__()
+        self.assertEqual(timeouts, [45])
+        self.assertEqual(browser.fetches, [])
+        browser.get.assert_called_once()
+        browser.quit.assert_called_once()
+
+    def test_closed_disconnected_and_unrelated_browser_errors_fail_immediately(self):
+        for failure in (api.InvalidSessionIdException("execution context was destroyed"),
+                        api.NoSuchWindowException("document unloaded"),
+                        WebDriverException("disconnected: cannot find context"), WebDriverException("script syntax failed")):
+            with self.subTest(error=type(failure).__name__, message=failure.msg):
+                browser = Browser()
+                execute = browser.execute_script
+                reads = []
+
+                def snapshot(script, *args):
+                    if "captchaVisible:" in script:
+                        reads.append(True)
+                        raise failure
+                    return execute(script, *args)
+
+                browser.execute_script = Mock(side_effect=snapshot)
+                client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+                with self.assertRaises(api.TransportError):
+                    client.__enter__()
+                self.assertEqual(len(reads), 1)
+                self.assertEqual(browser.fetches, [])
+                browser.quit.assert_called_once()
+
+    def test_unfinished_verification_and_denial_are_explicit_access_errors(self):
+        state = {"origin": api.BASE, "path": "/verification/", "readyState": "complete",
+                 "captchaVisible": False, "challenge": True, "denied": False}
+        for change, message in (({}, "verification did not finish"), ({"denied": True}, "denied browser access")):
+            with self.subTest(change=change):
+                browser = Browser(states=[{**state, **change}])
+                client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+                with self.assertRaisesRegex(api.AccessVerificationRequired, message):
+                    client.__enter__()
+                self.assertEqual(browser.fetches, [])
+                browser.quit.assert_called_once()
+
+    def test_ordinary_loading_and_wrong_origin_path_or_query_never_enable_fetch(self):
+        base = {"origin": api.BASE, "path": api.PATHS["sales"] + "/actualDate",
+                "readyState": "complete", "captchaVisible": False, "challenge": False, "denied": False}
+        for change in ({"readyState": "loading"}, {"origin": "https://other.invalid"},
+                       {"path": "/other"}, {"query": "?repMonth=1"}):
+            with self.subTest(change=change):
+                browser = Browser(states=[{**base, **change}])
+                client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+                with self.assertRaises(api.TransportError) as error:
+                    client.__enter__()
+                self.assertNotIsInstance(error.exception, api.AccessVerificationRequired)
+                self.assertEqual(browser.fetches, [])
+                browser.quit.assert_called_once()
+
+    def test_verification_response_is_not_retried_and_diagnostics_omit_tokens(self):
+        html = '<html><script src="/sp_rotated_captcha/js/captchaIntGen.js"></script><script>cookie="private-challenge-value"</script></html>'
+        browser = Browser(fetch_error={"status": 200, "content_type": "text/html", "body": html},
+                          diagnostic={"url": api.BASE + "/verification/?private-token=hidden-value", "title": "",
+                                      "readyState": "loading", "body": "", "html": html})
+        client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+        with self.assertRaisesRegex(api.AccessVerificationRequired, "verification instead of JSON"):
+            client.__enter__()
+        self.assertEqual(len(browser.fetches), 1)
+        browser.quit.assert_called_once()
+        saved = self.diagnostics()[-1].read_text()
+        self.assertNotIn("private-challenge-value", saved)
+        self.assertNotIn("hidden-value", saved)
+        evidence = json.loads(saved)
+        self.assertEqual(evidence["browser"]["url"], api.BASE + "/verification/")
+        self.assertEqual(set(evidence["browser"]), {"url", "readyState"})
+
+    def test_diagnostics_do_not_collect_verification_tokens_echoed_in_visible_text(self):
+        browser = Browser(diagnostic={"url": api.BASE + "/verification/?audit=URL_CANARY",
+                                      "title": "Request /verification/?audit=TITLE_CANARY",
+                                      "body": "Request /verification/?audit=BODY_CANARY",
+                                      "readyState": "loading", "html": "<html>HTML_CANARY</html>"})
+        client = api.OfficialClient(self.root)
+        client.driver = browser
+        client._diagnostic("browser_access_verification", api.PATHS["sales"] + "/actualDate",
+                           api.AccessVerificationRequired("verification required"))
+        saved = self.diagnostics()[-1].read_text()
+        self.assertNotIn("CANARY", saved)
+        self.assertEqual(json.loads(saved)["browser"], {"url": api.BASE + "/verification/", "readyState": "loading"})
+        self.assertNotIn("document.title", browser.scripts[-1])
+        self.assertNotIn("document.body", browser.scripts[-1])
+        self.assertNotIn("outerHTML", browser.scripts[-1])
+
+    def test_unknown_html_and_failed_snapshot_sanitizing_cannot_leak_raw_tokens(self):
+        html = '\ufeff<html><script>token="synthetic-private-value"</script></html>'
+        self.assertEqual(api.response_preview(html), "[HTML omitted]")
+        browser = Browser(diagnostic={"url": "https://[invalid/?token=synthetic-private-value",
+                                      "title": "", "readyState": "loading", "body": "", "html": html})
+        client = api.OfficialClient(self.root)
+        client.driver = browser
+        client._diagnostic("test", api.PATHS["sales"] + "/actualDate", api.TransportError("test"))
+        saved = self.diagnostics()[-1].read_text()
+        self.assertNotIn("synthetic-private-value", saved)
+        self.assertNotIn("browser", json.loads(saved).keys())
+        self.assertIn("browser_error", json.loads(saved))
+
+    def test_browser_access_denial_is_not_retried_as_a_temporary_transport_error(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                browser = Browser(fetch_error={"status": status, "content_type": "text/html", "body": "Forbidden"})
+                client, _ = self.client(HttpSession(error=requests.ConnectionError("offline")), browser)
+                with self.assertRaisesRegex(api.AccessVerificationRequired, f"HTTP {status}"):
+                    client.__enter__()
+                self.assertEqual(len(browser.fetches), 1)
+                browser.quit.assert_called_once()
+
+    def test_access_verification_stops_history_immediately_and_keeps_previous_bundle(self):
+        from scripts.check_nashdom_operational_history import FakeSource
+        from pipeline.downloaders.nashdom_operational_history import download_history
+        result = download_history(self.root, client=FakeSource(), progress=lambda event: None)
+        bundle = Path(result["history_file"])
+        previous = bundle.read_bytes()
+
+        class Blocked(FakeSource):
+            def collect(self, block, month):
+                raise api.AccessVerificationRequired("manual verification required")
+
+        result = download_history(self.root, client=Blocked(), progress=lambda event: None)
+        self.assertFalse(result["complete"])
+        self.assertEqual((result["attempted"], result["collected"]), (1, 0))
+        self.assertEqual(result["errors"][0]["kind"], "access_verification")
+        self.assertEqual(bundle.read_bytes(), previous)
 
     def test_cdp_initialization_error_and_failed_quit_preserve_original_error(self):
         session = HttpSession(error=requests.ConnectionError("offline"))
@@ -313,7 +552,7 @@ class OperationalTransportTests(unittest.TestCase):
         execute = browser.execute_script
 
         def failed_snapshot(script, *args):
-            if "readyState:document.readyState" in script:
+            if "readyState:document.readyState" in script and "captchaVisible:" not in script:
                 raise WebDriverException("snapshot unavailable")
             return execute(script, *args)
 

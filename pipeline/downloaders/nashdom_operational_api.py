@@ -9,17 +9,19 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import requests
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import InvalidSessionIdException, NoSuchWindowException, TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 
 BASE = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 API = "/" + quote("аналитика") + "/api"
 PATHS = {"construction": API + "/consolidated/housing_constructor", "sales": API + "/rpp"}
 MAX_RESPONSE_BYTES = 1024 * 1024
+BROWSER_DOCUMENT_TIMEOUT = 45
 MONTHS = ("Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
           "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь")
 SALES_FIELDS = {
@@ -38,6 +40,35 @@ class ReportError(ValueError):
 
 class TransportError(ReportError):
     pass
+
+
+class AccessVerificationRequired(TransportError):
+    """The source requires permitted browser access; never solve a CAPTCHA."""
+
+
+def verification_html(body):
+    if not isinstance(body, str) or not body.lstrip("\ufeff \t\r\n").startswith("<"):
+        return False
+
+    class Markup(HTMLParser):
+        found = False
+
+        def handle_starttag(self, tag, attrs):
+            values = dict(attrs)
+            source = str(values.get("src") or values.get("href") or "").casefold()
+            if (tag == "js-challenge-loader" or values.get("id") == "id_captcha_frame_div"
+                    or "servicepipe.tech/loaders/" in source or "sp_rotated_captcha/" in source):
+                self.found = True
+
+    parser = Markup()
+    parser.feed(body)
+    return parser.found
+
+
+def response_preview(body, limit=2048):
+    if verification_html(body):
+        return "[Source browser verification page; HTML omitted]"
+    return "[HTML omitted]" if body.lstrip("\ufeff \t\r\n").startswith("<") else body[:limit]
 
 
 class EmptyReport(ReportError):
@@ -187,12 +218,17 @@ class OfficialClient:
                     "error": self._error(exc), "events": list(self.events)}
         if self.driver is not None:
             try:
-                evidence["browser"] = self.driver.execute_script("""
-                    return {url:location.href.slice(0,1024), title:document.title.slice(0,512),
-                      readyState:document.readyState,
-                      body:(document.body ? document.body.innerText : '').slice(0,2048),
-                      html:(document.documentElement ? document.documentElement.outerHTML : '').slice(0,4096)};
+                snapshot = self.driver.execute_script("""
+                    return {url:(location.origin + location.pathname).slice(0,1024),
+                      readyState:document.readyState};
                 """)
+                if isinstance(snapshot, dict):
+                    location = urlsplit(str(snapshot.get("url", "")))
+                    evidence["browser"] = {
+                        "url": urlunsplit((location.scheme, location.hostname or "", location.path, "", "")),
+                        "readyState": snapshot.get("readyState") if snapshot.get("readyState") in
+                                      {"loading", "interactive", "complete"} else "unknown",
+                    }
             except Exception as snapshot_error:
                 evidence["browser_error"] = self._error(snapshot_error)
         try:
@@ -232,7 +268,9 @@ class OfficialClient:
                     if response.status_code != 200:
                         # Read only a small preview of an error page, never its full body.
                         preview = next(response.iter_content(chunk_size=2048), b"")
-                        event["preview"] = preview[:2048].decode("utf-8", errors="replace")
+                        event["preview"] = response_preview(preview[:2048].decode("utf-8", errors="replace"))
+                        if response.status_code in {401, 403}:
+                            raise AccessVerificationRequired(f"HTTP status {response.status_code}; checking ordinary browser access: {url}")
                         raise TransportError(f"HTTP status {response.status_code}: {url}")
                     content = bytearray()
                     for chunk in response.iter_content(chunk_size=16384):
@@ -241,13 +279,67 @@ class OfficialClient:
                         content.extend(chunk)
                         if time.monotonic() - started > 25:
                             raise TransportError(f"HTTP response exceeds time limit: {url}")
-                    event["preview"] = content[:2048].decode("utf-8", errors="replace")
+                    event["preview"] = response_preview(content.decode("utf-8", errors="replace"))
                     return self._payload(content, url)
+            except AccessVerificationRequired:
+                raise
             except (requests.RequestException, TransportError) as exc:
                 last = exc
                 self.events.append({"transport": "http", "url": url, "attempt": attempt + 1,
                                     "error": self._error(exc)})
         raise TransportError(f"HTTP transport failed: {url}: {self._error(last)}") from last
+
+    def _wait_for_browser_document(self, url):
+        expected = urlsplit(url)
+        expected_query = "?" + expected.query if expected.query else ""
+        state = {}
+        verification_seen = False
+
+        def ready(driver):
+            nonlocal state, verification_seen
+            try:
+                state = driver.execute_script("""
+                const visible = element => {
+                  const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+                  return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+                };
+                return {origin:location.origin, path:location.pathname.slice(0,1024),
+                  queryMatches:location.search === arguments[0], readyState:document.readyState,
+                  captchaVisible:[...document.querySelectorAll(
+                    'iframe[src*="captcha" i], input[name*="captcha" i], '
+                    + '#id_captcha_frame_div iframe, #id_captcha_frame_div canvas, '
+                    + '#id_captcha_frame_div input, #id_captcha_frame_div button, #id_captcha_frame_div img'
+                  )].some(visible),
+                  challenge:!!document.querySelector('js-challenge-loader, script[src*="servicepipe.tech/loaders/"], script[src*="sp_rotated_captcha/"]'),
+                  denied:/доступ\\s+заблокирован|access\\s+denied|forbidden/i.test(document.title)};
+                """, expected_query)
+            except WebDriverException as exc:
+                message = self._error(exc).casefold()
+                if (isinstance(exc, (InvalidSessionIdException, NoSuchWindowException))
+                        or any(marker in message for marker in ("disconnected", "session deleted", "invalid session id", "no such window"))):
+                    raise
+                if any(marker in message for marker in ("execution context was destroyed", "cannot find context", "document unloaded")):
+                    self.events.append({"transport": "browser_navigation", "event": "document_context_changed"})
+                    return False
+                raise
+            if not isinstance(state, dict):
+                raise TransportError("invalid browser document state")
+            verification_seen |= state.get("challenge") is True
+            if state.get("captchaVisible"):
+                raise AccessVerificationRequired("DOM.RF requires a visible CAPTCHA; automatic collection stopped. Permitted access or manual verification is required.")
+            if state.get("denied"):
+                raise AccessVerificationRequired("DOM.RF denied browser access; automatic collection stopped. Permitted access is required.")
+            return (state.get("origin") == BASE and state.get("path") == expected.path and state.get("queryMatches") is True
+                    and state.get("readyState") == "complete" and state.get("challenge") is False)
+
+        try:
+            WebDriverWait(self.driver, BROWSER_DOCUMENT_TIMEOUT, poll_frequency=0.5).until(ready)
+        except TimeoutException as exc:
+            self.events.append({"transport": "browser_document", "state": state})
+            if verification_seen:
+                raise AccessVerificationRequired("DOM.RF browser verification did not finish; automatic collection stopped. Permitted access or manual verification is required.") from exc
+            raise
 
     def _start_browser(self, url):
         from pipeline.selenium_utils import create_chrome
@@ -271,9 +363,11 @@ class OfficialClient:
                 d.get(BASE + url)
             except TimeoutException as exc:
                 self.events.append({"transport": "browser_navigation", "error": self._error(exc)})
-                d.execute_script("window.stop();")
-            WebDriverWait(d, 10).until(lambda driver: driver.execute_script(
-                "return location.origin === arguments[0]", BASE))
+            self._wait_for_browser_document(url)
+        except AccessVerificationRequired as exc:
+            detail = self._diagnostic("browser_access_verification", url, exc)
+            self._close_browser()
+            raise AccessVerificationRequired(f"{exc}; {detail}") from exc
         except Exception as exc:
             detail = self._diagnostic("browser_initialization", url, exc)
             self._close_browser()
@@ -314,11 +408,19 @@ class OfficialClient:
                 self.events.append({"transport": "browser", "url": url, "attempt": attempt + 1,
                                     "status": response.get("status"),
                                     "content_type": str(response.get("content_type", ""))[:128],
-                                    "error": str(response.get("error", ""))[:1024], "preview": body[:2048]})
+                                    "error": str(response.get("error", ""))[:1024], "preview": response_preview(body)})
+                if response.get("status") in {401, 403} or verification_html(body):
+                    reason = (f"denied API access with HTTP {response['status']}" if response.get("status") in {401, 403}
+                              else "returned browser verification instead of JSON")
+                    exc = AccessVerificationRequired(f"DOM.RF {reason}; automatic collection stopped. Permitted access or manual verification is required.")
+                    detail = self._diagnostic("browser_access_verification", url, exc)
+                    raise AccessVerificationRequired(f"{exc}; {detail}") from exc
                 if response.get("status") != 200:
                     raise TransportError(f"browser fetch failed: status={response.get('status')} "
                                          f"error={str(response.get('error', ''))[:1024]}")
                 return self._payload(body, url)
+            except AccessVerificationRequired:
+                raise
             except (WebDriverException, TransportError) as exc:
                 last = exc
                 self.events.append({"transport": "browser", "url": url, "attempt": attempt + 1,

@@ -13,6 +13,55 @@ from unittest.mock import patch
 from docker import publication as p
 
 REPO = Path(__file__).resolve().parents[1]
+BASH = shutil.which('bash') or next((str(path) for path in (
+    Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/bin/bash.exe',
+    Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Git/bin/bash.exe') if path.is_file()), None)
+
+
+@unittest.skipUnless(BASH, 'Image preservation contract needs Bash, not Docker')
+class CodeImagePreservationTests(unittest.TestCase):
+    def run_preservation(self, failure=''):
+        source = (REPO / 'docker/update.sh').read_text(encoding='utf-8')
+        function = re.search(r'^preserve_code_image\(\) \{\n.*?^\}\n', source, re.M | re.S).group(0)
+        harness = '''set -euo pipefail
+event() { printf '%s %s\\n' "$1" "${2:-}"; }
+bounded() {
+  shift
+  if [[ "$1 $2" == 'docker inspect' ]]; then printf '%s\\n' 'sha256:previous-image'; return; fi
+  if [[ "$1 $2 $3" != 'docker image tag' ]]; then return 99; fi
+  case "$PRESERVE_TEST_FAILURE" in
+    missing) echo 'Error response from daemon: No such image: sha256:previous-image' >&2; return 1 ;;
+    other_missing) echo 'Error response from daemon: No such image: sha256:another-image' >&2; return 1 ;;
+    daemon) echo 'Cannot connect to the Docker daemon' >&2; return 1 ;;
+    timeout) return 124 ;;
+  esac
+}
+'''
+        return subprocess.run([BASH, '-c', harness + function + '\npreserve_code_image backend running-container attempt\nprintf "continued\\n"\n'],
+                              env={**os.environ, 'PRESERVE_TEST_FAILURE': failure}, capture_output=True, text=True, timeout=10)
+
+    def test_available_image_is_preserved(self):
+        result = self.run_preservation()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('code_image_preserved', result.stdout)
+        self.assertNotIn('code_image_unavailable', result.stdout)
+        self.assertIn('continued', result.stdout)
+
+    def test_missing_running_container_image_is_a_warning_not_a_blocker(self):
+        result = self.run_preservation('missing')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('code_image_unavailable', result.stdout)
+        self.assertIn('rollback_image=unavailable existing_container=unchanged', result.stdout)
+        self.assertNotIn('code_image_preserved', result.stdout)
+        self.assertIn('continued', result.stdout)
+
+    def test_other_errors_still_block_the_upgrade(self):
+        for failure in ('other_missing', 'daemon', 'timeout'):
+            with self.subTest(failure=failure):
+                result = self.run_preservation(failure)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('code_image_preserve_failed', result.stdout)
+                self.assertNotIn('continued', result.stdout)
 
 # Snapshot of the production 3d09add CLI, kept local so shallow CI clones can
 # exercise migration without fetching historical commits or a Docker daemon.
@@ -72,6 +121,11 @@ if args[0]=='inspect':
         print(json.dumps(details))
     die(0)
 if args[:2]==['image','tag']:
+    state['image_tag_attempts']=state.get('image_tag_attempts',0)+1
+    if state.get('missing_image'):
+        print('Error response from daemon: No such image: '+args[2],file=sys.stderr); die(1)
+    if state.get('image_tag_error'):
+        print('Cannot connect to the Docker daemon',file=sys.stderr); die(1)
     state['image_tags']=state.get('image_tags',0)+1; die(0)
 assert args[0]=='compose', args
 args=args[1:]; command=args[0]
@@ -321,6 +375,25 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertEqual(self.state.get('publications', 0), 0)
         self.assertEqual(os.readlink(self.root / 'runtime/live'), 'releases/new')
         self.assertIn('code_upgrade_failed', result.stdout)
+
+    def test_code_upgrade_missing_old_image_continues_without_a_false_backup_claim(self):
+        self.state.update(served='releases/new', missing_image=True)
+        result = self.run_host('--upgrade-code')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['image_tag_attempts'], 2)
+        self.assertEqual(self.state.get('image_tags', 0), 0)
+        self.assertEqual((self.state['builds'], self.state['web_starts'], self.state['downloads'], self.state['stops']), (1, 1, 0, 0))
+        self.assertIn('code_image_unavailable', result.stdout)
+        self.assertNotIn('code_image_preserved', result.stdout)
+
+    def test_code_upgrade_other_backup_failures_keep_the_existing_containers(self):
+        self.state.update(served='releases/new', image_tag_error=True)
+        result = self.run_host('--upgrade-code')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state.get('builds', 0), 0)
+        self.assertEqual(self.state.get('web_starts', 0), 0)
+        self.assertEqual((self.state['starts'], self.state['restarts'], self.state['stops']), (0, 0, 0))
+        self.assertIn('code_image_preserve_failed', result.stdout)
 
     def test_new_modes_keep_missing_live_and_pending_recovery_guards(self):
         (self.root / 'runtime/live').unlink()

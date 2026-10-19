@@ -93,6 +93,23 @@ restart_backend() {
   ready_target "$(readlink runtime/live)" "${1:-full}"
 }
 
+preserve_code_image() {
+  local service="$1" id="$2" backup_id="$3" old_image backup_image preserve_error
+  old_image="$(bounded 15 docker inspect -f '{{.Image}}' "$id")" || return
+  [[ -n "$old_image" ]] || { event code_image_preserve_failed "service=$service reason=empty_image_id"; return 1; }
+  backup_image="parser-dashboard-previous-$service:$backup_id"
+  if preserve_error="$(bounded 30 docker image tag "$old_image" "$backup_image" 2>&1)"; then
+    event code_image_preserved "service=$service image=$backup_image"
+  elif [[ "$preserve_error" == "Error response from daemon: No such image: $old_image" ]]; then
+    # A surviving container can reference an image no longer in the local catalog.
+    # Do not snapshot its writable layer or claim an application rollback exists.
+    event code_image_unavailable "service=$service sourceImage=$old_image reason=missing_image rollback_image=unavailable existing_container=unchanged; continuing forward code upgrade"
+  else
+    event code_image_preserve_failed "service=$service sourceImage=$old_image error=$preserve_error"
+    return 1
+  fi
+}
+
 recover() {
   local info previous next live id status
   event recovery 'validate journal and live before mutation'
@@ -170,15 +187,12 @@ if [[ "$mode" == --upgrade-code ]]; then
   for service in backend web; do
     id="$(bounded 15 docker compose ps -aq "$service")"
     if [[ -n "$id" ]]; then
-      old_image="$(bounded 15 docker inspect -f '{{.Image}}' "$id")"
-      backup_image="parser-dashboard-previous-$service:$backup_id"
-      bounded 30 docker image tag "$old_image" "$backup_image"
-      event code_image_preserved "service=$service image=$backup_image"
+      preserve_code_image "$service" "$id" "$backup_id"
     fi
   done
   bounded 1800 docker compose --profile updater build
   if ! restart_backend; then
-    event code_upgrade_failed 'New backend compatibility was not proven; web was not updated. Previous image tags are logged above. Data pointer was not changed; application-image rollback is separate.'
+    event code_upgrade_failed 'New backend compatibility was not proven; web was not updated. Preserved image tags or missing-image warnings are logged above. Data pointer was not changed; application-image rollback is separate.'
     exit 1
   fi
   bounded 120 docker compose up -d --no-deps web

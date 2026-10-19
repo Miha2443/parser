@@ -51,7 +51,7 @@ async function download(page, button, filename) {
   assert.ok(fs.statSync(target).size > 30);
   return target;
 }
-async function hoverSeries(page, chart, names) {
+async function hoverSeries(page, chart, names, compact = false) {
   await chart.scrollIntoViewIfNeeded();
   const rect = await chart.boundingBox(), found = new Set();
   for (let x = 0.07; x < 1 && found.size < names.length; x += 0.04) {
@@ -59,6 +59,16 @@ async function hoverSeries(page, chart, names) {
       await page.mouse.move(rect.x + rect.width * x, rect.y + rect.height * y);
       await page.waitForTimeout(35);
       const text = await page.locator('.commissioning-tooltip:visible, .sales-tooltip:visible, .construction-pages-tooltip:visible').allTextContents();
+      if (compact) {
+        const tooltips = await page.locator('.construction-pages-tooltip:visible').evaluateAll(elements => elements.map(el => ({
+          text: el.innerText, lines: el.innerHTML.split(/<br\s*\/?>/i).length,
+        })));
+        for (const tip of tooltips) {
+          assert.equal(tip.lines, 2, `Permit tooltip must contain only period and hovered value: ${tip.text}`);
+          assert.match(tip.text, /(?:\d,\d|—) тыс\. м²$/);
+          assert.doesNotMatch(tip.text, /assumed_|data\/raw\/|Наблюдения|оснований источника|Сумма компонентов|Расхождение итога/);
+        }
+      }
       for (const name of names) if (text.some(t => t.includes(name))) found.add(name);
     }
   }
@@ -139,6 +149,11 @@ async function permitSelect(page, label, value) {
         await page.waitForTimeout(400);
         await layout(page, `permits-${kind}-${width}`);
       }
+      const breakdownCharts = page.locator('.permit-breakdowns .permit-chart');
+      for (let i = 0; i < await breakdownCharts.count(); i++) {
+        const block = breakdownCharts.nth(i), name = await block.locator('.chart-legend button').first().innerText();
+        await hoverSeries(page, block.locator('.chart-canvas'), [name], true);
+      }
     }
     await permitSelect(page, 'Месяц разрешений', 5);
     const structureTo = await page.getByLabel('Структура: месяц по', { exact: true }).inputValue();
@@ -167,7 +182,7 @@ async function permitSelect(page, label, value) {
     assert.ok((await page.locator('.permit-breakdowns').innerText()).includes('Полный год не подтверждён'));
     await ready(page, '/construction/permits?permit_kind=housing&month=5');
     assert.equal(await page.getByLabel('Структура: месяц по', { exact: true }).inputValue(), structureTo);
-    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Годовой прогноз', 'Остаток:']);
+    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Выбранный период', 'Остаток до годового ориентира'], true);
     const first = page.locator('.permit-main .chart-block');
     await first.locator('.data-toggle').click();
     const csv = await download(page, first.getByRole('button', { name: 'CSV', exact: true }), 'permits.csv');

@@ -5,7 +5,6 @@ import type { PermitBreakdown, PermitCoverage, PermitPresentationRow, PermitsDat
 import type { SalesChart } from './salesData';
 import type { Theme } from './types';
 
-const exact = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 20 });
 const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const measure = (value: number) => number(value, 1);
 const palette = ['#318dca', '#db9a36', '#359a79', '#ba6a87', '#7f83bd', '#657f89'];
@@ -32,12 +31,7 @@ export function permitCoverageComplete(coverage: PermitCoverage | undefined, mod
   if (from < 1 || to > 12 || from > to) return false;
   return !!coverage && (mode === 'annual' ? coverage.annualComplete : Array.from({ length: to - from + 1 }, (_, i) => from + i).every(m => coverage.completeMonths.includes(m)));
 }
-function evidenceSummary(evidence: string[]) {
-  return evidence.slice(0, 2).map(note => `<br/>${escape(note.slice(0, 160))}${note.length > 160 ? '…' : ''}`).join('')
-    + (evidence.length > 2 ? `<br/>Всего оснований источника: ${evidence.length}` : '');
-}
-
-function barOption(years: number[], series: PlotSeries[], totals: (number | null)[], theme: Theme, view: PermitChartView, tooltip: (index: number) => string): EChartsCoreOption {
+function barOption(years: number[], series: PlotSeries[], totals: (number | null)[], theme: Theme, view: PermitChartView, periodLabel: string, unit: string): EChartsCoreOption {
   const width = Math.max(160, view.width ?? 900), height = view.height ?? 390, hidden = new Set(view.hidden ?? []);
   const grid = { left: width < 380 ? 42 : 54, right: 12, top: 90, bottom: 38, containLabel: false };
   const plotWidth = Math.max(1, width - grid.left - grid.right), plotHeight = height - grid.top - grid.bottom;
@@ -60,9 +54,10 @@ function barOption(years: number[], series: PlotSeries[], totals: (number | null
   });
   return {
     grid, graphic,
-    tooltip: { trigger: 'axis', confine: true, className: 'construction-pages-tooltip', extraCssText: `max-width:${Math.max(100, Math.min(290, width - 32))}px;font-size:11px;`, axisPointer: { type: 'shadow' }, formatter: (params: Hover | Hover[]) => {
+    tooltip: { trigger: 'item', confine: true, className: 'construction-pages-tooltip', extraCssText: `max-width:${Math.max(100, Math.min(290, width - 32))}px;font-size:11px;`, formatter: (params: Hover | Hover[]) => {
       const point = Array.isArray(params) ? params[0] : params;
-      return point ? tooltip(point.dataIndex) : '';
+      const source = point && series[point.seriesIndex ?? 0], year = point && years[point.dataIndex];
+      return source && year !== undefined ? `<strong>${year} · ${escape(periodLabel)}</strong><br/>${escape(source.name)}: ${number(source.data[point.dataIndex], 1)} ${escape(unit)}` : '';
     } },
     xAxis: { type: 'category', data: years.map(String), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, fontSize: 10, interval: 0, rotate: band < 30 ? 90 : 0, hideOverlap: false } },
     yAxis: { type: 'value', name: 'тыс. м²', min: axisMinimum, max: maximum, splitNumber: 4, nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 10, formatter: (v: number) => number(v, 0) }, splitLine: { lineStyle: { color: theme === 'light' ? '#edf0f3' : '#363a40', type: 'dashed' } } },
@@ -78,22 +73,11 @@ function barOption(years: number[], series: PlotSeries[], totals: (number | null
   };
 }
 
-function observationNote(row: { periodComplete?: boolean; annualComplete?: boolean; observedThrough?: string | null }) {
-  return `${row.periodComplete === false ? '<br/>Период неполный' : ''}${row.observedThrough ? `<br/>Наблюдения по ${escape(row.observedThrough)}` : ''}`;
-}
 export function permitsMainOption(data: PermitsData, theme: Theme, view: PermitChartView = {}): EChartsCoreOption {
   const rows = data.permits.presentation.rows;
   const series: PlotSeries[] = [{ id: 'selected', name: permitPeriodName, color: palette[0], data: rows.map(r => r.selected) }];
   if (rows.some(r => permitRemainder(r) !== null)) series.push({ id: 'remainder', name: permitRemainderName, color: theme === 'light' ? '#b9bfc7' : '#a1a8b2', data: rows.map(permitRemainder) });
-  return barOption(rows.map(r => r.year), series, rows.map(r => r.selected === null ? null : r.selected + (permitRemainder(r) ?? 0)), theme, view, index => {
-    const row = rows[index]; if (!row) return '';
-    const basis = permitAnnualBasis(row), difference = basis === null || row.selected === null ? null : basis.value - row.selected, growth = permitGrowth(rows, row);
-    return `<strong>${row.year} · ${escape(data.permits.periodLabel)}</strong><br/>Факт выбранного периода: ${exact(row.selected)} тыс. м²${observationNote(row)}`
-      + (basis ? `<br/>${basis.label}: ${exact(basis.value)} тыс. м²<br/>Годовой ориентир минус выбранный период: ${exact(difference)} тыс. м²<br/>Остаток: ${exact(permitRemainder(row))} тыс. м²${basis.kind === 'forecast' ? '<br/>Единица прогноза принята: assumed_thousand_m2; на листе нет явного заголовка единицы.' : ''}` : '<br/>Подтверждённый годовой итог и прогноз отсутствуют; остаток не определён.')
-      + (difference !== null && difference < 0 ? `<br/><strong class="permit-overplan">Превышение годового ориентира: ${exact(-difference)} тыс. м²</strong>` : '')
-      + (growth === null ? '<br/>Изменение к аналогичному полному периоду прошлого года не определено.' : `<br/>К аналогичному полному периоду ${row.year - 1}: ${exact(growth)} %`)
-      + evidenceSummary(row.evidence);
-  });
+  return barOption(rows.map(r => r.year), series, rows.map(r => r.selected === null ? null : r.selected + (permitRemainder(r) ?? 0)), theme, view, data.permits.periodLabel, data.permits.unit);
 }
 
 export function permitsMainRows(data: PermitsData): Cell[][] {
@@ -115,18 +99,9 @@ export function breakdownReconciliation(data: PermitBreakdown, index: number) {
   const sum = values.length && values.every(v => v !== null) ? values.reduce<number>((sum, value) => sum + value!, 0) : null;
   return { total: typeof total === 'number' ? total : null, sum, difference: typeof total === 'number' && sum !== null ? total - sum : null };
 }
-export function breakdownOption(data: PermitBreakdown, theme: Theme, view: PermitChartView = {}, coverage: PermitCoverage[] = []): EChartsCoreOption {
-  const chart = breakdownChart(data), aggregateLabel = data.columns.find(c => c.id === data.aggregateField)?.label ?? data.aggregateField;
-  return barOption(data.rows.map(r => r.year), chart.series.map((s, i) => ({ id: s.id, name: s.name, color: palette[i % palette.length], data: s.points.map(p => p.y) })), data.rows.map((_, i) => breakdownReconciliation(data, i).total), theme, view, index => {
-    const row = data.rows[index]; if (!row) return '';
-    const source = coverage.find(c => c.blockId === data.id && c.year === row.year), totals = breakdownReconciliation(data, index);
-    return `<strong>${row.year} · ${escape(data.periodLabel)}</strong><br/>${escape(aggregateLabel)} (итог источника): ${exact(totals.total)} тыс. м²`
-      + chart.series.map(s => `<br/>${escape(s.name)}: ${exact(s.points[index]?.y)} тыс. м²`).join('')
-      + `<br/>Сумма компонентов: ${exact(totals.sum)} тыс. м²`
-      + (totals.difference !== null && Math.abs(totals.difference) > 1e-7 ? `<br/><strong>Расхождение итога и суммы компонентов: ${exact(totals.difference)} тыс. м²</strong>` : '')
-      + observationNote({ ...source, ...row })
-      + (source ? `<br/>Полные месяцы: ${source.completeMonths.join(', ') || 'нет'}${evidenceSummary(source.evidence)}` : '');
-  });
+export function breakdownOption(data: PermitBreakdown, theme: Theme, view: PermitChartView = {}): EChartsCoreOption {
+  const chart = breakdownChart(data);
+  return barOption(data.rows.map(r => r.year), chart.series.map((s, i) => ({ id: s.id, name: s.name, color: palette[i % palette.length], data: s.points.map(p => p.y) })), data.rows.map((_, i) => breakdownReconciliation(data, i).total), theme, view, data.periodLabel, data.unit);
 }
 export function permitBreakdownRows(data: PermitBreakdown, version: string): Cell[][] {
   return [[...data.columns.map(c => `${c.label}${c.id === 'year' ? '' : ', тыс. м²'}${c.id === data.aggregateField ? ' (итог источника)' : ''}`), 'Период полный', 'Год полный', 'Версия источника'],

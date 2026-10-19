@@ -47,8 +47,13 @@ Permits retain the original selected facts, but use `permits.presentation` for
 the corrected chart/KPIs. One bar per year contains the selected fact and gray
 remainder to its annual forecast, otherwise a confirmed full-year observation.
 An eight-/ten-month source sum is never a full-year reference. Without a reference
-there is no gray segment. Signed differences remain in tooltips/exports when
-actuals exceed the reference. Cached forecast cells of monitoring sheet `Прогнозы`
+there is no gray segment. Signed differences remain in data tables/exports and
+the overplan note when actuals exceed the reference. All permits-page bar hovers
+identify only the hovered segment: year/period, label and area rounded to one
+decimal. Gray hover shows the remainder, not the annual total. Source evidence,
+coverage and reconciliation stay in the existing data/source disclosures;
+chart arrays, calculations and exports retain their full numeric precision.
+Cached forecast cells of monitoring sheet `Прогнозы`
 are not recalculated. Their unit is explicitly an assumed thousand square meters
 because the worksheet does not label it; blank future years remain null.
 

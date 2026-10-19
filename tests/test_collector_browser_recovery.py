@@ -583,32 +583,21 @@ class ConstructionRecoveryTests(unittest.TestCase):
         old.quit.assert_called_once()
 
     def test_unconfirmed_construction_never_replaces_previous_same_day_file(self):
-        from pipeline.downloaders import nashdom_operational_history as history
-
-        class UnconfirmedSource:
-            bounds = {"construction": "2020-01", "sales": "2020-01"}
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                pass
-
-            def collect(self, block, month):
-                raise history.ReportError("requested period/region was not confirmed")
-
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             target = root / f"construction_operational_{datetime.now():%Y%m%d}.json"
             target.write_bytes(b"old snapshot")
             stack.enter_context(patch.object(nd, "DOWNLOAD_DIR", root))
-            factory = stack.enter_context(patch.object(history, "OfficialClient", return_value=UnconfirmedSource()))
+            driver = Mock()
+            factory = stack.enter_context(patch.object(nd, "create_chrome", return_value=driver))
+            stack.enter_context(patch.object(nd, "_load_operational_region", return_value=(driver, False)))
             stack.enter_context(redirect_stdout(StringIO()))
             state = {"construction_operational": {"previous": True}}
             self.assertEqual(nd.fetch_construction_operational(state), ([], False))
             self.assertEqual(state, {"construction_operational": {"previous": True}})
             self.assertEqual(target.read_bytes(), b"old snapshot")
             factory.assert_called_once()
+            driver.quit.assert_called_once()
 
 
 if __name__ == "__main__":

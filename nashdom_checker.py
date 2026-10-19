@@ -3835,34 +3835,111 @@ def _validate_construction_operational_result(result: dict) -> None:
             raise ValueError("apartment sales shares do not add up to 100%")
 
 
-def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
-    """Bootstrap missing actual months, refresh recent months, retain current data."""
-    from pipeline.downloaders.nashdom_operational_history import download_history
+def _current_operational_period(value: str) -> tuple[int, int]:
+    """Compare source periods strictly, without depending on history transport."""
+    months = ("январь", "февраль", "март", "апрель", "май", "июнь",
+              "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
+    if not isinstance(value, str):
+        raise ValueError("current operational period must be text")
+    parts = value.casefold().split()
+    if len(parts) == 2 and parts[0] in months and re.fullmatch(r"\d{4}", parts[1]):
+        year, month = int(parts[1]), months.index(parts[0]) + 1
+    elif re.fullmatch(r"\d{4}-\d{2}", value):
+        year, month = map(int, value.split("-"))
+    else:
+        raise ValueError(f"invalid current operational period: {value!r}")
+    if not 2000 <= year <= 2100 or not 1 <= month <= 12:
+        raise ValueError("current operational period is out of bounds")
+    return year, month
+
+
+def _publish_current_operational(target: Path, result: dict, report_date: str) -> None:
+    from pipeline.download_provenance import receipt_path, record_download
+
+    previous = {path: path.read_bytes() if path.exists() else None
+                for path in (target, receipt_path(target))}
     try:
-        result = download_history(DOWNLOAD_DIR)
-    except (OSError, ValueError, RuntimeError, TimeoutException, WebDriverException) as exc:
+        _write_json_atomic(target, result)
+        record_download(target, source_id="construction_operational", remote_date=report_date or None)
+    except (OSError, ValueError):
+        # A failed receipt must not leave the current JSON ahead of its state.
+        for path, content in previous.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                write_bytes_atomic(path, content)
+        raise
+
+
+def fetch_construction_operational(state: dict) -> tuple[list[Path], bool]:
+    """Collect only the current construction and apartment-sales RF/Moscow pages."""
+    result = {"source": "construction_operational", "scraped_at": datetime.now().isoformat(timespec="seconds"),
+              "construction": [], "sales": []}
+    regions = (("rf", "Все"), ("msk", "Город Москва"))
+    driver = None
+    try:
+        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        driver = create_chrome(download_dir=DOWNLOAD_DIR, headless=HEADLESS)
+        for region_key, label in regions:
+            driver, ready = _load_operational_region(driver, _build_construction_indicators_url(), "construction", label)
+            if not ready:
+                raise ValueError(f"construction region did not switch: {label}")
+            for mode_label, kind in (("Жилая", "living"), ("Общая", "total")):
+                if not _click_area_mode(driver, mode_label):
+                    raise ValueError(f"construction area mode did not switch: {mode_label}")
+                snap = _read_construction_snapshot(driver)
+                if snap.get("region") != label or snap.get("area_kind") != kind:
+                    raise ValueError(f"construction snapshot has a different region or area mode: {label}/{kind}")
+                result["construction"].append({**snap, "region_key": region_key})
+
+        for region_key, label in regions:
+            driver, ready = _load_operational_region(driver, _build_apartment_sales_url(), "sales", label)
+            if not ready:
+                raise ValueError(f"sales region did not switch: {label}")
+            snap = _parse_apartment_sales_html(driver.page_source, label)
+            result["sales"].append({**snap, "region_key": region_key})
+    except (OSError, TimeoutException, WebDriverException, ValueError) as exc:
         print(f"  construction_operational failed: {exc}")
         return [], False
-    if not result["collected"]:
-        return result["new_files"], False
-    previous = state.get("construction_operational") or {}
-    state["construction_operational"] = {
-        **previous,
-        "filename": Path(result["current_file"]).name if result["current_file"] else previous.get("filename", ""),
-        "history_file": Path(result["history_file"]).name if result["history_file"] else "",
-        "history_coverage": result["coverage"],
-        "last_checked_at": datetime.now().isoformat(timespec="seconds"),
-        "complete": result["complete"],
-        "collected": result["collected"],
-        "errors": result["errors"],
-        "current_publication_error": result["current_publication_error"],
-    }
-    if result["current_file"]:
-        payload = json.loads(Path(result["current_file"]).read_text(encoding="utf-8"))
-        dates = [row.get("report_date") for block in ("construction", "sales") for row in payload[block]]
-        dates = [date for date in dates if date]
-        state["construction_operational"]["report_date"] = max(dates, key=lambda d: datetime.strptime(d, "%d.%m.%Y")) if dates else ""
-    return result["new_files"], result["complete"]
+    finally:
+        if driver is not None:
+            try:
+                driver.quit()
+            except WebDriverException:
+                pass
+
+    try:
+        _validate_construction_operational_result(result)
+        periods = {block: _current_operational_period(result[block][0]["report_period"])
+                   for block in ("construction", "sales")}
+        dates = [row.get("report_date", "") for block in periods for row in result[block]]
+        report_date = max((date for date in dates if date),
+                          key=lambda date: datetime.strptime(date, "%d.%m.%Y"), default="")
+        # Scan valid current snapshots, not file mtimes or a shared block date.
+        for path in DOWNLOAD_DIR.glob("construction_operational_*.json"):
+            if not re.fullmatch(r"construction_operational_\d{8}(?:_.*)?\.json", path.name):
+                continue
+            try:
+                previous = json.loads(path.read_text(encoding="utf-8"))
+                _validate_construction_operational_result(previous)
+                previous_periods = {block: _current_operational_period(previous[block][0]["report_period"])
+                                    for block in periods}
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+            for block in periods:
+                if previous_periods[block] > periods[block]:
+                    raise ValueError(f"refusing to downgrade current {block}")
+
+        target = DOWNLOAD_DIR / f"construction_operational_{datetime.now():%Y%m%d}.json"
+        entry = {"report_date": report_date, "filename": target.name,
+                 "scraped_at": result["scraped_at"], "complete": True}
+        _publish_current_operational(target, result, report_date)
+    except (OSError, ValueError) as exc:
+        print(f"  construction_operational failed: {exc}")
+        return [], False
+    state["construction_operational"] = entry
+    print(f"  {target.name}: construction RF/Moscow + apartment sales RF/Moscow")
+    return [target], True
 
 
 
@@ -3906,6 +3983,19 @@ def run(only: Iterable[str] | None = None) -> tuple[list[Path], bool]:
                 new_files, ok = result, bool(result)
             all_new.extend(new_files)
             save_state(state)
+            # Current collection succeeds independently. Once history exists,
+            # a bounded refresh adds new months without rerunning the bootstrap.
+            if (key == "construction_operational" and ok
+                    and os.environ.get("CONSTRUCTION_HISTORY_REFRESH", "1") != "0"
+                    and (DOWNLOAD_DIR / "construction_history.json").is_file()):
+                try:
+                    from pipeline.downloaders.nashdom_operational_history import download_history
+                    refreshed = download_history(DOWNLOAD_DIR, recent=1, max_periods=6)
+                    all_new.extend(path for path in refreshed["new_files"] if path not in all_new)
+                    if not refreshed["complete"]:
+                        print("  history refresh is partial; current snapshot remains successfully collected")
+                except Exception as exc:
+                    print(f"  history refresh failed; current snapshot remains successfully collected: {exc}")
             if not ok:
                 failed = True
         except Exception as exc:  # noqa: BLE001

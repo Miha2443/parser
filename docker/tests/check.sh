@@ -9,8 +9,12 @@ for script in docker/*.sh docker/tests/*.sh; do bash -n "$script"; done
 printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
-docker compose run --rm --no-deps updater python -m unittest tests.test_docker_offline_repair tests.test_construction_page_coverage tests.test_domrf_history_publication tests.test_nashdom_operational_api tests.test_permit_empty_supplements backend.tests.test_construction_pages backend.tests.test_domrf_history -v
+docker compose run --rm --no-deps updater python -m unittest tests.test_docker_offline_repair tests.test_construction_page_coverage tests.test_domrf_history_publication tests.test_nashdom_operational_api tests.test_nashdom_current_browser tests.test_nashdom_operational_browser tests.test_permit_empty_supplements backend.tests.test_construction_pages backend.tests.test_domrf_history -v
 docker compose run --rm --no-deps updater python scripts/check_nashdom_operational_history.py
+
+# This optional JavaScript check runs on Node-enabled hosts; the slim updater
+# reports an explicit skip rather than acquiring a runtime dependency on Node.
+docker compose run --rm --no-deps updater python -m unittest tests.test_nashdom_request_tracking -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_optional_erz.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_recovery.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_cron_install.py -v

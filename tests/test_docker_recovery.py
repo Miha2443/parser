@@ -63,6 +63,55 @@ bounded() {
                 self.assertIn('code_image_preserve_failed', result.stdout)
                 self.assertNotIn('continued', result.stdout)
 
+@unittest.skipUnless(BASH, 'Construction collection modes need Bash, not Docker')
+class ConstructionModeShellTests(unittest.TestCase):
+    def run_mode(self, mode, collected=0, verified=0):
+        source = (REPO / 'docker/update.sh').read_text(encoding='utf-8')
+        start = source.index('event updater_start "mode=$mode"')
+        branch = source[start:source.index('if ! run_updater;', start)]
+        harness = '''set -euo pipefail
+mode="$MODE_TEST"
+event() { printf '%s %s\\n' "$1" "${2:-}"; }
+control() { printf 'CONTROL:%s\\n' "$1"; }
+docker() {
+  printf 'DOCKER:%s\\n' "$*"
+  if [[ "$*" == *--verify-published-attempt* ]]; then return "$VERIFY_TEST"; fi
+  return "$COLLECT_TEST"
+}
+'''
+        return subprocess.run([BASH, '-c', harness + branch + '\nrun_updater\nprintf "history_partial=%s\\n" "$history_partial"\n'],
+                              env={**os.environ, 'MODE_TEST': mode, 'COLLECT_TEST': str(collected),
+                                   'VERIFY_TEST': str(verified)}, capture_output=True, text=True, timeout=10)
+
+    def test_current_mode_does_not_invoke_history(self):
+        result = self.run_mode('--construction-current')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('CONSTRUCTION_HISTORY_REFRESH=0', result.stdout)
+        self.assertNotIn('pipeline.downloaders.nashdom_operational_history', result.stdout)
+        self.assertIn('CONTROL:publish', result.stdout)
+
+    def test_complete_and_partial_history_both_require_new_verified_bundle(self):
+        for collected in (0, 2):
+            with self.subTest(collected=collected):
+                result = self.run_mode('--construction-history', collected)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('--verify-published-attempt', result.stdout)
+                self.assertIn('CONTROL:publish', result.stdout)
+                self.assertIn('history_partial=' + str(int(collected == 2)), result.stdout)
+                self.assertNotIn('scripts/update_realty.py construction', result.stdout)
+
+    def test_no_new_verified_bundle_cannot_publish_even_after_partial_collection(self):
+        result = self.run_mode('--construction-history', 2, 9)
+        self.assertEqual(result.returncode, 9, result.stdout + result.stderr)
+        self.assertNotIn('CONTROL:publish', result.stdout)
+
+    def test_source_failure_cannot_publish_or_verify_old_progress(self):
+        result = self.run_mode('--construction-history', 1)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn('--verify-published-attempt', result.stdout)
+        self.assertNotIn('CONTROL:publish', result.stdout)
+
+
 # Snapshot of the production 3d09add CLI, kept local so shallow CI clones can
 # exercise migration without fetching historical commits or a Docker daemon.
 LEGACY_READINESS = '''import json,sys
@@ -153,6 +202,15 @@ if command=='run':
             else: p.transaction(runtime,action)
         except Exception as exc: print(str(exc),file=sys.stderr); die(1)
         die(0)
+    if 'pipeline.downloaders.nashdom_operational_history' in args:
+        if '--verify-published-attempt' in args:
+            state['history_verifications']=state.get('history_verifications',0)+1
+            die(1 if state.get('history_verification_failed') else 0)
+        state['history_collections']=state.get('history_collections',0)+1
+        state['downloads']+=1
+        die(2 if state.get('collected_partial') else 0 if state.get('collected_success') else 1)
+    if 'CONSTRUCTION_HISTORY_REFRESH=0' in args:
+        state['current_only_collections']=state.get('current_only_collections',0)+1
     state['downloads']+=1; die(0 if state.get('collected_success') else 1)
 if command=='exec':
     assert '-T' in args and '--interactive=false' in args, 'Readiness must not attach an interactive terminal'
@@ -352,6 +410,39 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertEqual((self.state['stops'], self.state['restarts']), (0, 1))
         self.assertEqual(self.state['served'], 'releases/history-new')
         self.assertFalse((self.root / 'runtime/pending.json').exists())
+        self.assertEqual(self.state['history_collections'], 1)
+        self.assertEqual(self.state['history_verifications'], 1)
+
+    def test_construction_history_partial_publishes_verified_progress_and_returns_two(self):
+        self.state.update(served='releases/new', collected_partial=True)
+        result = self.run_host('--construction-history')
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(self.state['history_verifications'], 1)
+        self.assertEqual(self.state['publications'], 1)
+        self.assertEqual(self.state['web_starts'], 1)
+        self.assertEqual(self.state['served'], 'releases/history-new')
+        self.assertFalse((self.root / 'runtime/pending.json').exists())
+        self.assertIn('history_pending', result.stdout)
+
+    def test_construction_history_partial_without_verified_bundle_cannot_publish(self):
+        self.state.update(served='releases/new', collected_partial=True, history_verification_failed=True)
+        result = self.run_host('--construction-history')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['history_verifications'], 1)
+        self.assertEqual(self.state.get('publications', 0), 0)
+        self.assertEqual(self.state.get('web_starts', 0), 0)
+        self.assertEqual((self.state['stops'], self.state['restarts']), (0, 0))
+
+    def test_construction_current_does_not_invoke_history(self):
+        self.state.update(served='releases/new', collected_success=True)
+        result = self.run_host('--construction-current')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.state['current_only_collections'], 1)
+        self.assertEqual(self.state.get('history_collections', 0), 0)
+        self.assertEqual(self.state['downloads'], 1)
+        self.assertEqual(self.state['publications'], 1)
+        self.assertEqual(self.state['web_starts'], 1)
+        self.assertIn('construction_current', result.stdout)
 
     def test_code_upgrade_proves_backend_before_web_without_source_collection(self):
         self.state['served'] = 'releases/new'
@@ -397,14 +488,14 @@ class HostRecoveryTests(unittest.TestCase):
 
     def test_new_modes_keep_missing_live_and_pending_recovery_guards(self):
         (self.root / 'runtime/live').unlink()
-        for mode in ('--construction-history', '--upgrade-code'):
+        for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
             with self.subTest(mode=mode, guard='missing-live'):
                 result = self.run_host(mode)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('reason=live_missing', result.stdout)
         (self.root / 'runtime/live').symlink_to('releases/new')
         (self.root / 'runtime/pending.json').write_text(json.dumps({'previous': None, 'next': 'releases/new'}))
-        for mode in ('--construction-history', '--upgrade-code'):
+        for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
             with self.subTest(mode=mode, guard='pending-recovery'):
                 result = self.run_host(mode)
                 self.assertNotEqual(result.returncode, 0)
@@ -420,7 +511,7 @@ class HostRecoveryTests(unittest.TestCase):
         (self.root / 'logs/docker-update_previous.log').write_text('previous run')
         with (self.root / 'state/.docker-update.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            for mode in ('--construction-history', '--upgrade-code'):
+            for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
                 with self.subTest(mode=mode):
                     result = self.run_host(mode)
                     self.assertNotEqual(result.returncode, 0)

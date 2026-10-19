@@ -66,10 +66,13 @@ and are never rescaled to force agreement with corrected main totals. Unknown
 month/year-only observations are not invented as January measurements.
 
 DOM.RF construction and realization use separate source periods and dates.
-Monthly construction and realization now include the actual historical monthly
-API observations from `construction_history.json`, beginning January 2020. The
-collector bootstraps missing months and refreshes recent months; it does not infer
-areas from rounded percentages. The existing sales API supplies its
+Monthly construction and realization include verified monthly observations from
+`construction_history.json`, beginning January 2020. The history collector uses the
+normal period controls on the two existing source pages, not direct API requests.
+Legacy verified API observations remain supported. Daily current cards and their
+matching chart point are independent of backfill; partial coverage is disclosed
+without inventing missing months. Areas are not inferred from rounded percentages.
+The existing dashboard sales API supplies its
 original history, readiness, forecast and six segment tables independently:
 one provider failing does not remove the other provider's blocks. Price and
 funds retain their original source values and units. Range/period controls are

@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline.download_provenance import record_download
-from pipeline.downloaders.nashdom_operational_api import (
-    BASE, OPTIONAL_SALES, SALES_FIELDS, AccessVerificationRequired, EmptyReport, OfficialClient, ReportError, TransportError, normalize,
+from pipeline.downloaders.nashdom_operational_contract import (
+    BASE, OPTIONAL_SALES, SALES_FIELDS, AccessVerificationRequired, EmptyReport, ReportError, TransportError, normalize,
     numeric, period, request_url, utc_now,
 )
 from pipeline.paths import DATA_RAW
@@ -117,15 +117,29 @@ def history_lock(raw_dir):
 
 
 def validate_artifact(artifact):
+    if not isinstance(artifact, dict) or artifact.get("schemaVersion") != SCHEMA_VERSION:
+        raise ReportError("invalid operational artifact schema")
     block, month = artifact["block"], period(artifact["period"])
+    if block not in {"construction", "sales"}:
+        raise ReportError("unknown operational artifact block")
     stamp = artifact["collected_at"]
     collected_instant(stamp)
     rows = artifact["rows"]
     report_dates = {row.get("report_date", "") for row in rows}
     if len(report_dates) != 1:
         raise ReportError("artifact has inconsistent block report dates")
-    expected = normalize(block, month, artifact["responses"], collected_at=stamp,
-                         report_date=next(iter(report_dates)))
+    if artifact.get("evidence_kind") == "browser_page":
+        from pipeline.downloaders.nashdom_operational_browser import normalize_page
+        if "responses" in artifact:
+            raise ReportError("mixed API/browser evidence")
+        expected = normalize_page(block, month, artifact["observations"], collected_at=stamp)
+    elif artifact.get("evidence_kind") in (None, "api_response"):
+        if "observations" in artifact:
+            raise ReportError("mixed API/browser evidence")
+        expected = normalize(block, month, artifact["responses"], collected_at=stamp,
+                             report_date=next(iter(report_dates)))
+    else:
+        raise ReportError("unknown operational evidence kind")
     if rows != expected:
         raise ReportError("stored rows do not match the literal source responses")
     return block, month
@@ -140,6 +154,13 @@ def bundle_entries(payload, block):
         year, num = map(int, month.split("-"))
         stamp = row["collected_at"]
         collected_instant(stamp)
+        if row.get("evidence_kind") == "browser_page":
+            if row.get("period_verified") is not True or not isinstance(row.get("page_evidence"), dict):
+                raise ReportError("bundle has unverified page observation")
+            grouped.setdefault(month, []).append(copy.deepcopy(row))
+            continue
+        if row.get("evidence_kind") not in (None, "api_response") or "page_evidence" in row:
+            raise ReportError("bundle has unknown or mixed source evidence")
         if (row.get("period_verified") is not True
                 or row.get("source_url") != BASE + request_url(block, month, region)
                 or row.get("period_evidence") != {"repYear": year, "repMonth": num}):
@@ -162,9 +183,55 @@ def bundle_entries(payload, block):
         stamps = {collected_instant(row["collected_at"]) for row in rows}
         if len(keys) != len(expected) or set(keys) != expected or len(stamps) != 1:
             raise ReportError("bundle month is partial or duplicate")
+        kinds = {row.get("evidence_kind") for row in rows}
+        if "browser_page" in kinds:
+            if kinds != {"browser_page"}:
+                raise ReportError("mixed evidence within block-month")
+            from pipeline.downloaders.nashdom_operational_browser import normalize_page
+            normalized = normalize_page(block, month, [row["page_evidence"] for row in rows], collected_at=rows[0]["collected_at"])
+            if normalized != rows:
+                raise ReportError("browser bundle values differ from captured page cells")
         result[month] = {"block": block, "period": month, "rows": rows,
                          "collected_at": rows[0]["collected_at"], "origin": "verified bundle"}
     return result
+
+
+def validate_bundle_payload(payload):
+    """Validate portable observations and truthful coverage, not a target volume."""
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
+        raise ReportError("unsupported history bundle schema")
+    for block in ("construction", "sales"):
+        if not isinstance(payload.get(block), list):
+            raise ReportError("invalid history bundle block")
+    if payload.get("content_sha256") != _digest({b: payload[b] for b in ("construction", "sales")}):
+        raise ReportError("history bundle hash mismatch")
+    entries = {b: bundle_entries(payload, b) for b in ("construction", "sales")}
+    coverage = payload.get("coverage")
+    if not isinstance(coverage, dict) or set(coverage) != set(entries):
+        raise ReportError("history bundle has no independent block coverage")
+    complete = True
+    for block, records in entries.items():
+        row = coverage[block]
+        if not isinstance(row, dict):
+            raise ReportError("invalid history coverage")
+        start, end, latest = (period(row.get(key)) for key in ("start", "end", "latest_available"))
+        if start < "2020-01" or end > latest:
+            raise ReportError("invalid history coverage bounds")
+        expected = months(start, end)
+        present = set(expected) & records.keys()
+        missing = [m for m in expected if m not in present]
+        if (type(row.get("expected_months")) is not int or row["expected_months"] != len(expected)
+                or type(row.get("collected_months")) is not int or row["collected_months"] != len(present)
+                or row.get("missing_months") != missing):
+            raise ReportError("history coverage differs from verified observations: " + block)
+        if any(month > latest for month in records):
+            raise ReportError("history observation exceeds observed source bound")
+        complete = complete and bool(expected) and not missing
+    if payload.get("history_complete", complete) is not complete:
+        raise ReportError("history completeness claim differs from verified coverage")
+    if payload.get("complete") is True and not complete:
+        raise ReportError("partial history falsely marked complete")
+    return entries
 
 
 class HistoryStore:
@@ -178,15 +245,7 @@ class HistoryStore:
         if self.bundle.exists():
             try:
                 payload = json.loads(self.bundle.read_text(encoding="utf-8"))
-                if payload.get("schemaVersion") != SCHEMA_VERSION:
-                    raise ReportError("unsupported history bundle schema")
-                for block in self.entries:
-                    if not isinstance(payload.get(block), list):
-                        raise ReportError("invalid history bundle block")
-                if payload.get("content_sha256") != _digest({b: payload[b] for b in self.entries}):
-                    raise ReportError("history bundle hash mismatch")
-                restored = {b: bundle_entries(payload, b) for b in self.entries}
-                self.entries = restored
+                self.entries = validate_bundle_payload(payload)
             except (ValueError, OSError, AttributeError, KeyError, TypeError) as exc:
                 quarantine = self.private / "quarantine"
                 quarantine.mkdir(parents=True, exist_ok=True)
@@ -268,9 +327,12 @@ class HistoryStore:
                    **rows, "coverage": coverage, "complete": complete, "errors": list(errors),
                    "history_complete": bool(coverage) and all(c["expected_months"] > 0 and not c["missing_months"] for c in coverage.values()),
                    "current_publication_error": current_publication_error,
+                   "run_status": "complete" if complete else "partial",
+                   "publishable": True,
                    "checked_at": utc_now(), "content_sha256": _digest(rows)}
         if not any(rows.values()):
             return None
+        validate_bundle_payload(payload)
         version = self.private / "bundles" / f"history_{uuid.uuid4().hex}.json"
         atomic_json(version, payload)
         atomic_json(self.bundle, payload)
@@ -311,15 +373,15 @@ def emit(event):
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
-def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
+def _download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
                      max_periods=None, delay=0.5, client=None, progress=emit):
     """Return only real downloaded paths; partial coverage is never success."""
     raw_dir = Path(raw_dir or DATA_RAW / "realty" / "nashdom")
     start, end = max("2020-01", period(start)), period(end) if end else None
-    run_started = utc_now()
     with history_lock(raw_dir):
         store = HistoryStore(raw_dir)
-        with client if client is not None else OfficialClient(raw_dir, delay=delay) as source:
+        from pipeline.downloaders.nashdom_operational_browser import BrowserClient
+        with client if client is not None else BrowserClient(raw_dir, delay=delay) as source:
             bounds = source.bounds
             coverage = store.coverage(bounds, start=start, end=end)
             plans = {b: select_months(start, c["end"], store.entries[b], recent=recent)
@@ -329,9 +391,8 @@ def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
             jobs += [(b, m) for b in plans for m in plans[b]]
             progress({"event": "plan", "bounds": bounds, "coverage": coverage,
                       "planned_blocks": len(jobs), "recovery_issues": store.recovery_issues})
-            files, errors, count, consecutive_transport = [], [], 0, 0
-            current_path, current_publication_error = None, None
-            current_attempted = False
+            files, errors, count, accepted, consecutive_transport = [], [], 0, 0, 0
+            current_publication_error = None
             for block, month in jobs:
                 if max_periods is not None and count >= max_periods:
                     break
@@ -339,7 +400,10 @@ def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
                 progress({"event": "fetch", "block": block, "period": month, "attempted": count, "planned": len(jobs)})
                 try:
                     artifact = source.collect(block, month)
+                    if validate_artifact(artifact) != (block, month):
+                        raise ReportError("collected artifact differs from scheduled block/month")
                     store.accept(artifact)
+                    accepted += 1
                     consecutive_transport = 0
                     coverage = store.coverage(bounds, start=start, end=end)
                     bundle = store.publish(coverage, errors=errors, network_collected=True,
@@ -356,19 +420,6 @@ def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
                     if isinstance(exc, AccessVerificationRequired) or consecutive_transport >= 3:
                         break
                     continue
-                # A stricter current-only contract must not discard a valid
-                # historical month or abort the remaining backfill.
-                if not current_attempted:
-                    try:
-                        current_path = publish_current(store, bounds, run_started)
-                        if current_path:
-                            current_attempted = True
-                            files.append(current_path)
-                    except (ValueError, OSError, KeyError, TypeError) as exc:
-                        current_attempted = True
-                        current_publication_error = str(exc)
-                        progress({"event": "current_publication_error", "error": str(exc),
-                                  "preserved_previous": True})
                 progress({"event": "saved", "block": block, "period": month,
                           "rows": len(artifact["rows"]), "coverage": {
                               b: {"collected_months": c["collected_months"],
@@ -383,13 +434,47 @@ def download_history(raw_dir=None, *, start="2020-01", end=None, recent=3,
                                     current_publication_error=current_publication_error)
                       if files or store.changed else store.bundle if store.bundle.exists() else None)
             result = {"new_files": files, "history_file": str(bundle) if bundle else "",
-                      "complete": complete, "collected": count - len(errors), "attempted": count,
+                      "complete": complete, "collected": accepted, "attempted": count,
                       "coverage": coverage, "errors": errors,
                       "history_complete": history_complete,
                       "current_publication_error": current_publication_error,
-                      "current_file": str(current_path) if current_path else ""}
+                      "current_file": "", "planned": len(jobs),
+                      "run_status": "complete" if complete else "partial" if accepted else "failed",
+                      "stop_reason": "access" if any(e["kind"] == "access_verification" for e in errors) else
+                                     "error" if errors else "limit" if count < len(jobs) else "exhausted",
+                      "published": bool(files and bundle)}
             progress({"event": "finished", **{k: v for k, v in result.items() if k != "new_files"}})
             return result
+
+
+def download_history(raw_dir=None, **kwargs):
+    """History is independent of the daily snapshot, including on failure."""
+    raw_dir = Path(raw_dir or DATA_RAW / "realty" / "nashdom")
+    started = utc_now()
+    try:
+        result = _download_history(raw_dir, **kwargs)
+    except Exception as exc:
+        atomic_json(raw_dir / ".construction_history" / "last_attempt.json",
+                    {"started_at": started, "finished_at": utc_now(), "run_status": "failed",
+                     "error": str(exc), "current_snapshot": "unchanged"})
+        raise
+    atomic_json(raw_dir / ".construction_history" / "last_attempt.json",
+                {"started_at": started, "finished_at": utc_now(), "current_snapshot": "unchanged",
+                 "bundle_sha256": _digest(json.loads(Path(result["history_file"]).read_text(encoding="utf-8"))) if result["history_file"] else "",
+                 **{key: value for key, value in result.items() if key != "new_files"}})
+    return result
+
+
+def verify_published_attempt(raw_dir):
+    raw_dir = Path(raw_dir)
+    attempt = json.loads((raw_dir / ".construction_history" / "last_attempt.json").read_text(encoding="utf-8"))
+    if attempt.get("published") is not True or not attempt.get("collected"):
+        raise ReportError("no new verified history bundle was materialized in this attempt")
+    payload = json.loads((raw_dir / BUNDLE_NAME).read_text(encoding="utf-8"))
+    validate_bundle_payload(payload)
+    if attempt.get("bundle_sha256") != _digest(payload):
+        raise ReportError("history bundle differs from the last collection attempt")
+    return attempt
 
 
 def main(argv=None):
@@ -400,10 +485,14 @@ def main(argv=None):
     parser.add_argument("--max-periods", type=int, help="Bound a probe by block-months; default is unlimited")
     parser.add_argument("--delay", type=float, default=0.5)
     parser.add_argument("--raw-dir", type=Path, default=DATA_RAW / "realty" / "nashdom")
+    parser.add_argument("--verify-published-attempt", action="store_true", help="Verify the last newly collected portable bundle without network access")
     args = parser.parse_args(argv)
     if args.recent_months < 0 or args.delay < 0 or (args.max_periods is not None and args.max_periods < 1):
         parser.error("invalid negative/empty download limit")
     try:
+        if args.verify_published_attempt:
+            emit({"event": "publishable_attempt_verified", **verify_published_attempt(args.raw_dir)})
+            return 0
         result = download_history(args.raw_dir, start=args.start, end=args.end,
                                   recent=args.recent_months, max_periods=args.max_periods, delay=args.delay)
         return 0 if result["complete"] else 2

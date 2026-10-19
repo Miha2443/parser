@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime
 import math
 import json
-import hashlib
 import re
 from numbers import Real
 from urllib.parse import urlencode
@@ -345,8 +344,33 @@ def validate_kvart_sources(access, kvart):
 
 
 def validate_construction_sources(access, construction, *, require_permits=True):
-    require(any(p.name.startswith("construction_operational_") for p in access.source_files("construction_operational")),
-            "construction has no dynamic snapshot")
+    from backend.domrf_service import DomrfService, _DAILY_NAME, _number, _period, _reject_constant
+    from pipeline.downloaders.nashdom_operational_contract import validate_current_snapshot
+
+    daily_files = [path for path in access.source_files("construction_operational") if _DAILY_NAME.fullmatch(path.name)]
+    require(daily_files, "construction has no dynamic snapshot")
+    latest = max(daily_files, key=lambda path: (path.stat().st_mtime_ns, str(path)))
+    try:
+        raw = json.loads(latest.read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
+        require(isinstance(raw, dict), "construction current raw snapshot is invalid")
+        normalized = {}
+        for block in ("construction", "sales"):
+            rows = raw.get(block)
+            require(isinstance(rows, list) and all(isinstance(row, dict) for row in rows),
+                    "construction current raw block is invalid: " + block)
+            require(all(_period(row.get("report_period")) is not None for row in rows),
+                    "construction current raw period is invalid: " + block)
+            if block == "construction":
+                normalized[block] = [{**row, "area_thousand_m2": _number(row.get("area_thousand_m2"))} for row in rows]
+            else:
+                require(all(isinstance(row.get("metrics"), dict) for row in rows),
+                        "construction current raw sales metrics are invalid")
+                normalized[block] = [{**row, "metrics": {key: _number(value) for key, value in row["metrics"].items()}}
+                                     for row in rows]
+        validate_current_snapshot(normalized)
+    except (OSError, ValueError, TypeError, LookupError) as exc:
+        raise RuntimeError("Incomplete dashboard coverage: construction current raw snapshot is invalid: " + str(exc)) from exc
+
     require_frame(construction.get("construction"), "construction", regions=True, numeric=("value_thousand_m2",))
     require_frame(construction.get("sales"), "construction/sales", regions=True)
     for row in construction["sales"].to_dict("records"):
@@ -355,28 +379,47 @@ def validate_construction_sources(access, construction, *, require_permits=True)
         require_frame(construction.get("permits"), "construction/permits", numeric=("value_thousand_m2",))
     history_files = access.source_files("construction_history")
     if history_files:
-        from backend.domrf_service import DomrfService
+        from pipeline.downloaders.nashdom_operational_history import ReportError, validate_bundle_payload
         require(len(history_files) == 1, "construction history is ambiguous")
-        payload = json.loads(history_files[0].read_text(encoding="utf-8"))
-        require(payload.get("schemaVersion") == 1 and payload.get("complete") is True
-                and not payload.get("errors") and not payload.get("current_publication_error"),
-                "construction history bootstrap or current publication is incomplete")
-        digest = hashlib.sha256(json.dumps({b: payload[b] for b in ("construction", "sales")},
-                                          ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")).hexdigest()
-        require(payload.get("content_sha256") == digest, "construction history checksum differs")
+        try:
+            payload = json.loads(history_files[0].read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
+            entries = validate_bundle_payload(payload)
+        except (OSError, ValueError, TypeError, LookupError, ReportError) as exc:
+            raise RuntimeError("Incomplete dashboard coverage: construction history is invalid: " + str(exc)) from exc
         service = DomrfService(access.context)
+        expected = {}
+        for path in [*daily_files, history_files[0]]:
+            try:
+                source = payload if path == history_files[0] else raw if path == latest else json.loads(
+                    path.read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
+                require(isinstance(source, dict), "construction source must be an object")
+                parsed = {(service._relative(path), region, block, row["period"]): row
+                          for block in ("construction", "sales") for region, row in service._snapshots(
+                              source, block, path, (None, None, path.stat().st_mtime_ns), [])}
+            except (OSError, ValueError, TypeError, LookupError, RuntimeError) as exc:
+                require(path not in (latest, history_files[0]), "construction source observations are invalid: " + str(exc))
+                continue
+            expected.update(parsed)
         for region in ("msk", "rf"):
             report = service.report(region)
+            validate_domrf_page(report, region)
             for block in ("construction", "sales"):
-                coverage = payload.get("coverage", {}).get(block, {})
-                require(coverage.get("start") == "2020-01" and not coverage.get("missing_months")
-                        and coverage.get("collected_months") == coverage.get("expected_months")
-                        and isinstance(coverage.get("expected_months"), int) and coverage["expected_months"] > 0,
-                        "construction history coverage is incomplete: " + block)
-                rows = report[block]["history"]
-                require(len(rows) == coverage["expected_months"] and rows[0]["period"] == coverage["start"]
-                        and rows[-1]["period"] == coverage.get("end") == coverage.get("latest_available"),
-                        "construction history periods do not match coverage: " + region + "/" + block)
+                period_id = _period(next(row for row in raw[block] if row["region_key"] == region)["report_period"])
+                current = expected[(service._relative(latest), region, block, period_id)]
+                require(report[block]["metrics"] == current["metrics"] and report[block]["period"] == {
+                    "id": current["period"], "label": current["label"], "reportDate": current["reportDate"]},
+                    "construction current backend snapshot differs from daily raw: " + region + "/" + block)
+                observed = {row["period"]: row for row in report[block]["history"]}
+                for month in entries[block]:
+                    row = observed.get(month)
+                    require(row is not None, "construction backend lacks verified history: " + region + "/" + block + "/" + month)
+                    reference = expected.get((row.get("sourceFile"), region, block, month))
+                    require(reference is not None, "construction backend history lacks source evidence")
+                    values = {key: row.get(key) for key in ("living", "total")} if block == "construction" else row.get("metrics")
+                    require(values == reference["metrics"] and all(row.get(key) == reference[key] for key in ("label", "reportDate")),
+                            "construction backend history differs from verified observations: " + region + "/" + block + "/" + month)
+                    if month == period_id:
+                        require(row["sourceFile"] == service._relative(latest), "construction current history row is not daily raw")
 
 
 def validate_economic_sources(access, *, aliases=frozenset({"fedstat", "rosstat"}), processed=True):
@@ -694,11 +737,12 @@ def validate_domrf_page(payload, region):
             _api_date(row["reportDate"], block_label)
             values = row if key == "construction" else _api_object(row.get("metrics"), block_label + "/history.metrics")
             _api_numbers(values, ("living", "total") if key == "construction" else values.keys(), block_label + "/history")
+            measured |= any(finite(values.get(field)) for field in (("living", "total") if key == "construction" else CONSTRUCTION_SALES_FIELDS))
             periods[period] = row
         period = block["period"]
         if period is None:
-            require(not periods and (metrics is None or all(v is None for v in metrics.values())),
-                    block_label + " has observations without a current period")
+            require(metrics is None or all(v is None for v in metrics.values()),
+                    block_label + " has measurements without a current period")
             continue
         _api_object(period, block_label + "/period")
         require(isinstance(period.get("label"), str) and "id" in period and "reportDate" in period,

@@ -17,6 +17,7 @@ from pipeline.data_access import DataAccess, DataContext, MONTH_NAMES_RU, file_s
 REGIONS = {"msk": "Город Москва", "rf": "Российская Федерация"}
 _SUFFIX = r"(?:%|тыс\.?\s*м[²2]|млн\.?\s*руб\.?|руб\.?)?"
 _NUMBER = re.compile(r"^\s*([+-]?(?:\d[\d\s]*)(?:[.,]\d+)?)\s*" + _SUFFIX + r"\s*$", re.I)
+_DAILY_NAME = re.compile(r"construction_operational_\d{8}\.json")
 
 
 def _number(value):
@@ -70,6 +71,18 @@ def _collected_ns(row, payload, fallback):
     return fallback
 
 
+def _month_ranges(values):
+    ranges = []
+    for value in sorted(set(values)):
+        year, month = map(int, value.split("-"))
+        ordinal = year * 12 + month
+        if ranges and ordinal == ranges[-1][2] + 1:
+            ranges[-1][1:] = [value, ordinal]
+        else:
+            ranges.append([value, value, ordinal])
+    return ", ".join(start if start == end else start + ".." + end for start, end, _ in ranges)
+
+
 class DomrfService:
     def __init__(self, context: DataContext, check_interval: float = 5):
         self.context = context
@@ -82,7 +95,7 @@ class DomrfService:
     def _inputs(self):
         access = DataAccess(self.context)
         files = sorted({path for path in access.source_files("construction_operational")
-                        if path.suffix.lower() == ".json" and path.name.startswith("construction_operational_")}
+                        if _DAILY_NAME.fullmatch(path.name)}
                        | set(access.source_files("construction_history")))
         signatures = tuple(file_signature(path) for path in files)
         if not files or any(signature[1] is None for signature in signatures):
@@ -160,23 +173,41 @@ class DomrfService:
             yield region, snapshot
 
     @staticmethod
-    def _block(snapshots, block):
-        if not snapshots:
-            return {"period": None, "metrics": {"living": None, "total": None} if block == "construction" else None,
-                    "history": []}
+    def _latest(snapshots):
         observed = [row for row in snapshots if row["period"] is not None]
         latest = max(observed, key=lambda row: row["period"]) if observed else None
         unknown = [row for row in snapshots if row["period"] is None]
         # A newly published block without a period cannot silently inherit old chronology.
         if unknown and (latest is None or max(row["freshness"] for row in unknown) > latest["freshness"]):
             latest = max(unknown, key=lambda row: (row["freshness"], row["sourceFile"]))
+        return latest
+
+    @staticmethod
+    def _block(snapshots, block, current):
         history = []
-        for row in sorted(observed, key=lambda row: row["period"]):
+        for row in sorted((row for row in snapshots if row["period"] is not None), key=lambda row: row["period"]):
             item = {key: row[key] for key in ("period", "label", "reportDate", "sourceFile")}
             item.update(row["metrics"] if block == "construction" else {"metrics": row["metrics"]})
             history.append(item)
-        return {"period": {"id": latest["period"], "label": latest["label"], "reportDate": latest["reportDate"]},
-                "metrics": latest["metrics"], "history": history}
+        if current is None:
+            return {"period": None, "metrics": {"living": None, "total": None} if block == "construction" else None,
+                    "history": history}
+        return {"period": {"id": current["period"], "label": current["label"], "reportDate": current["reportDate"]},
+                "metrics": current["metrics"], "history": history}
+
+    def _history_issues(self, payload, path, issues):
+        reference = self._relative(path)
+        if any(not row["expected_months"] or row["missing_months"] for row in payload["coverage"].values()):
+            issues.append({"level": "warning", "message": reference + ": история DOM.RF собрана частично; "
+                           "показаны только проверенные наблюдения."})
+        for block, coverage in payload["coverage"].items():
+            missing = coverage["missing_months"]
+            if missing:
+                issues.append({"level": "warning", "message": reference + ": " + block +
+                               "; отсутствующие периоды: " + _month_ranges(missing) + "."})
+        if payload.get("errors") or payload.get("current_publication_error"):
+            issues.append({"level": "warning", "message": reference + ": последний сбор истории завершился с ошибками; "
+                           "текущие показатели взяты из независимого дневного среза."})
 
     def _refresh(self):
         now = time.monotonic()
@@ -187,17 +218,47 @@ class DomrfService:
             self._checked = now
             return
         issues, snapshots = [], {region: {block: {} for block in ("construction", "sales")} for region in REGIONS}
+        daily = []
         for path, signature in zip(files, signatures):
-            payload = json.loads(path.read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
-            if not isinstance(payload, dict):
-                raise SourceUnavailable("Invalid DOM.RF JSON document")
-            for block in ("construction", "sales"):
-                for region, snapshot in self._snapshots(payload, block, path, signature, issues):
+            is_daily = bool(_DAILY_NAME.fullmatch(path.name))
+            file_issues = []
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
+                if not isinstance(payload, dict):
+                    raise SourceUnavailable("Invalid DOM.RF JSON document")
+                if not is_daily:
+                    from pipeline.downloaders.nashdom_operational_history import validate_bundle_payload
+                    validate_bundle_payload(payload)
+                    self._history_issues(payload, path, file_issues)
+                parsed = {block: list(self._snapshots(payload, block, path, signature, file_issues))
+                          for block in ("construction", "sales")}
+            except (OSError, ValueError, TypeError, LookupError, RuntimeError, OverflowError) as exc:
+                issues.append({"level": "warning", "message": self._relative(path) +
+                               ": источник не прошёл проверку и исключён: " + str(exc)})
+                continue
+            issues.extend(file_issues)
+            if is_daily:
+                daily.append((path, signature, parsed))
+            for block, rows in parsed.items():
+                for region, snapshot in rows:
                     current = snapshots[region][block].get(snapshot["period"])
                     if current is None or (snapshot["freshness"], snapshot["sourceFile"]) > (current["freshness"], current["sourceFile"]):
                         snapshots[region][block][snapshot["period"]] = snapshot
-        current_files = [(path, sig) for path, sig in zip(files, signatures) if re.fullmatch(r"construction_operational_\d{8}", path.stem)]
-        latest_path = max(current_files, key=lambda pair: (pair[1][2], str(pair[0])))[0] if current_files else None
+        if not daily and any(_DAILY_NAME.fullmatch(path.name) for path in files):
+            raise SourceUnavailable("No valid DOM.RF daily snapshot")
+        if not daily and not any(snapshots[r][b] for r in REGIONS for b in ("construction", "sales")):
+            raise SourceUnavailable("No valid DOM.RF observations")
+        selected = max(daily, key=lambda item: (item[1][2], str(item[0]))) if daily else None
+        latest_path = selected[0] if selected else None
+        current = {region: {block: None for block in ("construction", "sales")} for region in REGIONS}
+        if selected:
+            for block, rows in selected[2].items():
+                for region in REGIONS:
+                    snapshot = self._latest([row for key, row in rows if key == region])
+                    current[region][block] = snapshot
+                    # The graph must show exactly the daily card at its current period.
+                    if snapshot is not None:
+                        snapshots[region][block][snapshot["period"]] = snapshot
         match = re.fullmatch(r"construction_operational_(\d{8})", latest_path.stem) if latest_path else None
         source_date = None
         if match:
@@ -213,11 +274,14 @@ class DomrfService:
         generation = {}
         for region, blocks in snapshots.items():
             generation[region] = {**metadata, "region": {"id": region, "label": REGIONS[region]},
-                                  **{block: self._block(list(rows.values()), block) for block, rows in blocks.items()},
+                                  **{block: self._block(list(rows.values()), block, current[region][block])
+                                     for block, rows in blocks.items()},
                                   "notes": ["История содержит только наблюдавшиеся периоды зарегистрированных JSON; "
                                             "период определяется report_period, а не датой отчёта.",
-                                            "Одинаковый период: выбран полный снимок с последним временем сбора записи, иначе mtime; поля разных "
-                                            "файлов не смешиваются. construction и sales имеют независимые периоды и даты.",
+                                            "Текущие показатели взяты только из последнего корректного дневного JSON по mtime. "
+                                            "В истории для его текущего периода используется тот же дневной блок; для остальных периодов "
+                                            "выбран снимок с последним временем сбора записи, иначе mtime. Поля разных файлов не смешиваются. "
+                                            "construction и sales имеют независимые периоды и даты.",
                                             "Площади construction living/total и sales *_thousand_m2: тыс. м²; *_pct: "
                                             "исходные проценты; price_per_m2_rub: руб./м²; funds_million_rub: млн руб. "
                                             "Никаких пересчётов цены, денежных средств или восстановления истории из процентов.",

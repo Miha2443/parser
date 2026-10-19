@@ -65,6 +65,10 @@ class FakeSource:
 
 
 class HistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("requests.sessions.Session.request", side_effect=AssertionError("live network forbidden")))
+        self.enterContext(patch("nashdom_checker.create_chrome", side_effect=AssertionError("live browser forbidden")))
+
     def test_selection_gaps_late_publication_and_boundaries(self):
         self.assertEqual(history.months("2020-12", "2021-02"), ["2020-12", "2021-01", "2021-02"])
         self.assertEqual(history.select_months("2020-01", "2020-05", {"2020-01", "2020-03"}, recent=2),
@@ -139,18 +143,25 @@ class HistoryTests(unittest.TestCase):
             result = source.collect("construction", "2020-02")
         self.assertTrue(all(row["report_date"] == "" for row in result["rows"]))
 
-    def test_wrapper_startup_failure_preserves_state_and_daily_file(self):
-        import nashdom_checker as nc
+    def test_history_startup_failure_preserves_state_and_daily_file(self):
+        class StartupFailure(FakeSource):
+            def __enter__(self):
+                raise api.TransportError("blocked")
+
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "construction_operational_20261019.json"
             path.write_bytes(b"existing raw snapshot")
-            state = {"construction_operational": {"complete": True, "filename": path.name}}
-            previous = copy.deepcopy(state)
-            with patch.object(history, "download_history", side_effect=api.TransportError("blocked")):
-                result = nc.fetch_construction_operational(state)
-            self.assertEqual(result, ([], False))
-            self.assertEqual(state, previous)
+            state = Path(tmp) / "nashdom_state.json"
+            state.write_bytes(b'{"construction_operational":{"complete":true}}')
+            before, modified = state.read_bytes(), path.stat().st_mtime_ns
+            with patch.object(history, "publish_current", side_effect=AssertionError("current publication forbidden")) as publish:
+                with self.assertRaisesRegex(api.TransportError, "blocked"):
+                    history.download_history(tmp, client=StartupFailure(), progress=lambda _: None)
+            publish.assert_not_called()
+            self.assertEqual(state.read_bytes(), before)
             self.assertEqual(path.read_bytes(), b"existing raw snapshot")
+            self.assertEqual(path.stat().st_mtime_ns, modified)
+            self.assertFalse((Path(tmp) / history.BUNDLE_NAME).exists())
 
     def test_atomic_failure_preserves_previous_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,45 +300,61 @@ class HistoryTests(unittest.TestCase):
                                          "sales": fixture("sales", "2020-01")["rows"]})
             before, modified = target.read_bytes(), target.stat().st_mtime_ns
             source, events = NullableLatestSource(), []
-            result = history.download_history(tmp, client=source, recent=1, progress=events.append)
+            with patch.object(history, "publish_current", side_effect=AssertionError("history must not publish current")) as publish:
+                result = history.download_history(tmp, client=source, recent=1, progress=events.append)
+            publish.assert_not_called()
             self.assertEqual(len(source.calls), 5)
             self.assertEqual(result["collected"], 5)
             self.assertEqual(result["attempted"], 5)
             self.assertTrue(result["history_complete"])
-            self.assertFalse(result["complete"])
-            self.assertTrue(result["current_publication_error"])
+            self.assertTrue(result["complete"])
+            self.assertIsNone(result["current_publication_error"])
             self.assertEqual(result["errors"], [])
             self.assertEqual(result["current_file"], "")
             self.assertEqual(target.read_bytes(), before)
             self.assertEqual(target.stat().st_mtime_ns, modified)
             self.assertEqual(sum(e["event"] == "saved" for e in events), 5)
-            self.assertEqual(sum(e["event"] == "current_publication_error" for e in events), 1)
+            self.assertEqual(sum(e["event"] == "current_publication_error" for e in events), 0)
+            self.assertEqual(result["new_files"], [Path(result["history_file"])])
             payload = json.loads(Path(result["history_file"]).read_text(encoding="utf-8"))
             self.assertTrue(payload["history_complete"])
-            self.assertFalse(payload["complete"])
+            self.assertTrue(payload["complete"])
+            self.assertIsNone(payload["current_publication_error"])
+            self.assertTrue(all(row["metrics"]["price_per_m2_rub"] is None
+                                for row in payload["sales"] if api.period(row["report_period"]) == source.bounds["sales"]))
             self.assertEqual(len(payload["construction"]), 12)
             self.assertEqual(len(payload["sales"]), 4)
 
     def test_partial_bootstrap_never_complete_and_resumes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = FakeSource()
-            partial = history.download_history(tmp, client=source, max_periods=2, progress=lambda _: None)
+            with patch.object(history, "publish_current", side_effect=AssertionError("history must not publish current")) as publish:
+                partial = history.download_history(tmp, client=source, max_periods=2, progress=lambda _: None)
+            publish.assert_not_called()
             self.assertFalse(partial["complete"])
+            self.assertFalse(partial["history_complete"])
             self.assertEqual(partial["collected"], 2)
-            self.assertTrue(partial["current_file"])
-            current = Path(partial["current_file"])
-            current_bytes, modified = current.read_bytes(), current.stat().st_mtime_ns
-            self.assertNotIn(history.BUNDLE_NAME, [p.name for p in Path(tmp).glob("construction_operational_*.json")])
+            self.assertEqual(partial["current_file"], "")
+            self.assertIsNone(partial["current_publication_error"])
+            self.assertEqual(partial["errors"], [])
+            self.assertEqual(partial["new_files"], [Path(partial["history_file"])])
+            self.assertFalse(list(Path(tmp).glob("construction_operational_*.json")))
+            observations = {path: path.read_bytes()
+                            for path in (Path(tmp) / ".construction_history" / "observations").glob("*.json")}
             # Finish gaps, preserving old observations even though bundle mtime changes.
             result = history.download_history(tmp, client=FakeSource(), recent=1, progress=lambda _: None)
             self.assertTrue(result["complete"])
             self.assertEqual(result["coverage"]["construction"]["collected_months"], 3)
             self.assertEqual(result["coverage"]["sales"]["collected_months"], 2)
-            self.assertGreaterEqual(current.stat().st_mtime_ns, modified)
+            self.assertEqual(result["current_file"], "")
+            self.assertIsNone(result["current_publication_error"])
+            self.assertEqual(result["new_files"], [Path(result["history_file"])])
+            self.assertFalse(list(Path(tmp).glob("construction_operational_*.json")))
             payload = json.loads(Path(result["history_file"]).read_text(encoding="utf-8"))
             self.assertEqual(len(payload["construction"]), 12)
             self.assertEqual(len(payload["sales"]), 4)
-            self.assertTrue(current_bytes)
+            for path, content in observations.items():
+                self.assertEqual(path.read_bytes(), content)
 
     def test_late_publication_keeps_old_gap_pending(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -365,6 +392,24 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(result["new_files"], [])
             self.assertEqual(path.read_bytes(), previous)
             self.assertEqual(path.stat().st_mtime_ns, modified)
+
+    def test_source_bound_rollback_preserves_verified_bundle_and_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = history.download_history(tmp, client=FakeSource(), progress=lambda _: None)
+            bundle = Path(first["history_file"])
+            previous = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                        for path in (bundle, receipt_path(bundle))}
+            source = FakeSource(bounds={"construction": "2020-02", "sales": "2020-01"})
+            with self.assertRaisesRegex(api.ReportError, "exceeds observed source bound"):
+                history.download_history(tmp, client=source, progress=lambda _: None)
+            for path, (content, modified) in previous.items():
+                self.assertEqual(path.read_bytes(), content)
+                self.assertEqual(path.stat().st_mtime_ns, modified)
+            history.validate_bundle_payload(json.loads(bundle.read_text(encoding="utf-8")))
+            attempt = json.loads((Path(tmp) / ".construction_history" / "last_attempt.json").read_text(encoding="utf-8"))
+            self.assertEqual(attempt["run_status"], "failed")
+            self.assertEqual(attempt["current_snapshot"], "unchanged")
+            self.assertFalse(list(Path(tmp).glob("construction_operational_*.json")))
 
     def test_private_version_retention_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:

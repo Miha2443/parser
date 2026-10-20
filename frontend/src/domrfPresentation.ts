@@ -5,7 +5,7 @@ import type { RealizationObservation } from './constructionPagesData';
 import type { SalesChart } from './salesData';
 import type { Theme } from './types';
 
-export const domrfPriceNote = 'Объём привлечённых средств (млн руб.) / проданная площадь (млн м²) = руб./м². Показана готовая цена ДОМ.РФ по проектным декларациям, без пересчёта.';
+export const domrfPriceNote = 'Объём привлечённых средств (млн руб.) / проданная площадь (млн м²) = руб./м².';
 
 export function domrfLineOption(chart: SalesChart, theme: Theme): EChartsCoreOption {
   const option = readinessChartOption(chart, theme);

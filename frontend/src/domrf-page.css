@@ -1,0 +1,55 @@
+.domrf-page .cp-page-heading { align-items: end; gap: 16px 28px; margin-bottom: 20px; }
+.domrf-page .cp-page-heading h1 { font-size: 30px; }
+.domrf-page .cp-page-heading .cp-controls { margin: 0; }
+.domrf-page .cp-global-controls > label { width: 240px; }
+.domrf-page .cp-section { padding: 26px 0 30px; }
+.domrf-page .domrf-section-bar { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 14px 24px; margin-bottom: 24px; }
+.domrf-page .domrf-section-bar .cp-section-heading { margin: 0; }
+.domrf-page .domrf-section-bar .cp-controls { margin: 0; }
+.domrf-page .cp-controls > label { width: 205px; gap: 5px; }
+.domrf-page .cp-controls > label > span { font-size: 12px; }
+.domrf-page .cp-period-stamp { margin: 7px 0 0; font-size: 12px; }
+.domrf-page .cp-section-heading h2 { font-size: 24px; line-height: 1.35; }
+.domrf-page .cp-section-heading h3 { font-size: 19px; }
+.domrf-page .cp-metrics { margin: 0; padding: 24px 0; }
+.domrf-page .cp-metric { padding: 0 28px; }
+.domrf-page .cp-metric:first-child { padding-left: 0; }
+.domrf-page .cp-metric > span { color: var(--text); font-size: 18px; font-weight: 600; line-height: 1.4; }
+.domrf-page .cp-metric > strong { gap: 6px 10px; margin-top: 10px; font-size: 44px; font-weight: 600; line-height: 1.15; }
+.domrf-page .cp-metric small { font-size: 16px; line-height: 1.4; }
+.domrf-page .domrf-price-note { display: block; max-width: 600px; margin-top: 12px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.domrf-page .cp-subsection { padding-top: 28px; }
+.domrf-page .cp-range { margin-bottom: 16px; }
+.domrf-page .cp-range > label { width: 185px; }
+.domrf-page .cp-donuts { gap: 24px; margin: 28px 0 16px; }
+.domrf-page .cp-donut { padding-right: 24px; }
+.domrf-page .cp-donut h3 { margin: 0; min-height: 54px; font-size: 19px; line-height: 1.4; }
+.domrf-page .cp-donut .chart-legend { display: none; }
+.domrf-page .cp-donut .chart-canvas { max-width: 320px; margin: 0 auto; }
+.domrf-page .cp-donut .chart-data { margin-top: 6px; }
+.domrf-page .cp-source { margin-top: 14px; padding-top: 12px; }
+
+@media (max-width: 1000px) {
+  .domrf-page .cp-metric > strong { font-size: 38px; }
+  .domrf-page .cp-metric > span { font-size: 17px; }
+  .domrf-page .cp-donut h3 { font-size: 17px; }
+}
+
+@media (max-width: 700px) {
+  .domrf-page .cp-page-heading { align-items: start; flex-direction: column; gap: 16px; }
+  .domrf-page .cp-page-heading h1 { font-size: 27px; }
+  .domrf-page .cp-page-heading .cp-controls { width: 100%; }
+  .domrf-page .cp-page-heading .cp-controls > label { flex: 0 1 280px; }
+  .domrf-page .cp-section-heading h2 { font-size: 22px; }
+  .domrf-page .domrf-section-bar { align-items: start; gap: 14px; margin-bottom: 18px; }
+  .domrf-page .domrf-section-bar > .cp-controls { width: 100%; }
+  .domrf-page .domrf-section-bar .cp-controls > label { flex: 1 1 185px; }
+  .domrf-page .cp-metrics { padding: 0; }
+  .domrf-page .cp-metric, .domrf-page .cp-metric:first-child { padding: 20px 0; }
+  .domrf-page .cp-metric > strong { font-size: 38px; }
+  .domrf-page .cp-metric small { font-size: 15px; }
+  .domrf-page .cp-donuts { gap: 24px; }
+  .domrf-page .cp-donut { padding: 0 0 24px; }
+  .domrf-page .cp-donut h3 { min-height: 0; font-size: 20px; }
+  .domrf-page .cp-range > label { flex-basis: 135px; }
+}

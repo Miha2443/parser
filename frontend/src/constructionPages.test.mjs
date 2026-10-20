@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { ApiError, request } from './data.ts';
 import { breakdownChart, breakdownOption, constructionHistoryChart, constructionHistoryRows, constructionRegion, domRfForecastSelection, domRfUrl, forecastBasisNote, forecastFields, legacySalesForecastSeed, loadDomRfData, loadPermitsData, loadPermitsSelection, observedRange, permitKindChange, permitRequestFilters, permitsMainOption, permitsMainRows, permitsUrl, readDomRfData, readPermitsData, readinessChartOption, realizationDonutOption, realizationHistoryOption, realizationHistoryRows } from './constructionPagesData.ts';
 import { breakdownReconciliation, permitAnnualBasis, permitBreakdownRows, permitCoverageComplete, permitGrowth, permitRemainder } from './permitPresentation.ts';
+import { permitPageFilters } from './constructionPagesData.ts';
 
 const metadata = () => ({ schemaVersion: 1, version: 'unit-test + version', generatedAt: '2026-10-19T08:00:00.123456+03:00', source: { date: '2026-10-16', files: ['selected/source.xlsx'], fileEvidence: 'selected', issues: [{ level: 'warning', message: 'Source warning <not markup>' }] } });
 const tooltipText = markup => markup.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -108,11 +109,12 @@ test('annual forecast shares the actual year stack and ignores misleading legacy
   assert.deepEqual(option.series[0].data, [null, 0]);
   assert.deepEqual(option.series[1].data, [null, 9876.543210123]);
   assert.equal(option.series[0].stack, option.series[1].stack);
-  assert.equal(option.series[1].itemStyle.color, '#b9bfc7');
-  assert.equal(option.series[1].itemStyle.borderType, undefined);
+  assert.equal(option.series[1].itemStyle.color, '#e4eaf0');
+  assert.equal(option.series[1].itemStyle.borderType, 'dashed');
+  assert.ok(option.series[1].itemStyle.decal);
   assert.equal(option.tooltip.trigger, 'item');
   const tooltip = option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 });
-  assert.equal(tooltipText(tooltip), '2026 · Январь–сентябрь Остаток до годового ориентира: 9 876,5 тыс. м²');
+  assert.equal(tooltipText(tooltip), '2026 · прогноз на год Остаток до годового прогноза: 9 877 тыс. м²');
   assert.ok(forecastBasisNote.includes('не пересчитывается'));
   data.permits.chart.totals[1].value = 999999999;
   data.forecast.rows[0].value = 999999999;
@@ -122,6 +124,48 @@ test('annual forecast shares the actual year stack and ignores misleading legacy
   assert.equal(permitsMainOption(data, 'light').series[1].data.at(-1), 0);
   data.permits.presentation.rows[1].annualForecast = null;
   assert.equal(permitsMainOption(data, 'light').series.length, 1);
+});
+
+test('December remains selected while latest partial year gets its actual cumulative month below the year', () => {
+  const raw = permitsFixture();
+  raw.selection.month = 12;
+  raw.controls.monthsByKind.housing = Array.from({ length: 12 }, (_, i) => i + 1);
+  raw.permits.periodLabel = 'Январь–декабрь';
+  Object.assign(raw.permits.presentation.rows[0], { selected: 1234.567890123, actualMonth: 12 });
+  Object.assign(raw.permits.presentation.rows[1], { selected: 300.2, actualMonth: 10, observedThrough: '2026-10-19' });
+  const data = readPermitsData(raw, { permitKind: 'housing', month: 12 });
+  assert.equal(data.selection.month, 12);
+  assert.equal(data.permits.presentation.rows[1].actualMonth, 10);
+  const option = permitsMainOption(data, 'light');
+  assert.equal(option.xAxis.axisLabel.formatter('2011', 0), '2011');
+  assert.equal(option.xAxis.axisLabel.formatter('2026', 1), '2026\nянв–окт');
+  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · янв–окт Выбранный период: 300 тыс. м²');
+  assert.equal(data.permits.presentation.rows[0].selected, 1234.567890123);
+  for (const value of [0, 13, 10.5, '10']) {
+    const invalid = structuredClone(raw); invalid.permits.presentation.rows[1].actualMonth = value;
+    assert.throws(() => readPermitsData(invalid));
+    const invalidBlock = structuredClone(raw); invalidBlock.breakdowns[0].rows[1].actualMonth = value;
+    assert.throws(() => readPermitsData(invalidBlock));
+  }
+});
+
+test('permits page discards hidden year and start-month ranges from old links before requesting all years', () => {
+  const filters = permitPageFilters(new URLSearchParams('permit_kind=nonresidential&month=12&structure_mode=period&structure_year_from=2022&structure_year_to=2023&structure_month_from=4&structure_month_to=10'));
+  assert.deepEqual(filters, { permitKind: 'nonresidential', month: 12, structure: { mode: 'period', monthFrom: 1, monthTo: 10 } });
+  assert.doesNotMatch(permitsUrl(filters), /structure_year_|structure_month_from=4/);
+});
+
+test('confirmed annual remainders are solid while forecasts are hatched in the same chart', () => {
+  const data = readPermitsData(permitsFixture());
+  data.permits.presentation.rows[0].selected = 100;
+  const option = permitsMainOption(data, 'light');
+  assert.equal(option.series.length, 3);
+  assert.equal(option.series[1].id, 'remainder');
+  assert.equal(option.series[1].itemStyle.borderType, undefined);
+  assert.deepEqual(option.series[1].data, [1234.567890123 - 100, null]);
+  assert.equal(option.series[2].id, 'forecast');
+  assert.equal(option.series[2].itemStyle.borderType, 'dashed');
+  assert.deepEqual(option.series[2].data, [null, 9876.543210123]);
 });
 
 test('permit CSV exports explicit presentation, completion, provenance and version, never legacy annual sums', () => {
@@ -154,14 +198,14 @@ test('breakdown stacks exclude aggregate series even if a provider includes them
 test('main permit hover shows only the selected segment or actual gray remainder, never the annual total', () => {
   const data = readPermitsData(permitsFixture()), row = data.permits.presentation.rows[1];
   row.selected = 1234.567890123; row.annualComplete = true;
-  for (const [forecast, actual, expectedRemainder] of [[9876.543210123, 20000, '8 642,0'], [null, 5432.109876543, '4 197,5']]) {
+  for (const [forecast, actual, expectedRemainder] of [[9876.543210123, 20000, '8 642'], [null, 5432.109876543, '4 198']]) {
     row.annualForecast = forecast; row.annualActual = actual;
     const before = structuredClone(data), remainder = (forecast ?? actual) - row.selected;
     for (const theme of ['light', 'dark']) {
       const option = permitsMainOption(data, theme);
       assert.equal(option.tooltip.trigger, 'item');
-      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 1 234,6 тыс. м²');
-      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), `2026 · Январь–сентябрь Остаток до годового ориентира: ${expectedRemainder} тыс. м²`);
+      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 1 235 тыс. м²');
+      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), forecast === null ? `2026 · Январь–сентябрь Остаток до годового ориентира: ${expectedRemainder} тыс. м²` : `2026 · прогноз на год Остаток до годового прогноза: ${expectedRemainder} тыс. м²`);
       assert.equal(option.series[0].data[1], row.selected); assert.equal(option.series[1].data[1], remainder);
     }
     const csv = permitsMainRows(data);
@@ -184,7 +228,7 @@ test('every component in every permit breakdown has its own compact rounded hove
       assert.equal(option.tooltip.trigger, 'item');
       components.forEach((component, seriesIndex) => {
         const tooltip = option.tooltip.formatter({ dataIndex: 1, seriesIndex });
-        assert.equal(tooltipText(tooltip), `2026 · Январь–сентябрь ${component.name}: ${(seriesIndex + 1) * 10},1 тыс. м²`, `${block.id}/${component.id}`);
+        assert.equal(tooltipText(tooltip), `2026 · Январь–сентябрь ${component.name}: ${(seriesIndex + 1) * 10} тыс. м²`, `${block.id}/${component.id}`);
         assert.equal(option.series[seriesIndex].data[1], component.points[1].y);
         assert.equal(csvBefore[2][block.columns.findIndex(c => c.id === component.id)], component.points[1].y);
       });
@@ -194,16 +238,16 @@ test('every component in every permit breakdown has its own compact rounded hove
   }
 });
 
-test('permit item hovers format zero as one decimal and null as missing without substituting annual values', () => {
+test('permit item hovers format zero compactly and null as missing without substituting annual values', () => {
   const data = readPermitsData(permitsFixture());
   data.permits.presentation.rows[1].annualForecast = 0;
   const main = permitsMainOption(data, 'light'), breakdown = breakdownOption(data.breakdowns[0], 'light');
   for (const [option, dataIndex, seriesIndex, expected] of [
-    [main, 1, 0, '2026 · Январь–сентябрь Выбранный период: 0,0 тыс. м²'],
-    [main, 1, 1, '2026 · Январь–сентябрь Остаток до годового ориентира: 0,0 тыс. м²'],
+    [main, 1, 0, '2026 · Январь–сентябрь Выбранный период: 0 тыс. м²'],
+    [main, 1, 1, '2026 · прогноз на год Остаток до годового прогноза: 0 тыс. м²'],
     [main, 0, 0, '2011 · Январь–сентябрь Выбранный период: — тыс. м²'],
-    [main, 0, 1, '2011 · Январь–сентябрь Остаток до годового ориентира: — тыс. м²'],
-    [breakdown, 0, 0, '2011 · Январь–сентябрь living: 0,0 тыс. м²'],
+    [main, 0, 1, '2011 · прогноз на год Остаток до годового прогноза: — тыс. м²'],
+    [breakdown, 0, 0, '2011 · Январь–сентябрь living: 0 тыс. м²'],
     [breakdown, 0, 1, '2011 · Январь–сентябрь МОП и встроенное нежильё: — тыс. м²'],
   ]) assert.equal(tooltipText(option.tooltip.formatter({ dataIndex, seriesIndex })), expected);
 });
@@ -227,8 +271,8 @@ test('permit hovers escape period, component label and unit as literal text', ()
   data.permits.unit = block.unit = '<unit> & "area"';
   block.series[0].name = '<label> & "living"';
   const main = permitsMainOption(data, 'light'), breakdown = breakdownOption(block, 'light');
-  assert.equal(tooltipText(main.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · &lt;period&gt; &amp; &quot;months&quot; Выбранный период: 0,0 &lt;unit&gt; &amp; &quot;area&quot;');
-  assert.equal(tooltipText(breakdown.tooltip.formatter({ dataIndex: 0, seriesIndex: 0 })), '2011 · &lt;period&gt; &amp; &quot;months&quot; &lt;label&gt; &amp; &quot;living&quot;: 0,0 &lt;unit&gt; &amp; &quot;area&quot;');
+  assert.equal(tooltipText(main.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · &lt;period&gt; &amp; &quot;months&quot; Выбранный период: 0 &lt;unit&gt; &amp; &quot;area&quot;');
+  assert.equal(tooltipText(breakdown.tooltip.formatter({ dataIndex: 0, seriesIndex: 0 })), '2011 · &lt;period&gt; &amp; &quot;months&quot; &lt;label&gt; &amp; &quot;living&quot;: 0 &lt;unit&gt; &amp; &quot;area&quot;');
 });
 
 test('permit hovers omit provenance, observation dates, growth, annual basis and reconciliation details', () => {
@@ -239,9 +283,9 @@ test('permit hovers omit provenance, observation dates, growth, annual basis and
   block.rows[1].nonresidential = block.series[2].points[1].y = 1234.567890123;
   const main = permitsMainOption(data, 'light'), breakdown = breakdownOption(block, 'light');
   const tips = [main.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 }), main.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 }), breakdown.tooltip.formatter({ dataIndex: 1, seriesIndex: 2 })];
-  assert.equal(tooltipText(tips[0]), '2026 · Январь–сентябрь Выбранный период: 1 234,6 тыс. м²');
-  assert.equal(tooltipText(tips[1]), '2026 · Январь–сентябрь Остаток до годового ориентира: 8 642,0 тыс. м²');
-  assert.equal(tooltipText(tips[2]), '2026 · Январь–сентябрь nonresidential: 1 234,6 тыс. м²');
+  assert.equal(tooltipText(tips[0]), '2026 · Январь–сентябрь Выбранный период: 1 235 тыс. м²');
+  assert.equal(tooltipText(tips[1]), '2026 · прогноз на год Остаток до годового прогноза: 8 642 тыс. м²');
+  assert.equal(tooltipText(tips[2]), '2026 · Январь–сентябрь nonresidential: 1 235 тыс. м²');
   for (const tip of tips) {
     assert.doesNotMatch(tip, /assumed_thousand_m2|\.xlsx|2026-09-15|Technical evidence|Reconciliation evidence|Coverage evidence|Наблюдения|неполный|Полные месяцы|К аналогичному|Изменение|Годовой прогноз|итог источника|Сумма компонентов|Расхождение/);
     assert.doesNotMatch(tip, /[.,]\d{2,}/);
@@ -255,19 +299,19 @@ test('permit remainder needs a known annual basis AND selected observation, pref
   assert.equal(permitAnnualBasis(row).kind, 'forecast'); assert.equal(permitRemainder(row), 0);
   let option = permitsMainOption(data, 'light');
   assert.equal(option.series[0].data[1], 120); assert.equal(option.series[1].data[1], 0);
-  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 120,0 тыс. м²');
-  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · Январь–сентябрь Остаток до годового ориентира: 0,0 тыс. м²');
+  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 120 тыс. м²');
+  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · прогноз на год Остаток до годового прогноза: 0 тыс. м²');
   assert.equal(permitsMainRows(data)[2][5], -20);
   row.annualForecast = null;
   assert.equal(permitRemainder(row), 80); assert.equal(permitAnnualBasis(row).kind, 'annual_observed');
-  assert.equal(tooltipText(permitsMainOption(data, 'light').tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · Январь–сентябрь Остаток до годового ориентира: 80,0 тыс. м²');
+  assert.equal(tooltipText(permitsMainOption(data, 'light').tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · Январь–сентябрь Остаток до годового ориентира: 80 тыс. м²');
   row.annualComplete = false;
   assert.equal(permitRemainder(row), null);
   option = permitsMainOption(data, 'light');
   assert.equal(option.series.length, 1); assert.equal(option.series[0].data[1], 120);
-  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 120,0 тыс. м²');
+  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 120 тыс. м²');
   row.selected = null; row.annualForecast = 100;
-  assert.equal(permitRemainder(row), null); assert.equal(permitsMainOption(data, 'light').graphic.length, 0);
+  assert.equal(permitRemainder(row), null); assert.equal(permitsMainOption(data, 'light').graphic.length, 1);
   const raw = permitsFixture(); raw.permits.presentation.rows[1].annualActual = 100;
   assert.throws(() => readPermitsData(raw));
 });
@@ -277,7 +321,9 @@ test('permit presentation adds forecast-only years only if supplied by presentat
   data.permits.presentation.rows = [{ ...row, year: 2026, selected: null }];
   const option = permitsMainOption(data, 'light');
   assert.deepEqual(option.xAxis.data, ['2026']); assert.deepEqual(option.series[0].data, [null]);
-  assert.equal(option.series.length, 1);
+  assert.equal(option.series.length, 2);
+  assert.equal(option.series[1].data[0], 9876.543210123);
+  assert.equal(option.series[1].itemStyle.borderType, 'dashed');
   assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 0, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: — тыс. м²');
   const csv = permitsMainRows(data);
   assert.equal(csv.length, 2); assert.equal(csv[1][3], 9876.543210123);
@@ -316,8 +362,8 @@ test('permit structure source aggregate stays a label without fake balancing or 
   const block = breakdowns()[3], option = breakdownOption(block, 'light');
   const totals = breakdownReconciliation(block, 1);
   assert.equal(totals.total, 1003); assert.equal(totals.sum, 3003); assert.equal(totals.difference, -2000);
-  assert.equal(option.graphic[1].children[0].style.text.replace(/\s/g, ''), '1003,0');
-  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 2 })), '2026 · Январь–сентябрь nonresidential: 1 002,0 тыс. м²');
+  assert.equal(option.graphic[1].children[0].style.text.replace(/\s/g, ''), '1003');
+  assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 2 })), '2026 · Январь–сентябрь nonresidential: 1 002 тыс. м²');
   assert.ok(!option.series.some(s => /balance|total/.test(s.id)));
 });
 

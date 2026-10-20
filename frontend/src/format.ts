@@ -1,5 +1,12 @@
-export const number = (value: number | null | undefined, digits = 0): string =>
-  value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(value);
+export const number = (value: number | null | undefined, digits = 0): string => {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const precision = Math.abs(value) >= 1000 ? 0 : Math.min(1, Math.max(0, digits));
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: precision }).format(value);
+};
+export function chartNumberFormatter(values: readonly (number | null | undefined)[], maxFractionDigits = 1) {
+  const digits = values.some(value => value != null && Number.isFinite(value) && Math.abs(value) >= 1000) ? 0 : Math.max(0, Math.min(1, maxFractionDigits));
+  return (value: number | null | undefined) => number(value, digits);
+}
 export const area = (value: number | null | undefined): string => value == null ? '—' : number(value / 1000, 1);
 export const percent = (value: number | null | undefined): string => value == null ? '—' : `${number(value, 1)}%`;
 export const money = (value: number | null | undefined): string => value == null ? '—' : number(value / 1e9, 1);

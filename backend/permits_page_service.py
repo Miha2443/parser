@@ -1,4 +1,4 @@
-"""Independent Moscow permits generation, retaining the legacy main calculation."""
+"""Moscow permit views sharing literal components and approved annual controls."""
 from __future__ import annotations
 
 import copy
@@ -20,7 +20,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from backend.profile_service import FilterUnavailable, SourceUnavailable
 from pipeline.construction_calculations import catalog, report
 from pipeline.data_access import DataAccess, DataContext, file_signature
-from pipeline.permit_page_calculations import (OKS_SHEET, breakdowns, main_presentation, read_breakdown_sources,
+from pipeline.permit_page_calculations import (OKS_SHEET, apply_main_presentation, breakdowns, main_presentation, read_breakdown_sources,
                                                read_forecast, read_main_sources, read_static_annual,
                                                select_forecast, structure_base, structure_controls)
 
@@ -137,10 +137,10 @@ class PermitsPageService:
         if operational["permits"].empty:
             raise SourceUnavailable("Monitoring contains no permit observations")
         data = {"load_construction_operational": operational, "load_rasprodannost": {}}
-        controls = catalog(data)
-        controls = {"permitKinds": sorted(controls["permitKinds"], key=lambda row:
+        discovered = catalog(data)
+        controls = {"permitKinds": sorted(discovered["permitKinds"], key=lambda row:
                                          ("housing", "nonresidential", "total").index(row["id"])),
-                    "monthsByKind": controls["monthsByKind"]}
+                    "monthsByKind": {kind: list(range(1, 13)) for kind in ("housing", "nonresidential", "total")}}
         issues = [{"level": level, "message": message} for level, message in access.issues]
         if any(row["level"] == "error" for row in issues):
             raise SourceUnavailable("Permit loader reported a source error")
@@ -152,7 +152,8 @@ class PermitsPageService:
                               "fileEvidence": "selected", "issues": issues},
                    "controls": controls}
         generation = {"payload": payload, "data": data, "forecast": forecast,
-                      "structures": structure_base(detailed, _date(path)), "main_sources": main_sources}
+                      "structures": structure_base(detailed, _date(path), main_sources), "main_sources": main_sources,
+                      "default_months": {kind: max(months) for kind, months in discovered["monthsByKind"].items()}}
         json.dumps([payload, forecast], allow_nan=False)
         if self._inputs()[1] != signature:
             raise SourceUnavailable("Permit sources changed during loading")
@@ -188,7 +189,12 @@ class PermitsPageService:
             payload = generation["payload"]
             controls = payload["controls"]
             months = controls["monthsByKind"][permit_kind]
-            month = months[-1] if month is None else month
+            if month is None:
+                month = generation["default_months"][permit_kind]
+                source_date = payload["source"]["date"]
+                latest_year = int(generation["data"]["load_construction_operational"]["permits"]["year"].max())
+                if source_date is not None and latest_year == int(source_date[:4]):
+                    month = min(month, int(source_date[5:7]))
             if month not in months:
                 raise FilterUnavailable("Permit month is unavailable")
             structures = generation["structures"]
@@ -208,19 +214,19 @@ class PermitsPageService:
                 raise PermitSelectionInvalid("Structure year interval is reversed")
             selected_forecast = select_forecast(generation["forecast"], permit_kind)
             table = report(generation["data"], controls, permit_kind=permit_kind, month=month)["permits"]
-            table["presentation"] = main_presentation(table, generation["main_sources"], selected_forecast,
-                                                       permit_kind, month, payload["source"]["date"])
+            apply_main_presentation(table, main_presentation(table, generation["main_sources"], selected_forecast,
+                                                             permit_kind, month, payload["source"]["date"]))
             result = {
                 **payload, "controls": {**controls, "structure": structure_options},
                 "selection": {"permitKind": permit_kind, "month": month, "structure": structure_selection},
                 "permits": table, "forecast": selected_forecast,
-                "breakdowns": breakdowns(structures, permit_kind, structure_selection),
-                "notes": ["Разрешения относятся только к Москве. Основная таблица сохраняет прежний "
-                          "расчёт: жилая площадь жилья плюс общая площадь нежилья, без фильтра действующего статуса РС.",
+                "breakdowns": breakdowns(structures, permit_kind, structure_selection, generation["main_sources"], payload["source"]["date"]),
+                "notes": ["Разрешения относятся только к Москве, без фильтра действующего статуса РС. "
+                          "«Жильё» означает жилую площадь; «Всего» включает её, МОП и встроенное нежильё, а также нежилые объекты.",
                           "Презентационный остаток = годовой прогноз либо подтверждённый полный год минус выбранный факт, "
                           "не ниже нуля. Неполный итог текущего года не является годовым ориентиром. "
-                          "Прогноз и детальная структура не изменяют фактические значения и рост; прежние chart/rows сохранены для совместимости.",
-                          "Исторические структурные ряды имеют собственную исходную базу; расхождения с основной "
-                          "таблицей не исправляются масштабированием."]}
+                          "Прогноз не изменяет фактические значения и рост.",
+                          "Полные прошедшие годы используют одни и те же утверждённые годовые значения в основном графике и структуре. "
+                          "МОП не оценивается по коэффициентам. В неполном текущем году показываются доступные месяцы; actualMonth указывает последний."]}
             json.dumps(result, allow_nan=False)
             return copy.deepcopy(result)

@@ -43,26 +43,34 @@ before running `bash docker/update.sh --construction-history` on the server.
 Old `/construction` and `/sales` bookmarks open the DOM.RF page. Existing API
 routes and their calculations remain available for compatibility.
 
-Permits retain the original selected facts, but use `permits.presentation` for
-the corrected chart/KPIs. One bar per year contains the selected fact and gray
-remainder to its annual forecast, otherwise a confirmed full-year observation.
+Permits use one shared basis for the main chart, structure and downloads.
+Approved historical annual living/nonresidential values take priority for full
+years. `housing` means living area; `total` also includes common/embedded area.
+One bar per year contains the selected fact and remainder to its annual forecast,
+otherwise a confirmed full-year observation. Forecasts have dashed borders and
+hatching; confirmed historical annual remainders stay solid gray.
 An eight-/ten-month source sum is never a full-year reference. Without a reference
-there is no gray segment. Signed differences remain in data tables/exports and
-the overplan note when actuals exceed the reference. All permits-page bar hovers
-identify only the hovered segment: year/period, label and area rounded to one
-decimal. Gray hover shows the remainder, not the annual total. Source evidence,
+there is no gray segment. Signed differences remain in data tables/exports.
+All twelve cumulative month choices are available. December shows full past
+years and the latest available current-year months; `actualMonth` supplies the
+per-year caption below incomplete bars. All permits-page bar hovers identify
+only the hovered segment: year/period, label and area. Gray hover shows the
+remainder, not the annual total. Source evidence,
 coverage and reconciliation stay in the existing data/source disclosures;
 chart arrays, calculations and exports retain their full numeric precision.
 Cached forecast cells of monitoring sheet `Прогнозы`
 are not recalculated. Their unit is explicitly an assumed thousand square meters
 because the worksheet does not label it; blank future years remain null.
 
-Composition has independent annual/period mode, year bounds and inclusive start/
-end months. March-May is March+April+May, not YTD. Full-year mode does not annualize
-the incomplete current year. These controls do not change the main chart's month.
+Composition shows all years with independent annual/cumulative mode and one
+January-to-month control. Old year bounds/start-month URL filters are removed
+before requests. Full-year mode does not annualize the incomplete current year.
+These controls do not change the main chart's month.
 Source totals appear above bars; component labels appear inside when they fit.
-Aggregate totals are not stacked again. Historical sources remain identified
-and are never rescaled to force agreement with corrected main totals. Unknown
+Aggregate totals are not stacked again. Nonresidential classifications share
+one timeline; unlike category names are not silently mapped to each other.
+When archival components disagree with the approved annual control, the approved
+value is shown as undetailed, without invented shares or rescaling. Unknown
 month/year-only observations are not invented as January measurements.
 
 DOM.RF construction and realization use separate source periods and dates.
@@ -75,10 +83,20 @@ without inventing missing months. Areas are not inferred from rounded percentage
 The existing dashboard sales API supplies its
 original history, readiness, forecast and six segment tables independently:
 one provider failing does not remove the other provider's blocks. Price and
-funds retain their original source values and units. Range/period controls are
+funds retain their original source values and units. Area is centered inside
+realization donuts, percentages remain in hover, and dense monthly bars have no
+overlapping numeric labels. The duplicate thousand-square-meter volume chart is
+removed. Range/period controls are
 local to the relevant block; source/data panels start closed. Both new APIs
 provide complete Excel pinned to the displayed version; HTTP 409 downloads
 nothing and offers refresh.
+
+All chart measurements use at most one decimal, without trailing zeroes. If any
+plotted/displayed measurement is at least 1000 in magnitude, that chart uses
+integers throughout. Formatting runs after unit conversion, never on year keys;
+CSV/Excel retain raw numeric precision. Index-axis coordinates retain enough
+precision to avoid indistinguishable ticks. DOM.RF presentation checks:
+`node --test src/domrfPresentation.test.mjs` and `node src/domrf-page.browser.cjs`.
 
 Unavailable permit months reconcile through one default-month discovery request;
 persistent 404s remain visible rather than looping. Switching permit kind keeps

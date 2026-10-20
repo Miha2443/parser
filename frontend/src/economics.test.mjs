@@ -109,7 +109,7 @@ test('structure stacks exact values; segment tooltip identifies hovered industry
   const chart = fixture.report('accounts').charts.find(c => c.id === 'na_block5'), option = economicsChartOption(chart, 'dark');
   assert.ok(option.series.every(s => s.stack === 'structure')); assert.equal(option.tooltip.trigger, 'item'); assert.equal(option.series[0].data[0], 1.234567);
   const text = option.tooltip.formatter({ seriesIndex: 0, seriesName: '<script>', name: '2011', value: 1.234567, dataIndex: 0 });
-  assert.ok(text.includes('&lt;script&gt;') && text.includes('1,23 трлн руб') && text.includes('Всего:'));
+  assert.ok(text.includes('&lt;script&gt;') && text.includes('1,2 трлн руб') && text.includes('Всего:'));
   assert.equal(option.series[1].itemStyle.color, '#9ca5b1');
 });
 test('line and bar hovers are segment-specific, values are not scaled by frontend, units and colors stay stable', () => {

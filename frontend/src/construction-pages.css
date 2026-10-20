@@ -71,6 +71,7 @@
 .permit-chart .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; }
 .permit-chart .chart-legend button { display: inline-flex; align-items: center; text-align: left; line-height: 1.6; white-space: normal; }
 .permit-chart .chart-legend button i { flex: 0 0 9px; }
+.chart-legend button i.forecast-swatch { border: 1px dashed currentColor; background-image: repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(75, 101, 128, .5) 2px, rgba(75, 101, 128, .5) 3px) !important; }
 .permit-structure-controls > label { flex: 1 1 130px; width: 150px; }
 .permit-structure-controls > label:first-child { flex-basis: 200px; }
 .permit-controls select, .permit-structure-controls select { width: 100%; min-width: 0; max-width: 100%; }

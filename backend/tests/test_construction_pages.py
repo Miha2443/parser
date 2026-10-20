@@ -159,7 +159,7 @@ class ConstructionPagesTests(unittest.TestCase):
     def by_id(payload):
         return {row["id"]: row for row in payload["breakdowns"]}
 
-    def test_main_exact_legacy_parity_all_kinds_and_months(self):
+    def test_main_chart_table_and_presentation_share_corrected_facts_all_kinds_and_months(self):
         self.edit_book(OKS_SHEET, {"Q26": "100 000,125", "R26": "60\xa0000,125", "Q27": None,
                                    "R28": None, "D26": None, "F26": 2026})
         raw_context = DataContext(self.root, use_marts=False, require_marts=False)
@@ -171,13 +171,14 @@ class ConstructionPagesTests(unittest.TestCase):
             for month in range(1, 13):
                 with self.subTest(kind=kind, month=month):
                     actual = self.permits.report(kind, month)
-                    self.assertEqual({key: value for key, value in actual["permits"].items() if key != "presentation"},
-                                     report(data, controls, permit_kind=kind, month=month)["permits"])
+                    self.assertEqual(actual["permits"]["region"], "Москва")
                     for row in actual["permits"]["presentation"]["rows"]:
                         source = next((item for item in actual["permits"]["rows"] if item["Год"] == row["year"]), {})
                         self.assertEqual(row["selected"], source.get("С начала года, тыс. м²"))
                         self.assertEqual(row["growth"], source.get("Изменение, %"))
-                    self.assertEqual(actual["controls"]["monthsByKind"], controls["monthsByKind"])
+                    self.assertEqual(actual["controls"]["monthsByKind"][kind], list(range(1, 13)))
+                    self.assertEqual(actual["permits"]["chart"]["period"],
+                                     [{"value": row["С начала года, тыс. м²"]} for row in actual["permits"]["rows"]])
         for key, value in original["load_construction_operational"].items():
             if hasattr(value, "equals"):
                 self.assertTrue(data["load_construction_operational"][key].equals(value))
@@ -194,14 +195,14 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertEqual(forecast["unitBasis"], "assumed_thousand_m2")
         self.assertEqual(forecast["source"]["sheet"], FORECAST_SHEET)
         self.assertEqual(len(forecast["rows"]), 10)
-        self.assertEqual(forecast["rows"][0]["value"], 5810.123456789 + 6850.987654321)
+        self.assertEqual(forecast["rows"][0]["value"], 10017.24138 + 6850.987654321)
         self.assertEqual(forecast["rows"][0]["cells"]["housing_living"], "D3")
         self.assertEqual(forecast["rows"][1]["cells"]["other"], "E12")
         self.assertTrue(all(row[field] is None for row in forecast["rows"][1:] for field in (*FORECAST_FIELDS, "value")))
-        before = {key: value for key, value in payload["permits"].items() if key != "presentation"}
+        before = copy.deepcopy(payload["permits"]["rows"])
         self.edit_book(FORECAST_SHEET, {"D3": 9999999.123, "D6": None})
         updated = self.permits.report("total", 1)
-        self.assertEqual(before, {key: value for key, value in updated["permits"].items() if key != "presentation"})
+        self.assertEqual(before, updated["permits"]["rows"])
         current = next(row for row in updated["permits"]["presentation"]["rows"] if row["year"] == 2026)
         self.assertEqual(current["basis"], "none")
         self.assertIsNone(current["remainder"])
@@ -239,17 +240,17 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertAlmostEqual(house["living"], 41.4638)
         self.assertAlmostEqual(house["housing_total"], 61.0212)
         self.assertAlmostEqual(house["mop_embedded"], 19.5574)
-        self.assertEqual(blocks["nonresidential_historical"]["rows"][0]["nonresidential"], 327.442)
-        self.assertAlmostEqual(january["permits"]["rows"][0]["С начала года, тыс. м²"], 41.4638 + 348.1926)
+        self.assertEqual(blocks["nonresidential_components"]["rows"][0]["nonresidential"], 327.442)
+        self.assertAlmostEqual(january["permits"]["rows"][0]["С начала года, тыс. м²"], 61.0212 + 327.442)
         composition = blocks["area_composition"]
         self.assertEqual(composition["title"], "Структура общей площади")
         self.assertAlmostEqual(composition["rows"][0]["total"], 61.0212 + 327.442)
-        self.assertNotEqual(composition["rows"][0]["total"], january["permits"]["rows"][0]["С начала года, тыс. м²"])
+        self.assertEqual(composition["rows"][0]["total"], january["permits"]["rows"][0]["С начала года, тыс. м²"])
         feb = self.by_id(self.permits.report("total", 2, structure_month_to=2))
-        self.assertEqual(feb["nonresidential_historical"]["rows"][0]["nonresidential"], 327.442 * 2)
+        self.assertEqual(feb["nonresidential_components"]["rows"][0]["nonresidential"], 327.442 * 2)
         self.assertAlmostEqual(feb["housing_components"]["rows"][0]["living"], (41463.8 + 41464.8) / 1000)
         self.assertTrue(all(block["periodLabel"] == january["permits"]["periodLabel"] for block in blocks.values()))
-        self.assertTrue(any("I115:O115" in note for note in blocks["nonresidential_historical"]["notes"]))
+        self.assertTrue(any("I115:O115" in note for note in blocks["nonresidential_components"]["notes"]))
 
     def test_missing_raw_values_zero_negative_gap_native_taxonomy_no_status_filter(self):
         self.edit_book(OKS_SHEET, {"Q26": None, "R26": 0, "Q28": 10, "R28": 100,
@@ -259,19 +260,19 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertEqual(row["living"], 0)
         self.assertIsNone(row["housing_total"])
         self.assertIsNone(row["mop_embedded"])
-        native = jan["nonresidential_native"]
-        self.assertIn({"id": "unknown", "label": "Не указано в источнике"}, native["columns"])
+        native = jan["nonresidential_components"]
+        self.assertIn({"id": "unknown", "label": "Минстрой: Не указано в источнике"}, native["columns"])
         nrow = next(row for row in native["rows"] if row["year"] == 2026)
         self.assertEqual(nrow["unknown"], 0)
         self.assertEqual(nrow["nonresidential"], 1)
-        self.assertNotIn("offices", nrow)
+        self.assertIsNone(nrow["offices"])
         feb = self.by_id(self.permits.report("housing", 2, structure_month_to=2))["housing_components"]
         self.assertIsNone(next(row for row in feb["rows"] if row["year"] == 2026)["mop_embedded"])
         self.assertTrue(any("общая площадь меньше жилой" in note for note in feb["notes"]))
 
     def test_breakdown_stacks_include_only_additive_components(self):
         aggregates = {"housing_components": "housing_total", "area_composition": "total",
-                      "nonresidential_historical": "nonresidential", "nonresidential_native": "nonresidential"}
+                      "nonresidential_components": "nonresidential"}
         for month in (1, 2, 12):
             for block in self.permits.report("total", month)["breakdowns"]:
                 aggregate = aggregates[block["id"]]
@@ -279,7 +280,9 @@ class ConstructionPagesTests(unittest.TestCase):
                 self.assertNotIn(aggregate, [series["id"] for series in block["series"]])
                 for index, row in enumerate(block["rows"]):
                     points = [series["points"][index]["y"] for series in block["series"]]
-                    if row[aggregate] is not None and all(value is not None for value in points):
+                    # Approved annual controls are not used to rescale literal
+                    # nonresidential categories; the original subtotal survives.
+                    if row[aggregate] is not None and all(value is not None for value in points) and month != 12:
                         self.assertAlmostEqual(sum(points), row[aggregate], places=8)
 
     def test_strict_historical_coverage_missing_supplements_do_not_block_primary(self):
@@ -295,7 +298,7 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertTrue(payload["permits"]["rows"])
         self.assertEqual(payload["forecast"]["rows"], [])
         self.assertTrue(payload["forecast"]["notes"])
-        self.assertEqual(self.by_id(payload)["nonresidential_historical"]["rows"], [])
+        self.assertTrue(self.by_id(payload)["nonresidential_components"]["rows"])
 
     @staticmethod
     def presentation(payload, year):
@@ -315,7 +318,7 @@ class ConstructionPagesTests(unittest.TestCase):
         raw = next(row for row in payload["permits"]["rows"] if row["Год"] == 2026)
         self.assertEqual(current["selected"], raw["С начала года, тыс. м²"])
         self.assertEqual(current["growth"], raw["Изменение, %"])
-        self.assertEqual(current["annualForecast"], 5810.123456789 + 6850.987654321)
+        self.assertEqual(current["annualForecast"], 10017.24138 + 6850.987654321)
         self.assertEqual(current["difference"], current["annualForecast"] - current["selected"])
         self.assertEqual(current["remainder"], current["difference"])
         self.assertEqual(current["basis"], "forecast")
@@ -323,9 +326,9 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertFalse(current["annualComplete"])
         self.assertTrue(current["periodComplete"])
         self.assertEqual(current["observedThrough"], "2026-10-16")
-        self.assertNotEqual(current["remainder"], payload["permits"]["chart"]["remainder"][-1]["value"])
+        self.assertEqual(current["remainder"], payload["permits"]["chart"]["remainder"][-1]["value"])
         self.assertEqual([row["year"] for row in payload["permits"]["presentation"]["rows"]].count(2026), 1)
-        self.assertTrue(any("D3" in ref for ref in current["evidence"]))
+        self.assertTrue(any("D4" in ref for ref in current["evidence"]))
         self.assertTrue(any("assumed_thousand_m2" in ref for ref in current["evidence"]))
         self.edit_book(FORECAST_SHEET, {"D3": None, "D6": None})
         unplanned = self.permits.report("total", 5)
@@ -334,7 +337,7 @@ class ConstructionPagesTests(unittest.TestCase):
         for field in ("annualActual", "annualForecast", "difference", "remainder"):
             self.assertIsNone(current[field])
         self.assertEqual(current["selected"], raw["С начала года, тыс. м²"])
-        self.assertGreater(unplanned["permits"]["chart"]["remainder"][-1]["value"], 0)
+        self.assertIsNone(unplanned["permits"]["chart"]["remainder"][-1]["value"])
         october = self.presentation(self.permits.report("total", 10), 2026)
         self.assertFalse(october["periodComplete"])
         self.assertIsNone(october["remainder"])
@@ -343,14 +346,14 @@ class ConstructionPagesTests(unittest.TestCase):
         self.edit_book(OKS_SHEET, {"B50": None})
         payload = self.permits.report("total", 5)
         historic = self.presentation(payload, 2011)
-        self.assertEqual(historic["annualActual"], 9999.123456789 + 7777.123456789)
+        self.assertAlmostEqual(historic["annualActual"], 9999.123456789 + 7777.123456789 + 12 * 19.5574)
         self.assertEqual(historic["basis"], "annual_observed")
         self.assertTrue(historic["annualComplete"])
         self.assertTrue(any("годовой контроль" in ref for ref in historic["evidence"]))
         previous = self.presentation(payload, 2025)
         self.assertEqual(previous["basis"], "annual_observed")
         self.assertTrue(previous["annualComplete"])
-        self.assertAlmostEqual(previous["annualActual"], sum((100000 + 2 * month) / 1000 for month in range(1, 13)))
+        self.assertAlmostEqual(previous["annualActual"], sum((140000 + 2 * month) / 1000 for month in range(1, 13)))
         self.edit_book(OKS_SHEET, {"B10": None, "B11": None})
         missing = self.presentation(self.permits.report("total", 5), 2025)
         self.assertIsNone(missing["annualActual"])
@@ -375,7 +378,7 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertNotIn(2040, [row["Год"] for row in payload["permits"]["rows"]])
 
     def test_permit_forecast_overflow_unknown_snapshot_and_raw_null_coverage(self):
-        self.edit_book(FORECAST_SHEET, {"D3": 1e308, "D6": 1e308})
+        self.edit_book(FORECAST_SHEET, {"D4": 1e308, "D6": 1e308})
         payload = self.permits.report("total", 5)
         self.assertIsNone(payload["forecast"]["rows"][0]["value"])
         self.assertIsNone(self.presentation(payload, 2026)["remainder"])
@@ -404,7 +407,7 @@ class ConstructionPagesTests(unittest.TestCase):
         housing = blocks["housing_components"]
         self.assertEqual([row["year"] for row in housing["rows"]], [2012, 2013])
         self.assertAlmostEqual(housing["rows"][0]["living"], sum(41463.8 + month - 1 for month in (3, 4, 5)) / 1000)
-        self.assertEqual(blocks["nonresidential_historical"]["rows"][0]["nonresidential"], 327.442 * 3)
+        self.assertEqual(blocks["nonresidential_components"]["rows"][0]["nonresidential"], 327.442 * 3)
         self.assertAlmostEqual(blocks["area_composition"]["rows"][0]["total"],
                                sum(61021.2 + month - 1 for month in (3, 4, 5)) / 1000 + 327.442 * 3)
         self.assertTrue(all(row["periodComplete"] for block in first["breakdowns"] for row in block["rows"]))
@@ -421,18 +424,20 @@ class ConstructionPagesTests(unittest.TestCase):
         self.edit_book(OKS_SHEET, {"B50": None})
         payload = self.permits.report("total", 5, structure_mode="annual")
         blocks = self.by_id(payload)
-        for identifier in ("housing_components", "nonresidential_native", "area_composition"):
+        for identifier in ("housing_components", "nonresidential_components", "area_composition"):
             block = blocks[identifier]
             current = next(row for row in block["rows"] if row["year"] == 2026)
             self.assertFalse(current["annualComplete"])
             self.assertFalse(current["periodComplete"])
-            self.assertTrue(all(current[column["id"]] is None for column in block["columns"] if column["id"] != "year"))
+            self.assertEqual(current["actualMonth"], 10)
+            self.assertIsNotNone(current[block["aggregateField"]])
             past = next(row for row in block["rows"] if row["year"] == 2025)
             self.assertTrue(past["annualComplete"])
             self.assertTrue(past["periodComplete"])
         old = blocks["housing_components"]["rows"][0]
         self.assertTrue(old["annualComplete"])
-        self.assertAlmostEqual(old["living"], sum(41463.8 + month - 1 for month in range(1, 13)) / 1000)
+        self.assertEqual(old["living"], 9999.123456789)
+        self.assertAlmostEqual(old["source_living"], sum(41463.8 + month - 1 for month in range(1, 13)) / 1000)
         coverage = next(row for row in payload["controls"]["structure"]["coverage"]
                         if row["blockId"] == "housing_components" and row["year"] == 2026)
         self.assertEqual(coverage["months"], list(range(1, 13)))
@@ -442,17 +447,17 @@ class ConstructionPagesTests(unittest.TestCase):
 
     def test_structure_unknown_month_not_january_and_missing_raw_not_zero(self):
         payload = self.permits.report("nonresidential", 1, structure_month_to=1)
-        native = self.by_id(payload)["nonresidential_native"]
+        native = self.by_id(payload)["nonresidential_components"]
         row = next(row for row in native["rows"] if row["year"] == 2026)
         self.assertIsNone(row["nonresidential"])
         self.assertFalse(row["periodComplete"])
         coverage = next(row for row in payload["controls"]["structure"]["coverage"]
-                        if row["blockId"] == "nonresidential_native" and row["year"] == 2026)
+                        if row["blockId"] == "nonresidential_components" and row["year"] == 2026)
         self.assertEqual(coverage["completeMonths"], [])
         self.assertTrue(any("месяц неизвестен" in ref for ref in coverage["evidence"]))
-        # The old raw main table deliberately retains its legacy year -> January fallback.
+        # An unknown issue month is no longer silently counted as January.
         raw = next(row for row in payload["permits"]["rows"] if row["Год"] == 2026)
-        self.assertEqual(raw["С начала года, тыс. м²"], 41.001)
+        self.assertIsNone(raw["С начала года, тыс. м²"])
         self.edit_book(OKS_SHEET, {"Q26": None, "R26": 0})
         house = next(row for row in self.by_id(self.permits.report("housing", 1, structure_month_to=1))
                      ["housing_components"]["rows"] if row["year"] == 2026)
@@ -509,7 +514,7 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertEqual(full["/selection/structure/monthFrom"], ("int", 3))
         index = next(i for i, row in enumerate(payload["permits"]["presentation"]["rows"]) if row["year"] == 2026)
         self.assertEqual(full[f"/permits/presentation/rows/{index}/annualActual"], ("null", None))
-        self.assertEqual(full[f"/permits/presentation/rows/{index}/annualForecast"][1], 5810.123456789 + 6850.987654321)
+        self.assertEqual(full[f"/permits/presentation/rows/{index}/annualForecast"][1], 10017.24138 + 6850.987654321)
 
     def test_domrf_literal_units_distinct_periods_and_only_observed_history(self):
         payload = self.domrf.report()

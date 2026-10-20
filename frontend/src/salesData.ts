@@ -1,5 +1,5 @@
 import { request } from './data.ts';
-import { number } from './format.ts';
+import { chartNumberFormatter } from './format.ts';
 import type { EChartsCoreOption } from 'echarts/core';
 import type { Theme } from './types';
 
@@ -103,15 +103,21 @@ export function salesChartOption(chart: SalesChart, theme: Theme): EChartsCoreOp
   }
   const muted = theme === 'light' ? '#606975' : '#b2bac5', line = theme === 'light' ? '#e4e8ed' : '#363a40';
   const dual = chart.id === 'forecast' && chart.series.some(series => series.unit === '%') && chart.series.some(series => series.unit !== '%');
-  const axis = (unit: string) => ({ type: 'value' as const, name: unit, nameTextStyle: { color: muted }, axisLabel: { color: muted, fontSize: 11, formatter: (v: number) => number(v) }, splitLine: { show: unit !== '%' || !dual, lineStyle: { color: line, type: 'dashed' as const } } });
+  const format = chartNumberFormatter(chart.series.flatMap(series => series.points.map(point => point.y)));
+  const axis = (unit: string) => ({ type: 'value' as const, name: unit, nameTextStyle: { color: muted }, axisLabel: { color: muted, fontSize: 11, formatter: format }, splitLine: { show: unit !== '%' || !dual, lineStyle: { color: line, type: 'dashed' as const } } });
   return {
     grid: { left: 6, right: 12, top: 36, bottom: 12, containLabel: true },
     tooltip: { trigger: chart.kind === 'line' ? 'axis' : 'item', confine: true, className: 'sales-tooltip', formatter: (value: TooltipPoint | TooltipPoint[]) => {
       const points = Array.isArray(value) ? value : [value];
-      return points.map(p => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(chart.series[p.seriesIndex].unit)}`).join('<br/>');
+      return points.map(p => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(chart.series[p.seriesIndex].unit)}`).join('<br/>');
     } },
     xAxis: { type: 'category', data: slots.map(p => p.x), boundaryGap: chart.kind === 'bar', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, fontSize: 11, hideOverlap: true, interval: 'auto', alignMinLabel: 'left', alignMaxLabel: 'right' } },
     yAxis: dual ? [axis(chart.series.find(series => series.unit !== '%')!.unit), axis('%')] : axis(chart.unit),
-    series: chart.series.map((s, i) => ({ name: s.name, type: chart.kind, ...(dual ? { yAxisIndex: s.unit === '%' ? 1 : 0 } : {}), data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null), itemStyle: { color: color(s.name, i, theme) }, lineStyle: { color: color(s.name, i, theme), width: 2 }, symbolSize: 7, showSymbol: true, connectNulls: false, barMaxWidth: 40, emphasis: { focus: 'series' } })),
+    series: chart.series.map((s, i) => {
+      const projected = chart.id === 'forecast' && s.unit !== '%', seriesColor = color(s.name, i, theme);
+      return { name: s.name, type: chart.kind, ...(dual ? { yAxisIndex: s.unit === '%' ? 1 : 0 } : {}), data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null),
+        itemStyle: { color: seriesColor, ...(projected ? { borderColor: seriesColor, borderWidth: 1.5, borderType: 'dashed', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: theme === 'light' ? 'rgba(0, 0, 0, .25)' : 'rgba(255, 255, 255, .35)' } } : {}) },
+        lineStyle: { color: seriesColor, width: 2, type: projected ? 'dashed' : 'solid' }, symbolSize: 7, showSymbol: true, connectNulls: false, barMaxWidth: 40, emphasis: { focus: 'series' } };
+    }),
   };
 }

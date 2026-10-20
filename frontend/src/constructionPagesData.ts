@@ -15,7 +15,7 @@ export type PermitStructureSelection = { mode: 'period' | 'annual'; monthFrom: n
 export type PermitSelection = { permitKind: PermitKind; month: number; structure: PermitStructureSelection };
 export type PermitFilters = { permitKind: PermitKind; month?: number; structure?: Partial<PermitStructureSelection> };
 export type PermitCoverage = { blockId: string; year: number; months: number[]; completeMonths: number[]; annualComplete: boolean; observedThrough: string | null; evidence: string[] };
-export type PermitPresentationRow = { year: number; selected: number | null; annualActual: number | null; annualForecast: number | null; basis: 'forecast' | 'annual_observed' | 'none'; difference: number | null; remainder: number | null; growth: number | null; periodComplete: boolean; annualComplete: boolean; observedThrough: string | null; evidence: string[] };
+export type PermitPresentationRow = { year: number; selected: number | null; annualActual: number | null; annualForecast: number | null; basis: 'forecast' | 'annual_observed' | 'none'; difference: number | null; remainder: number | null; growth: number | null; periodComplete: boolean; annualComplete: boolean; observedThrough: string | null; actualMonth?: number | null; evidence: string[] };
 export const forecastFields = ['value', 'housing_living', 'housing_total', 'mop_embedded', 'nonresidential', 'offices', 'industry', 'social', 'trade', 'hotels', 'other'] as const;
 export type PermitForecastRow = { year: number; cells: Record<string, string> } & Record<typeof forecastFields[number], number | null>;
 export type PermitBreakdownRow = { year: number; periodComplete?: boolean; annualComplete?: boolean } & Record<string, number | null | boolean | undefined>;
@@ -81,6 +81,12 @@ export function permitRequestFilters(params: URLSearchParams): PermitFilters {
     if ((key.startsWith('month') ? /^(?:[1-9]|1[0-2])$/ : /^[1-9]\d{0,3}$/).test(value ?? '')) structure[key] = Number(value);
   }
   return { permitKind: kind === 'nonresidential' || kind === 'total' ? kind : 'housing', ...(/^(?:[1-9]|1[0-2])$/.test(month ?? '') ? { month: Number(month) } : {}), ...(Object.keys(structure).length ? { structure } : {}) };
+}
+export function permitPageFilters(params: URLSearchParams): PermitFilters {
+  const requested = permitRequestFilters(params);
+  return { permitKind: requested.permitKind, ...(requested.month === undefined ? {} : { month: requested.month }),
+    structure: { mode: requested.structure?.mode ?? 'period', monthFrom: 1,
+      ...(requested.structure?.monthTo === undefined ? {} : { monthTo: requested.structure.monthTo }) } };
 }
 export function permitKindChange(controls: PermitsData['controls'], month: number, nextKind: PermitKind): Record<string, string | null> {
   return { permit_kind: nextKind, month: controls.monthsByKind[nextKind].includes(month) ? String(month) : null };
@@ -182,7 +188,7 @@ export function readPermitsData(value: unknown, expected?: PermitFilters): Permi
     const annualActual = num(row.annualActual), annualForecast = num(row.annualForecast), annualComplete = bool(row.annualComplete);
     if (annualActual !== null && !annualComplete) throw invalid();
     if (basis !== (annualForecast !== null ? 'forecast' : annualActual !== null && annualComplete ? 'annual_observed' : 'none')) throw invalid();
-    return { year: int(row.year), selected: num(row.selected), annualActual, annualForecast, basis, difference: num(row.difference), remainder: num(row.remainder), growth: num(row.growth), periodComplete: bool(row.periodComplete), annualComplete, observedThrough: sourceDate(row.observedThrough), evidence: list(row.evidence, str) };
+    return { year: int(row.year), selected: num(row.selected), annualActual, annualForecast, basis, difference: num(row.difference), remainder: num(row.remainder), growth: num(row.growth), periodComplete: bool(row.periodComplete), annualComplete, observedThrough: sourceDate(row.observedThrough), ...(row.actualMonth === undefined ? {} : { actualMonth: row.actualMonth === null ? null : int(row.actualMonth, 1, 12) }), evidence: list(row.evidence, str) };
   }), row => row.year) };
   const forecast = readPermitForecast(v.forecast);
   const breakdowns = distinct(list(v.breakdowns, value => {
@@ -192,7 +198,8 @@ export function readPermitsData(value: unknown, expected?: PermitFilters): Permi
     if (!columns.some(c => c.id === aggregateField)) throw invalid();
     const rows = distinct(list(b.rows, value => {
       const raw = obj(value), row = Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, key === 'periodComplete' || key === 'annualComplete' ? bool(value) : num(value)])) as PermitBreakdownRow;
-      int(row.year); if (columns.some(c => !Object.hasOwn(row, c.id) || typeof row[c.id] === 'boolean')) throw invalid(); return row;
+      int(row.year); if (row.actualMonth != null) int(row.actualMonth, 1, 12);
+      if (columns.some(c => !Object.hasOwn(row, c.id) || typeof row[c.id] === 'boolean')) throw invalid(); return row;
     }), row => row.year);
     const series = distinct(list(b.series, value => {
       const s = obj(value), key = id(s.id), points = list(s.points, value => { const p = obj(value); return { x: str(p.x), y: num(p.y) }; });

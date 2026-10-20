@@ -16,7 +16,7 @@ from pipeline.source_availability import route_sources
 class ConstructionPageCoverageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        fixture = fixtures.ConstructionPagesTests("test_main_exact_legacy_parity_all_kinds_and_months")
+        fixture = fixtures.ConstructionPagesTests()
         fixture.setUp()
         cls.addClassCleanup(fixture.doCleanups)
         with fixture.client() as client:

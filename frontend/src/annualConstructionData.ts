@@ -1,5 +1,5 @@
 import { request } from './data.ts';
-import { number } from './format.ts';
+import { chartNumberFormatter } from './format.ts';
 import { readCommissioningMetadata, readReportTable, tableRows } from './commissioningData.ts';
 import type { Cell, CommissioningMetadata, ReportTable, ValuePoint } from './commissioningData';
 import type { EChartsCoreOption } from 'echarts/core';
@@ -94,30 +94,36 @@ export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: s
   const t = tones(theme), visible = c.series.filter(s => visibleNames === undefined || visibleNames.includes(s.name)), single = visible.length === 1, topId = visible.at(-1)?.id;
   const topAt = (index: number) => visible.filter(series => series.points[index].y !== null).at(-1)?.id;
   const labelled = (id: string) => c.controlTotal ? visible.some(series => series.id === id) && (single || c.totals) : id === topId && (single || c.totals);
+  const labelValues = c.rows.map((_, index) => {
+    if (!visible.length || !(single || c.totals)) return null;
+    if (c.controlTotal && visible.length === c.series.length) {
+      const control = c.rows[index][c.controlTotal];
+      const known = visible.map(series => series.points[index].y).filter((value): value is number => value !== null);
+      const proof = c.categoryProvenance?.find(row => row.year === c.rows[index].year);
+      const precision = proof ? Object.entries(proof).filter(([key]) => key.endsWith('_source_precision_million'))
+        .reduce((sum, [, value]) => sum + (typeof value === 'number' ? value / 2 : 0), 0) : 0;
+      if (typeof control === 'number' && known.length && Math.abs(known.reduce((sum, value) => sum + value, 0) - control) <= precision + 1e-10) return control;
+    }
+    const values = visible.map(s => s.points[index].y);
+    return values.some(v => v === null) ? null : values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+  });
+  const format = chartNumberFormatter([...visible.flatMap(series => series.points.map(point => point.y)), ...labelValues]);
   return {
     grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 1)} ${escape(c.unit)}` },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(c.unit)}` },
     xAxis: { type: 'category', data: c.rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: (v: number) => number(v, 1) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
+    yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
     series: c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: s.points.map(p => p.y), itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {
       if (c.controlTotal && topAt(p.dataIndex) !== s.id) return '';
-      if (c.controlTotal && visible.length === c.series.length) {
-        const control = c.rows[p.dataIndex][c.controlTotal];
-        const known = visible.map(series => series.points[p.dataIndex].y).filter((value): value is number => value !== null);
-        const proof = c.categoryProvenance?.find(row => row.year === c.rows[p.dataIndex].year);
-        const precision = proof ? Object.entries(proof).filter(([key]) => key.endsWith('_source_precision_million'))
-          .reduce((sum, [, value]) => sum + (typeof value === 'number' ? value / 2 : 0), 0) : 0;
-        if (typeof control === 'number' && known.length && Math.abs(known.reduce((sum, value) => sum + value, 0) - control) <= precision + 1e-10) return number(control, 1);
-      }
-      const values = visible.map(s => s.points[p.dataIndex].y);
-      return values.some(v => v === null) ? '' : number(values.reduce<number>((sum, v) => sum + (v ?? 0), 0), 1);
+      return labelValues[p.dataIndex] === null ? '' : format(labelValues[p.dataIndex]);
     } } })),
     media: [{ query: { maxWidth: 600 }, option: { series: c.series.map(s => ({ label: { show: single && labelled(s.id) } })) } }],
   };
 }
 export function permitChartOption(p: ConstructionReport['permits'], theme: Theme): EChartsCoreOption {
   const c = p.chart! , t = tones(theme);
-  return { grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true }, tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (v: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => `<strong>${escape(v.name)} · ${escape(v.seriesName)}</strong><br/>${number(v.value)} ${escape(p.unit)}${v.seriesIndex === 0 && p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог года: ${number(c.totals[v.dataIndex].value)} ${escape(p.unit)}<br/>Изменение: ${number(c.growth[v.dataIndex].value)} %` }, xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } }, yAxis: { type: 'value', name: p.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: (v: number) => number(v) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } }, series: [{ name: p.periodLabel, values: c.period, color: theme === 'light' ? '#b9404c' : '#cf5d64' }, { name: 'Остаток до итога года', values: c.remainder, color: theme === 'light' ? '#6f8091' : '#96a7b8' }].map((s, i) => ({ type: 'bar', stack: 'permits', name: s.name, data: s.values.map(v => v.value), itemStyle: { color: s.color }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: i === 0 ? 'inside' : 'top', color: i === 0 ? '#ffffff' : t.muted, fontSize: 10, formatter: (v: { dataIndex: number; value: number }) => i === 0 ? p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '' : `${number(v.value)}${c.growth[v.dataIndex].value === null ? '' : `\n${number(c.growth[v.dataIndex].value)}%`}` : c.totals[v.dataIndex].value === null ? '' : number(c.totals[v.dataIndex].value) } })), media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }] };
+  const format = chartNumberFormatter([...c.period, ...c.remainder, ...c.totals, ...c.growth].map(point => point.value));
+  return { grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true }, tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (v: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => `<strong>${escape(v.name)} · ${escape(v.seriesName)}</strong><br/>${format(v.value)} ${escape(p.unit)}${v.seriesIndex === 0 && p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог года: ${format(c.totals[v.dataIndex].value)} ${escape(p.unit)}<br/>Изменение: ${format(c.growth[v.dataIndex].value)} %` }, xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } }, yAxis: { type: 'value', name: p.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } }, series: [{ name: p.periodLabel, values: c.period, color: theme === 'light' ? '#b9404c' : '#cf5d64' }, { name: 'Остаток до итога года', values: c.remainder, color: theme === 'light' ? '#6f8091' : '#96a7b8' }].map((s, i) => ({ type: 'bar', stack: 'permits', name: s.name, data: s.values.map(v => v.value), itemStyle: { color: s.color }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: i === 0 ? 'inside' : 'top', color: i === 0 ? '#ffffff' : t.muted, fontSize: 10, formatter: (v: { dataIndex: number; value: number }) => i === 0 ? p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '' : `${format(v.value)}${c.growth[v.dataIndex].value === null ? '' : `\n${format(c.growth[v.dataIndex].value)}%`}` : c.totals[v.dataIndex].value === null ? '' : format(c.totals[v.dataIndex].value) } })), media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }] };
 }
 export const permitChartRows = (p: ConstructionReport['permits']): Cell[][] => !p.chart ? [] : [['Год', `За период, ${p.unit}`, `Остаток, ${p.unit}`, `Итог, ${p.unit}`, 'Изменение, %', `Исходное значение периода, ${p.unit}`], ...p.chart.x.map((x, i) => [x, p.chart!.period[i].value, p.chart!.remainder[i].value, p.chart!.totals[i].value, p.chart!.growth[i].value, p.rows[i]['С начала года, тыс. м²']])];
 export function salesTable(sales: Record<string, Cell>): ReportTable { return { id: 'sales', title: 'Реализация квартир · исходные значения', columns: [{ id: 'field', label: 'Показатель' }, { id: 'value', label: 'Исходное значение' }], rows: Object.entries(sales).map(([field, value]) => ({ field, value })) }; }

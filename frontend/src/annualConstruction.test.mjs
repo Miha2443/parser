@@ -22,7 +22,7 @@ test('renovation and every single visible annual series keep numeric labels abov
     assert.equal(o.series[0].label.formatter({ dataIndex: 0 }), '1,1');
   }
   const multi = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], visible = multi.series[1], o = annualChartOption(multi, 'light', [visible.name]);
-  assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.media[0].option.series[1].label.show, true); assert.equal(o.series[1].label.formatter({ dataIndex: 0 }), '0,0');
+  assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.media[0].option.series[1].label.show, true); assert.equal(o.series[1].label.formatter({ dataIndex: 0 }), '0');
   visible.points[0].y = null; assert.equal(annualChartOption(multi, 'light', [visible.name]).series[1].label.formatter({ dataIndex: 0 }), '');
 });
 test('annual stack label follows highest visible series and sums only visible segments without changing source data', () => {
@@ -46,7 +46,7 @@ test('annual controls label the last measured segment per year and never add TOT
   const parsed = readAnnualReport(raw, annualSelection).charts[1], before = structuredClone(parsed), o = annualChartOption(parsed, 'light');
   assert.equal(o.series.length, 3); assert.equal(o.series.some(s => s.name === 'TOTAL'), false);
   assert.equal(o.series[0].data[0], null); assert.equal(o.series[1].data[0], null);
-  assert.equal(o.series[2].label.formatter({ dataIndex: 0 }), '3,0');
+  assert.equal(o.series[2].label.formatter({ dataIndex: 0 }), '3');
   assert.equal(o.series[2].label.formatter({ dataIndex: 1 }), '');
   assert.equal(o.series[1].label.formatter({ dataIndex: 1 }), '7,4');
   assert.equal(o.series[1].label.formatter({ dataIndex: 2 }), '4,3');

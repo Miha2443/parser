@@ -1,5 +1,5 @@
 import { request } from './data.ts';
-import { number } from './format.ts';
+import { chartNumberFormatter } from './format.ts';
 import type { EChartsCoreOption } from 'echarts/core';
 import type { Theme } from './types';
 
@@ -124,38 +124,40 @@ const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
 const tones = (theme: Theme) => ({ muted: theme === 'light' ? '#606975' : '#b2bac5', line: theme === 'light' ? '#e4e8ed' : '#363a40', plan: theme === 'light' ? '#6f8091' : '#96a7b8', fact: theme === 'light' ? '#b9404c' : '#cf5d64' });
 export function operationalChartOption(t: OperationalTable, periodLabel: string, theme: Theme): EChartsCoreOption {
   const colors = tones(theme), c = t.chart;
+  const format = chartNumberFormatter([...c.period, ...c.remainder, ...c.totals, ...c.growth].map(point => point.value));
   return {
     grid: { left: 6, right: 14, top: 40, bottom: 12, containLabel: true },
     tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { dataIndex: number; seriesIndex: number; seriesName: string; name: string; value: number | null }) => {
       const raw = t.rows.find(r => String(r['Год']) === p.name)?.['За выбранный период, млн м²'];
-      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, 2)} млн м²${p.seriesIndex === 0 && raw === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог / доступный период: ${number(c.totals[p.dataIndex].value, 2)} млн м²<br/>Изменение к аналогичному периоду: ${number(c.growth[p.dataIndex].value, 1)} %`;
+      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} млн м²${p.seriesIndex === 0 && raw === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог / доступный период: ${format(c.totals[p.dataIndex].value)} млн м²<br/>Изменение к аналогичному периоду: ${format(c.growth[p.dataIndex].value)} %`;
     } },
     xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: colors.muted, fontSize: 11, interval: 'auto', hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: 'млн м²', nameTextStyle: { color: colors.muted }, axisLabel: { color: colors.muted, formatter: (v: number) => number(v, 1) }, splitLine: { lineStyle: { color: colors.line, type: 'dashed' } } },
+    yAxis: { type: 'value', name: 'млн м²', nameTextStyle: { color: colors.muted }, axisLabel: { color: colors.muted, formatter: format }, splitLine: { lineStyle: { color: colors.line, type: 'dashed' } } },
     series: [
-      { type: 'bar', name: periodLabel, stack: 'period', data: c.period.map(p => p.value), itemStyle: { color: colors.fact }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'inside', color: '#ffffff', fontSize: 10, formatter: (p: { dataIndex: number; value: number }) => { const raw = t.rows.find(r => String(r['Год']) === c.x[p.dataIndex])?.['За выбранный период, млн м²'], growth = c.growth[p.dataIndex].value; return raw == null ? '' : `${number(p.value, 2)}${growth === null ? '' : `\n${growth >= 0 ? '+' : ''}${number(growth)}%`}`; } } },
-      { type: 'bar', name: 'Остаток до итога года', stack: 'period', data: c.remainder.map(p => p.value), itemStyle: { color: colors.plan }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: colors.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => c.totals[p.dataIndex].value === null ? '' : number(c.totals[p.dataIndex].value, 2) } },
+      { type: 'bar', name: periodLabel, stack: 'period', data: c.period.map(p => p.value), itemStyle: { color: colors.fact }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'inside', color: '#ffffff', fontSize: 10, formatter: (p: { dataIndex: number; value: number }) => { const raw = t.rows.find(r => String(r['Год']) === c.x[p.dataIndex])?.['За выбранный период, млн м²'], growth = c.growth[p.dataIndex].value; return raw == null ? '' : `${format(p.value)}${growth === null ? '' : `\n${growth >= 0 ? '+' : ''}${format(growth)}%`}`; } } },
+      { type: 'bar', name: 'Остаток до итога года', stack: 'period', data: c.remainder.map(p => p.value), itemStyle: { color: colors.plan }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: colors.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => c.totals[p.dataIndex].value === null ? '' : format(c.totals[p.dataIndex].value) } },
     ],
     media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }],
   };
 }
 export function linearSummaryOption(row: LinearRow, theme: Theme): EChartsCoreOption {
-  const c = tones(theme), digits = linearDigits(row.unit), maximum = Math.max(row.plan ?? 0, row.fact ?? 0);
+  const c = tones(theme), maximum = Math.max(row.plan ?? 0, row.fact ?? 0);
+  const format = chartNumberFormatter([row.plan, row.fact]);
   return {
     grid: { left: 6, right: 60, top: 12, bottom: 32, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { seriesName: string; value: number | null }) => `<strong>${escape(row.indicator)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, digits)} ${escape(row.unit)}` },
-    xAxis: { type: 'value', name: row.unit, nameLocation: 'middle', nameGap: 25, max: maximum > 0 ? maximum * 1.18 : undefined, axisLabel: { color: c.muted, fontSize: 10, formatter: (v: number) => number(v, digits) }, splitLine: { lineStyle: { color: c.line, type: 'dashed' } } },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { seriesName: string; value: number | null }) => `<strong>${escape(row.indicator)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(row.unit)}` },
+    xAxis: { type: 'value', name: row.unit, nameLocation: 'middle', nameGap: 25, max: maximum > 0 ? maximum * 1.18 : undefined, axisLabel: { color: c.muted, fontSize: 10, formatter: format }, splitLine: { lineStyle: { color: c.line, type: 'dashed' } } },
     yAxis: { type: 'category', data: ['Факт', 'План'], axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: c.muted, fontSize: 11 } },
-    series: [{ name: 'План', values: [null, row.plan], color: c.plan }, { name: 'Факт', values: [row.fact, null], color: c.fact }].map(s => ({ type: 'bar', name: s.name, data: s.values, barGap: '-100%', barMaxWidth: 20, itemStyle: { color: s.color }, label: { show: true, position: 'right', color: c.muted, fontSize: 11, formatter: (p: { value: number | null }) => p.value === null ? '' : number(p.value, digits) } })),
+    series: [{ name: 'План', values: [null, row.plan], color: c.plan }, { name: 'Факт', values: [row.fact, null], color: c.fact }].map(s => ({ type: 'bar', name: s.name, data: s.values, barGap: '-100%', barMaxWidth: 20, itemStyle: { color: s.color }, label: { show: true, position: 'right', color: c.muted, fontSize: 11, formatter: (p: { value: number | null }) => p.value === null ? '' : format(p.value) } })),
   };
 }
 export function linearTrendOption(rows: LinearRow[], unit: string, theme: Theme): EChartsCoreOption {
-  const c = tones(theme), digits = linearDigits(unit);
+  const c = tones(theme), format = chartNumberFormatter(rows.flatMap(row => [row.plan, row.fact, row.percent]));
   return {
     grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { seriesName: string; name: string; value: number | null; dataIndex: number }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${number(p.value, digits)} ${escape(unit)}<br/>Выполнение плана: ${number(rows[p.dataIndex].percent, 1)} %` },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { seriesName: string; name: string; value: number | null; dataIndex: number }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(unit)}<br/>Выполнение плана: ${format(rows[p.dataIndex].percent)} %` },
     xAxis: { type: 'category', data: rows.map(r => `${r.quarter} кв.`), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: c.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: unit, nameTextStyle: { color: c.muted }, axisLabel: { color: c.muted, formatter: (v: number) => number(v, digits) }, splitLine: { lineStyle: { color: c.line, type: 'dashed' } } },
-    series: [{ name: 'План', key: 'plan' as const, color: c.plan }, { name: 'Факт', key: 'fact' as const, color: c.fact }].map(s => ({ type: 'bar', name: s.name, data: rows.map(r => r[s.key]), itemStyle: { color: s.color }, barMaxWidth: 45, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: c.muted, fontSize: 11, formatter: (p: { value: number | null }) => p.value === null ? '' : number(p.value, digits) } })),
+    yAxis: { type: 'value', name: unit, nameTextStyle: { color: c.muted }, axisLabel: { color: c.muted, formatter: format }, splitLine: { lineStyle: { color: c.line, type: 'dashed' } } },
+    series: [{ name: 'План', key: 'plan' as const, color: c.plan }, { name: 'Факт', key: 'fact' as const, color: c.fact }].map(s => ({ type: 'bar', name: s.name, data: rows.map(r => r[s.key]), itemStyle: { color: s.color }, barMaxWidth: 45, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: c.muted, fontSize: 11, formatter: (p: { value: number | null }) => p.value === null ? '' : format(p.value) } })),
   };
 }

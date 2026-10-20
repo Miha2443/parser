@@ -59,7 +59,7 @@ test('forecast separates area and percentage axes and retains complete unit-awar
   assert.equal(lines.tooltip.trigger, 'axis');
   for (const s of lines.series) assert.equal(s.connectNulls, false);
   const tooltip = lines.tooltip.formatter([{ name: '2026-01', seriesIndex: 0, seriesName: 'Распроданность', value: 44 }, { name: '2026-01', seriesIndex: 1, seriesName: 'Стройготовность', value: 42 }]);
-  assert.ok(tooltip.includes('44,0 %') && tooltip.includes('42,0 %'));
+  assert.ok(tooltip.includes('44 %') && tooltip.includes('42 %'));
 });
 test('series colors stay assigned by meaning in each theme and missing series do not shift them', () => {
   for (const theme of ['dark', 'light']) {

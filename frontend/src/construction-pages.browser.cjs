@@ -65,7 +65,7 @@ async function hoverSeries(page, chart, names, compact = false) {
         })));
         for (const tip of tooltips) {
           assert.equal(tip.lines, 2, `Permit tooltip must contain only period and hovered value: ${tip.text}`);
-          assert.match(tip.text, /(?:\d,\d|—) тыс\. м²$/);
+          assert.match(tip.text, /(?:\d(?:,\d)?|—) тыс\. м²$/);
           assert.doesNotMatch(tip.text, /assumed_|data\/raw\/|Наблюдения|оснований источника|Сумма компонентов|Расхождение итога/);
         }
       }
@@ -118,11 +118,14 @@ async function permitSelect(page, label, value) {
     await page.getByLabel('Период распроданности', { exact: true }).selectOption('2026-05');
     await page.locator('.domrf-readiness canvas').waitFor();
     assert.equal(await page.getByLabel('Период прогноза и сегментов', { exact: true }).inputValue(), '2026-01');
-    await page.route('**/api/v1/construction/permits?**', r => new URL(r.request().url()).searchParams.get('month') === '12' ? r.fulfill({ status: 404, json: { detail: 'fixture month unavailable' } }) : r.continue());
-    await ready(page, '/construction/permits?permit_kind=housing&month=12&keep=fixture');
-    assert.notEqual(await page.getByLabel('Месяц разрешений', { exact: true }).inputValue(), '12');
+    await ready(page, '/construction/permits?permit_kind=housing&month=12&keep=fixture&structure_year_from=2022&structure_year_to=2023&structure_month_from=4');
+    assert.equal(await page.getByLabel('Месяц разрешений', { exact: true }).inputValue(), '12');
+    assert.equal(await page.getByLabel('Месяц разрешений', { exact: true }).locator('option').count(), 12);
     assert.equal(new URL(page.url()).searchParams.get('keep'), 'fixture');
-    await page.unroute('**/api/v1/construction/permits?**');
+    assert.equal(new URL(page.url()).searchParams.has('structure_year_from'), false);
+    assert.equal(new URL(page.url()).searchParams.has('structure_month_from'), false);
+    assert.equal(await page.getByLabel('Структура: год с', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.permit-summary').count(), 0);
     await page.getByLabel('Месяц разрешений', { exact: true }).selectOption('1');
     await page.locator('.permit-main canvas').waitFor();
     await page.getByLabel('Вид объектов', { exact: true }).selectOption('nonresidential');
@@ -133,7 +136,9 @@ async function permitSelect(page, label, value) {
     await page.goto(base + '/construction/permits?permit_kind=housing&month=12');
     await page.locator('.permits-page [role="alert"]').waitFor();
     await page.waitForTimeout(1000);
-    assert.ok(notFoundRequests <= 2, `Unbounded 404 recovery: ${notFoundRequests}`);
+    // StrictMode may start one immediately aborted request before the active
+    // request plus its single discovery; it must not keep retrying.
+    assert.ok(notFoundRequests <= 3, `Unbounded 404 recovery: ${notFoundRequests}`);
     await page.unroute('**/api/v1/construction/permits?**');
     await ready(page, '/construction/permits');
     assert.deepEqual(await page.getByLabel('Вид объектов', { exact: true }).locator('option').evaluateAll(a => a.map(e => e.value)), ['housing', 'nonresidential', 'total']);
@@ -156,32 +161,25 @@ async function permitSelect(page, label, value) {
       }
     }
     await permitSelect(page, 'Месяц разрешений', 5);
-    const structureTo = await page.getByLabel('Структура: месяц по', { exact: true }).inputValue();
-    await permitSelect(page, 'Структура: год с', 2020);
-    await permitSelect(page, 'Структура: год по', 2022);
-    await permitSelect(page, 'Структура: месяц с', 3);
-    await permitSelect(page, 'Структура: месяц по', 5);
+    const structureTo = await page.getByLabel('Структура: накопленный период', { exact: true }).inputValue();
+    await permitSelect(page, 'Структура: накопленный период', 5);
     assert.equal(await page.getByLabel('Месяц разрешений', { exact: true }).inputValue(), '5');
     const currentQuery = new URL(page.url()).search;
     const report = await (await page.request.get(base + '/api/v1/construction/permits' + currentQuery)).json();
     const actualYear = report.permits.presentation.rows.find(r => r.year === 2026);
     assert.equal(actualYear.basis, 'forecast');
     assert.equal(actualYear.remainder, Math.max(0, actualYear.annualForecast - actualYear.selected));
-    assert.ok(report.breakdowns.every(b => b.rows.every(r => r.year >= 2020 && r.year <= 2022)));
-    assert.equal(report.selection.structure.monthFrom, 3);
+    assert.ok(report.breakdowns.every(b => b.rows.some(r => r.year === 2011) && b.rows.some(r => r.year === 2026)));
+    assert.equal(report.selection.structure.monthFrom, 1);
     assert.equal(report.selection.structure.monthTo, 5);
     await permitSelect(page, 'Месяц разрешений', 1);
-    assert.equal(await page.getByLabel('Структура: месяц с', { exact: true }).inputValue(), '3');
-    assert.equal(await page.getByLabel('Структура: месяц по', { exact: true }).inputValue(), '5');
+    assert.equal(await page.getByLabel('Структура: накопленный период', { exact: true }).inputValue(), '5');
     await permitSelect(page, 'Режим структуры', 'annual');
-    assert.equal(await page.getByLabel('Структура: месяц с', { exact: true }).isDisabled(), true);
-    await layout(page, 'permits-annual-2020-2022');
-    await permitSelect(page, 'Структура: год по', 2026);
-    await permitSelect(page, 'Структура: год с', 2026);
-    assert.equal(await page.locator('.permit-breakdowns .chart-canvas').count(), 0, 'Partial current year cannot be an annual total');
-    assert.ok((await page.locator('.permit-breakdowns').innerText()).includes('Полный год не подтверждён'));
+    assert.equal(await page.getByLabel('Структура: накопленный период', { exact: true }).count(), 0);
+    await layout(page, 'permits-annual-all-years');
+    assert.ok(await page.locator('.permit-breakdowns .chart-canvas').count() > 0);
     await ready(page, '/construction/permits?permit_kind=housing&month=5');
-    assert.equal(await page.getByLabel('Структура: месяц по', { exact: true }).inputValue(), structureTo);
+    assert.equal(await page.getByLabel('Структура: накопленный период', { exact: true }).inputValue(), structureTo);
     await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Выбранный период', 'Остаток до годового ориентира'], true);
     const first = page.locator('.permit-main .chart-block');
     await first.locator('.data-toggle').click();
@@ -252,7 +250,7 @@ async function permitSelect(page, label, value) {
     });
     await ready(page, '/construction/domrf');
     await page.getByLabel('Период строительства ДОМ.РФ', { exact: true }).selectOption('2026-09');
-    assert.equal(await page.locator('.domrf-construction .cp-metric strong').first().innerText(), '0,00\nмлн м²');
+    assert.match(await page.locator('.domrf-construction .cp-metric strong').first().innerText(), /^0\s*млн м²$/);
     assert.ok((await page.locator('.domrf-construction .cp-metric strong').nth(1).innerText()).includes('—'));
     assert.equal(await page.getByLabel('Период реализации ДОМ.РФ', { exact: true }).inputValue(), snapshot.sales.period.id);
     await page.getByLabel('Период реализации ДОМ.РФ', { exact: true }).selectOption('2026-07');
@@ -266,7 +264,7 @@ async function permitSelect(page, label, value) {
     assert.equal(await page.getByLabel('Регион показателей', { exact: true }).inputValue(), 'msk');
     assert.ok((await page.locator('.domrf-construction').innerText()).includes('Город Москва'));
     await page.unroute('**/api/v1/construction/domrf?**');
-    checks.push({ annualForecastRemainder: true, arbitraryMonthInterval: true, independentStructure: true, incompleteAnnualHidden: true, independentProviders: true, independentPeriods: true, legacyPeriod: true, permits404: true, validMonthRetained: true, nullAndZero: true, abortedRegion: true, exports: 4, conflict409: true });
+    checks.push({ annualForecastRemainder: true, allTwelveMonths: true, allStructureYears: true, independentStructure: true, latestActualPeriod: true, independentProviders: true, independentPeriods: true, legacyPeriod: true, permits404: true, validMonthRetained: true, nullAndZero: true, abortedRegion: true, exports: 4, conflict409: true });
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify({ checks, errors }, null, 2));
     console.log(JSON.stringify({ layouts: checks.filter(c => c.label).length, checks, errors, output }));

@@ -91,7 +91,9 @@ def select_forecast(forecast, kind):
     # The caller owns this generation; selection never mutates the cached rows.
     return {**forecast, "rows": [{**row, "value": row["housing_living"] if kind == "housing" else
                                   row["nonresidential"] if kind == "nonresidential" else
-                                  strict_sum((row["housing_living"], row["nonresidential"]))}
+                                  strict_sum((row["housing_total"] if row["housing_total"] is not None else
+                                              strict_sum((row["housing_living"], row["mop_embedded"])),
+                                              row["nonresidential"]))}
                                  for row in forecast["rows"]]}
 
 
@@ -128,7 +130,7 @@ def _housing_history(book, notes):
             return {}
         total = _cell_number(total_cell, notes, 1000)
         living = _cell_number(living_cell, notes, 1000)
-        source = f"{HOUSING_SHEET}!{total_cell.coordinate}:{living_cell.coordinate}"
+        source = f"{HOUSING_SHEET}!C{label.row}:D{label.row}"
         result[key] = {"housing_total": total, "living": living,
                        "mop_embedded": _gap(total, living, notes, source), "source": source}
     return result
@@ -262,7 +264,7 @@ def _coverage(block_id, monthly, fields, unknown, source_date, evidence):
     return result
 
 
-def structure_base(data, source_date):
+def structure_base(data, source_date, annual_sources=None):
     """Index literal months once; request views only select/sum this immutable base."""
     housing_fields = (("living", "Жилая площадь"), ("mop_embedded", "МОП и встроенное нежильё"),
                       ("housing_total", "Общая площадь жилья"))
@@ -295,6 +297,25 @@ def structure_base(data, source_date):
             if rows:
                 target[year] = [f"{OKS_SHEET}!D/F/Q/R/AT, строки {_row_refs(rows)}; м² / 1000. Статус РС не фильтруется."]
     nvalues = {**historical, **native}
+    # Only identical category names are shared. Broader Ministry categories
+    # cannot be allocated to historical offices/trade/hotels without evidence.
+    historical_labels = {normalized(label): key for key, label in HISTORICAL_FIELDS}
+    category_ids = {key: historical_labels.get(normalized(label), key) for key, label in data["groups"].items()}
+    unified_fields = dict(HISTORICAL_FIELDS)
+    for key, label in native_fields[1:]:
+        canonical = category_ids[key]
+        if canonical not in unified_fields:
+            unified_fields[canonical] = f"Минстрой: {label}"
+    unified = {}
+    for key, row in historical.items():
+        unified[key] = {"nonresidential": row["nonresidential"],
+                        **{field: row.get(field) for field in unified_fields}}
+    for key, row in native.items():
+        item = {field: None for field in unified_fields}
+        for field in data["groups"]:
+            canonical = category_ids[field]
+            item[canonical] = row.get(field)
+        unified[key] = {"nonresidential": row["nonresidential"], **item}
     composition = {}
     for key in housing.keys() | nvalues.keys():
         h, n = housing.get(key, {}), nvalues.get(key, {})
@@ -304,16 +325,16 @@ def structure_base(data, source_date):
         composition[key] = row
     combined_evidence = {year: housing_evidence.get(year, []) + history_evidence.get(year, []) + native_evidence.get(year, [])
                          for year in set(housing_evidence) | set(history_evidence) | set(native_evidence)}
-    basis = ["Исторические пары жилья Вспомогат1!C:D (м² / 1000) и категории нежилья "
-             "Данные с 2011 года!I:O (тыс. м²) имеют собственную базу. Они могут отличаться от основной "
-             "исторической таблицы; значения не масштабируются для совпадения.",
+    basis = ["Для полных прошедших лет жилая площадь и нежильё берутся из утверждённых годовых контролей, "
+             "как на основном графике. МОП и встроенное нежильё сохраняются по исходной разности общей и жилой площади; "
+             "общий итог рассчитывается из этих компонентов. Исходные суммы сохраняются отдельно, без масштабирования.",
              "Суммируются только буквальные месяцы выбранного интервала. Пустые значения и неизвестное "
              "покрытие не заменяются нулями. Годовой режим требует подтверждения всех 12 месяцев."]
     specifications = [
         ("area_composition", "Структура общей площади", composition_fields, "total", composition, unknown_h | unknown_n,
          combined_evidence, data["housing_notes"] + data["historical_notes"] + data["modern_notes"] +
          ["Общая структура = жилая площадь + МОП и встроенное нежильё + общая площадь нежилья. "
-          "Это не смешанный итог основной таблицы (жилая + нежилая)."]),
+          "В режиме «Всего» основного графика используется та же база."]),
         ("housing_components", "Структура площади жилья", housing_fields, "housing_total", housing, unknown_h,
          housing_evidence, data["housing_notes"] + data["modern_notes"] +
          ["МОП и встроенное нежильё = общая минус жилая площадь; отдельного источника МОП нет."]),
@@ -321,11 +342,38 @@ def structure_base(data, source_date):
          set(), history_evidence, data["historical_notes"]),
         ("nonresidential_native", "Нежильё: группы Минстроя", native_fields, "nonresidential", native, unknown_n,
          native_evidence, data["modern_notes"] + ["Группы AT сохранены буквально. Исторические шесть категорий "
-          "не сопоставлены с современной классификацией; коды ОСМ и пустой AU не используются."])]
-    return {identifier: {"id": identifier, "title": title, "fields": fields, "aggregateField": aggregate,
+          "не сопоставлены с современной классификацией; коды ОСМ и пустой AU не используются."]),
+        ("nonresidential_components", "Структура площади нежилья", (("nonresidential", "Нежильё, всего"),) + tuple(unified_fields.items()),
+         "nonresidential", unified, unknown_n, {**history_evidence, **native_evidence},
+         data["historical_notes"] + data["modern_notes"] + [
+             "До 2022 года используются исторические категории I:O, с 2022 года буквальные группы AT. "
+             "Объединены только полностью совпадающие названия; остальные группы Минстроя сохранены отдельно. "
+             "Неприменимые категории другой классификации показаны как null, не как ноль. "
+             "Если категории не подтверждают утверждённый итог, столбец показывается без детализации; исходные значения сохранены отдельно."])]
+    result = {identifier: {"id": identifier, "title": title, "fields": fields, "aggregateField": aggregate,
                          "monthly": monthly, "unknown": unknown, "notes": basis + notes,
                          "coverage": _coverage(identifier, monthly, [key for key, _ in fields], unknown, source_date, evidence)}
             for identifier, title, fields, aggregate, monthly, unknown, evidence, notes in specifications}
+    unified_block = result["nonresidential_components"]
+    unified_block["fields"] += (("undetailed", "Без детализации"),)
+    unified_block["coverage"] = [{**row, "blockId": "nonresidential_components"}
+                                  for key in ("nonresidential_historical", "nonresidential_native")
+                                  for row in result[key]["coverage"]]
+    unified_block["applicable"] = {
+        year: {key for key, _ in HISTORICAL_FIELDS} if year <= 2021 else set(category_ids.values())
+        for year in {key[0] for key in unified}}
+    snapshot = _as_date(source_date)
+    if annual_sources is not None and snapshot is not None:
+        for identifier, block in result.items():
+            kinds = ("housing",) if identifier == "housing_components" else ("housing", "nonresidential") if identifier == "area_composition" else ("nonresidential",)
+            years = {year for year, kind in annual_sources["annual"] if kind in kinds and year < snapshot.year}
+            present = {row["year"] for row in block["coverage"]}
+            for year in years - present:
+                refs = [annual_sources["annual"][(year, kind)]["evidence"] for kind in kinds if (year, kind) in annual_sources["annual"]]
+                block["coverage"].append({"blockId": identifier, "year": year, "months": [], "completeMonths": [],
+                                          "annualComplete": False, "observedThrough": f"{year}-12-31", "evidence": refs})
+            block["coverage"].sort(key=lambda row: row["year"])
+    return result
 
 
 def structure_controls(base, kind):
@@ -333,15 +381,49 @@ def structure_controls(base, kind):
     coverage = [row for identifier in identifiers for row in base[identifier]["coverage"]]
     return {"modes": [{"id": "period", "label": "По периодам"}, {"id": "annual", "label": "По годам"}],
             "years": sorted({row["year"] for row in coverage}),
-            "months": sorted({month for row in coverage for month in row["months"]}), "coverage": coverage}
+            "months": list(range(1, 13)), "coverage": coverage}
 
 
 def _block_ids(kind):
-    return (["area_composition", "housing_components", "nonresidential_historical", "nonresidential_native"] if kind == "total"
-            else ["housing_components"] if kind == "housing" else ["nonresidential_historical", "nonresidential_native"])
+    return (["area_composition", "housing_components", "nonresidential_components"] if kind == "total"
+            else ["housing_components"] if kind == "housing" else ["nonresidential_components"])
 
 
-def breakdowns(base, kind, selection):
+def _available_month(year, end, source_date, observed_months=None):
+    snapshot = _as_date(source_date)
+    if snapshot is None or year != snapshot.year:
+        return end
+    available = [month for month in observed_months or [] if month <= snapshot.month]
+    return min(end, max(available)) if available else None
+
+
+def _monthly_value(sources, kind, year, start, end):
+    if end is None or year in sources["unknown"].get(kind, set()):
+        return None
+    return strict_sum(sources["monthly"].get(kind, {}).get((year, month), {}).get("value")
+                      for month in range(start, end + 1))
+
+
+def _annual_values(sources, year, source_date):
+    snapshot = _as_date(source_date)
+    if snapshot is None or year >= snapshot.year:
+        return {}, []
+    result, evidence = {}, []
+    for kind in ("housing", "nonresidential"):
+        control = sources["annual"].get((year, kind))
+        if control is not None:
+            result[kind] = control["value"]
+            evidence.append(control["evidence"])
+        else:
+            result[kind] = _monthly_value(sources, kind, year, 1, 12)
+    # A living-area control says nothing about missing common/embedded areas.
+    result["mop_embedded"] = _monthly_value(sources, "mop_embedded", year, 1, 12)
+    result["housing_total"] = strict_sum((result["housing"], result["mop_embedded"]))
+    result["total"] = strict_sum((result["housing_total"], result["nonresidential"]))
+    return result, evidence
+
+
+def breakdowns(base, kind, selection, sources=None, source_date=None):
     start, end = (1, 12) if selection["mode"] == "annual" else (selection["monthFrom"], selection["monthTo"])
     label = "За год" if selection["mode"] == "annual" else MONTH_LABELS[end - 1] if start == 1 else f"Месяцы {start}–{end}"
     result = []
@@ -352,19 +434,61 @@ def breakdowns(base, kind, selection):
             year = coverage["year"]
             if not selection["yearFrom"] <= year <= selection["yearTo"]:
                 continue
-            months = [block["monthly"].get((year, month)) for month in range(start, end + 1)]
+            # Housing must share the main living-area period even when its
+            # common/total component is missing for the latest month.
+            period_field = "living" if identifier == "housing_components" else block["aggregateField"]
+            actual_month = _available_month(year, end, source_date, [month for (y, month), item in block["monthly"].items()
+                                                                    if y == year and item.get(period_field) is not None])
+            months = [block["monthly"].get((year, month)) for month in range(start, actual_month + 1)] if actual_month else []
             known = year not in block["unknown"] and all(row is not None for row in months)
-            if selection["mode"] == "annual" and not coverage["annualComplete"]:
-                known = False
             row = {"year": year,
-                   **{field: strict_sum(item[field] for item in months) if known else None for field, _ in block["fields"]},
+                   **{field: strict_sum(item.get(field) for item in months) if known else None for field, _ in block["fields"]},
                    "periodComplete": set(range(start, end + 1)) <= set(coverage["completeMonths"]),
-                   "annualComplete": coverage["annualComplete"]}
+                   "annualComplete": coverage["annualComplete"], "actualMonth": actual_month}
+            if sources is not None:
+                values = {key: _monthly_value(sources, key, year, start, actual_month)
+                          for key in ("housing", "mop_embedded", "nonresidential")}
+                approved, annual_evidence = _annual_values(sources, year, source_date) if start == 1 and end == 12 else ({}, [])
+                if approved:
+                    values.update({key: approved.get(key) for key in values})
+                    evidence.extend(annual_evidence)
+                if identifier in ("housing_components", "area_composition"):
+                    row["source_living"] = row["living"]
+                    row["living"], row["mop_embedded"] = values["housing"], values["mop_embedded"]
+                    if identifier == "housing_components":
+                        row["source_housing_total"] = row["housing_total"]
+                        row["housing_total"] = strict_sum((row["living"], row["mop_embedded"]))
+                if identifier in ("nonresidential_components", "area_composition"):
+                    row["source_nonresidential"] = row["nonresidential"]
+                    row["nonresidential"] = values["nonresidential"]
+                if identifier == "area_composition":
+                    row["total"] = strict_sum((row["living"], row["mop_embedded"], row["nonresidential"]))
+                if approved:
+                    row["annualComplete"] = row[block["aggregateField"]] is not None
+                    row["periodComplete"] = row["annualComplete"]
+            if identifier == "nonresidential_components":
+                applicable = block["applicable"].get(year, set())
+                subtotal = strict_sum(row[field] for field in applicable)
+                total = row["nonresidential"]
+                for field in applicable:
+                    row[f"source_{field}"] = row[field]
+                if total is not None and (subtotal is None or not math.isclose(subtotal, total, abs_tol=1e-6)):
+                    for field in applicable:
+                        row[field] = None
+                    row["undetailed"] = total
+                else:
+                    row["undetailed"] = None
             rows.append(row)
             evidence.extend(coverage["evidence"])
+        raw_fields = sorted({key for row in rows for key in row if key.startswith("source_")})
+        source_labels = dict(block["fields"])
+        for row in rows:
+            for key in raw_fields:
+                row.setdefault(key, None)
         result.append({"id": identifier, "title": block["title"], "unit": "тыс. м²", "periodLabel": label,
                        "aggregateField": block["aggregateField"],
-                       "columns": [{"id": "year", "label": "Год"}] + [{"id": key, "label": name} for key, name in block["fields"]],
+                       "columns": [{"id": "year", "label": "Год"}] + [{"id": key, "label": name} for key, name in block["fields"]] +
+                                  [{"id": key, "label": f"Исходное значение: {source_labels.get(key[7:], key[7:])}"} for key in raw_fields],
                        "rows": rows, "series": [{"id": key, "name": name,
                                                   "points": [{"x": str(row["year"]), "y": row[key]} for row in rows]}
                                                  for key, name in block["fields"] if key != block["aggregateField"]],
@@ -374,12 +498,16 @@ def breakdowns(base, kind, selection):
 
 
 def read_main_sources(book, detailed, source_file):
-    """Raw coverage for the main living + nonresidential basis, not structure totals."""
+    """Shared literal components and approved annual controls for every permit view."""
     monthly = {"housing": {key: {"value": row["living"]} for key, row in detailed["housing"].items()},
-               "nonresidential": {}}
-    evidence = {"housing": {}, "nonresidential": {}}
+               "mop_embedded": {key: {"value": row["mop_embedded"]} for key, row in detailed["housing"].items()},
+               "nonresidential": {key: {"value": row["nonresidential"]} for key, row in detailed["nonresidential"].items()}}
+    evidence = {"housing": {}, "mop_embedded": {}, "nonresidential": {}}
     for (year, _), row in detailed["housing"].items():
         evidence["housing"].setdefault(year, []).append(f"{source_file}:{row['source']}")
+        evidence["mop_embedded"].setdefault(year, []).append(f"{source_file}:{row['source']}")
+    for (year, _), row in detailed["nonresidential"].items():
+        evidence["nonresidential"].setdefault(year, []).append(f"{source_file}:{row['source']}")
     if HOUSING_SHEET in book.sheetnames:
         year = None
         stems = ("янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
@@ -392,25 +520,32 @@ def read_main_sources(book, detailed, source_file):
             if year is not None and month is not None:
                 key = (year, month)
                 value = number(cell.value)
-                # Duplicate months are not evidence of complete monthly coverage.
-                monthly["nonresidential"][key] = {"value": value / 1000 if value is not None and key not in monthly["nonresidential"] else None}
-                evidence["nonresidential"].setdefault(year, []).append(f"{source_file}:{HOUSING_SHEET}!{cell.coordinate}")
-    unknown = {"housing": set(), "nonresidential": set()}
+                # I:O has the total matching the categories. F:G is a fallback
+                # only when that historical series is entirely unavailable.
+                if not detailed["nonresidential"]:
+                    monthly["nonresidential"][key] = {"value": value / 1000 if value is not None and key not in monthly["nonresidential"] else None}
+                    evidence["nonresidential"].setdefault(year, []).append(f"{source_file}:{HOUSING_SHEET}!G{label.row}")
+    unknown = {"housing": set(), "mop_embedded": set(), "nonresidential": set()}
     grouped = {}
     for row in detailed["modern"]:
         kind, year, month = row["kind"], row["year"], row["month"]
         if month is None:
             unknown[kind].add(year)
+            if kind == "housing":
+                unknown["mop_embedded"].add(year)
         else:
             grouped.setdefault((year, month, kind), []).append(row)
     for (year, month, kind), rows in grouped.items():
         field = "living" if kind == "housing" else "nonresidential"
         monthly[kind][(year, month)] = {"value": strict_sum(row[field] for row in rows)}
+        if kind == "housing":
+            monthly["mop_embedded"][(year, month)] = {"value": strict_sum(row["mop_embedded"] for row in rows)}
     for kind in monthly:
-        for year in {row["year"] for row in detailed["modern"] if row["kind"] == kind}:
-            rows = [row for row in detailed["modern"] if row["kind"] == kind and row["year"] == year]
+        source_kind = "housing" if kind == "mop_embedded" else kind
+        for year in {row["year"] for row in detailed["modern"] if row["kind"] == source_kind}:
+            rows = [row for row in detailed["modern"] if row["kind"] == source_kind and row["year"] == year]
             evidence[kind][year] = [f"{source_file}:{OKS_SHEET}!D/F/Q/R, строки {_row_refs(rows)}; "
-                                    "жилая площадь жилья + общая площадь нежилья, без фильтра статуса."]
+                                    "исходные площади жилья/МОП/нежилья, без фильтра статуса."]
     annual = {}
     if HISTORY_SHEET in book.sheetnames:
         rows = list(book[HISTORY_SHEET].iter_rows(min_col=2, max_col=3))
@@ -442,8 +577,7 @@ def read_static_annual(book, source_file):
 
 
 def main_presentation(table, sources, forecast, kind, month, source_date):
-    snapshot = _as_date(source_date)
-    kinds = ("housing", "nonresidential") if kind == "total" else (kind,)
+    kinds = ("housing", "mop_embedded", "nonresidential") if kind == "total" else (kind,)
     monthly, evidence = {}, {}
     keys = set().union(*(sources["monthly"][k].keys() for k in kinds))
     for key in keys:
@@ -456,34 +590,54 @@ def main_presentation(table, sources, forecast, kind, month, source_date):
     forecasts = {row["year"]: row for row in forecast["rows"] if row["value"] is not None}
     rows = []
     for year in sorted(actual.keys() | forecasts.keys()):
-        raw = actual.get(year, {})
-        selected = raw.get("С начала года, тыс. м²")
         current = coverage.get(year, {})
         refs = list(current.get("evidence", []))
-        annual_rows = [sources["annual"].get((year, k)) for k in kinds]
-        annual = None
-        # A current-year control or an incomplete latest registry sum is not a full-year observation.
-        if snapshot is not None and year < snapshot.year:
-            if all(row is not None for row in annual_rows):
-                annual = strict_sum(row["value"] for row in annual_rows)
-                refs.extend(row["evidence"] for row in annual_rows)
-            elif current.get("annualComplete"):
-                annual = strict_sum(monthly[(year, m)]["value"] for m in range(1, 13))
-                refs.append("Подтверждены 12 буквальных месяцев на основной исходной базе.")
+        annual_values, annual_evidence = _annual_values(sources, year, source_date)
+        annual = annual_values.get(kind)
+        refs.extend(annual_evidence)
+        actual_month = _available_month(year, month, source_date,
+                                        [m for (y, m), item in monthly.items() if y == year and item["value"] is not None]) if year in actual else None
+        selected = strict_sum(_monthly_value(sources, k, year, 1, actual_month) for k in kinds) if actual_month else None
+        if month == 12 and annual is not None:
+            selected = annual
         predicted = forecasts.get(year)
         annual_forecast = predicted["value"] if predicted else None
         basis = "forecast" if annual_forecast is not None else "annual_observed" if annual is not None else "none"
         reference = annual_forecast if basis == "forecast" else annual
         difference = number(reference - selected) if reference is not None and selected is not None else None
         if predicted:
-            fields = ("housing_living", "nonresidential") if kind == "total" else ("housing_living",) if kind == "housing" else ("nonresidential",)
+            fields = (("housing_total", "nonresidential") if predicted["housing_total"] is not None else
+                      ("housing_living", "mop_embedded", "nonresidential")) if kind == "total" else ("housing_living",) if kind == "housing" else ("nonresidential",)
             refs.extend(f"{forecast['source']['file']}:{forecast['source']['sheet']}!{predicted['cells'][field]}; "
                         f"годовой прогноз, {forecast['unitBasis']}." for field in fields)
         rows.append({"year": year, "selected": selected, "annualActual": annual, "annualForecast": annual_forecast,
                      "basis": basis, "difference": difference, "remainder": max(difference, 0) if difference is not None else None,
-                     "growth": raw.get("Изменение, %"),
-                     "periodComplete": set(range(1, month + 1)) <= set(current.get("completeMonths", [])),
+                     "growth": None,
+                     "periodComplete": (month == 12 and annual is not None) or
+                                       (selected is not None and set(range(1, month + 1)) <= set(current.get("completeMonths", []))),
                      "annualComplete": annual is not None,
+                     "actualMonth": actual_month,
                      "observedThrough": current.get("observedThrough") or (f"{year}-12-31" if annual is not None else None),
                      "evidence": refs})
+    by_year = {row["year"]: row for row in rows}
+    for row in rows:
+        previous = by_year.get(row["year"] - 1, {})
+        if row["selected"] is not None and previous.get("selected") not in (None, 0) and row["actualMonth"] == previous.get("actualMonth"):
+            row["growth"] = number((row["selected"] / previous["selected"] - 1) * 100)
     return {"rows": rows}
+
+
+def apply_main_presentation(table, presentation):
+    """Keep downloads/legacy chart arrays on the same facts as the visible chart."""
+    indexed = {row["year"]: row for row in presentation["rows"]}
+    for row in table["rows"]:
+        selected = indexed[int(row["Год"])]
+        row["С начала года, тыс. м²"] = selected["selected"]
+        row["За год, тыс. м²"] = selected["annualActual"]
+        row["Изменение, %"] = selected["growth"]
+    if table["chart"]:
+        rows = [indexed[int(year)] for year in table["chart"]["x"]]
+        for field, key in (("period", "selected"), ("totals", "annualActual"), ("growth", "growth"), ("remainder", "remainder")):
+            table["chart"][field] = [{"value": row[key]} for row in rows]
+    table["presentation"] = presentation
+    return table

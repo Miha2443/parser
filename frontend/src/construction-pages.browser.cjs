@@ -164,6 +164,8 @@ async function permitSelect(page, label, value) {
     const annualNonresidential = await (await page.request.get(base + '/api/v1/construction/permits' + new URL(page.url()).search)).json();
     assert.equal(annualNonresidential.breakdowns.length, 1);
     const annualBlock = annualNonresidential.breakdowns[0];
+    assert.deepEqual(annualBlock.series.map(series => series.id), ['offices', 'industry', 'trade', 'social', 'hotels', 'other', 'undetailed']);
+    assert.ok(annualBlock.series.every(series => !series.name.startsWith('Минстрой:')));
     for (const [index, row] of annualBlock.rows.entries()) {
       if (row.other_adjustment == null) continue;
       assert.ok(Math.abs(row.other - (row.source_other ?? 0) - row.other_adjustment) < 1e-6);

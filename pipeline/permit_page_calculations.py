@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime
-import hashlib
 import math
 import re
 
@@ -22,6 +21,8 @@ FORECAST_FIELDS = ("housing_living", "housing_total", "mop_embedded", "nonreside
 HISTORICAL_FIELDS = (("offices", "Административно-деловые"), ("industry", "Промышленные"),
                      ("trade", "Торговые"), ("social", "Социальные"),
                      ("hotels", "Гостиницы"), ("other", "Прочие"))
+OSM_GROUPS = {**{code: "social" for code in range(2, 10)},
+              10: "trade", 11: "hotels", 13: "industry", 14: "offices"}
 
 
 def normalized(value):
@@ -43,6 +44,16 @@ def number(value):
 def strict_sum(values):
     values = list(values)
     return number(sum(values)) if values and all(value is not None for value in values) else None
+
+
+def _osm_group(value):
+    if isinstance(value, str):
+        match = re.fullmatch(r"(\d{1,2})(?:\s+.*)?", value.strip())
+        code = int(match[1]) if match else None
+    else:
+        numeric = number(value)
+        code = int(numeric) if numeric is not None and numeric == int(numeric) else None
+    return OSM_GROUPS.get(code, "other")
 
 
 def _cell_number(cell, notes, scale=1):
@@ -177,12 +188,12 @@ def read_breakdown_sources(book):
     if OKS_SHEET not in book.sheetnames:
         modern_notes.append("Реестр ОКС отсутствует; структура с 2022 года недоступна.")
     else:
-        rows = book[OKS_SHEET].iter_rows(min_row=1, max_col=46)
+        rows = book[OKS_SHEET].iter_rows(min_row=1, max_col=44)
         headers = next(rows, ())
         expected = {1: "Назначение", 3: "Срок выдачи РС", 5: "Год выдачи",
                     16: "Общая площадь", 17: "Жилая площадь"}
-        valid = len(headers) >= 46 and all(normalized(headers[col].value) == normalized(label) for col, label in expected.items())
-        classification = len(headers) >= 46 and normalized(headers[45].value) == normalized("ФНО для Минстроя России")
+        valid = len(headers) >= 18 and all(normalized(headers[col].value) == normalized(label) for col, label in expected.items())
+        classification = len(headers) >= 44 and normalized(headers[43].value) == normalized("ОСМ код")
         if not valid:
             modern_notes.append("Заголовки B/D/F/Q/R реестра ОКС не подтверждены; современная структура недоступна.")
         else:
@@ -200,10 +211,9 @@ def read_breakdown_sources(book):
                 source_row = cells[1].row
                 general = _cell_number(cells[16], modern_notes, 1000)
                 living = _cell_number(cells[17], modern_notes, 1000) if purpose == "жилье" else None
-                label = " ".join(str(cells[45].value or "").split()) if classification else ""
-                group = "native_" + hashlib.sha256(normalized(label).encode()).hexdigest()[:12] if label else "unknown"
-                if purpose == "нежилье":
-                    groups[group] = label or "Не указано в источнике"
+                group = _osm_group(cells[43].value if classification else None)
+                if purpose == "нежилье" and not groups:
+                    groups.update(HISTORICAL_FIELDS)
                 modern.append({"year": date.year, "month": None if fallback_used else date.month,
                                "kind": "housing" if purpose == "жилье" else "nonresidential",
                                "housing_total": general if purpose == "жилье" else None,
@@ -212,7 +222,8 @@ def read_breakdown_sources(book):
                                "nonresidential": general if purpose == "нежилье" else None,
                                "group": group, "source_row": source_row, "fallback": fallback_used})
             if not classification:
-                modern_notes.append("Заголовок AT не подтверждён; нежилые объекты показаны в неизвестной категории.")
+                modern_notes.append("Заголовок AR «ОСМ код» не подтверждён; нежилые объекты отнесены в «Прочие». "
+                                    "Классификация ФНО вместо ОСМ не используется.")
     return {"housing": housing, "nonresidential": nonresidential, "modern": modern, "groups": groups,
             "housing_notes": housing_notes, "historical_notes": historical_notes, "modern_notes": modern_notes}
 
@@ -269,7 +280,7 @@ def structure_base(data, source_date, annual_sources=None):
     housing_fields = (("living", "Жилая площадь"), ("mop_embedded", "МОП и встроенное нежильё"),
                       ("housing_total", "Общая площадь жилья"))
     historical_fields = (("nonresidential", "Нежильё, всего"),) + HISTORICAL_FIELDS
-    native_fields = (("nonresidential", "Нежильё, всего"),) + tuple(sorted(data["groups"].items(), key=lambda item: item[1]))
+    native_fields = historical_fields
     composition_fields = (("living", "Жилая площадь"), ("mop_embedded", "МОП и встроенное нежильё"),
                           ("nonresidential", "Общая площадь нежилья"), ("total", "Общая площадь, всего"))
     housing, historical, native = dict(data["housing"]), dict(data["nonresidential"]), {}
@@ -295,26 +306,8 @@ def structure_base(data, source_date, annual_sources=None):
         for kind, target in (("housing", housing_evidence), ("nonresidential", native_evidence)):
             rows = [row for row in data["modern"] if row["year"] == year and row["kind"] == kind]
             if rows:
-                target[year] = [f"{OKS_SHEET}!D/F/Q/R/AT, строки {_row_refs(rows)}; м² / 1000. Статус РС не фильтруется."]
+                target[year] = [f"{OKS_SHEET}!D/F/Q/R/AR, строки {_row_refs(rows)}; м² / 1000. Статус РС не фильтруется."]
     nvalues = {**historical, **native}
-    # Share identical names and the agreed residual bucket. Broader Ministry
-    # categories cannot be allocated to offices/trade/hotels without evidence.
-    historical_labels = {normalized(label): key for key, label in HISTORICAL_FIELDS}
-    category_ids = {key: "other" if normalized(label) in ("прочие", "другие") else
-                    historical_labels.get(normalized(label), key) for key, label in data["groups"].items()}
-    unified_fields = dict(HISTORICAL_FIELDS)
-    for key, label in native_fields[1:]:
-        canonical = category_ids[key]
-        if canonical not in unified_fields:
-            unified_fields[canonical] = f"Минстрой: {label}"
-    unified = {}
-    for key, row in historical.items():
-        unified[key] = {"nonresidential": row["nonresidential"],
-                        **{field: row.get(field) for field in unified_fields}}
-    for key, row in native.items():
-        item = {field: strict_sum(row.get(group) for group, canonical in category_ids.items() if canonical == field)
-                for field in unified_fields}
-        unified[key] = {"nonresidential": row["nonresidential"], **item}
     composition = {}
     for key in housing.keys() | nvalues.keys():
         h, n = housing.get(key, {}), nvalues.get(key, {})
@@ -339,15 +332,14 @@ def structure_base(data, source_date, annual_sources=None):
          ["МОП и встроенное нежильё = общая минус жилая площадь; отдельного источника МОП нет."]),
         ("nonresidential_historical", "Нежильё: исторические категории", historical_fields, "nonresidential", historical,
          set(), history_evidence, data["historical_notes"]),
-        ("nonresidential_native", "Нежильё: группы Минстроя", native_fields, "nonresidential", native, unknown_n,
-         native_evidence, data["modern_notes"] + ["Группы AT сохранены буквально. Исторические шесть категорий "
-          "не сопоставлены с современной классификацией; коды ОСМ и пустой AU не используются."]),
-        ("nonresidential_components", "Структура площади нежилья", (("nonresidential", "Нежильё, всего"),) + tuple(unified_fields.items()),
-         "nonresidential", unified, unknown_n, {**history_evidence, **native_evidence},
+        ("nonresidential_native", "Нежильё: группы ОСМ", native_fields, "nonresidential", native, unknown_n,
+         native_evidence, data["modern_notes"]),
+        ("nonresidential_components", "Структура площади нежилья", historical_fields,
+         "nonresidential", nvalues, unknown_n, {**history_evidence, **native_evidence},
          data["historical_notes"] + data["modern_notes"] + [
-             "До 2022 года используются исторические категории I:O, с 2022 года буквальные группы AT. "
-             "Объединены совпадающие названия и остаточные категории «Прочие»/«Другие»; остальные группы Минстроя сохранены отдельно. "
-             "Неприменимые категории другой классификации показаны как null, не как ноль. "
+             "До 2022 года используются исторические категории I:O, с 2022 года — ОСМ код из AR реестра ОКС: "
+             "02–09 — социальные, 10 — торговые, 14 — административно-деловые, 13 — промышленные, "
+             "11 — гостиницы, остальные и отсутствующие коды — прочие. Столбцы ФНО не используются. "
              "Для согласованного полного года разница между итогом и суммой категорий относится в «Прочие» со знаком, "
              "без изменения остальных категорий. Исходные значения и корректировка сохранены отдельно. "
              "Если исходная разбивка неполна, итог остаётся без детализации."])]
@@ -361,8 +353,7 @@ def structure_base(data, source_date, annual_sources=None):
                                   for key in ("nonresidential_historical", "nonresidential_native")
                                   for row in result[key]["coverage"]]
     unified_block["applicable"] = {
-        year: {key for key, _ in HISTORICAL_FIELDS} if year <= 2021 else set(category_ids.values())
-        for year in {key[0] for key in unified}}
+        year: {key for key, _ in HISTORICAL_FIELDS} for year in {key[0] for key in nvalues}}
     snapshot = _as_date(source_date)
     if annual_sources is not None and snapshot is not None:
         for identifier, block in result.items():

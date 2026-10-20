@@ -64,12 +64,14 @@ class ConstructionPagesTests(unittest.TestCase):
                     values = {1: f"id-{row}", 2: kind, 4: datetime(year, month, 2), 6: year,
                               8: "Не действует", 17: 100000 + month if kind == "Жилье" else 40000 + month,
                               18: 60000 + month if kind == "Жилье" else None, 37: "Developer",
-                              44: "Do not classify by OSM", 46: "Коммерческие" if month % 2 else "Административные"}
+                              44: "10 Торгово-бытовые" if month % 2 else "14 Административно-деловые",
+                              46: "Коммерческие" if month % 2 else "Административные"}
                     for column, value in values.items():
                         registry.cell(row, column, value)
         registry.cell(50, 2, "Нежилье")
         registry.cell(50, 6, 2026)
         registry.cell(50, 17, 1000)
+        registry.cell(50, 44, "13 Промышленно-производственные")
         registry.cell(50, 46, "Другие")
         # Original DataAccess also expects RV, although permit calculations do not use it.
         rv = book.create_sheet("Реестр РВ")
@@ -252,20 +254,22 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertTrue(all(block["periodLabel"] == january["permits"]["periodLabel"] for block in blocks.values()))
         self.assertTrue(any("I115:O115" in note for note in blocks["nonresidential_components"]["notes"]))
 
-    def test_missing_raw_values_zero_negative_gap_native_taxonomy_no_status_filter(self):
+    def test_missing_raw_values_zero_negative_gap_osm_taxonomy_no_status_filter(self):
         self.edit_book(OKS_SHEET, {"Q26": None, "R26": 0, "Q28": 10, "R28": 100,
-                                   "AT27": None, "AU27": "Не использовать AU", "Q27": 0, "D50": datetime(2026, 1, 3)})
+                                   "AR27": None, "AT27": "Административно-деловые", "AU27": "Не использовать AU",
+                                   "Q27": 0, "D50": datetime(2026, 1, 3)})
         jan = self.by_id(self.permits.report("total", 1, structure_month_to=1))
         row = next(row for row in jan["housing_components"]["rows"] if row["year"] == 2026)
         self.assertEqual(row["living"], 0)
         self.assertIsNone(row["housing_total"])
         self.assertIsNone(row["mop_embedded"])
         native = jan["nonresidential_components"]
-        self.assertIn({"id": "unknown", "label": "Минстрой: Не указано в источнике"}, native["columns"])
+        self.assertFalse(any(column["label"].startswith("Минстрой:") for column in native["columns"]))
         nrow = next(row for row in native["rows"] if row["year"] == 2026)
-        self.assertEqual(nrow["unknown"], 0)
+        self.assertEqual(nrow["other"], 0)
+        self.assertEqual(nrow["industry"], 1)
         self.assertEqual(nrow["nonresidential"], 1)
-        self.assertIsNone(nrow["offices"])
+        self.assertEqual(nrow["offices"], 0)
         feb = self.by_id(self.permits.report("housing", 2, structure_month_to=2))["housing_components"]
         self.assertIsNone(next(row for row in feb["rows"] if row["year"] == 2026)["mop_embedded"])
         self.assertTrue(any("общая площадь меньше жилой" in note for note in feb["notes"]))

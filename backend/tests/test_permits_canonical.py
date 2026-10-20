@@ -4,7 +4,8 @@ import unittest
 from openpyxl import Workbook
 
 from backend.tests import test_construction_pages as fixtures
-from pipeline.permit_page_calculations import FORECAST_SHEET, HISTORY_SHEET, HOUSING_SHEET, OKS_SHEET
+from pipeline.permit_page_calculations import (FORECAST_SHEET, HISTORICAL_FIELDS, HISTORY_SHEET,
+                                               HOUSING_SHEET, OKS_SHEET, _osm_group)
 
 
 class CanonicalPermitTests(unittest.TestCase):
@@ -123,10 +124,10 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertAlmostEqual(old["source_other"], 79.811 * 12)
         self.assertAlmostEqual(old["other_adjustment"], 7777.123456789 - 327.442 * 12)
         self.assertAlmostEqual(old["other"], old["source_other"] + old["other_adjustment"])
-        native = next(column["id"] for column in block["columns"] if column["label"] == "Минстрой: Коммерческие")
-        self.assertIsNone(old[native])
-        self.assertIsNotNone(modern[native])
-        self.assertIsNone(modern["trade"])
+        self.assertFalse(any(column["label"].startswith("Минстрой:") for column in block["columns"]))
+        self.assertEqual(old["trade"], 0)
+        self.assertAlmostEqual(modern["trade"], sum((40000 + month) / 1000 for month in range(1, 11, 2)))
+        self.assertAlmostEqual(modern["offices"], sum((40000 + month) / 1000 for month in range(2, 11, 2)))
         for index, row in enumerate(block["rows"]):
             values = [series["points"][index]["y"] for series in block["series"]]
             self.assertAlmostEqual(sum(value for value in values if value is not None), row["nonresidential"])
@@ -154,8 +155,9 @@ class CanonicalPermitTests(unittest.TestCase):
                 self.assertAlmostEqual(row["other"], 79.811 * 10)
                 self.assertIsNone(row["other_adjustment"])
 
-    def test_modern_other_is_merged_and_signed_difference_is_retained(self):
-        self.fixture.edit_book(OKS_SHEET, {"AT3": "Другие", "AT5": "Прочие"})
+    def test_modern_osm_other_and_signed_difference_are_retained(self):
+        self.fixture.edit_book(OKS_SHEET, {"AR3": "12 Коммунально-складские", "AR5": "17 Специальные объекты",
+                                           "AT3": "Коммерческие", "AT5": "Административные"})
         source_total = sum((40000 + month) / 1000 for month in range(1, 13))
         self.fixture.edit_book(HISTORY_SHEET, {"B10": 2025, "C10": source_total - 5})
         payload = self.service.report("nonresidential", 12, structure_mode="annual")
@@ -165,7 +167,51 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertAlmostEqual(row["other"], row["source_other"] - 5)
         self.assertAlmostEqual(row["other_adjustment"], -5)
         self.assertEqual([column["id"] for column in block["columns"] if column["label"] == "Прочие"], ["other"])
-        self.assertFalse(any(column["label"] in ("Минстрой: Другие", "Минстрой: Прочие") for column in block["columns"]))
+        self.assertFalse(any(column["label"].startswith("Минстрой:") for column in block["columns"]))
+
+    def test_osm_codes_are_exact_and_all_other_codes_are_other(self):
+        expected = {**{code: "social" for code in range(2, 10)},
+                    10: "trade", 11: "hotels", 13: "industry", 14: "offices"}
+        for code in range(21):
+            for value in (code, float(code), str(code), f"{code:02}", f"  {code:02} Название из источника  "):
+                with self.subTest(value=value):
+                    self.assertEqual(_osm_group(value), expected.get(code, "other"))
+        for value in (None, "", "Социальные", "ОСМ 02", "140", "02.5", "02x", 2.5,
+                      True, False, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                self.assertEqual(_osm_group(value), "other")
+
+    def test_modern_categories_use_only_ar_and_preserve_totals_and_historical_rows(self):
+        before = self.service.report("nonresidential", 12, structure_mode="annual")
+        codes = [*range(2, 12), 13, 14]
+        edits = {"AT1": "Неприменимый заголовок ФНО", "AU1": "Другой заголовок"}
+        for month, code in enumerate(codes, 1):
+            edits.update({f"AR{month * 2 + 1}": f"{code:02} Противоречащее названию описание",
+                          f"AS{month * 2 + 1}": "Коммерческие", f"AT{month * 2 + 1}": "Другие",
+                          f"AU{month * 2 + 1}": "Административно-деловые"})
+        self.fixture.edit_book(OKS_SHEET, edits)
+        after = self.service.report("nonresidential", 12, structure_mode="annual")
+        row = self.block(after, "nonresidential_components", 2025)
+        for field, _ in HISTORICAL_FIELDS:
+            expected = sum((40000 + month) / 1000 for month, code in enumerate(codes, 1) if _osm_group(code) == field)
+            self.assertAlmostEqual(row[field], expected)
+        self.assertEqual(row["nonresidential"], self.main(before, 2025)["selected"])
+        self.assertEqual(self.main(after, 2025), self.main(before, 2025))
+        self.assertEqual(self.block(after, "nonresidential_components", 2011),
+                         self.block(before, "nonresidential_components", 2011))
+        block = after["breakdowns"][0]
+        self.assertEqual([series["id"] for series in block["series"]], [field for field, _ in HISTORICAL_FIELDS] + ["undetailed"])
+        coverage = next(item for item in after["controls"]["structure"]["coverage"] if item["year"] == 2025)
+        self.assertTrue(any("D/F/Q/R/AR" in note for note in coverage["evidence"]))
+        self.assertFalse(any("/AT" in note for note in coverage["evidence"]))
+
+    def test_unavailable_osm_header_uses_other_without_fno_fallback(self):
+        self.fixture.edit_book(OKS_SHEET, {"AR1": "Не ОСМ код"})
+        payload = self.service.report("nonresidential", 12, structure_mode="annual")
+        row = self.block(payload, "nonresidential_components", 2025)
+        self.assertEqual(row["other"], row["nonresidential"])
+        self.assertTrue(all(row[field] == 0 for field, _ in HISTORICAL_FIELDS if field != "other"))
+        self.assertTrue(any("Заголовок AR" in note for note in payload["breakdowns"][0]["notes"]))
 
     def test_incomplete_annual_categories_remain_undetailed_instead_of_fabricating_other(self):
         self.fixture.edit_book(HISTORY_SHEET, {"J115": None})

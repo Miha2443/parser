@@ -68,8 +68,10 @@ before requests. Full-year mode does not annualize the incomplete current year.
 These controls do not change the main chart's month.
 Source totals appear above bars; component labels appear inside when they fit.
 Aggregate totals are not stacked again. Nonresidential classifications share
-one timeline; unlike category names are not silently mapped to each other except
-the explicitly agreed residual `Прочие`/`Другие` bucket. The signed difference
+one timeline with six categories. From 2022 onward, only registry AR (`ОСМ код`)
+determines the category: 02–09 social, 10 trade, 14 offices, 13 industry,
+11 hotels, everything else (including missing codes) other. FNO columns are not
+used; historical 2011–2021 categories remain unchanged. The signed difference
 between an approved full-year total and complete source components adjusts only
 `Прочие`. Raw components and `other_adjustment` remain in data/exports; other
 categories are not rescaled. Incomplete source breakdowns stay undetailed. Unknown

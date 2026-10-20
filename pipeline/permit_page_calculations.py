@@ -297,10 +297,11 @@ def structure_base(data, source_date, annual_sources=None):
             if rows:
                 target[year] = [f"{OKS_SHEET}!D/F/Q/R/AT, строки {_row_refs(rows)}; м² / 1000. Статус РС не фильтруется."]
     nvalues = {**historical, **native}
-    # Only identical category names are shared. Broader Ministry categories
-    # cannot be allocated to historical offices/trade/hotels without evidence.
+    # Share identical names and the agreed residual bucket. Broader Ministry
+    # categories cannot be allocated to offices/trade/hotels without evidence.
     historical_labels = {normalized(label): key for key, label in HISTORICAL_FIELDS}
-    category_ids = {key: historical_labels.get(normalized(label), key) for key, label in data["groups"].items()}
+    category_ids = {key: "other" if normalized(label) in ("прочие", "другие") else
+                    historical_labels.get(normalized(label), key) for key, label in data["groups"].items()}
     unified_fields = dict(HISTORICAL_FIELDS)
     for key, label in native_fields[1:]:
         canonical = category_ids[key]
@@ -311,10 +312,8 @@ def structure_base(data, source_date, annual_sources=None):
         unified[key] = {"nonresidential": row["nonresidential"],
                         **{field: row.get(field) for field in unified_fields}}
     for key, row in native.items():
-        item = {field: None for field in unified_fields}
-        for field in data["groups"]:
-            canonical = category_ids[field]
-            item[canonical] = row.get(field)
+        item = {field: strict_sum(row.get(group) for group, canonical in category_ids.items() if canonical == field)
+                for field in unified_fields}
         unified[key] = {"nonresidential": row["nonresidential"], **item}
     composition = {}
     for key in housing.keys() | nvalues.keys():
@@ -347,9 +346,11 @@ def structure_base(data, source_date, annual_sources=None):
          "nonresidential", unified, unknown_n, {**history_evidence, **native_evidence},
          data["historical_notes"] + data["modern_notes"] + [
              "До 2022 года используются исторические категории I:O, с 2022 года буквальные группы AT. "
-             "Объединены только полностью совпадающие названия; остальные группы Минстроя сохранены отдельно. "
+             "Объединены совпадающие названия и остаточные категории «Прочие»/«Другие»; остальные группы Минстроя сохранены отдельно. "
              "Неприменимые категории другой классификации показаны как null, не как ноль. "
-             "Если категории не подтверждают утверждённый итог, столбец показывается без детализации; исходные значения сохранены отдельно."])]
+             "Для согласованного полного года разница между итогом и суммой категорий относится в «Прочие» со знаком, "
+             "без изменения остальных категорий. Исходные значения и корректировка сохранены отдельно. "
+             "Если исходная разбивка неполна, итог остаётся без детализации."])]
     result = {identifier: {"id": identifier, "title": title, "fields": fields, "aggregateField": aggregate,
                          "monthly": monthly, "unknown": unknown, "notes": basis + notes,
                          "coverage": _coverage(identifier, monthly, [key for key, _ in fields], unknown, source_date, evidence)}
@@ -445,6 +446,7 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
                    **{field: strict_sum(item.get(field) for item in months) if known else None for field, _ in block["fields"]},
                    "periodComplete": set(range(start, end + 1)) <= set(coverage["completeMonths"]),
                    "annualComplete": coverage["annualComplete"], "actualMonth": actual_month}
+            approved = {}
             if sources is not None:
                 values = {key: _monthly_value(sources, key, year, start, actual_month)
                           for key in ("housing", "mop_embedded", "nonresidential")}
@@ -472,6 +474,14 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
                 total = row["nonresidential"]
                 for field in applicable:
                     row[f"source_{field}"] = row[field]
+                row["other_adjustment"] = None
+                if total is not None and subtotal is not None and approved.get("nonresidential") is not None:
+                    # The agreed annual difference belongs only to the residual
+                    # category; preserve source amounts and never clip its sign.
+                    row.setdefault("source_other", row.get("other"))
+                    row["other_adjustment"] = total - subtotal
+                    row["other"] = (row.get("other") or 0) + row["other_adjustment"]
+                    subtotal = total
                 if total is not None and (subtotal is None or not math.isclose(subtotal, total, abs_tol=1e-6)):
                     for field in applicable:
                         row[field] = None
@@ -485,10 +495,12 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
         for row in rows:
             for key in raw_fields:
                 row.setdefault(key, None)
+        adjustment_columns = ([{"id": "other_adjustment", "label": "Годовая корректировка «Прочие»"}]
+                              if identifier == "nonresidential_components" else [])
         result.append({"id": identifier, "title": block["title"], "unit": "тыс. м²", "periodLabel": label,
                        "aggregateField": block["aggregateField"],
                        "columns": [{"id": "year", "label": "Год"}] + [{"id": key, "label": name} for key, name in block["fields"]] +
-                                  [{"id": key, "label": f"Исходное значение: {source_labels.get(key[7:], key[7:])}"} for key in raw_fields],
+                                  [{"id": key, "label": f"Исходное значение: {source_labels.get(key[7:], key[7:])}"} for key in raw_fields] + adjustment_columns,
                        "rows": rows, "series": [{"id": key, "name": name,
                                                   "points": [{"x": str(row["year"]), "y": row[key]} for row in rows]}
                                                  for key, name in block["fields"] if key != block["aggregateField"]],

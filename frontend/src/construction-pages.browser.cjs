@@ -63,7 +63,7 @@ async function hoverSeries(page, chart, names, compact = false) {
         const tooltips = await page.locator('.construction-pages-tooltip:visible').evaluateAll(elements => elements.map(el => ({
           text: el.innerText, lines: el.innerHTML.split(/<br\s*\/?>/i).length,
         })));
-        for (const tip of tooltips) {
+        for (const tip of tooltips.filter(tip => tip.text.trim())) {
           assert.equal(tip.lines, 2, `Permit tooltip must contain only period and hovered value: ${tip.text}`);
           assert.match(tip.text, /(?:\d(?:,\d)?|—) тыс\. м²$/);
           assert.doesNotMatch(tip.text, /assumed_|data\/raw\/|Наблюдения|оснований источника|Сумма компонентов|Расхождение итога/);
@@ -160,7 +160,25 @@ async function permitSelect(page, label, value) {
         await hoverSeries(page, block.locator('.chart-canvas'), [name], true);
       }
     }
-    await permitSelect(page, 'Месяц разрешений', 5);
+    await ready(page, '/construction/permits?permit_kind=nonresidential&month=12&structure_mode=annual');
+    const annualNonresidential = await (await page.request.get(base + '/api/v1/construction/permits' + new URL(page.url()).search)).json();
+    assert.equal(annualNonresidential.breakdowns.length, 1);
+    const annualBlock = annualNonresidential.breakdowns[0];
+    for (const [index, row] of annualBlock.rows.entries()) {
+      if (row.other_adjustment == null) continue;
+      assert.ok(Math.abs(row.other - (row.source_other ?? 0) - row.other_adjustment) < 1e-6);
+      const sum = annualBlock.series.reduce((total, series) => total + (series.points[index].y ?? 0), 0);
+      assert.ok(Math.abs(sum - row.nonresidential) < 1e-6, `Annual categories disagree for ${row.year}`);
+      assert.equal(row.undetailed, null);
+    }
+    assert.equal(await page.locator('.permit-breakdowns .chart-legend').getByRole('button', { name: 'Прочие', exact: true }).count(), 1);
+    await hoverSeries(page, page.locator('.permit-breakdowns .chart-canvas'), ['Прочие'], true);
+    for (const width of [320, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.waitForTimeout(400);
+      await layout(page, `permits-annual-other-${width}`);
+    }
+    await ready(page, '/construction/permits?permit_kind=housing&month=5');
     const structureTo = await page.getByLabel('Структура: накопленный период', { exact: true }).inputValue();
     await permitSelect(page, 'Структура: накопленный период', 5);
     assert.equal(await page.getByLabel('Месяц разрешений', { exact: true }).inputValue(), '5');

@@ -111,15 +111,18 @@ class CanonicalPermitTests(unittest.TestCase):
                 self.assertIsNone(structure["mop_embedded"])
                 self.assertIsNone(structure["housing_total"])
 
-    def test_one_nonresidential_chart_keeps_unmapped_categories_and_undetailed_controls(self):
+    def test_one_nonresidential_chart_reconciles_approved_controls_through_other(self):
         payload = self.service.report("nonresidential", 12, structure_mode="annual")
         self.assertEqual([block["id"] for block in payload["breakdowns"]], ["nonresidential_components"])
         block = payload["breakdowns"][0]
         self.assertEqual([row["year"] for row in block["rows"]], [*range(2011, 2022), 2025, 2026])
         old, modern = self.block(payload, block["id"], 2011), self.block(payload, block["id"], 2026)
-        self.assertEqual(old["undetailed"], 7777.123456789)
-        self.assertIsNone(old["offices"])
+        self.assertIsNone(old["undetailed"])
+        self.assertAlmostEqual(old["offices"], 234.535 * 12)
         self.assertAlmostEqual(old["source_offices"], 234.535 * 12)
+        self.assertAlmostEqual(old["source_other"], 79.811 * 12)
+        self.assertAlmostEqual(old["other_adjustment"], 7777.123456789 - 327.442 * 12)
+        self.assertAlmostEqual(old["other"], old["source_other"] + old["other_adjustment"])
         native = next(column["id"] for column in block["columns"] if column["label"] == "Минстрой: Коммерческие")
         self.assertIsNone(old[native])
         self.assertIsNotNone(modern[native])
@@ -127,6 +130,50 @@ class CanonicalPermitTests(unittest.TestCase):
         for index, row in enumerate(block["rows"]):
             values = [series["points"][index]["y"] for series in block["series"]]
             self.assertAlmostEqual(sum(value for value in values if value is not None), row["nonresidential"])
+
+    def test_annual_other_adjustment_is_signed_and_does_not_change_periods_or_other_categories(self):
+        source_total, source_other = 327.442 * 12, 79.811 * 12
+        for difference in (100.25, -100.25, -1000.25, 0):
+            with self.subTest(difference=difference):
+                self.fixture.edit_book(HISTORY_SHEET, {"C8": source_total + difference})
+                for mode in ("annual", "period"):
+                    payload = self.service.report("nonresidential", 12, structure_mode=mode, structure_month_to=12)
+                    row = self.block(payload, "nonresidential_components", 2011)
+                    self.assertAlmostEqual(row["nonresidential"], source_total + difference)
+                    self.assertAlmostEqual(row["other"], source_other + difference)
+                    self.assertAlmostEqual(row["other_adjustment"], difference)
+                    self.assertAlmostEqual(row["source_other"], source_other)
+                    self.assertAlmostEqual(row["offices"], row["source_offices"])
+                    self.assertIsNone(row["undetailed"])
+                    self.assertAlmostEqual(sum(series["points"][0]["y"] or 0 for series in payload["breakdowns"][0]["series"]), row["nonresidential"])
+                    columns = {column["id"] for column in payload["breakdowns"][0]["columns"]}
+                    self.assertIn("other_adjustment", columns)
+                    self.assertIn("source_other", columns)
+                period = self.service.report("nonresidential", 10, structure_month_to=10)
+                row = self.block(period, "nonresidential_components", 2011)
+                self.assertAlmostEqual(row["other"], 79.811 * 10)
+                self.assertIsNone(row["other_adjustment"])
+
+    def test_modern_other_is_merged_and_signed_difference_is_retained(self):
+        self.fixture.edit_book(OKS_SHEET, {"AT3": "Другие", "AT5": "Прочие"})
+        source_total = sum((40000 + month) / 1000 for month in range(1, 13))
+        self.fixture.edit_book(HISTORY_SHEET, {"B10": 2025, "C10": source_total - 5})
+        payload = self.service.report("nonresidential", 12, structure_mode="annual")
+        block = payload["breakdowns"][0]
+        row = self.block(payload, block["id"], 2025)
+        self.assertAlmostEqual(row["source_other"], (40001 + 40002) / 1000)
+        self.assertAlmostEqual(row["other"], row["source_other"] - 5)
+        self.assertAlmostEqual(row["other_adjustment"], -5)
+        self.assertEqual([column["id"] for column in block["columns"] if column["label"] == "Прочие"], ["other"])
+        self.assertFalse(any(column["label"] in ("Минстрой: Другие", "Минстрой: Прочие") for column in block["columns"]))
+
+    def test_incomplete_annual_categories_remain_undetailed_instead_of_fabricating_other(self):
+        self.fixture.edit_book(HISTORY_SHEET, {"J115": None})
+        payload = self.service.report("nonresidential", 12, structure_mode="annual")
+        row = self.block(payload, "nonresidential_components", 2011)
+        self.assertEqual(row["undetailed"], 7777.123456789)
+        self.assertIsNone(row["other_adjustment"])
+        self.assertIsNone(row["other"])
 
     def test_periods_use_category_total_not_incompatible_auxiliary_nonresidential(self):
         payload = self.service.report("nonresidential", 5, structure_month_to=5)

@@ -8,10 +8,10 @@ import type { Theme } from './types';
 const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const palette = ['#318dca', '#db9a36', '#359a79', '#ba6a87', '#7f83bd', '#657f89'];
 export const permitPeriodName = 'Выбранный период';
-export const permitRemainderName = 'Остаток до годового ориентира';
+export const permitRemainderName = 'Годовые значения';
 export const permitForecastName = 'Остаток до годового прогноза';
 export type PermitChartView = { width?: number; height?: number; hidden?: string[] };
-type PlotSeries = { id: string; name: string; color: string; data: (number | null)[]; forecast?: boolean };
+type PlotSeries = { id: string; name: string; color: string; data: (number | null)[]; hoverData?: (number | null)[]; forecast?: boolean };
 type Hover = { dataIndex: number; seriesIndex?: number };
 
 export function permitAnnualBasis(row: PermitPresentationRow) {
@@ -64,7 +64,7 @@ function barOption(years: number[], series: PlotSeries[], totals: (number | null
     tooltip: { trigger: 'item', confine: true, className: 'construction-pages-tooltip', extraCssText: `max-width:${Math.max(100, Math.min(290, width - 32))}px;font-size:11px;`, formatter: (params: Hover | Hover[]) => {
       const point = Array.isArray(params) ? params[0] : params;
       const source = point && series[point.seriesIndex ?? 0], year = point && years[point.dataIndex];
-      return source && year !== undefined ? `<strong>${year} · ${escape(source.forecast ? 'прогноз на год' : actualPeriods?.[point.dataIndex] ?? periodLabel)}</strong><br/>${escape(source.name)}: ${measure(source.data[point.dataIndex])} ${escape(unit)}` : '';
+      return source && year !== undefined ? `<strong>${year} · ${escape(source.forecast ? 'прогноз на год' : source.id === 'remainder' ? 'за год' : actualPeriods?.[point.dataIndex] ?? periodLabel)}</strong><br/>${escape(source.name)}: ${measure(source.hoverData?.[point.dataIndex] ?? source.data[point.dataIndex])} ${escape(unit)}` : '';
     } },
     xAxis: { type: 'category', data: years.map(String), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, fontSize: 10, lineHeight: 16, interval: 0, rotate: band < 30 ? 90 : 0, hideOverlap: false, formatter: (value: string, index: number) => partialPeriods?.[index] ? `${value}\n${partialPeriods[index]}` : value } },
     yAxis: { type: 'value', name: 'тыс. м²', min: axisMinimum, max: maximum, splitNumber: 4, nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 10, formatter: (v: number) => number(v, 0) }, splitLine: { lineStyle: { color: theme === 'light' ? '#edf0f3' : '#363a40', type: 'dashed' } } },
@@ -83,7 +83,7 @@ function barOption(years: number[], series: PlotSeries[], totals: (number | null
 export function permitsMainOption(data: PermitsData, theme: Theme, view: PermitChartView = {}): EChartsCoreOption {
   const rows = data.permits.presentation.rows;
   const series: PlotSeries[] = [{ id: 'selected', name: permitPeriodName, color: palette[0], data: rows.map(r => r.selected) }];
-  if (rows.some(r => permitAnnualBasis(r)?.kind === 'annual_observed' && permitRemainder(r) !== null)) series.push({ id: 'remainder', name: permitRemainderName, color: theme === 'light' ? '#b9bfc7' : '#a1a8b2', data: rows.map(r => permitAnnualBasis(r)?.kind === 'annual_observed' ? permitRemainder(r) : null) });
+  if (rows.some(r => permitAnnualBasis(r)?.kind === 'annual_observed' && permitRemainder(r) !== null)) series.push({ id: 'remainder', name: permitRemainderName, color: theme === 'light' ? '#b9bfc7' : '#a1a8b2', data: rows.map(r => permitAnnualBasis(r)?.kind === 'annual_observed' ? permitRemainder(r) : null), hoverData: rows.map(r => permitAnnualBasis(r)?.kind === 'annual_observed' ? r.annualActual : null) });
   if (rows.some(r => r.annualForecast !== null)) series.push({ id: 'forecast', name: permitForecastName, forecast: true, color: theme === 'light' ? '#e4eaf0' : '#8a9cab', data: rows.map(r => r.annualForecast === null ? null : r.selected === null ? r.annualForecast : permitRemainder(r)) });
   const periods = rows.map(r => r.actualMonth == null ? data.permits.periodLabel : permitActualPeriod(r, data.selection.month));
   return barOption(rows.map(r => r.year), series, rows.map(r => r.selected === null ? r.annualForecast : r.selected + (permitRemainder(r) ?? 0)), theme, view, data.permits.periodLabel, data.permits.unit, periods, rows.map(r => r.selected !== null && !r.periodComplete ? permitActualPeriod(r, data.selection.month) : null));

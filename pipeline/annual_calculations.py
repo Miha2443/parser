@@ -1,6 +1,8 @@
 """Annual commissioning with approved controls and explicit source categories."""
+import math
+
 import pandas as pd
-from pipeline.data_access import monitoring_by_year, month_label, quarter_label
+from pipeline.data_access import MONTH_NAMES_RU, monitoring_by_year, month_label, quarter_label
 from pipeline.report_values import records
 
 COLORS = {"green": "#2c9869", "amber": "#d6a23f", "blue": "#398dcc", "teal": "#329d9c"}
@@ -9,6 +11,48 @@ TITLES = {"b1": "Ввод недвижимости", "b2_1": "МКД и ИЖС",
           "b2_2": "Бюджетное и небюджетное жильё · Москва", "b2_3": "Реновация · Москва",
           "b3_1": "Нежильё и нежилые помещения в жилье · Москва",
           "b3_2": "Бюджетное и небюджетное нежильё · Москва", "b3_3": "Нежильё по отраслям · Москва"}
+
+FORECAST_METRICS = {
+    "b1": ("Общая площадь жилья и отдельно стоящего нежилья", ("housing_total", "nonres_standalone")),
+    "b2_1": ("Жилая площадь", ("housing_living",)),
+    "b2_2": ("Жилая площадь", ("housing_living",)),
+    "b2_3": ("Жилая площадь реновации", ("renovation_living",)),
+    "b3_1": ("Нежильё, включая помещения в жилье", ("nonres_total",)),
+    "b3_2": ("Отдельно стоящее нежильё", ("nonres_standalone",)),
+    "b3_3": ("Отдельно стоящее нежильё", ("nonres_standalone",)),
+}
+
+
+def annual_fact_period(data, year, region):
+    month = None
+    rv = data["load_monitoring_2_0"].get("rv", pd.DataFrame())
+    if region == "Москва" and {"Год ввода по Мосстату", "Месяц ввода по Мосстату"} <= set(rv.columns):
+        selected = rv.loc[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").eq(year)]
+        names = {name: index for index, name in enumerate(MONTH_NAMES_RU, 1)}
+        months = selected["Месяц ввода по Мосстату"].map(lambda value: names.get(str(value).strip().casefold(), value))
+        months = pd.to_numeric(months, errors="coerce")
+        valid = months.loc[months.between(1, 12) & months.eq(months.round())]
+        if not valid.empty:
+            month = int(valid.max())
+    return {"year": year, "month": month}
+
+
+def annual_forecast(chart_id, source, current_year):
+    """Only matched totals; no inferred category splits or missing-year fills."""
+    if chart_id not in FORECAST_METRICS:
+        return None
+    metric, fields = FORECAST_METRICS[chart_id]
+    points = []
+    for row in source.get("rows", []):
+        if row["year"] < current_year:
+            continue
+        values = [row.get(field) for field in fields]
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) or value < 0 for value in values):
+            continue
+        points.append({"year": row["year"], "value": sum(values) / 1000})
+    return {"metric": metric, "sourceFields": list(fields), "points": sorted(points, key=lambda point: point["year"])} if points else None
+
 
 def append_chart(charts, frame, series, *, year_from, year_to, key, totals=True, height=360):
     years = list(range(year_from, year_to + 1))

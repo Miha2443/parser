@@ -318,7 +318,39 @@ Screenshots and `checks.json` are saved to `%TEMP%/dashboard-sales-checks`;
 override the directory using `SALES_OUTPUT`. Workbook calculations/parity are
 owned and checked by the backend agent, not claimed by these frontend tests.
 
-## Operational And Linear Commissioning
+## Commissioning Pages (21 October 2026)
+
+The home page and sidebar expose three routes in this order:
+`/commissioning/operational`, `/commissioning/annual`, `/commissioning/linear`.
+Operational starts with a monthly YTD structure infographic, then independent
+housing/nonresidential charts. `structureMonth`, `housingMonth`, `nonresMonth`,
+and `nonresExcludeMkd` are independent URL filters; `year` belongs to structure.
+Both monthly additions and prior-year percentage comparisons are supplied by the
+API. Renovation subsets use the registry flag, not company-name guesses. Missing
+measurements remain null; known subtotals are marked `≥` rather than passed off
+as complete totals. Raw data and provenance remain in closed disclosures.
+
+The gray series is called `Годовые значения` here and on permits. RV forecasts
+use monitoring sheet rows 13–26, not RS rows 3–12. Forecast areas are converted
+from the explicitly documented assumed thousand-m² basis to million m² and
+hatched/dashed. Annual charts preserve factual rows/summaries, label the current
+actual period, and add separate forecast categories to the right. The complete
+axis fits the viewport; narrow screens rotate captions without chart scrolling.
+
+Linear uses `/api/v1/linear/dashboard`: six tiles and six yearly charts in order
+roads, bridges/tunnels/overpasses, pedestrian crossings, metro stations, metro
+tunnels, depots. Real zero remains zero; missing facts/plans remain unavailable.
+Each metric retains its own forecast horizon. Current facts are explicitly
+partial-year observations. Pinned full Excel uses `/linear/dashboard/export`;
+charts also expose CSV/PNG. The old quarterly API remains compatible but is no
+longer the linear page's primary presentation.
+
+Current checks: `node --test src/*.test.mjs tests/*.test.mjs`,
+`node src/commissioning-refresh.browser.cjs` (set `DASHBOARD_TEST_URL` if needed),
+and the focused `src/annualForecast.browser.cjs` / `src/linearDashboard.browser.cjs`.
+The current app is light-only; both chart palette branches have unit coverage.
+
+## Legacy Commissioning Contract Checks
 
 `/commissioning/operational` and `/commissioning/linear` reuse the approved shell.
 Both use live API catalogs and reports only, with no frozen fallback. Operational

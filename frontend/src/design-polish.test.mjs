@@ -8,7 +8,7 @@ test('each operational visualization keeps only its own filters and supports leg
   const params = new URLSearchParams('housingMonth=12&nonresMonth=3&nonresExcludeMkd=true&year=2021&quarter=2&cumulative=true');
   assert.equal(operationalScopeParams(params, 'housing').toString(), 'month=12');
   assert.equal(operationalScopeParams(params, 'nonres').toString(), 'month=3&exclude_mkd=true');
-  assert.equal(operationalScopeParams(params, 'structure').toString(), 'year=2021&quarter=2&cumulative=true');
+  assert.equal(operationalScopeParams(params, 'structure').toString(), 'year=2021&quarter=2&cumulative=true&month=12');
   assert.equal(operationalScopeParams(new URLSearchParams('month=6&exclude_mkd=true'), 'nonres').toString(), 'month=6&exclude_mkd=true');
 });
 test('forecast omits only completely missing years, sorts years naturally and retains source CSV', () => {

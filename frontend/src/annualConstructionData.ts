@@ -8,8 +8,9 @@ import type { Theme } from './types';
 type Choice = { id: string; label: string };
 export type AnnualCatalog = CommissioningMetadata & { regions: Choice[] };
 export type AnnualSelection = { region: string };
-export type AnnualChart = ReportTable & { unit: string; totals: boolean; controlTotal?: string; categoryProvenance?: Record<string, unknown>[]; rawCategoryValues?: Record<string, number | null>[]; series: { id: string; name: string; color: string; points: { x: string; y: number | null }[] }[]; summaries: { from: number; to: number; values: { id: string; label: string; value: number | null }[] }[] };
-export type AnnualReport = CommissioningMetadata & { region: Choice; charts: AnnualChart[]; notes: string[] };
+export type AnnualForecast = { metric: string; sourceFields: string[]; points: { year: number; value: number }[] };
+export type AnnualChart = ReportTable & { unit: string; totals: boolean; factPeriod?: { year: number; month: number | null }; forecast?: AnnualForecast; controlTotal?: string; categoryProvenance?: Record<string, unknown>[]; rawCategoryValues?: Record<string, number | null>[]; series: { id: string; name: string; color: string; points: { x: string; y: number | null }[] }[]; summaries: { from: number; to: number; values: { id: string; label: string; value: number | null }[] }[] };
+export type AnnualReport = CommissioningMetadata & { region: Choice; charts: AnnualChart[]; notes: string[]; forecastSource?: { file: string | null; date: string | null; unitBasis: string; notes: string[] } };
 export type ConstructionCatalog = AnnualCatalog & { permitKinds: Choice[]; monthsByKind: Record<string, number[]> };
 export type ConstructionSelection = { region: string; permitKind: string; month: number };
 export type PermitChart = { x: string[]; period: ValuePoint[]; remainder: ValuePoint[]; totals: ValuePoint[]; growth: ValuePoint[] };
@@ -59,11 +60,36 @@ export function readAnnualReport(value: unknown, selection: AnnualSelection): An
       const row = obj(value); int(row.year);
       return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, num(value)]));
     }), row => row.year!);
+    let factPeriod: AnnualChart['factPeriod'];
+    if (c.factPeriod !== undefined) {
+      const period = obj(c.factPeriod);
+      factPeriod = { year: int(period.year), month: period.month === null ? null : int(period.month, 1, 12) };
+      if (factPeriod.year !== table.rows.at(-1)?.year) throw invalid();
+    }
+    let forecast: AnnualForecast | undefined;
+    if (c.forecast !== undefined) {
+      if (region.id !== 'msk' || !factPeriod) throw invalid();
+      const f = obj(c.forecast), points = distinct(list(f.points, value => {
+        const point = obj(value), amount = num(point.value);
+        if (amount === null || amount < 0) throw invalid();
+        return { year: int(point.year, factPeriod!.year), value: amount };
+      }), point => point.year);
+      const sourceFields = distinct(list(f.sourceFields, str), field => field);
+      if (!points.length || !sourceFields.length || points.some((point, index) => index > 0 && point.year <= points[index - 1].year)) throw invalid();
+      forecast = { metric: str(f.metric), sourceFields, points };
+    }
     return { ...table, unit: str(c.unit), totals: c.totals, series, summaries,
+      ...(factPeriod ? { factPeriod } : {}), ...(forecast ? { forecast } : {}),
       ...(controlTotal ? { controlTotal } : {}), ...(categoryProvenance ? { categoryProvenance } : {}),
       ...(rawCategoryValues ? { rawCategoryValues } : {}) };
   }), c => c.id);
-  return { ...readCommissioningMetadata(v), region, charts, notes: list(v.notes, str) };
+  let forecastSource: AnnualReport['forecastSource'];
+  if (v.forecastSource !== undefined) {
+    if (region.id !== 'msk') throw invalid();
+    const source = obj(v.forecastSource);
+    forecastSource = { file: nullable(source.file), date: nullable(source.date), unitBasis: str(source.unitBasis), notes: list(source.notes, str) };
+  }
+  return { ...readCommissioningMetadata(v), region, charts, notes: list(v.notes, str), ...(forecastSource ? { forecastSource } : {}) };
 }
 export function readConstructionReport(value: unknown, expected: ConstructionSelection): ConstructionReport {
   const v = obj(value), s = obj(v.selection), selection = { region: str(s.region), permitKind: str(s.permitKind), month: int(s.month, 1, 12) };
@@ -90,6 +116,14 @@ export async function loadMarketCatalog(kind: MarketKind, signal: AbortSignal) {
 export async function loadMarketReport(kind: MarketKind, selection: MarketSelection, signal: AbortSignal) { const v: unknown = await (await request(marketUrl(kind, selection), signal)).json(); return kind === 'annual' ? readAnnualReport(v, selection) : readConstructionReport(v, selection as ConstructionSelection); }
 const escape = (v: string) => v.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const tones = (theme: Theme) => ({ muted: theme === 'light' ? '#606975' : '#b2bac5', line: theme === 'light' ? '#e4e8ed' : '#363a40' });
+const annualMonths = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+export const annualFactCaption = (c: AnnualChart) => c.factPeriod?.month ? `янв–${annualMonths[c.factPeriod.month - 1]}` : 'период не указан';
+const annualFactYear = (c: AnnualChart, row: Record<string, Cell>) => c.factPeriod?.year === row.year ? `${row.year}\n${c.series.some(series => series.points.find(point => point.x === String(row.year))?.y != null) ? annualFactCaption(c) : 'нет данных'}` : String(row.year);
+export const annualChartRows = (c: AnnualChart): Cell[][] => {
+  const rows = c.rows.map(row => c.columns.map(column => column.id === 'year' ? annualFactYear(c, row).replace('\n', ' · факт · ') : row[column.id]));
+  if (!c.forecast) return [c.columns.map(column => column.label), ...rows];
+  return [[...c.columns.map(column => column.label), `Прогноз, ${c.unit}`], ...rows.map(row => [...row, null]), ...c.forecast.points.map(point => [`${point.year} · прогноз`, ...c.columns.slice(1).map(() => null), point.value])];
+};
 export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: string[]): EChartsCoreOption {
   const t = tones(theme), visible = c.series.filter(s => visibleNames === undefined || visibleNames.includes(s.name)), single = visible.length === 1, topId = visible.at(-1)?.id;
   const topAt = (index: number) => visible.filter(series => series.points[index].y !== null).at(-1)?.id;
@@ -107,23 +141,30 @@ export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: s
     const values = visible.map(s => s.points[index].y);
     return values.some(v => v === null) ? null : values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
   });
-  const format = chartNumberFormatter([...visible.flatMap(series => series.points.map(point => point.y)), ...labelValues]);
+  const forecastPoints = c.forecast?.points ?? [], forecastVisible = visibleNames === undefined || visibleNames.includes('Прогноз');
+  const format = chartNumberFormatter([...visible.flatMap(series => series.points.map(point => point.y)), ...labelValues, ...forecastPoints.map(point => point.value)]);
+  const forecastSeries = c.forecast ? [{ type: 'bar', stack: c.id, name: 'Прогноз',
+    data: [...c.rows.map(() => null), ...forecastPoints.map(point => point.value)], barMaxWidth: 50,
+    itemStyle: { color: theme === 'light' ? '#a5adb6' : '#626c78', borderColor: t.muted, borderType: 'dashed', borderWidth: 1.5,
+      decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: theme === 'light' ? '#59636e' : '#c3c9d1' } },
+    emphasis: { focus: 'series' }, label: { show: forecastVisible, position: 'top', color: t.muted, fontSize: 10, formatter: (p: { value: number | null }) => p.value === null ? '' : format(p.value) },
+  }] : [];
   return {
     grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(c.unit)}` },
-    xAxis: { type: 'category', data: c.rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name).replaceAll('\n', ' · ')} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(c.unit)}${p.seriesName === 'Прогноз' && c.forecast ? `<br/>${escape(c.forecast.metric)}` : ''}` },
+    xAxis: { type: 'category', data: [...c.rows.map(r => annualFactYear(c, r)), ...forecastPoints.map(point => `${point.year}\nпрогноз`)], axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, interval: 0, fontSize: 10, lineHeight: 14, hideOverlap: true } },
     yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
-    series: c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: s.points.map(p => p.y), itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {
+    series: [...c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: [...s.points.map(p => p.y), ...forecastPoints.map(() => null)], itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {
       if (c.controlTotal && topAt(p.dataIndex) !== s.id) return '';
-      return labelValues[p.dataIndex] === null ? '' : format(labelValues[p.dataIndex]);
-    } } })),
-    media: [{ query: { maxWidth: 600 }, option: { series: c.series.map(s => ({ label: { show: single && labelled(s.id) } })) } }],
+      return labelValues[p.dataIndex] == null ? '' : format(labelValues[p.dataIndex]);
+    } } })), ...forecastSeries],
+    media: [{ query: { maxWidth: 600 }, option: { xAxis: { axisLabel: { rotate: 90, fontSize: 9, lineHeight: 11, hideOverlap: false, formatter: (value: string) => value.replaceAll('\n', ' ') } }, series: [...c.series.map(s => ({ label: { show: single && labelled(s.id) } })), ...forecastSeries.map(() => ({ label: { show: forecastVisible } }))] } }],
   };
 }
 export function permitChartOption(p: ConstructionReport['permits'], theme: Theme): EChartsCoreOption {
   const c = p.chart! , t = tones(theme);
   const format = chartNumberFormatter([...c.period, ...c.remainder, ...c.totals, ...c.growth].map(point => point.value));
-  return { grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true }, tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (v: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => `<strong>${escape(v.name)} · ${escape(v.seriesName)}</strong><br/>${format(v.value)} ${escape(p.unit)}${v.seriesIndex === 0 && p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог года: ${format(c.totals[v.dataIndex].value)} ${escape(p.unit)}<br/>Изменение: ${format(c.growth[v.dataIndex].value)} %` }, xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } }, yAxis: { type: 'value', name: p.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } }, series: [{ name: p.periodLabel, values: c.period, color: theme === 'light' ? '#b9404c' : '#cf5d64' }, { name: 'Остаток до итога года', values: c.remainder, color: theme === 'light' ? '#6f8091' : '#96a7b8' }].map((s, i) => ({ type: 'bar', stack: 'permits', name: s.name, data: s.values.map(v => v.value), itemStyle: { color: s.color }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: i === 0 ? 'inside' : 'top', color: i === 0 ? '#ffffff' : t.muted, fontSize: 10, formatter: (v: { dataIndex: number; value: number }) => i === 0 ? p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '' : `${format(v.value)}${c.growth[v.dataIndex].value === null ? '' : `\n${format(c.growth[v.dataIndex].value)}%`}` : c.totals[v.dataIndex].value === null ? '' : format(c.totals[v.dataIndex].value) } })), media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }] };
+  return { grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true }, tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (v: { name: string; seriesName: string; value: number | null; dataIndex: number; seriesIndex: number }) => `<strong>${escape(v.name)} · ${escape(v.seriesName)}</strong><br/>${format(v.value)} ${escape(p.unit)}${v.seriesIndex === 0 && p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог года: ${format(c.totals[v.dataIndex].value)} ${escape(p.unit)}<br/>Изменение: ${format(c.growth[v.dataIndex].value)} %` }, xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } }, yAxis: { type: 'value', name: p.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } }, series: [{ name: p.periodLabel, values: c.period, color: theme === 'light' ? '#b9404c' : '#cf5d64' }, { name: 'Годовые значения', values: c.remainder, color: theme === 'light' ? '#6f8091' : '#96a7b8' }].map((s, i) => ({ type: 'bar', stack: 'permits', name: s.name, data: s.values.map(v => v.value), itemStyle: { color: s.color }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: i === 0 ? 'inside' : 'top', color: i === 0 ? '#ffffff' : t.muted, fontSize: 10, formatter: (v: { dataIndex: number; value: number }) => i === 0 ? p.rows[v.dataIndex]['С начала года, тыс. м²'] === null ? '' : `${format(v.value)}${c.growth[v.dataIndex].value === null ? '' : `\n${format(c.growth[v.dataIndex].value)}%`}` : c.totals[v.dataIndex].value === null ? '' : format(c.totals[v.dataIndex].value) } })), media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }] };
 }
 export const permitChartRows = (p: ConstructionReport['permits']): Cell[][] => !p.chart ? [] : [['Год', `За период, ${p.unit}`, `Остаток, ${p.unit}`, `Итог, ${p.unit}`, 'Изменение, %', `Исходное значение периода, ${p.unit}`], ...p.chart.x.map((x, i) => [x, p.chart!.period[i].value, p.chart!.remainder[i].value, p.chart!.totals[i].value, p.chart!.growth[i].value, p.rows[i]['С начала года, тыс. м²']])];
 export function salesTable(sales: Record<string, Cell>): ReportTable { return { id: 'sales', title: 'Реализация квартир · исходные значения', columns: [{ id: 'field', label: 'Показатель' }, { id: 'value', label: 'Исходное значение' }], rows: Object.entries(sales).map(([field, value]) => ({ field, value })) }; }

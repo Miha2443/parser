@@ -12,9 +12,10 @@ export type LinearSelection = { year: number; quarter: number; cumulative: boole
 export type OperationalCatalog = CommissioningMetadata & { months: { id: number; label: string }[]; defaultMonth: number; currentYear: number; years: number[] };
 export type LinearCatalog = CommissioningMetadata & { years: { id: string; label: string; quarters: number[]; defaultQuarter: number }[]; indicators: { id: string; label: string; unit: string }[] };
 export type ValuePoint = { value: number | null };
-export type OperationalTable = ReportTable & { chart: { x: string[]; period: ValuePoint[]; remainder: ValuePoint[]; totals: ValuePoint[]; growth: ValuePoint[] } };
+export type OperationalTable = ReportTable & { annualForecasts?: { year: number; value: number | null }[]; chart: { x: string[]; period: ValuePoint[]; remainder: ValuePoint[]; totals: ValuePoint[]; growth: ValuePoint[]; actualMonths?: (number | null)[] } };
+export type MonthlyStructure = { year: number; requestedMonth: number; actualMonth: number | null; sourceDate: string | null; rows: { id: string; label: string; value: number | null; knownSum: number | null; monthChange: number | null; yearChangePct: number | null; renovation: number | null; renovationKnownSum: number | null; renovationMonthChange: number | null; renovationYearChangePct: number | null }[] };
 export type StructureRow = { id: string; label: string; value: number | null };
-export type OperationalReport = CommissioningMetadata & { selection: OperationalSelection; currentYear: number; periodLabel: string; region: string; tables: OperationalTable[]; tree: Record<string, number | null>; treeGrowth?: Record<string, number | null>; treeRows: StructureRow[]; sourceDetails: { file: string | null; date: string | null }; notes: string[] };
+export type OperationalReport = CommissioningMetadata & { selection: OperationalSelection; currentYear: number; periodLabel: string; region: string; tables: OperationalTable[]; tree: Record<string, number | null>; treeGrowth?: Record<string, number | null>; treeRows: StructureRow[]; structure?: MonthlyStructure; sourceDetails: { file: string | null; date: string | null }; notes: string[] };
 export type LinearRow = { code: string; indicator: string; unit: string; year: number; quarter: number; plan: number | null; fact: number | null; percent: number | null };
 export type LinearReport = CommissioningMetadata & { selection: LinearSelection; summary: LinearRow[]; trend: LinearRow[]; allPeriods: LinearRow[] };
 export type CommissioningCatalog = OperationalCatalog | LinearCatalog;
@@ -64,13 +65,22 @@ export function readOperationalReport(value: unknown, expected: OperationalSelec
   const tables = distinct(list(v.tables, value => {
     const t = obj(value), c = obj(t.chart), x = list(c.x, str);
     const readPoints = (value: unknown) => { const points = list(value, value => ({ value: num(obj(value).value) })); if (points.length !== x.length) throw invalid(); return points; };
-    return { ...table(t), chart: { x, period: readPoints(c.period), remainder: readPoints(c.remainder), totals: readPoints(c.totals), growth: readPoints(c.growth) } };
+    const annualForecasts = t.annualForecasts === undefined ? undefined : distinct(list(t.annualForecasts, value => { const row = obj(value); return { year: int(row.year, 1900, 2200), value: num(row.value) }; }), row => row.year);
+    const actualMonths = c.actualMonths === undefined ? undefined : list(c.actualMonths, value => value === null ? null : int(value, 1, 12));
+    if (actualMonths && actualMonths.length !== x.length) throw invalid();
+    return { ...table(t), ...(annualForecasts ? { annualForecasts } : {}), chart: { x, period: readPoints(c.period), remainder: readPoints(c.remainder), totals: readPoints(c.totals), growth: readPoints(c.growth), ...(actualMonths ? { actualMonths } : {}) } };
   }), t => t.id);
   const tree = Object.fromEntries(Object.entries(obj(v.tree)).map(([key, value]) => [key, num(value)]));
   const treeRows = distinct(list(v.treeRows, value => { const r = obj(value); return { id: id(r.id), label: str(r.label), value: num(r.value) }; }), r => r.id);
   if (treeRows.some(row => !Object.hasOwn(tree, row.id) || tree[row.id] !== row.value)) throw invalid();
   const sourceDetails = obj(v.sourceDetails);
-  return { ...metadata(v), selection, currentYear: int(v.currentYear, 1, 9999), periodLabel: str(v.periodLabel), region: str(v.region), tables, tree, ...(v.treeGrowth === undefined ? {} : { treeGrowth: Object.fromEntries(Object.entries(obj(v.treeGrowth)).map(([key, value]) => [key, num(value)])) }), treeRows, sourceDetails: { file: nullableStr(sourceDetails.file), date: nullableStr(sourceDetails.date) }, notes: list(v.notes, str) };
+  let structure: MonthlyStructure | undefined;
+  if (v.structure !== undefined) {
+    const s = obj(v.structure);
+    structure = { year: int(s.year, 1, 9999), requestedMonth: int(s.requestedMonth, 1, 12), actualMonth: s.actualMonth === null ? null : int(s.actualMonth, 1, 12), sourceDate: nullableStr(s.sourceDate), rows: distinct(list(s.rows, value => { const row = obj(value); return { id: id(row.id), label: str(row.label), value: num(row.value), knownSum: num(row.knownSum), monthChange: num(row.monthChange), yearChangePct: num(row.yearChangePct), renovation: num(row.renovation), renovationKnownSum: num(row.renovationKnownSum), renovationMonthChange: num(row.renovationMonthChange), renovationYearChangePct: num(row.renovationYearChangePct) }; }), row => row.id) };
+    if (structure.year !== selection.year || structure.requestedMonth !== selection.month || structure.actualMonth !== null && structure.actualMonth > structure.requestedMonth) throw invalid();
+  }
+  return { ...metadata(v), selection, currentYear: int(v.currentYear, 1, 9999), periodLabel: str(v.periodLabel), region: str(v.region), tables, tree, ...(structure ? { structure } : {}), ...(v.treeGrowth === undefined ? {} : { treeGrowth: Object.fromEntries(Object.entries(obj(v.treeGrowth)).map(([key, value]) => [key, num(value)])) }), treeRows, sourceDetails: { file: nullableStr(sourceDetails.file), date: nullableStr(sourceDetails.date) }, notes: list(v.notes, str) };
 }
 function linearRow(value: unknown): LinearRow { const r = obj(value); return { code: id(r.code), indicator: str(r.indicator), unit: str(r.unit), year: int(r.year, 1, 9999), quarter: int(r.quarter, 1, 4), plan: num(r.plan), fact: num(r.fact), percent: num(r.percent) }; }
 export function readLinearReport(value: unknown, expected: LinearSelection): LinearReport {
@@ -119,25 +129,42 @@ export const linearDigits = (unit: string) => unit === 'км' ? 1 : 0;
 export function linearTable(rows: LinearRow[], title = 'Все показатели по кварталам'): ReportTable {
   return { id: 'all-periods', title, columns: [['code', 'Код'], ['indicator', 'Показатель'], ['unit', 'Единица'], ['year', 'Год'], ['quarter', 'Квартал'], ['plan', 'План'], ['fact', 'Факт'], ['percent', 'Выполнение плана, %']].map(([id, label]) => ({ id, label })), rows: rows.map(r => ({ ...r })) };
 }
-export function operationalChartRows(t: OperationalTable): Cell[][] { return [['Год', 'За период, млн м²', 'Остаток, млн м²', 'Итог / доступный период, млн м²', 'Изменение к аналогичному периоду, %', 'Исходное значение периода, млн м²'], ...t.chart.x.map((x, i) => [x, t.chart.period[i].value, t.chart.remainder[i].value, t.chart.totals[i].value, t.chart.growth[i].value, t.rows.find(r => String(r['Год']) === x)?.['За выбранный период, млн м²'] ?? null])]; }
+export function operationalChartRows(t: OperationalTable): Cell[][] {
+  const rows: Cell[][] = [['Год', 'За период, млн м²', 'Остаток, млн м²', 'Итог / доступный период, млн м²', 'Изменение к аналогичному периоду, %', 'Исходное значение периода, млн м²'], ...t.chart.x.map((x, i) => [x, t.chart.period[i].value, t.chart.remainder[i].value, t.chart.totals[i].value, t.chart.growth[i].value, t.rows.find(r => String(r['Год']) === x)?.['За выбранный период, млн м²'] ?? null])];
+  if (!t.annualForecasts?.length) return rows;
+  return [[...rows[0], 'Годовой прогноз, млн м²'], ...rows.slice(1).map(row => [...row, t.annualForecasts!.find(point => String(point.year) === row[0])?.value ?? null]), ...t.annualForecasts.filter(point => !t.chart.x.includes(String(point.year))).map(point => [`${point.year} · прогноз`, null, null, null, null, null, point.value])];
+}
 const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const tones = (theme: Theme) => ({ muted: theme === 'light' ? '#606975' : '#b2bac5', line: theme === 'light' ? '#e4e8ed' : '#363a40', plan: theme === 'light' ? '#6f8091' : '#96a7b8', fact: theme === 'light' ? '#b9404c' : '#cf5d64' });
 export function operationalChartOption(t: OperationalTable, periodLabel: string, theme: Theme): EChartsCoreOption {
   const colors = tones(theme), c = t.chart;
-  const format = chartNumberFormatter([...c.period, ...c.remainder, ...c.totals, ...c.growth].map(point => point.value));
+  const forecasts = t.annualForecasts ?? [], years = [...c.x, ...forecasts.filter(row => !c.x.includes(String(row.year))).map(row => String(row.year))];
+  const forecast = years.map(year => forecasts.find(row => String(row.year) === year)?.value ?? null);
+  const period = years.map((_, i) => c.period[i]?.value ?? null);
+  const annual = years.map((year) => t.rows.find(row => String(row['Год']) === year)?.['За год, млн м²'] as number | null ?? null);
+  const remainder = years.map((_, i) => forecast[i] !== null ? null : c.remainder[i]?.value ?? null);
+  const forecastRemainder = years.map((_, i) => forecast[i] === null ? null : Math.max(0, forecast[i]! - (period[i] ?? 0)));
+  const totals = years.map((_, i) => forecast[i] === null ? c.totals[i]?.value ?? null : Math.max(forecast[i]!, period[i] ?? 0));
+  const format = chartNumberFormatter([...period, ...annual, ...forecast, ...totals, ...c.growth.map(point => point.value)]);
+  const shortMonths = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+  const forecastStyle = { borderColor: colors.plan, borderType: 'dashed' as const, borderWidth: 1.5, color: theme === 'light' ? '#eef1f5' : '#45515e', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [3, 5], rotation: -Math.PI / 4, color: theme === 'light' ? '#7b8a9b55' : '#ced8e455' } };
+  const yearCaption = (value: string, index: number) => index >= c.x.length ? `${value}\nпрогноз` : c.actualMonths?.[index] && c.actualMonths[index]! < 12 ? `${value}\nянв–${shortMonths[c.actualMonths[index]! - 1]}` : value;
   return {
     grid: { left: 6, right: 14, top: 40, bottom: 12, containLabel: true },
     tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { dataIndex: number; seriesIndex: number; seriesName: string; name: string; value: number | null }) => {
       const raw = t.rows.find(r => String(r['Год']) === p.name)?.['За выбранный период, млн м²'];
-      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} млн м²${p.seriesIndex === 0 && raw === null ? '<br/>Исходное значение периода: —' : ''}<br/>Итог / доступный период: ${format(c.totals[p.dataIndex].value)} млн м²<br/>Изменение к аналогичному периоду: ${format(c.growth[p.dataIndex].value)} %`;
+      const value = p.seriesIndex === 2 ? forecast[p.dataIndex] : p.seriesIndex === 1 ? annual[p.dataIndex] : p.value;
+      const growth = c.growth[p.dataIndex]?.value ?? null;
+      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(value)} млн м²${p.seriesIndex === 0 && raw === null ? '<br/>Исходное значение периода: —' : ''}${p.seriesIndex === 0 && growth !== null ? `<br/>К АППГ: ${format(growth)} %` : ''}`;
     } },
-    xAxis: { type: 'category', data: c.x, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: colors.muted, fontSize: 11, interval: 'auto', hideOverlap: true, alignMinLabel: 'left', alignMaxLabel: 'right' } },
+    xAxis: { type: 'category', data: years, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: colors.muted, fontSize: 10, lineHeight: 15, interval: 0, hideOverlap: false, formatter: yearCaption, alignMinLabel: 'left', alignMaxLabel: 'right' } },
     yAxis: { type: 'value', name: 'млн м²', nameTextStyle: { color: colors.muted }, axisLabel: { color: colors.muted, formatter: format }, splitLine: { lineStyle: { color: colors.line, type: 'dashed' } } },
     series: [
-      { type: 'bar', name: periodLabel, stack: 'period', data: c.period.map(p => p.value), itemStyle: { color: colors.fact }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'inside', color: '#ffffff', fontSize: 10, formatter: (p: { dataIndex: number; value: number }) => { const raw = t.rows.find(r => String(r['Год']) === c.x[p.dataIndex])?.['За выбранный период, млн м²'], growth = c.growth[p.dataIndex].value; return raw == null ? '' : `${format(p.value)}${growth === null ? '' : `\n${growth >= 0 ? '+' : ''}${format(growth)}%`}`; } } },
-      { type: 'bar', name: 'Остаток до итога года', stack: 'period', data: c.remainder.map(p => p.value), itemStyle: { color: colors.plan }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: colors.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => c.totals[p.dataIndex].value === null ? '' : format(c.totals[p.dataIndex].value) } },
+      { type: 'bar', name: periodLabel, stack: 'period', data: period, itemStyle: { color: colors.fact }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'inside', color: '#ffffff', fontSize: 10, formatter: (p: { dataIndex: number; value: number }) => { const raw = t.rows.find(r => String(r['Год']) === years[p.dataIndex])?.['За выбранный период, млн м²'], growth = c.growth[p.dataIndex]?.value ?? null; return raw == null ? '' : `${format(p.value)}${growth === null ? '' : `\n${growth >= 0 ? '+' : ''}${format(growth)}%`}`; } } },
+      { type: 'bar', name: 'Годовые значения', stack: 'period', data: remainder, itemStyle: { color: colors.plan }, barMaxWidth: 48, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top', color: colors.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => totals[p.dataIndex] === null ? '' : format(totals[p.dataIndex]) } },
+      ...(forecasts.length ? [{ type: 'bar' as const, name: 'Годовой прогноз', stack: 'period', data: forecastRemainder, itemStyle: forecastStyle, barMaxWidth: 48, emphasis: { focus: 'series' as const }, labelLayout: { hideOverlap: true }, label: { show: true, position: 'top' as const, color: colors.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => totals[p.dataIndex] === null ? '' : format(totals[p.dataIndex]) } }] : []),
     ],
-    media: [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false } }, { label: { show: false } }] } }],
+    media: [{ query: { maxWidth: 900 }, option: { xAxis: { axisLabel: { rotate: 45, fontSize: 9 } } } }, { query: { maxWidth: 600 }, option: { xAxis: { axisLabel: { rotate: 90, formatter: (value: string, index: number) => yearCaption(value, index).replaceAll('\n', ' ') } }, series: [{ label: { show: false } }, { label: { show: false } }, ...(forecasts.length ? [{ label: { show: false } }] : [])] } }],
   };
 }
 export function linearSummaryOption(row: LinearRow, theme: Theme): EChartsCoreOption {

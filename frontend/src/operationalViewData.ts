@@ -2,6 +2,7 @@ export function operationalScopeParams(params: URLSearchParams, scope: 'housing'
   const selected = new URLSearchParams();
   if (scope === 'structure') {
     for (const key of ['year', 'quarter', 'cumulative']) if (params.has(key)) selected.set(key, params.get(key)!);
+    selected.set('month', params.get('structureMonth') ?? '12');
   } else {
     const month = params.get(`${scope}Month`) ?? params.get('month');
     if (month) selected.set('month', month);

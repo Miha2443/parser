@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, ChevronLeft, ChevronRight, Database, Download, FileSpreadsheet, House, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Database, Download, FileSpreadsheet, RefreshCw, Search } from 'lucide-react';
 import { Chart } from './Chart';
 import { ApiError, request } from './data';
 import { date, exportCsv, number } from './format';
-import { commissioningUrl, operationalChartOption, reportTablePage, structureRows, tableRows } from './commissioningData';
+import { commissioningUrl, operationalChartOption, operationalChartRows, reportTablePage, tableRows } from './commissioningData';
 import { operationalScopeParams } from './operationalViewData';
 import './visual-polish.css';
 import type { Cell, CommissioningKind, CommissioningMetadata, CommissioningSelection, OperationalReport, ReportTable } from './commissioningData';
 import { useCommissioningData } from './useCommissioningData';
+import CommissioningStructure from './CommissioningStructure';
 import type { Theme } from './types';
 
 export type CommissioningChange = (values: Record<string, string | null>, replace?: boolean) => void;
@@ -54,24 +55,6 @@ export function CommissioningTable({ table, params, change, scope, filename, cel
 return <details className="visual-data-disclosure"><summary>Данные: {table.title}</summary><div className="commissioning-table" aria-label={table.title}><div className="section-heading commissioning-table-heading"><div><h3>{table.title}</h3><p>{number(table.rows.length)} строк</p></div><button className="icon-button" title={`Скачать все строки CSV: ${table.title}`} aria-label={`Скачать все строки CSV: ${table.title}`} onClick={() => exportCsv(tableRows(table), `${filename}.csv`)}><Download size={17} /></button></div><div className="object-toolbar"><label className="object-search"><Search size={14} /><input type="search" aria-label={`Поиск: ${table.title}`} placeholder="Поиск" value={query} onChange={e => change({ [searchKey]: e.target.value || null, [pageKey]: null })} /></label><label className="apartment-page-size"><span>Строк</span><select aria-label={`Строк на странице: ${table.title}`} value={view.pageSize} onChange={e => change({ [sizeKey]: e.target.value, [pageKey]: null })}>{[20, 50, 100].map(size => <option key={size}>{size}</option>)}</select></label></div><div className="table-wrap" tabIndex={0} role="region" aria-label={`Таблица: ${table.title}`}><table><thead><tr>{table.columns.map(c => <th scope="col" key={c.id}>{c.label}</th>)}</tr></thead><tbody>{view.shown.map((r, i) => <tr key={i}>{table.columns.map((c, j) => { const value = r[c.id], text = cellText ? cellText(value, c.id, r) : typeof value === 'number' ? value.toLocaleString('ru-RU', { maximumFractionDigits: 20 }) : value ?? '—'; return j === 0 ? <th scope="row" key={c.id}>{text}</th> : <td key={c.id}>{text}</td>; })}</tr>)}</tbody></table></div>{!view.shown.length && <CommissioningEmpty text={table.rows.length ? 'Ничего не найдено.' : 'Нет данных для выбранного периода.'} />}<div className="pagination"><span aria-live="polite">{number(view.total)} строк · страница {view.current} из {view.pages}</span><button className="icon-button" title={`Предыдущая страница: ${table.title}`} aria-label={`Предыдущая страница: ${table.title}`} disabled={view.current === 1} onClick={() => change({ [pageKey]: String(view.current - 1) })}><ChevronLeft size={15} /></button><button className="icon-button" title={`Следующая страница: ${table.title}`} aria-label={`Следующая страница: ${table.title}`} disabled={view.current === view.pages} onClick={() => change({ [pageKey]: String(view.current + 1) })}><ChevronRight size={15} /></button></div></div></details>;
 }
 export function periodCaption(year: number, quarter: number, cumulative: boolean) { return `${cumulative && quarter > 1 ? `1–${quarter} кварталы` : `${quarter} квартал`} ${year}`; }
-function Growth({ data, id }: { data: OperationalReport; id: string }) {
-  const value = data.treeGrowth?.[id];
-  return value == null ? null : <span className="quarter-growth">{value > 0 ? '+' : ''}{number(value, 1)}% <small>к АППГ</small></span>;
-}
-function QuarterStructure({ data }: { data: OperationalReport }) {
-  const rows = (ids: string[]) => <dl>{ids.map(id => {
-    const row = data.treeRows.find(item => item.id === id); if (!row) return null;
-    const labels: Record<string, string> = { mkd_total: 'МКД', mkd_residential: 'Квартиры', mop: 'МОП', nonres_in_housing: 'Нежильё в жилье', izhs: 'ИЖС' };
-    return <div key={id} data-structure-id={id} className={['mkd_residential', 'mop', 'nonres_in_housing'].includes(id) ? 'quarter-detail-row' : ''}><dt>{labels[id] ?? row.label}</dt><dd>{number(row.value, 2)}<Growth data={data} id={id} /></dd></div>;
-  })}</dl>;
-  return <div className="quarter-infographic">
-    <div className="quarter-total" data-structure-id="total"><div><span>Всего введено</span><strong>{number(data.tree.total, 2)}<small>млн м²</small></strong></div><Growth data={data} id="total" /></div>
-    <div className="quarter-columns">
-      <section className="quarter-category"><header><House size={25} /><h3>Жильё</h3></header><div className="quarter-category-value" data-structure-id="housing_objects"><strong>{number(data.tree.housing_objects, 2)}<small>млн м²</small></strong><Growth data={data} id="housing_objects" /></div>{rows(['mkd_total', 'mkd_residential', 'mop', 'nonres_in_housing', 'izhs'])}<footer data-structure-id="residential_area"><span>Жилая площадь</span><strong>{number(data.tree.residential_area, 2)}<small>млн м²</small></strong><Growth data={data} id="residential_area" /></footer></section>
-      <section className="quarter-category"><header><Building2 size={25} /><h3>Нежильё</h3></header><div className="quarter-category-value" data-structure-id="nonres_objects"><strong>{number(data.tree.nonres_objects, 2)}<small>млн м²</small></strong><Growth data={data} id="nonres_objects" /></div>{rows(['offices', 'hotels', 'industrial', 'social', 'other', 'nonres_in_housing'])}<footer data-structure-id="nonres_total"><span>Всё нежильё, включая помещения в жилье</span><strong>{number(data.tree.nonres_total, 2)}<small>млн м²</small></strong><Growth data={data} id="nonres_total" /></footer></section>
-    </div>
-  </div>;
-}
 function OperationalSeries({ scope, theme, params, change }: { scope: 'housing' | 'nonres'; theme: Theme; params: URLSearchParams; change: CommissioningChange }) {
   const scoped = useMemo(() => operationalScopeParams(params, scope), [params, scope]);
   const { catalog, selection, data, error, retry } = useCommissioningData('operational', scoped);
@@ -82,7 +65,7 @@ function OperationalSeries({ scope, theme, params, change }: { scope: 'housing' 
   return <section className="section operational-series" aria-label={title}>
     <div className="section-heading"><div><h2>{title}</h2><p>Москва · с 2011 года · млн м²</p></div>{data && <CommissioningExport kind="operational" selection={data.selection} version={data.version} caption={`Скачать ${title.toLocaleLowerCase('ru')} Excel`} />}</div>
     {catalog && selection && <div className="filters commissioning-filters chart-scope-filters"><label><span>Период с начала года</span><select aria-label={`Период: ${title}`} value={selection.month} onChange={e => change({ [`${scope}Month`]: e.target.value })}>{catalog.months.map(month => <option key={month.id} value={month.id}>{month.label}</option>)}</select></label>{scope === 'nonres' && <label className="commissioning-checkbox"><input type="checkbox" aria-label="Без нежилых помещений в жилых объектах" checked={selection.excludeMkd} onChange={e => change({ nonresExcludeMkd: String(e.target.checked) })} /><span>Без нежилых помещений в жилых объектах</span></label>}</div>}
-    {error || !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption={title} /> : table?.chart.x.length ? <Chart key={`${data.version}-${scope}-${selection?.month}-${selection?.excludeMkd}`} theme={theme} label={title} option={operationalChartOption(table, data.periodLabel, theme)} height={380} rows={tableRows(table)} filename={`operational-${scope}-m${selection?.month}`} /> : <CommissioningEmpty />}
+    {error || !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption={title} /> : table?.chart.x.length ? <Chart key={`${data.version}-${scope}-${selection?.month}-${selection?.excludeMkd}`} theme={theme} label={title} option={operationalChartOption(table, data.periodLabel, theme)} height={380} rows={operationalChartRows(table)} filename={`operational-${scope}-m${selection?.month}`} /> : <CommissioningEmpty />}
   </section>;
 }
 export default function Operational({ theme, query, change }: { theme: Theme; query: string; change: CommissioningChange }) {
@@ -98,12 +81,12 @@ export default function Operational({ theme, query, change }: { theme: Theme; qu
   const metadata = data ?? catalog;
   return <main className="commissioning-page operational-page" id="operational-page">
     <div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Ввод недвижимости · оперативные данные</h1></div></div>
+    <section className="section operational-structure"><div className="section-heading"><div><h2>Структура ввода</h2><p>Москва · {data?.structure?.actualMonth ? `${catalog?.months.find(month => month.id === data.structure!.actualMonth)?.label} ${data.structure.year}` : 'С начала года'}{data?.sourceDetails.date ? ` · ${date(data.sourceDetails.date)}` : ''}</p></div>{data && <CommissioningExport kind="operational" selection={data.selection} version={data.version} caption="Скачать структуру ввода Excel" />}</div>
+      {catalog && selection && <div className="filters commissioning-filters chart-scope-filters"><label><span>Год</span><select aria-label="Год структуры ввода" value={selection.year} onChange={e => change({ year: e.target.value })}>{catalog.years.map(year => <option key={year} value={year}>{year}</option>)}</select></label><label><span>Накопленный период</span><select aria-label="Период структуры ввода" value={selection.month} onChange={e => change({ structureMonth: e.target.value })}>{catalog.months.map(month => <option key={month.id} value={month.id}>{month.label}</option>)}</select></label></div>}
+      {error || !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption="Структура ввода" /> : data.structure ? <><CommissioningStructure data={data.structure} /><details className="visual-data-disclosure"><summary>Данные и скачивание</summary><button onClick={() => exportCsv([['Показатель', 'млн м²', 'Известная сумма, млн м²', 'Прирост за месяц, млн м²', 'К АППГ, %', 'Реновация, млн м²'], ...data.structure!.rows.map(row => [row.label, row.value, row.knownSum, row.monthChange, row.yearChangePct, row.renovation])], `operational-structure-${selection?.year}-m${selection?.month}.csv`)}><Download size={16} />CSV</button><div className="table-wrap"><table><thead><tr><th>Показатель</th><th>млн м²</th><th>Прирост за месяц, млн м²</th><th>К АППГ, %</th></tr></thead><tbody>{data.structure.rows.map(row => <tr key={row.id}><th scope="row">{row.label}</th><td>{number(row.value, 2)}</td><td>{number(row.monthChange, 2)}</td><td>{number(row.yearChangePct, 1)}</td></tr>)}</tbody></table></div></details></> : <CommissioningEmpty text="Месячная структура недоступна." />}
+    </section>
     <OperationalSeries scope="housing" theme={theme} params={params} change={change} />
     <OperationalSeries scope="nonres" theme={theme} params={params} change={change} />
-    <section className="section operational-structure"><div className="section-heading"><div><h2>Структура ввода за квартал</h2><p>Москва · {selection ? periodCaption(selection.year, selection.quarter, selection.cumulative) : 'Загрузка периода'}</p></div></div>
-      {catalog && selection && <div className="filters commissioning-filters quarter-filters chart-scope-filters"><QuarterControls years={catalog.years.map(year => ({ id: String(year), label: String(year) }))} quarters={[1, 2, 3, 4]} year={selection.year} quarter={selection.quarter} cumulative={selection.cumulative} change={change} /></div>}
-      {error || !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption="Квартальная структура" /> : <><QuarterStructure data={data} /><details className="visual-data-disclosure"><summary>Данные и скачивание</summary><button onClick={() => exportCsv(structureRows(data.treeRows), `operational-structure-${selection?.year}-q${selection?.quarter}.csv`)}><Download size={16} />CSV</button><div className="table-wrap"><table><thead><tr><th>Показатель</th><th>млн м²</th></tr></thead><tbody>{data.treeRows.map(row => <tr key={row.id}><th scope="row">{row.label}</th><td>{number(row.value, 2)}</td></tr>)}</tbody></table></div></details></>}
-    </section>
     {metadata && <CommissioningEvidence metadata={metadata} anchor="operational-sources" notes={data?.notes} detail={data?.sourceDetails} />}
     <footer className="page-footer"><span>Аналитика Москвы</span><span>Оперативный ввод · API</span></footer>
   </main>;

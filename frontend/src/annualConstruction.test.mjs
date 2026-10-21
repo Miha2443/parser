@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fixtures from './annualConstruction.browser.cjs';
-import { annualChartOption, annualFilters, annualSummaryRows, constructionFilters, loadMarketCatalog, loadMarketReport, marketParams, marketUrl, permitChartOption, permitChartRows, readAnnualCatalog, readAnnualReport, readConstructionCatalog, readConstructionReport, salesTable, tableRows } from './annualConstructionData.ts';
+import { annualChartOption, annualChartRows, annualFactCaption, annualFilters, annualSummaryRows, constructionFilters, loadMarketCatalog, loadMarketReport, marketParams, marketUrl, permitChartOption, permitChartRows, readAnnualCatalog, readAnnualReport, readConstructionCatalog, readConstructionReport, salesTable, tableRows } from './annualConstructionData.ts';
 const annualSelection = { region: 'msk' }, constructionSelection = { region: 'msk', permitKind: 'total', month: 3 };
 test('annual regions and construction month defaults remain catalog-defined and region-independent', () => {
   const a = readAnnualCatalog(fixtures.annualCatalog), c = readConstructionCatalog(fixtures.constructionCatalog); assert.deepEqual(a, fixtures.annualCatalog); assert.deepEqual(c, fixtures.constructionCatalog); assert.deepEqual(annualFilters(a, new URLSearchParams('region=missing')), annualSelection); assert.deepEqual(constructionFilters(c, new URLSearchParams()), constructionSelection); assert.deepEqual(constructionFilters(c, new URLSearchParams('region=rf&permit_kind=nonresidential&month=1')), { region: 'rf', permitKind: 'nonresidential', month: 2 }); assert.equal(annualFilters({ ...a, regions: [] }, new URLSearchParams()), null);
@@ -24,6 +24,10 @@ test('renovation and every single visible annual series keep numeric labels abov
   const multi = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], visible = multi.series[1], o = annualChartOption(multi, 'light', [visible.name]);
   assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.media[0].option.series[1].label.show, true); assert.equal(o.series[1].label.formatter({ dataIndex: 0 }), '0');
   visible.points[0].y = null; assert.equal(annualChartOption(multi, 'light', [visible.name]).series[1].label.formatter({ dataIndex: 0 }), '');
+});
+test('compatibility permit chart uses the agreed annual-values legend', () => {
+  const report = readConstructionReport(fixtures.constructionReport(), constructionSelection);
+  assert.equal(permitChartOption(report.permits, 'light').series[1].name, 'Годовые значения');
 });
 test('annual stack label follows highest visible series and sums only visible segments without changing source data', () => {
   const c = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], before = structuredClone(c), visible = c.series.slice(0, 2).map(s => s.name), o = annualChartOption(c, 'dark', visible);
@@ -64,6 +68,44 @@ test('annual controls label the last measured segment per year and never add TOT
     c => c.categoryProvenance[0].МКД_source_file = { guessed: true }, c => c.categoryProvenance[1].МКД_source_rows = [0]]) {
     const bad = structuredClone(raw); mutate(bad.charts[1]); assert.throws(() => readAnnualReport(bad, annualSelection));
   }
+});
+test('annual forecasts occupy separate hatched categories after the dated fact without altering facts or summaries', () => {
+  const raw = fixtures.annualForecastReport(), before = structuredClone(raw), parsed = readAnnualReport(raw, annualSelection), c = parsed.charts[0];
+  assert.deepEqual(parsed, raw); assert.equal(annualFactCaption(c), 'янв–сен');
+  for (const theme of ['light', 'dark']) {
+    const o = annualChartOption(c, theme), forecast = o.series.at(-1), count = c.rows.length;
+    assert.deepEqual(o.xAxis.data.slice(-4), ['2026\nянв–сен', '2026\nпрогноз', '2027\nпрогноз', '2030\nпрогноз']);
+    assert.equal(forecast.name, 'Прогноз'); assert.equal(forecast.itemStyle.borderType, 'dashed'); assert.ok(forecast.itemStyle.decal);
+    assert.deepEqual(forecast.data, [...Array(count).fill(null), 14, 0, 17]);
+    for (const [index, series] of o.series.slice(0, -1).entries()) {
+      assert.deepEqual(series.data.slice(0, count), c.series[index].points.map(point => point.y));
+      assert.deepEqual(series.data.slice(count), [null, null, null]);
+    }
+    assert.match(o.tooltip.formatter({ name: '2026\nпрогноз', seriesName: 'Прогноз', value: 14 }), /Общая площадь жилья/);
+    assert.equal(annualChartOption(c, theme, c.series.map(s => s.name)).series.at(-1).label.show, false);
+    const only = annualChartOption(c, theme, ['Прогноз']); assert.ok(only.series.slice(0, -1).every(s => !s.label.show)); assert.equal(only.series.at(-1).label.show, true);
+  }
+  const rows = annualChartRows(c);
+  assert.equal(rows[0].at(-1), 'Прогноз, млн м²'); assert.equal(rows[c.rows.length][0], '2026 · факт · янв–сен');
+  assert.deepEqual(rows.at(-2), ['2027 · прогноз', ...c.columns.slice(1).map(() => null), 0]);
+  assert.deepEqual(annualSummaryRows(c), annualSummaryRows(before.charts[0])); assert.deepEqual(raw, before);
+});
+test('annual forecast schema rejects duplicate/historical/fabricated/RF values and keeps missing forecasts absent', () => {
+  for (const mutate of [v => v.charts[0].forecast.points.push({ year: 2026, value: 1 }),
+    v => v.charts[0].forecast.points[0].year = 2025, v => v.charts[0].forecast.points[0].value = null,
+    v => v.charts[0].forecast.points[0].value = -1, v => v.charts[0].forecast.points[0].value = NaN,
+    v => v.charts[0].forecast.points.reverse(), v => v.charts[0].factPeriod.month = 13,
+    v => v.charts[0].factPeriod.year = 2027, v => v.charts[0].forecast.sourceFields = [],
+    v => delete v.charts[0].factPeriod]) {
+    const value = fixtures.annualForecastReport(); mutate(value); assert.throws(() => readAnnualReport(value, annualSelection));
+  }
+  const rf = fixtures.annualReport({ region: 'rf' });
+  rf.charts[0].factPeriod = { year: 2026, month: null };
+  const c = readAnnualReport(rf, { region: 'rf' }).charts[0];
+  assert.equal(c.forecast, undefined); assert.equal(annualChartOption(c, 'light').series.length, c.series.length);
+  rf.forecastSource = fixtures.annualForecastReport().forecastSource; assert.throws(() => readAnnualReport(rf, { region: 'rf' }));
+  const missing = fixtures.annualReport(); missing.charts[0].factPeriod = { year: 2026, month: null };
+  assert.equal(annualChartOption(readAnnualReport(missing, annualSelection).charts[0], 'light').xAxis.data.at(-1), '2026\nпериод не указан');
 });
 test('pinned exports contain every selection filter and never table search/page', () => {
   assert.deepEqual(marketParams(constructionSelection), { region: 'msk', permit_kind: 'total', month: '3' }); assert.equal(new URL(marketUrl('annual', annualSelection, 'v +'), 'http://local').searchParams.get('required_version'), 'v +'); const u = new URL(marketUrl('construction', constructionSelection, 'v2'), 'http://local'); assert.equal(u.pathname, '/api/v1/construction/export'); assert.deepEqual([...u.searchParams.keys()], ['region', 'permit_kind', 'month', 'required_version']);

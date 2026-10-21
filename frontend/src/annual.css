@@ -1,0 +1,11 @@
+.annual-commissioning-page .page-heading { align-items: center; gap: 16px; }
+.annual-commissioning-page .page-heading > div:first-child { min-width: 0; }
+.annual-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.annual-chart-scroll { width: 100%; min-width: 0; }
+.annual-chart-surface { width: 100%; min-width: 0; }
+.annual-commissioning-page .source-list code { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .annual-chart-surface .chart-canvas { min-height: 430px; }
+  .annual-commissioning-page .page-heading { align-items: flex-start; }
+  .annual-commissioning-page .page-heading h1 { font-size: 23px; overflow-wrap: anywhere; }
+}

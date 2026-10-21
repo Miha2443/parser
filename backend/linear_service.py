@@ -7,11 +7,14 @@ import json
 import threading
 import time
 from zipfile import BadZipFile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+
+from openpyxl import load_workbook
 
 from app.linear_objects import latest_source, period_summary, read_linear_objects, source_date
 from backend.profile_service import FilterUnavailable, SourceUnavailable
-from pipeline.data_access import DataContext, file_signature
+from pipeline.data_access import DataAccess, DataContext, file_signature
+from pipeline.linear_dashboard import HISTORY_SHEET, build_dashboard, read_history
 from pipeline.report_values import records
 
 
@@ -19,12 +22,15 @@ class LinearService:
     def __init__(self, context: DataContext, check_interval: float = 5):
         self.directory = context.root / "data/raw/realty/linear_objects"
         self.root = context.root
+        self.context = context
         self.check_interval = check_interval
         self._lock = threading.RLock()
         self._checked = 0.0
         self._signature = None
         self._data = None
         self._catalog = None
+        self._dashboard = None
+        self._dashboard_signature = None
 
     def _refresh(self):
         now = time.monotonic()
@@ -93,3 +99,63 @@ class LinearService:
                            "allPeriods": all_periods})
             json.dumps(result, allow_nan=False)
             return result
+
+    def _dashboard_inputs(self, access):
+        dsti = latest_source(self.directory)
+        files = access.source_files("commissioning_forecasts")
+        monitoring = max(files, key=lambda path: path.stat().st_mtime) if files else None
+        return dsti, monitoring, (file_signature(dsti) if dsti else None,
+                                  access.data_version("load_commissioning_forecasts"), date.today().isoformat())
+
+    def dashboard(self):
+        with self._lock:
+            access = DataAccess(self.context)
+            dsti, monitoring, signature = self._dashboard_inputs(access)
+            if signature == self._dashboard_signature:
+                return copy.deepcopy(self._dashboard)
+            history, notes, data = [], [], None
+            if dsti:
+                try:
+                    data = read_linear_objects(dsti)
+                except (OSError, ValueError, BadZipFile) as exc:
+                    raise SourceUnavailable("DSTI source cannot be read") from exc
+            else:
+                notes.append("Источник ДСТИ отсутствует; квартальные факты и годовой план недоступны.")
+            forecasts = access.load_commissioning_forecasts()
+            if monitoring:
+                with monitoring.open("rb") as stream:
+                    book = load_workbook(stream, read_only=True, data_only=True)
+                    try:
+                        history, history_notes = read_history(book)
+                        notes.extend(history_notes)
+                    finally:
+                        book.close()
+            else:
+                notes.append("Мониторинг отсутствует; годовая история и прогнозы недоступны.")
+            def relative(path):
+                if path is None:
+                    return None
+                try:
+                    return path.relative_to(self.root).as_posix()
+                except ValueError:
+                    return path.name
+            sources = [
+                {"id": "dsti", "file": relative(dsti), "date": source_date(dsti).isoformat() if dsti else None,
+                 "sheet": None},
+                {"id": "monitoring", "file": relative(monitoring), "date": forecasts.get("source_date"),
+                 "sheet": HISTORY_SHEET},
+                {"id": "forecast", "file": forecasts.get("source_file"), "date": forecasts.get("source_date"),
+                 "sheet": "Прогнозы"},
+            ]
+            payload = {"schemaVersion": 1, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
+                       "generatedAt": datetime.now(timezone.utc).isoformat(), "sources": sources,
+                       "notes": notes + forecasts.get("notes", []) + [
+                           "Прогноз не является фактом. Пустые значения не считаются нулём.",
+                           "Годовой план ДСТИ — сумма четырёх заполненных квартальных планов.",
+                           "Факт текущего года неполный; история депо без отдельного источника не восстанавливается."],
+                       **build_dashboard(data, history, forecasts, sources, date.today())}
+            if self._dashboard_inputs(access) != (dsti, monitoring, signature):
+                raise SourceUnavailable("Linear dashboard sources changed during loading")
+            json.dumps(payload, allow_nan=False)
+            self._dashboard, self._dashboard_signature = payload, signature
+            return copy.deepcopy(payload)

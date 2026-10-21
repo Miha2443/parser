@@ -200,7 +200,7 @@ async function permitSelect(page, label, value) {
     assert.ok(await page.locator('.permit-breakdowns .chart-canvas').count() > 0);
     await ready(page, '/construction/permits?permit_kind=housing&month=5');
     assert.equal(await page.getByLabel('Структура: накопленный период', { exact: true }).inputValue(), structureTo);
-    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Выбранный период', 'Остаток до годового ориентира'], true);
+    await hoverSeries(page, page.locator('.permit-main .chart-canvas'), ['Выбранный период', 'Годовые значения'], true);
     const first = page.locator('.permit-main .chart-block');
     await first.locator('.data-toggle').click();
     const csv = await download(page, first.getByRole('button', { name: 'CSV', exact: true }), 'permits.csv');

@@ -83,7 +83,16 @@ class OperationalTests(unittest.TestCase):
                             self.assertEqual(table["rows"], records(env[name]))
                             self.assertEqual(table["chart"]["x"], list(figure.data[0].x))
                             for field, trace in (("period", 0), ("remainder", 1), ("totals", 2)):
-                                self.assertEqual(table["chart"][field], records(pd.DataFrame({"value": figure.data[trace].y})))
+                                expected = records(pd.DataFrame({"value": figure.data[trace].y}))
+                                if field in ("period", "remainder"):
+                                    # Old Plotly traces drew artificial zeroes for
+                                    # unknown periods and missing annual bases.
+                                    for index, label in enumerate(table["chart"]["x"]):
+                                        row = next(row for row in table["rows"] if str(row["Год"]) == label)
+                                        missing = row["За выбранный период, млн м²"] is None if field == "period" else row["За год, млн м²"] is None
+                                        if missing:
+                                            expected[index]["value"] = None
+                                self.assertEqual(table["chart"][field], expected)
                         self.assertEqual(payload["tree"], env["tree"])
         access = DataAccess(self.context)
         self.assertEqual(self.before, tuple(access.data_version(name) for name in self.loaders))

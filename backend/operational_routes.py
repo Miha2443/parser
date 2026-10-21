@@ -19,8 +19,8 @@ def build_report(*args, **kwargs):
 
 
 def create_service(context, check_interval=5):
-    return GenerationService(context, ("load_vvod_static", "load_monitoring_2_0", "load_monitoring_operational_history"),
-                             ("vvod_static", "monitoring_2_0", "monitoring_operational_history"),
+    return GenerationService(context, ("load_vvod_static", "load_monitoring_2_0", "load_monitoring_operational_history", "load_commissioning_forecasts"),
+                             ("vvod_static", "monitoring_2_0", "monitoring_operational_history", "commissioning_forecasts"),
                              catalog, build_report, check_interval)
 
 
@@ -35,6 +35,8 @@ def export_workbook(payload):
     for key in ("version", "generatedAt", "region", "periodLabel", "selection", "source", "sourceDetails", "notes"):
         value = payload[key]
         meta.append([key, safe(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value)])
+    if payload.get("forecastSource"):
+        meta.append(["forecastSource", json.dumps(payload["forecastSource"], ensure_ascii=False)])
     for table in payload["tables"]:
         tab = book.create_sheet(table["id"])
         tab.append([column["label"] for column in table["columns"]])
@@ -44,6 +46,18 @@ def export_workbook(payload):
     tab.append(["Indicator", "million m2"])
     for row in payload["treeRows"]:
         tab.append([safe(row["label"]), row["value"]])
+    if "structure" in payload:
+        tab = book.create_sheet("Monthly structure")
+        tab.append(["Indicator", "million m2", "Known sum, million m2", "Monthly change, million m2", "Change to previous year, %",
+                    "Renovation, million m2", "Renovation known sum, million m2", "Renovation monthly change, million m2", "Renovation change to previous year, %"])
+        for row in payload["structure"]["rows"]:
+            tab.append([safe(row["label"]), row["value"], row["knownSum"], row["monthChange"], row["yearChangePct"],
+                        row["renovation"], row["renovationKnownSum"], row["renovationMonthChange"], row["renovationYearChangePct"]])
+    tab = book.create_sheet("Forecasts")
+    tab.append(["Indicator", "Year", "Forecast, million m2"])
+    for table in payload["tables"]:
+        for row in table.get("annualForecasts", []):
+            tab.append([safe(table["title"]), row["year"], row["value"]])
     for tab in book:
         tab.freeze_panes = "A2"
         tab.auto_filter.ref = tab.dimensions

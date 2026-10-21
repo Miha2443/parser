@@ -8,9 +8,9 @@ from openpyxl import Workbook
 
 from backend.generation_service import GenerationService
 from backend.profile_service import FilterUnavailable, SourceUnavailable
-from pipeline.annual_calculations import annual_charts
+from pipeline.annual_calculations import annual_charts, annual_fact_period, annual_forecast
 
-LOADERS = ("load_vvod_static", "load_emiss_34118", "load_emiss_34118_periods", "load_monitoring_2_0", "load_monitoring_2011_2026_static")
+LOADERS = ("load_vvod_static", "load_emiss_34118", "load_emiss_34118_periods", "load_monitoring_2_0", "load_monitoring_2011_2026_static", "load_commissioning_forecasts")
 
 
 def catalog(data):
@@ -26,6 +26,13 @@ def report(data, options, region="msk"):
     charts = annual_charts(data, chosen["label"])
     if not charts:
         raise SourceUnavailable("Annual report has no source data")
+    forecasts = data.get("load_commissioning_forecasts", {})
+    for chart in charts:
+        year = chart["rows"][-1]["year"]
+        chart["factPeriod"] = annual_fact_period(data, year, chosen["label"])
+        forecast = annual_forecast(chart["id"], forecasts, year) if region == "msk" else None
+        if forecast:
+            chart["forecast"] = forecast
     notes = ["Единицы всех графиков: млн м²; период 2011–2026, реновация с 2017 года.",
              "Неизвестные значения остаются null. Итог периода неизвестен, если отсутствует хотя бы один год выбранного ряда.",
              "34118: общий ввод, ИЖС, сельский ИЖС и явно названный МКД — разные категории; сельский ИЖС входит в ИЖС и не прибавляется к нему.",
@@ -38,7 +45,11 @@ def report(data, options, region="msk"):
         notes.extend(["2026 год по Москве дополняется мониторингом 2.0; исторические значения МОП и реновации сохранены из утверждённой страницы.",
                       "Дополнительные отрасли показываются при покрытии мониторингом не менее 95% годового объёма; иначе площадь остаётся в «Прочем».",
                       "Состав отраслей фиксирован для всех лет: доля более 10% хотя бы в одном году и не менее шести крупнейших групп."])
-    return {"region": chosen, "charts": charts, "notes": notes}
+    result = {"region": chosen, "charts": charts, "notes": notes}
+    if region == "msk" and forecasts:
+        result["forecastSource"] = {"file": forecasts.get("source_file"), "date": forecasts.get("source_date"),
+                                    "unitBasis": forecasts["unitBasis"], "notes": forecasts["notes"]}
+    return result
 
 
 def create_service(context, check_interval=5):
@@ -54,7 +65,13 @@ def export_workbook(payload):
     for key in ("version", "generatedAt", "region", "source", "notes"):
         value = payload[key]
         tab.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value])
+    if "forecastSource" in payload:
+        tab.append(["forecastSource", json.dumps(payload["forecastSource"], ensure_ascii=False)])
     for chart in payload["charts"]:
+        if chart.get("factPeriod"):
+            tab.append([chart["id"] + "/factPeriod", json.dumps(chart["factPeriod"], ensure_ascii=False)])
+        if chart.get("forecast"):
+            tab.append([chart["id"] + "/forecastMetric", json.dumps({key: value for key, value in chart["forecast"].items() if key != "points"}, ensure_ascii=False)])
         if chart.get("categoryProvenance"):
             tab.append([chart["id"] + "/categoryProvenance", json.dumps(chart["categoryProvenance"], ensure_ascii=False)])
         if chart.get("rawCategoryValues"):
@@ -69,6 +86,11 @@ def export_workbook(payload):
         for period in chart["summaries"]:
             for row in period["values"]:
                 summary.append([period["from"], period["to"], row["label"], row["value"]])
+        if chart.get("forecast"):
+            forecast = book.create_sheet(f"{chart['id']}_forecast")
+            forecast.append(["Год", "Ряд", "Показатель", chart["unit"]])
+            for point in chart["forecast"]["points"]:
+                forecast.append([point["year"], "Прогноз", chart["forecast"]["metric"], point["value"]])
     for tab in book:
         tab.freeze_panes = "A2"
         tab.auto_filter.ref = tab.dimensions

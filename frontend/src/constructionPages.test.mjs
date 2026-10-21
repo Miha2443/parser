@@ -195,7 +195,7 @@ test('breakdown stacks exclude aggregate series even if a provider includes them
   });
 });
 
-test('main permit hover shows only the selected segment or actual gray remainder, never the annual total', () => {
+test('main permit hover distinguishes selected fact, gray annual values and forecast remainder', () => {
   const data = readPermitsData(permitsFixture()), row = data.permits.presentation.rows[1];
   row.selected = 1234.567890123; row.annualComplete = true;
   for (const [forecast, actual, expectedRemainder] of [[9876.543210123, 20000, '8 642'], [null, 5432.109876543, '4 198']]) {
@@ -205,7 +205,7 @@ test('main permit hover shows only the selected segment or actual gray remainder
       const option = permitsMainOption(data, theme);
       assert.equal(option.tooltip.trigger, 'item');
       assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0 })), '2026 · Январь–сентябрь Выбранный период: 1 235 тыс. м²');
-      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), forecast === null ? `2026 · Январь–сентябрь Остаток до годового ориентира: ${expectedRemainder} тыс. м²` : `2026 · прогноз на год Остаток до годового прогноза: ${expectedRemainder} тыс. м²`);
+      assert.equal(tooltipText(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), forecast === null ? '2026 · за год Годовые значения: 5 432 тыс. м²' : `2026 · прогноз на год Остаток до годового прогноза: ${expectedRemainder} тыс. м²`);
       assert.equal(option.series[0].data[1], row.selected); assert.equal(option.series[1].data[1], remainder);
     }
     const csv = permitsMainRows(data);
@@ -304,7 +304,7 @@ test('permit remainder needs a known annual basis AND selected observation, pref
   assert.equal(permitsMainRows(data)[2][5], -20);
   row.annualForecast = null;
   assert.equal(permitRemainder(row), 80); assert.equal(permitAnnualBasis(row).kind, 'annual_observed');
-  assert.equal(tooltipText(permitsMainOption(data, 'light').tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · Январь–сентябрь Остаток до годового ориентира: 80 тыс. м²');
+  assert.equal(tooltipText(permitsMainOption(data, 'light').tooltip.formatter({ dataIndex: 1, seriesIndex: 1 })), '2026 · за год Годовые значения: 200 тыс. м²');
   row.annualComplete = false;
   assert.equal(permitRemainder(row), null);
   option = permitsMainOption(data, 'light');

@@ -9,6 +9,52 @@ from openpyxl.styles import Font, PatternFill
 from backend.linear_service import LinearService
 
 
+def export_dashboard(payload):
+    book = Workbook()
+    meta = book.active
+    meta.title = "Dashboard"
+    meta.append(["Field", "Value"])
+    meta.append(["version", payload["version"]])
+    meta.append(["currentYear", payload["currentYear"]])
+    meta.append(["generatedAt", payload["generatedAt"]])
+    sources = book.create_sheet("Sources")
+    sources.append(["id", "file", "date", "sheet"])
+    for source in payload["sources"]:
+        sources.append([source[key] for key in ("id", "file", "date", "sheet")])
+    notes = book.create_sheet("Notes")
+    notes.append(["Note"])
+    for note in payload["notes"]:
+        notes.append([note])
+    yearly = book.create_sheet("Yearly data")
+    yearly.append(["id", "indicator", "unit", "year", "fact", "factKind", "factPeriod", "factSource", "plan", "forecast"])
+    forecasts = book.create_sheet("Forecasts")
+    forecasts.append(["id", "indicator", "unit", "year", "forecast"])
+    kpis = book.create_sheet("Current year")
+    kpis.append(["id", "indicator", "unit", "fact", "factPeriod", "annualPlan", "forecast", "targetKind", "percent", "remaining"])
+    for metric in payload["metrics"]:
+        base = [metric[key] for key in ("id", "label", "unit")]
+        kpis.append(base + [metric[key] for key in ("fact", "factPeriod", "annualPlan", "forecast", "targetKind", "percent", "remaining")])
+        for row in metric["years"]:
+            yearly.append(base + [row[key] for key in ("year", "fact", "factKind", "factPeriod", "factSource", "plan", "forecast")])
+            if row["year"] >= payload["currentYear"]:
+                forecasts.append(base + [row["year"], row["forecast"]])
+    for tab in book:
+        tab.freeze_panes = "A2"
+        tab.auto_filter.ref = tab.dimensions
+        for row in tab:
+            for cell in row:
+                if isinstance(cell.value, str) and cell.value.lstrip().startswith(("=", "+", "-", "@")):
+                    cell.value = "'" + cell.value
+        for cell in tab[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="1C3444")
+        for column in tab.columns:
+            tab.column_dimensions[column[0].column_letter].width = 26
+    buffer = BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+
+
 def export_workbook(payload):
     book = Workbook()
     meta = book.active
@@ -40,6 +86,19 @@ def export_workbook(payload):
 def create_router(context, call, service=None):
     router = APIRouter(prefix="/api/v1/linear")
     service = service or LinearService(context)
+
+    @router.get("/dashboard")
+    def dashboard():
+        return call(service.dashboard, scope="Linear")
+
+    @router.get("/dashboard/export")
+    def dashboard_export(required_version: str = Query(min_length=1, max_length=128)):
+        payload = call(service.dashboard, scope="Linear")
+        if required_version != payload["version"]:
+            raise HTTPException(409, "Source changed; refresh the displayed dashboard before exporting")
+        return Response(export_dashboard(payload), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="linear-dashboard.xlsx"',
+                                 "X-Data-Version": payload["version"]})
 
     @router.get("/catalog")
     def catalog():

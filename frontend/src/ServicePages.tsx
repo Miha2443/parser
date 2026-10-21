@@ -28,7 +28,7 @@ function DataTable({ title, rows, columns, filename }: { title: string; rows: Ro
 }
 const realtySections = [
   ['Текущее строительство', [['/construction/tree', 'Дерево текущего строительства'], ['/construction/permits', 'Разрешения на строительство'], ['/construction/domrf', 'Данные ДОМ.РФ'], ['/apartments', 'Квартирография'], ['/map', 'Карта объектов']]],
-  ['Ввод недвижимости', [['/commissioning/operational', 'Оперативный ввод'], ['/commissioning/annual', 'Годовой ввод'], ['/commissioning/linear', 'Линейные объекты']]],
+  ['Ввод недвижимости', [['/commissioning/operational', 'Оперативные данные'], ['/commissioning/annual', 'Годовой ввод'], ['/commissioning/linear', 'Ввод линейных объектов']]],
   ['Профиль застройщика', [['/', 'Профиль'], ['/apartments/developer', 'Квартирография по застройщику']]],
 ] as const;
 const statisticsLinks = [['/economics/salary', 'Заработная плата'], ['/economics/ipc', 'Индекс потребительских цен'], ['/economics/accounts', 'ВРП, ВВП и ВДС']] as const;

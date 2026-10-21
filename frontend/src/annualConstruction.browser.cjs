@@ -21,7 +21,17 @@ function constructionReport(selection = { region: 'msk', permitKind: 'total', mo
   const rows = Array.from({ length: 16 }, (_, i) => ({ 'Год': 2011 + i, 'За год, тыс. м²': i === 15 ? null : 1234.567 + i * 40, 'С начала года, тыс. м²': i < 2 ? null : 234.567 + i * 20 + selection.month, 'Изменение, %': i <= 2 ? null : i === 3 ? 0 : -12.345 }));
   return { ...meta, selection, constructionPeriod: 'Октябрь 2026', salesReadinessPeriod: { year: 2026, month: 5 }, metrics: [['living', 'Жилая площадь', 15.64321, 'млн м²', 2], ['total', 'Общая площадь', null, 'млн м²', 2], ['sold', 'Распроданность', 47.234, '%', 0], ['ready', 'Стройготовность', 0, '%', 0], ['ratio', 'Отношение распроданности к стройготовности', null, '%', 0]].map(([id, label, value, unit, digits]) => ({ id, label, value, unit, digits })), sales: { region_key: selection.region, report_period: 'Август 2026', total_living_thousand_m2: 15743.123, sales_open_thousand_m2: 14140.123, sold_pct: 47.234, sold_thousand_m2: 7366.123, unsold_pct: 0, unsold_thousand_m2: 0, sales_not_open_pct: null, sales_not_open_thousand_m2: null, price_per_m2_rub: 441306.78, funds_million_rub: 3250869.12 }, permits: { region: 'Москва', unit: 'тыс. м²', periodLabel: `Январь–месяц ${selection.month}`, columns: Object.keys(rows[0]).map(id => ({ id, label: id })), rows, chart: { x: rows.map(r => String(r['Год'])), period: rows.map(r => ({ value: r['С начала года, тыс. м²'] })), remainder: rows.map(r => ({ value: r['За год, тыс. м²'] === null ? null : r['За год, тыс. м²'] - (r['С начала года, тыс. м²'] ?? 0) })), totals: rows.map(r => ({ value: r['За год, тыс. м²'] })), growth: rows.map(r => ({ value: r['Изменение, %'] })) } }, sourceDetails: { file: 'selected/construction.json', date: null }, notes: ['Разрешения на строительство всегда относятся к Москве, независимо от выбранного региона.', 'Жилая площадь может использовать последний KPI при отсутствии оперативного значения.'] };
 }
-module.exports = { annualCatalog, constructionCatalog, annualReport, constructionReport };
+function annualForecastReport(selection = { region: 'msk' }, meta = metadata) {
+  const report = annualReport(selection, meta);
+  report.charts.forEach(chart => chart.factPeriod = { year: 2026, month: selection.region === 'msk' ? 9 : null });
+  if (selection.region === 'msk') {
+    report.forecastSource = { file: 'monitoring_2_0_20261021.xlsx', date: '2026-10-21', unitBasis: 'assumed_thousand_m2', notes: ['Единица площади в листе не указана; принято тыс. м².'] };
+    const fields = { b1: ['housing_total', 'nonres_standalone'], b2_1: ['housing_living'], b2_2: ['housing_living'], b2_3: ['renovation_living'], b3_1: ['nonres_total'], b3_2: ['nonres_standalone'], b3_3: ['nonres_standalone'] };
+    report.charts.forEach(chart => chart.forecast = { metric: chart.id === 'b1' ? 'Общая площадь жилья и отдельно стоящего нежилья' : chart.title, sourceFields: fields[chart.id], points: [{ year: 2026, value: 14 }, { year: 2027, value: 0 }, { year: 2030, value: 17 }] });
+  }
+  return report;
+}
+module.exports = { annualCatalog, constructionCatalog, annualReport, annualForecastReport, constructionReport };
 const fmt = (n, digits = 0) => n === null ? '—' : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
 async function bytes(d) { const stream = await d.createReadStream(), chunks = []; for await (const c of stream) chunks.push(c); return Buffer.concat(chunks); }
 const roots = { annual: '/api/v1/commissioning/annual', construction: '/api/v1/construction' }, pages = { annual: '/commissioning/annual', construction: '/construction' }, captions = { annual: 'Годовой ввод', construction: 'Текущее строительство' };

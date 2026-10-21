@@ -5,6 +5,7 @@ import pandas as pd
 
 from app.vvod_operational import MONTHS_RU, housing_ytd_table, nonres_ytd_table, quarter_tree
 from pipeline.report_values import records
+from pipeline.commissioning_structure import monthly_structure
 
 MONTH_LABELS = ["Январь", "Январь–февраль", "Январь–март", "Январь–апрель", "Январь–май",
                 "Январь–июнь", "Январь–июль", "Январь–август", "Январь–сентябрь",
@@ -54,8 +55,18 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
         # period is unknown; the period itself must stay null.
         remainder = (annual - period).where(period.notna(), annual).clip(lower=0)
         totals = visible["За год, млн м²"].where(visible["За год, млн м²"].notna(), visible["За выбранный период, млн м²"])
+        forecasts = data.get("load_commissioning_forecasts", {})
+        forecast_field = "housing_living" if key == "housing" else "nonres_standalone" if exclude_mkd else "nonres_total"
+        forecast_rows = [{"year": row["year"], "value": row[forecast_field] / 1000}
+                         for row in forecasts.get("rows", []) if row.get(forecast_field) is not None and row[forecast_field] >= 0 and row["year"] >= options["currentYear"]]
+        available_months = [MONTHS_RU.get(str(value).strip().casefold()) for value in
+                            rv.loc[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").eq(options["currentYear"]),
+                                   "Месяц ввода по Мосстату"]]
+        latest_month = max((value for value in available_months if value), default=month)
         tables.append({"id": key, "title": title, "columns": [{"id": col, "label": col} for col in frame.columns],
+                       "annualForecasts": forecast_rows,
                        "rows": records(frame), "chart": {"x": [str(int(v)) for v in visible["Год"]],
+                          "actualMonths": [min(month, latest_month) if int(value) == options["currentYear"] else None for value in visible["Год"]],
                           "period": records(pd.DataFrame({"value": period})),
                           "remainder": records(pd.DataFrame({"value": remainder})),
                           "totals": records(pd.DataFrame({"value": totals})),
@@ -65,10 +76,13 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
     tree_growth = {key: (value - previous_tree[key]) / previous_tree[key] * 100
                    if previous_tree is not None and previous_tree[key] != 0 else None
                    for key, value in tree.items()}
+    structure = monthly_structure(rv, year, month, history.get("source_date"))
     return {"selection": {"month": month, "year": year, "quarter": quarter, "cumulative": cumulative,
                            "excludeMkd": exclude_mkd}, "periodLabel": MONTH_LABELS[month - 1],
             "currentYear": options["currentYear"], "region": "Москва", "tables": tables, "tree": tree,
             "treeGrowth": tree_growth,
+            "structure": structure,
+            "forecastSource": {key: value for key, value in data.get("load_commissioning_forecasts", {}).items() if key != "rows"},
             "treeRows": [{"id": key, "label": title, "value": tree[key]} for key, title in TREE_LABELS],
             "sourceDetails": {"file": history.get("source_file"), "date": history.get("source_date")},
             "notes": ["Исторические месяцы: лист «Данные с 2011 года» Мониторинга 2.0.",
@@ -77,4 +91,8 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
                       "Текущий год: только имеющиеся строки РВ до выбранного месяца; отсутствующие поздние месяцы не прогнозируются.",
                       "Жильё: исторические месяцы суммируются как загружены; отсутствующая история сохраняется как null, годовые значения её не заменяют.",
                       "Нежильё: периодные значения рассчитываются по РВ только с 2022 года; до 2022 года они остаются null.",
-                      "Структура ввода — Москва, по реестру РВ; отсутствие месячной истории не означает нулевой ввод."]}
+                      "Структура ввода — Москва, по реестру РВ; отсутствие месячной истории не означает нулевой ввод.",
+                      "Месячная структура сохраняет неизвестные площади как null, отдельно указывает известную сумму. "
+                      "Прирост — сумма записей выбранного месяца. Реновация определяется по «Инвестор для Реновации» = да.",
+                      "При неполном исходном измерении выводится нижняя граница известной суммы (≥), темп роста не вычисляется."] +
+                     data.get("load_commissioning_forecasts", {}).get("notes", []) + structure["issues"]}

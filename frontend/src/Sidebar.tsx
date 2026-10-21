@@ -24,7 +24,7 @@ export default function Sidebar({ open, onClose, compact, onCompact, path, onNav
         {local('Главная', '/home', <House size={17} />)}
         {group('market', 'Рынок недвижимости', <Building2 size={17} />, <>
           {group('construction', 'Текущее строительство', null, <>{local('Дерево текущего строительства', '/construction/tree')}{local('Разрешения на строительство', '/construction/permits')}{local('Данные ДОМ.РФ', '/construction/domrf')}{local('Квартирография', '/apartments')}{local('Карта объектов', '/map')}</>, true)}
-          {group('commissioning', 'Ввод недвижимости', null, <>{local('Оперативный ввод', '/commissioning/operational')}{local('Годовой ввод', '/commissioning/annual')}{local('Линейные объекты', '/commissioning/linear')}</>, true)}
+          {group('commissioning', 'Ввод недвижимости', null, <>{local('Оперативные данные', '/commissioning/operational')}{local('Годовой ввод', '/commissioning/annual')}{local('Ввод линейных объектов', '/commissioning/linear')}</>, true)}
           {group('profile', 'Профиль застройщика', null, <>{local('Профиль', '/', <UserRound size={15} />)}{local('Квартирография по застройщику', '/apartments/developer')}</>, true)}
         </>)}
         {group('statistics', 'Мосстат / Росстат', <Landmark size={17} />, <>{local('ВВП и ВРП', '/economics/accounts')}{local('ИПЦ', '/economics/ipc')}{local('Заработная плата', '/economics/salary')}</>)}

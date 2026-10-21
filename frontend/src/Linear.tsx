@@ -1,27 +1,67 @@
-import { useEffect, useMemo } from 'react';
-import { AlertCircle, ChevronRight, Database } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDownToLine, Building2, Database, FileSpreadsheet, Footprints, RefreshCw, Route, TrainFront, TramFront, Waypoints } from 'lucide-react';
 import { Chart } from './Chart';
+import { ApiError, request } from './data';
 import { date, number } from './format';
-import { commissioningParams, linearDigits, linearSummaryOption, linearTable, linearTrendOption, tableRows } from './commissioningData';
-import type { Cell } from './commissioningData';
-import { CommissioningEmpty, CommissioningEvidence, CommissioningExport, CommissioningState, CommissioningTable, QuarterControls, periodCaption } from './Operational';
+import { linearDashboardUrl, linearHistoryOption, linearValue, linearYearRows } from './linearDashboardData';
+import type { LinearMetric } from './linearDashboardData';
+import { CommissioningEmpty, CommissioningState } from './Operational';
 import type { CommissioningChange } from './Operational';
-import { useCommissioningData } from './useCommissioningData';
+import { useLinearDashboard } from './useLinearDashboard';
 import type { Theme } from './types';
+import './linear-dashboard.css';
 
-function linearCell(value: Cell, column: string, row: Record<string, Cell>) { return typeof value === 'number' ? number(value, column === 'percent' ? 1 : column === 'plan' || column === 'fact' ? linearDigits(String(row.unit)) : 0) : value ?? '—'; }
-export default function Linear({ theme, query, change }: { theme: Theme; query: string; change: CommissioningChange }) {
-  const params = useMemo(() => new URLSearchParams(query), [query]);
-  const { catalog, selection, data, error, retry } = useCommissioningData('linear', params);
-  useEffect(() => { if (!selection) return; const values = Object.fromEntries(Object.entries(commissioningParams(selection)).filter(([key, value]) => params.get(key) !== value)); if (Object.keys(values).length) change(values, true); }, [selection?.year, selection?.quarter, selection?.cumulative, selection?.indicator, params]);
-  const metadata = data ?? catalog, year = catalog?.years.find(y => y.id === String(selection?.year)), indicator = catalog?.indicators.find(i => i.id === selection?.indicator);
-  const filename = selection ? `linear-${selection.year}-q${selection.quarter}-${selection.cumulative ? 'ytd' : 'quarter'}` : 'linear';
-  return <main className="commissioning-page linear-page" id="linear-page"><div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Ввод линейных объектов</h1></div><div className="snapshot-label"><Database size={14} />Данные API<span>Дата отчёта: {metadata ? date(metadata.source.date) : '—'}</span></div></div>
-    {catalog && selection && year && <><div className="filters commissioning-filters"><QuarterControls years={catalog.years} quarters={year.quarters} year={selection.year} quarter={selection.quarter} cumulative={selection.cumulative} change={change} resetQuarterOnYearChange /><a className="source-anchor" href="#linear-sources"><Database size={15} />Источники<ChevronRight size={14} /></a></div></>}
-    {error || !catalog || selection && !data ? <CommissioningState error={error} retry={retry} catalog={!!catalog} caption="Ввод линейных объектов" /> : !selection ? <CommissioningEmpty text="Нет доступных периодов или показателей." /> : data && <><div className="developer-heading commissioning-heading"><div className="developer-name"><h2>План и факт</h2><span className="region-label">{periodCaption(data.selection.year, data.selection.quarter, data.selection.cumulative)}</span></div><CommissioningExport kind="linear" selection={data.selection} version={data.version} /></div>{data.summary.some(r => r.fact === null) && <p className="method-note warning-text linear-missing-fact"><AlertCircle size={14} /><span>Для выбранного периода факт ещё не указан в отчёте. Пустые значения не считаются нулём.</span></p>}
-      <section className="section linear-summary" aria-label="План и факт по показателям"><div className="linear-summary-grid">{data.summary.map(row => <div className="linear-indicator" key={row.code} data-indicator={row.code}><h3>{row.indicator}</h3><div className="linear-metrics">{[{ label: 'План', value: row.plan, unit: row.unit, digits: linearDigits(row.unit) }, { label: 'Факт', value: row.fact, unit: row.unit, digits: linearDigits(row.unit) }, { label: 'Выполнение плана', value: row.percent, unit: '%', digits: 1 }].map(m => <div className="metric" key={m.label}><span className="metric-label">{m.label}</span><div className="metric-number">{number(m.value, m.digits)}<span>{m.unit}</span></div></div>)}</div>{row.plan !== null || row.fact !== null ? <Chart key={`${data.version}-${JSON.stringify(data.selection)}-${row.code}`} theme={theme} option={linearSummaryOption(row, theme)} label={`План и факт: ${row.indicator}`} height={180} rows={tableRows(linearTable([row], row.indicator))} filename={`${filename}-${row.code}`} /> : <CommissioningEmpty />}</div>)}</div>{!data.summary.length && <CommissioningEmpty />}</section>
-      <section className="section linear-trend" aria-label="Динамика по кварталам"><div className="section-heading"><div><h2>Динамика по кварталам</h2><p>{indicator?.label ?? selection.indicator} · {selection.year} · {selection.cumulative ? 'с начала года' : 'за квартал'} · {indicator?.unit}</p></div></div><div className="filters commissioning-indicator-filter"><label><span>Показатель динамики</span><select aria-label="Показатель динамики" value={selection.indicator} onChange={e => change({ indicator: e.target.value })}>{catalog.indicators.map(i => <option key={i.id} value={i.id}>{i.label} · {i.unit}</option>)}</select></label></div>{data.trend.some(r => r.plan !== null || r.fact !== null) ? <Chart key={`${data.version}-${JSON.stringify(data.selection)}-trend`} theme={theme} option={linearTrendOption(data.trend, indicator?.unit ?? data.trend[0]?.unit ?? '', theme)} label={`Динамика по кварталам: ${indicator?.label ?? selection.indicator}`} height={320} rows={tableRows(linearTable(data.trend))} filename={`${filename}-${selection.indicator}-trend`} /> : <CommissioningEmpty />}</section>
-      <section className="section linear-all-periods"><CommissioningTable table={linearTable(data.allPeriods)} params={params} change={change} scope="linearAll" filename={`${filename}-all-periods`} cellText={linearCell} /></section>
+const icons = { roads: Route, bridges: Waypoints, crossings: Footprints, metro_stations: TrainFront, metro_tunnels: TramFront, depots: Building2 };
+function MetricTile({ metric, year }: { metric: LinearMetric; year: number }) {
+  const Icon = icons[metric.id];
+  return <article className="linear-kpi" data-metric={metric.id}>
+    <header><Icon size={20} /><h2>{metric.label}</h2><span>{metric.unit}</span></header>
+    <div className="linear-kpi-fact"><strong>{linearValue(metric.fact, metric.unit)}</strong><span>Факт · {year}</span></div>
+    <p className="linear-kpi-period">{metric.factPeriod ?? 'Факт в источниках отсутствует'}</p>
+    <dl className="linear-kpi-targets"><div><dt>План на год</dt><dd>{linearValue(metric.annualPlan, metric.unit)}</dd></div><div><dt>Прогноз на год</dt><dd>{linearValue(metric.forecast, metric.unit)}</dd></div></dl>
+    <div className="linear-progress-heading"><span>{metric.targetKind === 'forecast' ? 'К прогнозу' : 'Выполнение плана'}</span><strong>{metric.percent === null ? '—' : `${number(metric.percent, 1)}%`}</strong></div>
+    <div className={`linear-progress ${metric.percent === null ? 'unavailable' : ''}`} role={metric.percent === null ? undefined : 'progressbar'} aria-label={`Выполнение: ${metric.label}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.percent === null ? undefined : Math.min(100, metric.percent)} aria-valuetext={metric.percent === null ? undefined : `${number(metric.percent, 1)}%`}><span style={{ width: `${Math.min(100, metric.percent ?? 0)}%` }} /></div>
+    <div className="linear-kpi-remaining"><span><ArrowDownToLine size={13} />Осталось {metric.targetKind === 'forecast' ? 'к прогнозу' : 'до плана'}</span><strong>{linearValue(metric.remaining, metric.unit)} <small>{metric.unit}</small></strong></div>
+  </article>;
+}
+function DashboardExport({ version }: { version: string }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const active = useRef<AbortController>();
+  useEffect(() => { setError(''); setBusy(false); return () => active.current?.abort(); }, [version]);
+  async function download() {
+    active.current?.abort(); const controller = new AbortController(); active.current = controller;
+    setBusy(true); setError('');
+    try {
+      const blob = await (await request(linearDashboardUrl(version), controller.signal)).blob();
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = 'linear-dashboard.xlsx'; document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      if (!controller.signal.aborted) setError(error instanceof ApiError && error.status === 409 ? 'Источники изменились. Обновите данные перед скачиванием.' : 'Не удалось скачать Excel. Повторите скачивание.');
+    } finally { if (!controller.signal.aborted) setBusy(false); }
+  }
+  return <div className="linear-export"><button className="icon-button" disabled={busy} title="Скачать факты, прогнозы и источники Excel" aria-label="Скачать факты, прогнозы и источники Excel" onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span role="alert">{error}</span>}</div>;
+}
+export default function Linear({ theme }: { theme: Theme; query: string; change: CommissioningChange }) {
+  const { data, error, retry } = useLinearDashboard();
+  const sourceDate = data?.sources.map(source => source.date).filter((value): value is string => value !== null).sort().at(-1);
+  return <main className="commissioning-page linear-page" id="linear-page">
+    <div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Ввод линейных объектов</h1></div><div className="snapshot-label"><Database size={14} />Москва<span>Обновлено: {sourceDate ? date(sourceDate) : '—'}</span></div></div>
+    {error || !data ? <CommissioningState error={error} retry={retry} catalog={false} caption="Ввод линейных объектов" /> : <>
+      <div className="linear-dashboard-heading"><h2>{data.currentYear} год</h2><div><a href="#linear-sources" className="linear-sources-link"><Database size={15} />Источники</a><button className="icon-button" aria-label="Обновить линейные объекты" title="Обновить линейные объекты" onClick={retry}><RefreshCw size={16} /></button><DashboardExport version={data.version} /></div></div>
+      <section className="linear-kpi-grid" aria-label="Шесть показателей текущего года">{data.metrics.map(metric => <MetricTile key={metric.id} metric={metric} year={data.currentYear} />)}</section>
+      <div className="linear-history-list">{data.metrics.map(metric => <History key={metric.id} metric={metric} theme={theme} year={data.currentYear} version={data.version} />)}</div>
+      <section className="section sources-section" id="linear-sources"><details><summary><Database size={17} /><span>Исходные файлы и даты</span></summary><div className="source-list">{data.sources.map(source => <div key={source.id}><strong>{({ dsti: 'ДСТИ · квартальный факт и план', monitoring: 'Мониторинг · годовая история', forecast: 'Мониторинг · прогноз' } as Record<string, string>)[source.id]}</strong><span>{source.date ? date(source.date) : '—'}</span><div><code>{source.file ?? 'Источник отсутствует'}</code>{source.sheet && <p>{source.sheet}</p>}</div></div>)}</div>{data.notes.map((note, i) => <p className="method-note" key={i}>{note}</p>)}<p className="muted">Сформировано: {date(data.generatedAt)} · версия {data.version}</p></details></section>
     </>}
-    {metadata && <CommissioningEvidence metadata={metadata} anchor="linear-sources" />}<footer className="page-footer"><span>Аналитика Москвы</span><span>Ввод линейных объектов · API</span></footer></main>;
+    <footer className="page-footer"><span>Аналитика Москвы</span><span>Ввод линейных объектов · API</span></footer>
+  </main>;
+}
+function History({ metric, year, theme, version }: { metric: LinearMetric; year: number; theme: Theme; version: string }) {
+  const current = metric.years.find(row => row.year === year);
+  const periods = metric.years.filter(row => row.fact !== null).map(row => row.year);
+  const range = periods.length ? `${Math.min(...periods)}–${Math.max(...periods)}` : null;
+  return <section className="section linear-year-chart" data-history={metric.id} aria-label={`История: ${metric.label}`}>
+    <div className="section-heading"><div><h2>{metric.label}</h2><p>{range ? `${range} · ` : ''}{metric.unit} · {year}: {current?.factPeriod ?? 'факт отсутствует'}</p></div></div>
+    {metric.years.some(row => row.fact !== null || row.forecast !== null) ? <Chart key={`${version}-${metric.id}`} option={linearHistoryOption(metric, year, theme)} theme={theme} label={`Годовой ввод: ${metric.label}`} rows={linearYearRows(metric)} filename={`linear-${metric.id}-yearly`} height={290} legendHints={{ Прогноз: 'Годовой прогноз мониторинга, не фактический ввод' }} /> : <CommissioningEmpty text="Годовые факты и прогнозы в источниках отсутствуют." />}
+  </section>;
 }

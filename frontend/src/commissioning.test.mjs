@@ -44,7 +44,7 @@ test('operational chart options use exact API missing periods, annual totals and
   assert.deepEqual(option.series[0].data, table.chart.period.map(p => p.value)); assert.deepEqual(option.series[1].data, table.chart.remainder.map(p => p.value)); assert.equal(option.series[0].stack, option.series[1].stack); assert.equal(option.tooltip.trigger, 'item');
   const tip = option.tooltip.formatter({ dataIndex: 0, seriesIndex: 0, seriesName: '<period>', name: '2011', value: null }); assert.ok(tip.includes('— млн м²') && tip.includes('Исходное значение периода: —') && tip.includes('&lt;period&gt;'));
   assert.equal(option.series[0].label.formatter({ dataIndex: 0, value: 0 }), ''); assert.equal(option.series[1].label.formatter({ dataIndex: 0 }), '2,1');
-  assert.equal(option.media[0].query.maxWidth, 600); assert.equal(option.media[0].option.series[0].label.show, false);
+  assert.equal(option.media.find(rule => rule.query.maxWidth === 600).option.series[0].label.show, false);
 });
 test('linear summary and quarter bars retain missing facts as null instead of drawing zero', () => {
   const selection = { ...fixtures.linearSelection, quarter: 4 }, report = fixtures.linearReport(selection), summary = linearSummaryOption(report.summary[0], 'light'), trend = linearTrendOption(report.trend, 'км', 'light');

@@ -1,0 +1,42 @@
+.linear-page .linear-dashboard-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px; }
+.linear-dashboard-heading h2 { font-size: 18px; font-weight: 600; }
+.linear-dashboard-heading > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.linear-sources-link { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.linear-export { display: flex; align-items: center; gap: 8px; }
+.linear-export [role="alert"] { font-size: 11px; max-width: 240px; color: var(--accent); }
+.linear-page .linear-kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.linear-kpi { min-width: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 18px; --metric-color: #367ba4; }
+.linear-kpi[data-metric="bridges"] { --metric-color: #448a76; }
+.linear-kpi[data-metric="crossings"] { --metric-color: #a77b32; }
+.linear-kpi[data-metric="metro_stations"] { --metric-color: #b75160; }
+.linear-kpi[data-metric="metro_tunnels"] { --metric-color: #6e7e45; }
+.linear-kpi[data-metric="depots"] { --metric-color: #697c92; }
+.linear-kpi header { display: flex; gap: 9px; align-items: flex-start; min-height: 40px; }
+.linear-kpi header svg { color: var(--metric-color); }
+.linear-kpi header h2 { font-size: 13px; line-height: 1.45; font-weight: 600; flex: 1; overflow-wrap: anywhere; }
+.linear-kpi header > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.linear-kpi-fact { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 9px; min-height: 43px; }
+.linear-kpi-fact strong { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; max-width: 100%; }
+.linear-kpi-fact > span { color: var(--muted); font-size: 11px; }
+.linear-kpi-period { margin-top: 6px; min-height: 32px; font-size: 10px; color: var(--muted); line-height: 1.5; }
+.linear-kpi-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.linear-kpi-targets dt { color: var(--muted); font-size: 10px; }
+.linear-kpi-targets dd { font-size: 16px; font-weight: 600; margin: 5px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.linear-progress-heading, .linear-kpi-remaining { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+.linear-progress-heading > span { color: var(--muted); }
+.linear-progress { margin-top: 8px; height: 6px; background: var(--line); overflow: hidden; border-radius: 2px; }
+.linear-progress > span { display: block; height: 100%; background: var(--metric-color); }
+.linear-progress.unavailable { background: repeating-linear-gradient(135deg, var(--line), var(--line) 3px, var(--soft) 3px, var(--soft) 6px); }
+.linear-kpi-remaining { margin-top: 11px; min-height: 20px; }
+.linear-kpi-remaining > span { color: var(--muted); display: flex; gap: 5px; align-items: center; }
+.linear-kpi-remaining strong { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.linear-kpi-remaining small { color: var(--muted); font-weight: 400; }
+.linear-history-list { margin-top: 26px; }
+.linear-page .linear-year-chart { padding: 22px 0; border-top: 1px solid var(--line); margin: 0; min-width: 0; }
+.linear-year-chart .section-heading h2 { font-size: 17px; }
+.linear-year-chart .section-heading p { font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.linear-year-chart .chart-block { min-width: 0; }
+.linear-year-chart .chart-canvas { width: 100%; }
+@media (max-width: 1100px) and (min-width: 761px) { .linear-kpi { padding: 14px; } .linear-kpi header { min-height: 55px; } }
+@media (max-width: 760px) { .linear-page .linear-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .linear-kpi { padding: 14px; } .linear-page .page-heading { align-items: flex-start; flex-wrap: wrap; } }
+@media (max-width: 480px) { .linear-page .linear-kpi-grid { grid-template-columns: minmax(0, 1fr); } .linear-page .linear-dashboard-heading { align-items: flex-start; } .linear-kpi-period { min-height: 0; } }

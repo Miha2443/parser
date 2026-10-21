@@ -1,9 +1,14 @@
-"""Monthly RV commissioning structure with independently measured comparisons."""
+"""Monthly RV structure with measured areas and the agreed reconstruction rule."""
 import math
 
 import pandas as pd
 
 from app.vvod_operational import MONTHS_RU
+
+
+RECONSTRUCTION_LIVING_SHARE = 0.58
+# The user confirmed this reconstruction; K only says "Жилой комплекс".
+CONFIRMED_RECONSTRUCTION_PERMITS = frozenset({"77-01-012565-2025"})
 
 
 STRUCTURE_LABELS = (
@@ -18,6 +23,32 @@ STRUCTURE_LABELS = (
 )
 
 
+def _prepare_areas(rv):
+    prepared = rv.copy(deep=True)
+    prepared["Общая площадь_calculated"] = False
+    required = {"Общая площадь", "Жилая площадь", "Общая площадь_measured", "Жилая площадь_measured",
+                "Отрасли", "Группировка", "Подтип объекта", "category_моп"}
+    if not required <= set(prepared):
+        return prepared
+    normalized = lambda column: prepared.get(column, pd.Series("", index=prepared.index)).fillna("").astype(str).str.strip().str.casefold().str.replace("ё", "е")
+    general = pd.to_numeric(prepared["Общая площадь"], errors="coerce")
+    living = pd.to_numeric(prepared["Жилая площадь"], errors="coerce")
+    calculated = living / RECONSTRUCTION_LIVING_SHARE
+    reconstruction = (normalized("Наименование объекта").str.contains("реконструк", regex=False) |
+                      normalized("№ РВ").isin(CONFIRMED_RECONSTRUCTION_PERMITS))
+    mask = (reconstruction & normalized("Отрасли").eq("жилые объекты") & normalized("Группировка").eq("жилье") &
+            normalized("Подтип объекта").eq("мкд") & ~prepared["Общая площадь_measured"] &
+            (general.isna() | general.eq(0)) & prepared["Жилая площадь_measured"] &
+            living.gt(0) & calculated.lt(float("inf")))
+    if mask.any():
+        prepared["Общая площадь"] = general.astype(float)
+        prepared["category_моп"] = pd.to_numeric(prepared["category_моп"], errors="coerce").astype(float)
+        prepared.loc[mask, "Общая площадь"] = calculated[mask]
+        prepared.loc[mask, "category_моп"] = calculated[mask] - living[mask]
+        prepared.loc[mask, "Общая площадь_calculated"] = True
+    return prepared
+
+
 def _sum(frame, column, measured=(), *, known=False):
     if column not in frame:
         return None
@@ -27,7 +58,7 @@ def _sum(frame, column, measured=(), *, known=False):
     valid = values.notna() & values.map(lambda value: math.isfinite(value) if pd.notna(value) else False)
     for field in measured:
         if field + "_measured" in frame:
-            valid &= frame[field + "_measured"]
+            valid &= frame[field + "_measured"] | frame.get(field + "_calculated", False)
     if not valid.all() and not known or not valid.any():
         return None
     return float(values[valid].sum()) / 1_000_000
@@ -78,7 +109,7 @@ def _values(selected, *, known=False):
 
 
 def monthly_structure(rv, year, requested_month, source_date=None):
-    prepared = rv.copy()
+    prepared = _prepare_areas(rv)
     # These rows describe linear road commissioning, not unknown building area.
     industries = prepared["Отрасли"].fillna("").astype(str).str.strip().str.casefold()
     prepared = prepared.loc[~industries.eq("улицы и дороги")].copy()
@@ -114,9 +145,10 @@ def monthly_structure(rv, year, requested_month, source_date=None):
     current = period_values(chosen, year, annual=full_year)
     known = _values(chosen, known=True)
     monthly_frame = prepared[years.eq(year) & months.eq(actual_month)] if actual_month else prepared.iloc[:0]
-    previous_frame = prepared[years.eq(year - 1) & months.le(actual_month)] if actual_month else prepared.iloc[:0]
+    previous_mask = years.eq(year - 1) & months.le(actual_month) if actual_month else years.eq(-1)
     if full_year:
-        previous_frame = prepared[years.eq(year - 1)]
+        previous_mask = years.eq(year - 1)
+    previous_frame = prepared[previous_mask]
     monthly = period_values(monthly_frame, year) if actual_month else None
     analogous = period_values(previous_frame, year - 1, annual=full_year) if actual_month else None
     renovation = period_values(chosen, year, renovation=True, annual=full_year)
@@ -141,5 +173,19 @@ def monthly_structure(rv, year, requested_month, source_date=None):
                 row[key] = None
     if months[years.isin([year, year - 1])].isna().any():
         issues.append("Есть строки без месяца ввода; затронутые периодные суммы и сравнения не подтверждены.")
+    estimates = []
+    for index, item in prepared[prepared["Общая площадь_calculated"] & (chosen_mask | previous_mask)].iterrows():
+        text = lambda key: str(item[key]) if pd.notna(item.get(key)) else None
+        source_row = pd.to_numeric(item.get("source_row"), errors="coerce")
+        estimates.append({"year": int(years.loc[index]), "month": int(months.loc[index]) if pd.notna(months.loc[index]) else None,
+                          "period": "current" if years.loc[index] == year else "previous",
+                          "sourceFile": text("source_file"), "sourceSheet": text("source_sheet"),
+                          "sourceRow": int(source_row) if pd.notna(source_row) else None,
+                          "address": text("Адрес"), "permit": text("№ РВ"), "objectName": text("Наименование объекта"),
+                          "reconstructionBasis": "object_name" if "реконструк" in (text("Наименование объекта") or "").casefold() else "confirmed_permit",
+                          "sourceGeneralArea": None, "livingArea": float(item["Жилая площадь"]),
+                          "livingShare": RECONSTRUCTION_LIVING_SHARE,
+                          "generalArea": float(item["Общая площадь"]), "mopArea": float(item["category_моп"])})
     return {"year": year, "requestedMonth": requested_month, "actualMonth": actual_month,
-            "sourceDate": str(source_date) if source_date else None, "rows": rows, "issues": issues}
+            "sourceDate": str(source_date) if source_date else None, "rows": rows, "issues": issues,
+            "areaEstimates": estimates}

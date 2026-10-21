@@ -178,6 +178,43 @@ class HistoricalMonthTests(unittest.TestCase):
         self.assertEqual(self.options["currentYear"], 2026)
         self.assertEqual(self.options["years"], [2026, 2025])
 
+    def test_reconstruction_estimate_export_retains_source_area_and_coefficient(self):
+        rv = self.data["load_monitoring_2_0"]["rv"]
+        rv["Группировка"] = "Жилье"
+        rv["Жилая площадь"] = rv["category_жилое"]
+        rv["Общая площадь_measured"] = True
+        rv["Жилая площадь_measured"] = True
+        rv["source_sheet"] = "Реестр РВ"
+        rv["source_row"] = [10, 11, 4602]
+        rv["source_file"] = "monitoring.xlsx"
+        rv["Адрес"] = "Тестовый адрес"
+        rv["Наименование объекта"] = "Реконструкция жилого дома"
+        rv.loc[2, "Общая площадь"] = 0
+        rv.loc[2, "Общая площадь_measured"] = False
+        before = rv.copy(deep=True)
+        payload = build_report(self.data, self.options, month=8)
+        estimate = payload["structure"]["areaEstimates"][0]
+        payload.update({"version": "test", "generatedAt": "2026-09-28T00:00:00Z", "source": {}})
+        book = load_workbook(BytesIO(export_workbook(payload)))
+        tab = book["Area estimates"]
+        self.assertEqual(tab.max_row, 2)
+        self.assertEqual(tab["G2"].value, "Реестр РВ")
+        self.assertEqual(tab["H2"].value, 4602)
+        self.assertIsNone(tab["I2"].value)
+        self.assertEqual(tab["J2"].value, 500000)
+        self.assertEqual(tab["K2"].value, .58)
+        self.assertAlmostEqual(tab["L2"].value, 500000 / .58)
+        self.assertAlmostEqual(tab["M2"].value, 500000 / .58 - 500000)
+        self.assertEqual(tab["N2"].value, "Реконструкция жилого дома")
+        self.assertEqual(tab["O2"].value, "object_name")
+        self.assertAlmostEqual(estimate["generalArea"], tab["L2"].value)
+        self.assertTrue(any("0,58" in note for note in payload["notes"]))
+        # The approved rule is scoped to the monthly infographic, not legacy
+        # series or source records that the user has already accepted.
+        self.assertEqual(payload["tables"][0]["rows"][-1]["За выбранный период, млн м²"], .5)
+        self.assertEqual(payload["tree"], quarter_tree(rv, 2026, 1))
+        pd.testing.assert_frame_equal(rv, before)
+
     def test_december_history_and_partial_current_year_preserve_helpers_and_all_rows(self):
         vvod = self.data["load_vvod_static"]
         rv = self.data["load_monitoring_2_0"]["rv"]

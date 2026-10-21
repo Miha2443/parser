@@ -46,10 +46,11 @@ class MonthlyCommissioningStructureTests(unittest.TestCase):
         self.assertEqual(rows["social"]["value"], .06)
         self.assertEqual(rows["other"]["value"], 0)
 
-    def test_missing_general_does_not_destroy_known_month_or_invent_mop(self):
+    def test_missing_general_without_measured_living_remains_unknown(self):
         frame = self.rows()
         frame.loc[8, "Общая площадь"] = 0
         frame.loc[8, "Общая площадь_measured"] = False
+        frame.loc[8, "Жилая площадь_measured"] = False
         frame.loc[8, "category_моп"] = 0
         _, rows = self.report(frame)
         self.assertIsNone(rows["total"]["value"])
@@ -108,6 +109,7 @@ class MonthlyCommissioningStructureTests(unittest.TestCase):
         self.assertAlmostEqual(rows["mkd_total"]["knownSum"], .2)
         frame = self.rows()
         frame.loc[8, "Общая площадь_measured"] = False
+        frame.loc[8, "Жилая площадь_measured"] = False
         _, rows = self.report(frame)
         self.assertIsNone(rows["housing_objects"]["renovation"])
         self.assertAlmostEqual(rows["housing_objects"]["renovationKnownSum"], .1)
@@ -120,6 +122,100 @@ class MonthlyCommissioningStructureTests(unittest.TestCase):
         self.assertIsNone(rows["total"]["value"])
         self.assertIsNone(rows["total"]["knownSum"])
         self.assertIsNone(rows["total"]["yearChangePct"])
+
+    def test_missing_general_is_living_divided_by_58_percent_for_mkd_only(self):
+        frame = self.rows()
+        index = 12  # February 2026, so the calculation also restores monthly growth.
+        frame.loc[index, ["Общая площадь", "category_моп"]] = 0
+        frame.loc[index, "Общая площадь_measured"] = False
+        frame.loc[index, "Наименование объекта"] = "Реконструкция жилого дома"
+        frame.loc[index, "Адрес"] = "Тестовый адрес"
+        frame.loc[index, "source_file"] = "monitoring.xlsx"
+        frame.loc[index, "source_sheet"] = "Реестр РВ"
+        frame.loc[index, "source_row"] = 4602
+        before = frame.copy(deep=True)
+        report, rows = self.report(frame)
+        general = 60000 / .58
+        self.assertAlmostEqual(rows["total"]["value"], (.22e6 + general) / 1e6)
+        self.assertAlmostEqual(rows["total"]["monthChange"], (.06e6 + general) / 1e6)
+        self.assertEqual(rows["total"]["value"], rows["total"]["knownSum"])
+        self.assertAlmostEqual(rows["total"]["yearChangePct"], ((.22e6 + general) / .32e6 - 1) * 100)
+        self.assertAlmostEqual(rows["mop"]["value"], (.04e6 + general - 60000) / 1e6)
+        self.assertAlmostEqual(rows["mkd_total"]["value"], (.12e6 + general) / 1e6)
+        self.assertAlmostEqual(rows["total"]["renovation"], (.1e6 + general) / 1e6)
+        self.assertEqual(len(report["areaEstimates"]), 1)
+        estimate = report["areaEstimates"][0]
+        self.assertEqual((estimate["period"], estimate["year"], estimate["month"]), ("current", 2026, 2))
+        self.assertEqual((estimate["sourceSheet"], estimate["sourceRow"]), ("Реестр РВ", 4602))
+        self.assertIsNone(estimate["sourceGeneralArea"])
+        self.assertEqual(estimate["livingArea"], 60000)
+        self.assertEqual(estimate["livingShare"], .58)
+        self.assertEqual(estimate["reconstructionBasis"], "object_name")
+        self.assertAlmostEqual(estimate["generalArea"], general)
+        self.assertAlmostEqual(estimate["mopArea"], general - 60000)
+        self.assertEqual(rows["nonres_objects"]["value"], .1)
+        pd.testing.assert_frame_equal(frame, before)
+        self.assertEqual(report, self.report(frame)[0])
+
+    def test_same_rule_restores_previous_year_totals_but_does_not_infer_missing_living(self):
+        frame = self.rows()
+        frame.loc[[0, 8], ["Общая площадь", "category_моп"]] = 0
+        frame.loc[[0, 8], "Общая площадь_measured"] = False
+        frame.loc[[0, 8], "Наименование объекта"] = "РЕКОНСТРУКЦИЯ жилого дома"
+        report, rows = self.report(frame)
+        self.assertEqual(rows["total"]["yearChangePct"], 0)
+        self.assertEqual([row["period"] for row in report["areaEstimates"]], ["previous", "current"])
+        # Selecting January must not include February-only estimates.
+        frame.loc[4, ["Общая площадь", "category_моп"]] = 0
+        frame.loc[4, "Общая площадь_measured"] = False
+        january, _ = self.report(frame, month=1)
+        self.assertEqual(len(january["areaEstimates"]), 2)
+        frame.loc[4, "Общая площадь"] = 100000
+        frame.loc[4, "Общая площадь_measured"] = True
+        frame.loc[4, "Жилая площадь_measured"] = False
+        _, rows = self.report(frame)
+        self.assertEqual(rows["total"]["yearChangePct"], 0)
+        self.assertIsNone(rows["mkd_residential"]["yearChangePct"])
+        self.assertIsNone(rows["mop"]["yearChangePct"])
+
+    def test_reconstruction_rule_preserves_supplied_totals_and_excludes_other_scope(self):
+        for index, changed in (
+            (8, {"Общая площадь": 0, "Общая площадь_measured": True}),
+            (8, {"Общая площадь": -1, "Общая площадь_measured": False}),
+            (8, {"Общая площадь": 0, "Общая площадь_measured": False, "Подтип объекта": "ИЖС"}),
+            (8, {"Общая площадь": 0, "Общая площадь_measured": False, "Жилая площадь": 0}),
+            (8, {"Общая площадь": 0, "Общая площадь_measured": False, "Жилая площадь_measured": False}),
+            (8, {"Общая площадь": 0, "Общая площадь_measured": False, "Жилая площадь": float("inf")}),
+            (8, {"Общая площадь": 0, "Общая площадь_measured": False, "Наименование объекта": "Новое строительство МКД"}),
+            (9, {"Общая площадь": 0, "Общая площадь_measured": False, "Жилая площадь": 60000}),
+            (10, {"Общая площадь": 0, "Общая площадь_measured": False, "Жилая площадь": 60000}),
+        ):
+            with self.subTest(changed=changed):
+                frame = self.rows()
+                frame["Жилая площадь"] = frame["Жилая площадь"].astype(float)
+                frame["Наименование объекта"] = "Реконструкция здания"
+                for key, value in changed.items():
+                    frame.loc[index, key] = value
+                report, _ = self.report(frame)
+                self.assertEqual(report["areaEstimates"], [])
+        report, rows = self.report()
+        self.assertEqual(report["areaEstimates"], [])
+        self.assertAlmostEqual(rows["total"]["value"], .32)
+
+    def test_confirmed_reconstruction_without_word_in_k_uses_only_exact_permit(self):
+        frame = self.rows()
+        frame.loc[0, ["Общая площадь", "category_моп"]] = 0
+        frame.loc[0, "Общая площадь_measured"] = False
+        frame.loc[0, "Наименование объекта"] = "Жилой комплекс"
+        frame.loc[0, "№ РВ"] = "77-01-012565-2025"
+        report, rows = self.report(frame)
+        self.assertIsNotNone(rows["total"]["yearChangePct"])
+        self.assertEqual(report["areaEstimates"][0]["reconstructionBasis"], "confirmed_permit")
+        for permit in ("77-01-012565-2026", "", None):
+            frame.loc[0, "№ РВ"] = permit
+            report, rows = self.report(frame)
+            self.assertEqual(report["areaEstimates"], [])
+            self.assertIsNone(rows["total"]["yearChangePct"])
 
 
 if __name__ == "__main__":

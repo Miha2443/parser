@@ -53,6 +53,15 @@ def export_workbook(payload):
         for row in payload["structure"]["rows"]:
             tab.append([safe(row["label"]), row["value"], row["knownSum"], row["monthChange"], row["yearChangePct"],
                         row["renovation"], row["renovationKnownSum"], row["renovationMonthChange"], row["renovationYearChangePct"]])
+        if payload["structure"].get("areaEstimates"):
+            tab = book.create_sheet("Area estimates")
+            fields = ["period", "year", "month", "address", "permit", "sourceFile", "sourceSheet", "sourceRow",
+                      "sourceGeneralArea", "livingArea", "livingShare", "generalArea", "mopArea", "objectName", "reconstructionBasis"]
+            tab.append(["Period", "Year", "Month", "Address", "RV permit", "Source file", "Source sheet", "Source row",
+                        "Original general area, m2", "Living area, m2", "Living / general share",
+                        "Calculated general area, m2", "Calculated MOP area, m2", "Source object name (K)", "Reconstruction basis"])
+            for row in payload["structure"]["areaEstimates"]:
+                tab.append([safe(row[field]) for field in fields])
     tab = book.create_sheet("Forecasts")
     tab.append(["Indicator", "Year", "Forecast, million m2"])
     for table in payload["tables"]:

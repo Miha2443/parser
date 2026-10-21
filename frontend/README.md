@@ -551,6 +551,29 @@ room-strip tooltips. It defaults to port 5180; set `DASHBOARD_TEST_URL` to chang
 the URL. Screenshots and results are in `%TEMP%/dashboard-design-polish`.
 This batch passed 89 frontend unit tests and 105 backend tests.
 
+## Mortgage Lending
+
+`/economics/mortgage` is linked from the Central Bank group, with DOM.RF clearly
+identified as its source. Region is global; annual accumulation, monthly market
+volume/count, rates, and loan-parameter dates have independent controls. The two
+annual charts distinguish the selected interval from confirmed full-year values;
+annual YoY is a dashed percentage line, not an added part of a volume column.
+The latest partial year is explicitly labelled with its observed interval.
+
+Monthly primary/secondary charts and all three rate lines use the complete
+available monthly history without dense point labels. Missing observations remain
+gaps. Rates and loan parameters are source observations, not unweighted averages.
+Chart data starts collapsed; version-pinned Excel exports all saved observations
+for Russia and Moscow. The UI never falls back to demonstration mortgage data.
+
+`node src/mortgage.browser.cjs` runs a private API and Vite instance with temporary,
+synthetic fixtures, checks five charts at 320/360/768/1280/1920 px, independent
+filters, hover, Excel and source-loss recovery, then stops its own servers. Set
+`DASHBOARD_TEST_PYTHON` to the Python executable and provide Playwright through
+the normal test environment. These screenshots are fixture QA, not source data.
+Live mortgage collection remains unverified while DOM.RF requires access
+verification on the development machine; see the root README.
+
 ## Brand Assets
 
 `public/brand-moscow.svg`, `brand-gk.svg` and `brand-dgp.svg` reuse the existing

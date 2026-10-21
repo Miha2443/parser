@@ -50,6 +50,8 @@ def create_app(service=None, apartments_service=None, sales_service=None):
 
     from backend.linear_routes import create_router as create_linear_router
     app.include_router(create_linear_router(DataContext.from_environment(), call))
+    from backend.mortgage_routes import create_router as create_mortgage_router
+    app.include_router(create_mortgage_router(context, call))
     from backend.operational_routes import create_router as create_operational_router
     app.include_router(create_operational_router(DataContext.from_environment(), call))
     from backend.construction_routes import create_router as create_construction_router

@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 test -f .env || { echo '.env is required' >&2; exit 1; }
 mode="${1:-update}"
-[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
-  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-current|--construction-history|--upgrade-code|--recover]' >&2; exit 1;
+[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --mortgage || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
+  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-current|--construction-history|--mortgage|--upgrade-code|--recover]' >&2; exit 1;
 }
 mkdir -p state logs runtime/releases
 exec 9>state/.docker-update.lock
@@ -208,6 +208,18 @@ elif [[ "$mode" == --construction-current ]]; then
   run_updater() {
     event construction_current 'collect ordinary current pages only; history is independent'
     docker compose run --rm --no-deps -T --interactive=false -e CONSTRUCTION_HISTORY_REFRESH=0 updater python -u scripts/update_realty.py construction --retries 0 --collect-only --require-collected </dev/null || return
+    control publish
+  }
+elif [[ "$mode" == --mortgage ]]; then
+  run_updater() {
+    event mortgage 'collect Russia and Moscow; first run all observed years, later refresh newest year'
+    mortgage_status=0
+    docker compose run --rm --no-deps -T --interactive=false updater python -u -m pipeline.downloaders.nashdom_mortgage </dev/null || mortgage_status=$?
+    case "$mortgage_status" in
+      0) ;;
+      2) history_partial=1; event mortgage_partial 'publish newly verified observations; history is incomplete' ;;
+      *) return "$mortgage_status" ;;
+    esac
     control publish
   }
 elif [[ "$mode" == --construction-history ]]; then

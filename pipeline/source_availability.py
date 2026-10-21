@@ -310,6 +310,13 @@ def verify_inventory(root, publication):
             file = root / item["path"]
             if file.stat().st_mtime_ns != item["mtime_ns"] or file_sha256(file) != item["sha256"]:
                 raise RuntimeError("Publication source evidence changed: " + alias)
+    supplemental = publication.get("supplemental_sources", {})
+    if not isinstance(supplemental, dict):
+        raise RuntimeError("Invalid supplemental source declaration")
+    mortgage = supplemental.get("mortgage")
+    if mortgage is not None:
+        from docker.mortgage import verify_snapshot
+        verify_snapshot(root, mortgage)
 
 
 def verify_manifest(root):
@@ -357,6 +364,16 @@ def manifest_signature(root):
         files.add(root / info["file"])
     for row in publication.get("sources", {}).values():
         files.update(root / item["path"] for item in row.get("inventory", []))
+    supplemental = publication.get("supplemental_sources", {})
+    if not isinstance(supplemental, dict):
+        raise RuntimeError("Invalid supplemental source declaration")
+    mortgage = supplemental.get("mortgage")
+    if mortgage is not None and not isinstance(mortgage, dict):
+        raise RuntimeError("Invalid mortgage source declaration")
+    from docker.mortgage import RELATIVE as mortgage_relative
+    mortgage_file = root / mortgage_relative
+    if mortgage_file.exists() or mortgage is not None and mortgage.get("state") != "unavailable":
+        files.add(mortgage_file)
     for identifier in indicator_ids({alias for alias, row in publication.get("sources", {}).items() if row["state"] != "unavailable"}):
         path = root / "data/processed" / (identifier + ".pkl")
         if path.exists():

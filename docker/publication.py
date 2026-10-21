@@ -22,7 +22,8 @@ TREES = ("downloads", "data/processed", "data/marts", "data/derived",
          "data/raw/realty", "logs")
 from docker.coverage import SOURCES, OPTIONAL_SOURCES, REQUIRED_SOURCES
 EXCLUDED = {"_archive", "archive", "archives", "__pycache__", "temp", "tmp",
-            ".fedstat_resume", ".construction_history", ".construction_history.lock", "_debug"}
+            ".fedstat_resume", ".construction_history", ".construction_history.lock",
+            ".mortgage_history", ".mortgage_history.lock", "_debug"}
 
 
 @contextmanager
@@ -398,6 +399,8 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
             # An offline import can contain newer downloads than its pickles.
             # Repair only the private candidate, then keep the normal proofs.
             build_candidate_processed(candidate, {"fedstat", "rosstat"})
+        from docker.mortgage import select_source as select_mortgage
+        metadata["supplemental_sources"] = {"mortgage": select_mortgage(candidate, runtime / previous if previous else None)}
         build_candidate(candidate)
         metadata["full_marts_built"] = True
         if selection is not None:
@@ -511,6 +514,8 @@ def run_action(action, root, runtime):
                                     cwd=root, check=False)
             status = read_status(root)
             require_success(status, before, started, expected_sources=expected, returncode=result.returncode)
+            from docker.mortgage import collect as collect_mortgage
+            collect_mortgage(root)
             publish(root, runtime, run_status=status, collector_returncode=result.returncode, baseline=baseline)
 
 

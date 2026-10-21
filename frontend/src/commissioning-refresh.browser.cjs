@@ -21,7 +21,11 @@ async function main() {
       if (route.includes('linear')) await page.locator('.linear-kpi').first().waitFor({ timeout: 180000 });
       await page.waitForTimeout(600);
     };
-    await ready('/commissioning/operational');
+    await ready('/commissioning/operational?year=2021');
+    const structureYear = page.getByLabel('Год структуры ввода', { exact: true });
+    assert.deepEqual(await structureYear.locator('option').evaluateAll(options => options.map(option => option.value)), ['2026', '2025', '2024', '2023']);
+    assert.equal(await structureYear.inputValue(), '2026');
+    await page.waitForURL(url => url.searchParams.get('year') === '2026');
     assert.equal(await page.locator('main > section').first().locator('h2').innerText(), 'Структура ввода');
     assert.equal(await page.locator('.operational-series .chart-legend').getByRole('button', { name: 'Годовой прогноз', exact: true }).count(), 2);
     assert.equal(await page.locator('.operational-series .chart-legend').getByRole('button', { name: 'Годовые значения', exact: true }).count(), 2);

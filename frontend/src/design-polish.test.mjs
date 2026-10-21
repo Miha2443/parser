@@ -1,15 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { operationalScopeParams } from './operationalViewData.ts';
+import { operationalScopeParams, operationalStructureYears } from './operationalViewData.ts';
 import { salesChartOption, salesChartRows } from './salesData.ts';
 import { economicsChartOption } from './economicsData.ts';
 
 test('each operational visualization keeps only its own filters and supports legacy links', () => {
-  const params = new URLSearchParams('housingMonth=12&nonresMonth=3&nonresExcludeMkd=true&year=2021&quarter=2&cumulative=true');
+  const params = new URLSearchParams('housingMonth=12&nonresMonth=3&nonresExcludeMkd=true&year=2024&quarter=2&cumulative=true');
   assert.equal(operationalScopeParams(params, 'housing').toString(), 'month=12');
   assert.equal(operationalScopeParams(params, 'nonres').toString(), 'month=3&exclude_mkd=true');
-  assert.equal(operationalScopeParams(params, 'structure').toString(), 'year=2021&quarter=2&cumulative=true&month=12');
+  assert.equal(operationalScopeParams(params, 'structure').toString(), 'year=2024&quarter=2&cumulative=true&month=12');
   assert.equal(operationalScopeParams(new URLSearchParams('month=6&exclude_mkd=true'), 'nonres').toString(), 'month=6&exclude_mkd=true');
+});
+test('monthly structure is limited to the approved 2023–2026 years, including saved links', () => {
+  assert.deepEqual(operationalStructureYears, [2026, 2025, 2024, 2023]);
+  for (const year of operationalStructureYears) {
+    assert.equal(operationalScopeParams(new URLSearchParams(`year=${year}`), 'structure').get('year'), String(year));
+  }
+  for (const year of ['2022', '2027', '2023.5', 'invalid', '']) {
+    const params = new URLSearchParams(`year=${year}&structureMonth=4&housingMonth=9`);
+    assert.equal(operationalScopeParams(params, 'structure').toString(), 'month=4');
+    assert.equal(operationalScopeParams(params, 'housing').toString(), 'month=9');
+  }
 });
 test('forecast omits only completely missing years, sorts years naturally and retains source CSV', () => {
   const chart = { id: 'forecast', kind: 'bar', unit: '', series: [

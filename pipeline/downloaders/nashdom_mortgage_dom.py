@@ -119,18 +119,44 @@ def _control(node, *, button: bool = False, active: bool = False) -> dict:
     return result
 
 
+def _hidden(node):
+    while isinstance(node, Tag):
+        if node.has_attr("hidden") or node.get("data-mortgage-visible") == "false":
+            return True
+        styles = {}
+        for declaration in str(node.get("style", "")).split(";"):
+            key, separator, value = declaration.partition(":")
+            if separator:
+                styles[key.strip().casefold()] = value.replace("!important", "").strip().casefold()
+        if (styles.get("display") == "none" or styles.get("visibility") in {"hidden", "collapse"}
+                or styles.get("opacity") in {"0", "0.0"}):
+            return True
+        node = node.parent
+    return False
+
+
 def _soup(html: str):
     if not isinstance(html, str) or not html.strip():
         raise MortgageDOMError("empty mortgage page HTML")
     soup = BeautifulSoup(html, "html.parser")
     title = _text(soup.title).casefold()
-    visible = _text(soup.body or soup).casefold()
-    if (soup.select_one("js-challenge-loader, #id_captcha_frame_div, #captcha_root, #id_captcha_loaded")
+    visible = " ".join(" ".join(str(text).split()) for text in (soup.body or soup).strings
+                       if text.parent.name not in {"script", "style", "noscript"}
+                       and not _hidden(text.parent)).casefold()
+    roots = soup.select("#id_captcha_frame_div, #captcha_root, #id_captcha_loaded")
+    widgets = soup.select('iframe[src*="captcha" i], input[name*="captcha" i]')
+    for root in roots:
+        if root.name in {"iframe", "canvas", "input", "button", "img"}:
+            widgets.append(root)
+        widgets.extend(root.select("iframe, canvas, input, button, img"))
+    if (any(not _hidden(widget) for widget in widgets)
             or "доступ заблокирован" in title
             or "access denied" in title
             or "подтвердите, что вы не робот" in visible
             or "запросы с вашего устройства похожи на автоматические" in visible):
         raise AccessVerificationRequired("source requires access verification")
+    if any(not _hidden(loader) for loader in soup.select("js-challenge-loader")):
+        raise MortgageDOMError("source page is still loading")
     heading = _one(soup, "h1.head-title")
     if _text(heading) != "Ипотечное кредитование":
         raise MortgageDOMError("not the supported mortgage page")

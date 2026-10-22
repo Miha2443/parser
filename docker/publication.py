@@ -510,12 +510,13 @@ def run_action(action, root, runtime):
         started = time.time()
         expected = requested_sources()
         with bootstrap_baseline(root, runtime) as baseline:
+            # A failed core provider must not skip the independent daily check.
+            from docker.mortgage import collect as collect_mortgage
+            collect_mortgage(root)
             result = subprocess.run([sys.executable, "-u", "scripts/update_realty.py", *sorted(expected), "--retries", "0", "--collect-only"],
                                     cwd=root, check=False)
             status = read_status(root)
             require_success(status, before, started, expected_sources=expected, returncode=result.returncode)
-            from docker.mortgage import collect as collect_mortgage
-            collect_mortgage(root)
             publish(root, runtime, run_status=status, collector_returncode=result.returncode, baseline=baseline)
 
 

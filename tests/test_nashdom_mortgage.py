@@ -316,7 +316,8 @@ class BrowserWaitTests(unittest.TestCase):
         self.client.responses = Mock()
         self.client.responses.month.side_effect = lambda region, period, **kwargs: normalize_month(
             region, period, exchanges(region, period))
-        self.client._access_check = Mock()
+        self.client._access_check = Mock(return_value={"ready": True})
+        self.client._diagnostic = Mock()
         self.client._html = Mock(side_effect=lambda: self.html)
         self.client._network = Mock(return_value={"pending": 0, "idle": 800,
             "finished": [{"url": item["url"], "status": 200} for item in exchanges()]})
@@ -343,6 +344,17 @@ class BrowserWaitTests(unittest.TestCase):
         self.assertEqual(item["rawMetrics"]["renderedPage"]["current"]["all"]["count"]["value"], 48116)
         self.assertTrue(item["selectionEvidence"]["responseCapture"])
         self.assertEqual(self.client.responses.poll.call_count, 3)
+
+    def test_hidden_service_nodes_do_not_override_ready_browser_or_exact_responses(self):
+        from bs4 import BeautifulSoup
+        from tests.test_mortgage_dom import monthly as month_page
+        document = month_page()
+        document.body.append(BeautifulSoup(
+            '<div id="captcha_root" hidden><button>Verify</button></div>'
+            '<js-challenge-loader data-mortgage-visible="false"></js-challenge-loader>', "html.parser"))
+        self.html = str(document)
+        _, item = self.client._wait(region="msk", period="2026-08", basis="month")
+        self.assertEqual(item["metrics"]["all"]["volumeRub"], 392274000000)
 
     def test_initial_month_without_explicit_basis_still_uses_exact_response(self):
         self.client._interaction = 0

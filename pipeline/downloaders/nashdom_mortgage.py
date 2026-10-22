@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 
 from pipeline.mortgage_history import (
     METRICS, SOURCE_URL, HistoryValidationError, load_checkpoint, load_published,
@@ -21,6 +22,7 @@ from pipeline.mortgage_history import (
 )
 from pipeline.downloaders.nashdom_mortgage_api import ENDPOINTS, normalize_month
 from pipeline.downloaders.nashdom_mortgage_network import MortgageResponseCapture, ResponseCaptureError
+from pipeline.downloaders.nashdom_mortgage_access import VISIBILITY_SCRIPT, read_access_state
 
 
 REGION_VALUES = {"rf": "1", "msk": "1762"}
@@ -30,6 +32,10 @@ LEGACY_COLLECTOR_VERSION = "mortgage-dom-month-v1"
 
 
 class AccessVerificationRequired(RuntimeError):
+    pass
+
+
+class PageNotReady(RuntimeError):
     pass
 
 
@@ -114,22 +120,37 @@ class BrowserClient:
         self.driver = None
         self.responses = None
         self._interaction = 0
+        self._last_access_state = {}
+        self._navigation_timed_out = False
 
     def __enter__(self):
+        from selenium.common.exceptions import TimeoutException
         from pipeline.selenium_utils import create_chrome
         from pipeline.downloaders.nashdom_operational_browser import TRACK_REQUESTS
+        self._interaction = 0
+        self._last_access_state = {}
+        self._navigation_timed_out = False
+        stage = "navigation"
         try:
             self.driver = create_chrome(headless=os.environ.get("HEADLESS", "1") != "0",
                                         performance_logs=True)
             self.driver.set_page_load_timeout(self.timeout)
             self.responses = MortgageResponseCapture(self.driver)
             self.responses.enable()
-            self.driver.get(SOURCE_URL)
-            self._access_check()
+            try:
+                self.driver.get(SOURCE_URL)
+            except TimeoutException:
+                # Analytics/assets can outlive page load; let the page finish normally.
+                self._navigation_timed_out = True
+            stage = "document"
+            self._wait_for_page()
             self.driver.execute_script(TRACK_REQUESTS)
+            stage = "observation"
             self._wait()
             return self
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception) and stage != "observation":
+                self._diagnostic(stage, exc)
             self.__exit__()
             raise
 
@@ -140,23 +161,94 @@ class BrowserClient:
             driver.quit()
 
     def _access_check(self):
-        state = self.driver.execute_script("""
-          return {title:document.title,
-            challenge:!!document.querySelector('#captcha_root,#id_captcha_loaded'),
-            text:document.body?.innerText?.slice(0,1800)||''};
-        """)
-        if (state.get("challenge") or any(text in (state.get("title", "") + state.get("text", "")).lower()
-                for text in ("доступ заблокирован", "access denied", "подтвердите, что вы не робот"))):
-            raise AccessVerificationRequired("DOM.RF requires manual access verification; previous data retained")
+        state = read_access_state(self.driver)
+        self._last_access_state = state
+        if state["captchaVisible"]:
+            raise AccessVerificationRequired("DOM.RF shows a visible CAPTCHA; manual verification required; previous data retained")
+        if state["denied"]:
+            raise AccessVerificationRequired("DOM.RF shows an access-denied page; previous data retained")
+        return state
+
+    def _wait_for_page(self):
+        from selenium.common.exceptions import JavascriptException, TimeoutException
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        def ready(driver):
+            try:
+                state = self._access_check()
+            except JavascriptException as exc:
+                if any(marker in str(exc).lower() for marker in (
+                        "execution context was destroyed", "cannot find context", "document unloaded")):
+                    return False
+                raise
+            self.responses.poll()
+            return state if state["ready"] else False
+
+        try:
+            return WebDriverWait(self.driver, self.timeout, poll_frequency=0.3).until(ready)
+        except TimeoutException as exc:
+            raise PageNotReady("Mortgage page did not become ready; this does not establish a CAPTCHA; previous data retained") from exc
+
+    def _diagnostic(self, stage, error):
+        """Private bounded page evidence, never copied into published snapshots."""
+        if self.driver is None:
+            return
+        directory = self.raw_dir / ".mortgage_history" / "diagnostics"
+        name = "page_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "_" + uuid.uuid4().hex
+        metadata = {"at": utc_now(), "stage": stage, "sourceUrl": SOURCE_URL,
+                    "errorClass": type(error).__name__,
+                    "state": {key: value for key, value in self._last_access_state.items() if key != "title"},
+                    "navigationTimedOut": self._navigation_timed_out}
+        screenshot_path = directory / (name + ".png")
+        path = directory / (name + ".json")
+        metadata_complete = False
+        try:
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                screenshot = self.driver.get_screenshot_as_png()
+                if isinstance(screenshot, bytes) and 0 < len(screenshot) <= 5 * 1024 * 1024:
+                    with screenshot_path.open("xb") as stream:
+                        os.chmod(stream.name, 0o600)
+                        stream.write(screenshot)
+                    metadata["screenshot"] = name + ".png"
+            except Exception as exc:
+                metadata["screenshotErrorClass"] = type(exc).__name__
+            with path.open("x", encoding="utf-8") as stream:
+                os.chmod(stream.name, 0o600)
+                json.dump(metadata, stream, ensure_ascii=False, allow_nan=False, indent=2)
+            metadata_complete = True
+            older = sorted((item for item in directory.glob("page_*.json") if item != path),
+                           key=lambda item: item.stat().st_mtime_ns, reverse=True)
+            for old in older[4:]:
+                old.unlink(missing_ok=True)
+                old.with_suffix(".png").unlink(missing_ok=True)
+            for orphan in directory.glob("page_*.png"):
+                if not orphan.with_suffix(".json").exists():
+                    orphan.unlink(missing_ok=True)
+            print(f"Mortgage browser diagnostic: {path}", file=sys.stderr, flush=True)
+        except OSError as exc:
+            if not metadata_complete:
+                for incomplete in (path, screenshot_path):
+                    try:
+                        incomplete.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            print(f"Mortgage browser diagnostic unavailable: {type(exc).__name__}", file=sys.stderr, flush=True)
 
     def _html(self):
         # Serialize actual checked properties; React need not update attributes.
-        return self.driver.execute_script("""
+        return self.driver.execute_script(VISIBILITY_SCRIPT + """
           const clone=document.documentElement.cloneNode(true);
           const live=document.querySelectorAll('input');
           clone.querySelectorAll('input').forEach((e,i)=>{
             if(live[i].checked) e.setAttribute('checked',''); else e.removeAttribute('checked');
           });
+          const markers='js-challenge-loader,#captcha_root,#id_captcha_loaded,#id_captcha_frame_div,'
+            + '#captcha_root *,#id_captcha_loaded *,#id_captcha_frame_div *,'
+            + 'iframe[src*="captcha" i],input[name*="captcha" i]';
+          const copied=clone.querySelectorAll(markers);
+          document.querySelectorAll(markers).forEach((element,index)=>
+            copied[index].setAttribute('data-mortgage-visible',String(visible(element))));
           return clone.outerHTML;
         """)
 
@@ -186,8 +278,11 @@ class BrowserClient:
 
         def ready(driver):
             nonlocal previous, stable
-            self._access_check()
+            state = self._access_check()
             self.responses.poll()
+            if not state["ready"]:
+                stable = 0
+                return False
             network = self._network()
             if (not network or network["pending"] or network["idle"] < 500
                     or requested and not network["finished"]):
@@ -234,8 +329,12 @@ class BrowserClient:
                 "responseCapture": meta["basis"] == "month"}
             return meta, observation
 
-        return WebDriverWait(self.driver, self.timeout, poll_frequency=0.3).until(
-            ready, message="Mortgage page did not establish stable scope-matched exact monthly responses")
+        try:
+            return WebDriverWait(self.driver, self.timeout, poll_frequency=0.3).until(
+                ready, message="Mortgage page did not establish stable scope-matched exact monthly responses")
+        except Exception as exc:
+            self._diagnostic("observation", exc)
+            raise
 
     def _choose(self, selector):
         from selenium.webdriver.common.by import By

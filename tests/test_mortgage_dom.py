@@ -376,8 +376,7 @@ class MortgageDOMTests(unittest.TestCase):
         cases = [
             '<html><head><title>Доступ заблокирован [403]</title></head><body></body></html>',
             '<html><head><title>Access denied</title></head><body></body></html>',
-            "<html><body><js-challenge-loader></js-challenge-loader></body></html>",
-            '<html><body><div id="id_captcha_frame_div"></div></body></html>',
+            '<html><body><div id="id_captcha_frame_div"><button>Verify</button></div></body></html>',
             "<html><body>Подтвердите, что вы не робот</body></html>",
         ]
         for html in cases:
@@ -387,6 +386,24 @@ class MortgageDOMTests(unittest.TestCase):
         document.body.append(BeautifulSoup("<p>Подтвердите, что вы не робот</p>", "html.parser"))
         with self.assertRaises(AccessVerificationRequired):
             parsed(document)
+
+    def test_hidden_or_empty_service_nodes_do_not_reject_valid_monthly_data(self):
+        for markup in ('<div id="captcha_root" hidden><button>Подтвердите, что вы не робот</button></div>',
+                       '<div id="id_captcha_loaded" style="display:none"><canvas></canvas></div>',
+                       '<div id="id_captcha_frame_div"></div>',
+                       '<js-challenge-loader data-mortgage-visible="false"></js-challenge-loader>',
+                       '<iframe src="/captcha" data-mortgage-visible="false"></iframe>'):
+            document = monthly()
+            document.body.append(BeautifulSoup(markup, "html.parser"))
+            with self.subTest(markup=markup):
+                self.assertEqual(parsed(document)["period"], "2026-08")
+
+    def test_visible_loader_is_not_misreported_as_a_human_captcha(self):
+        document = monthly()
+        document.body.append(BeautifulSoup('<js-challenge-loader></js-challenge-loader>', "html.parser"))
+        with self.assertRaisesRegex(MortgageDOMError, "still loading") as caught:
+            parsed(document)
+        self.assertNotIsInstance(caught.exception, AccessVerificationRequired)
 
     def test_unrelated_or_incomplete_html_is_not_a_default_mortgage_page(self):
         for html in ("", "not html", "<html><body>48 116 шт.</body></html>",

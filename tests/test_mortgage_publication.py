@@ -1,5 +1,6 @@
 """Mortgage onboarding must not invalidate the existing eight-source release."""
 import json
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -9,6 +10,7 @@ from unittest.mock import patch
 from backend.tests.test_mortgage import observation, source
 from docker.mortgage import RELATIVE, collect, select_source, verify_snapshot
 from docker.publication import copy_tree
+from docker import publication
 
 
 class MortgagePublicationTests(unittest.TestCase):
@@ -27,6 +29,37 @@ class MortgagePublicationTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         return path
+
+    def daily_update(self, *, core_failure=False, mortgage_status="success"):
+        for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
+            (self.root / name).write_bytes(b"isolated test source fingerprint")
+        events = []
+        old, new = {"run_id": "old"}, {"run_id": "new"}
+        with patch.object(publication, "seed"), \
+                patch.object(publication, "read_status", side_effect=[old, new]), \
+                patch.object(publication, "requested_sources", return_value=publication.SOURCES), \
+                patch.object(publication, "bootstrap_baseline", return_value=nullcontext("baseline")), \
+                patch("docker.mortgage.collect", side_effect=lambda root: events.append("mortgage") or {"status": mortgage_status}) as mortgage, \
+                patch.object(publication.subprocess, "run", side_effect=lambda *args, **kwargs:
+                             events.append("core") or subprocess.CompletedProcess(args[0], int(core_failure))), \
+                patch.object(publication, "require_success", side_effect=RuntimeError("core failed") if core_failure else None), \
+                patch.object(publication, "publish") as publish:
+            if core_failure:
+                with self.assertRaisesRegex(RuntimeError, "core failed"):
+                    publication.run_action("update", self.root, self.root / "runtime")
+                publish.assert_not_called()
+            else:
+                publication.run_action("update", self.root, self.root / "runtime")
+                publish.assert_called_once_with(self.root, self.root / "runtime", run_status=new,
+                                               collector_returncode=0, baseline="baseline")
+            mortgage.assert_called_once_with(self.root)
+        self.assertEqual(events, ["mortgage", "core"])
+
+    def test_daily_mortgage_check_runs_even_if_a_core_provider_fails(self):
+        self.daily_update(core_failure=True)
+
+    def test_daily_mortgage_failure_does_not_block_healthy_core_publication(self):
+        self.daily_update(mortgage_status="failed")
 
     def test_first_release_without_mortgage_is_compatible(self):
         result = select_source(self.candidate, self.previous)

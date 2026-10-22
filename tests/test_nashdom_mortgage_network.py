@@ -194,11 +194,13 @@ class CaptureTests(unittest.TestCase):
     def test_initial_navigation_capture_enabled_before_get(self):
         from pipeline.downloaders.nashdom_mortgage import BrowserClient, SOURCE_URL
         driver = Mock()
+        driver.get_log.return_value = []
         order = []
         driver.execute_cdp_cmd.side_effect = lambda name, params: order.append(name)
         driver.get.side_effect = lambda url: order.append(("get", url))
         with patch("pipeline.selenium_utils.create_chrome", return_value=driver) as factory, \
-                patch.object(BrowserClient, "_access_check"), patch.object(BrowserClient, "_wait"):
+                patch.object(BrowserClient, "_access_check", return_value={"ready": True}), \
+                patch.object(BrowserClient, "_wait"):
             with BrowserClient("unused") as client:
                 self.assertIsInstance(client.responses, MortgageResponseCapture)
             self.assertEqual(order, ["Network.enable", ("get", SOURCE_URL)])
@@ -210,7 +212,8 @@ class CaptureTests(unittest.TestCase):
         from pipeline.downloaders.nashdom_mortgage import BrowserClient
         driver = Mock()
         driver.execute_cdp_cmd.side_effect = RuntimeError("performance logs unavailable")
-        with patch("pipeline.selenium_utils.create_chrome", return_value=driver):
+        with patch("pipeline.selenium_utils.create_chrome", return_value=driver), \
+                patch.object(BrowserClient, "_diagnostic"):
             with self.assertRaises(RuntimeError):
                 with BrowserClient("unused"):
                     pass

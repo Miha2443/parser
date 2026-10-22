@@ -499,13 +499,20 @@ null и масштабы. Отдельно проверяет сигнатуры
 
 Проверки: `python -m unittest backend.tests.test_mortgage
 tests.test_mortgage_history tests.test_mortgage_publication
-tests.test_nashdom_mortgage tests.test_nashdom_mortgage_api
+tests.test_nashdom_mortgage tests.test_nashdom_mortgage_access tests.test_nashdom_mortgage_api
 tests.test_nashdom_mortgage_network tests.test_mortgage_capture_import
 tests.test_mortgage_dom -v`. Проверки DOM/сетевого наблюдателя используют
 обезличенные примеры. 22.10.2026 отдельно импортирована реальная помесячная история
 2009-01–2026-08 для РФ и Москвы, проверены API и Excel. Это не подтверждение
 доступа Selenium с рабочего сервера. `scripts.import_mortgage_capture` позволяет
 перенести публичные ответы без cookies; старые и неполные замены отклоняются.
+Готовность браузерной страницы теперь проверяется отдельно от видимой капчи;
+скрытые контейнеры и загрузчик не объявляются ручной проверкой. `PageNotReady`
+отличается от `AccessVerificationRequired`, приватные JSON/PNG ограничены пятью
+парами и исключены из публикации. Локальные Chromium-фикстуры:
+`PARSER_BROWSER_TESTS=1 python -m unittest tests.test_mortgage_access_browser -v`.
+Реальный отдельный запуск 22.10.2026 получил подтверждённый скриншотом отказ
+доступа, не успешный автоматический обход.
 
 ## Карта И Сервис
 

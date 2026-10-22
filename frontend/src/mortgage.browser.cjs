@@ -78,6 +78,24 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(web + '/economics/mortgage');
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
+    const terms = page.locator('.mortgage-terms');
+    const termPeriods = sourceDocument.records.filter(row => row.region === 'msk' && row.segment === 'all'
+      && (row.termMonths !== null || row.averageAmountRub !== null)).map(row => row.period).sort();
+    const latestTermPeriod = termPeriods.at(-1);
+    const format = value => value === null ? '—' : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value);
+    async function checkTerms(period) {
+      const expected = sourceDocument.records.find(row => row.region === 'msk' && row.segment === 'all' && row.period === period);
+      assert.deepEqual(await terms.locator('dt').allTextContents(), ['Средний срок кредита', 'Средняя сумма кредита']);
+      assert.equal(await terms.locator('dd').count(), 2);
+      assert.equal(await terms.locator('h4').count(), 0);
+      assert.deepEqual(await terms.locator('dd').evaluateAll(nodes => nodes.map(node => node.firstChild.textContent)),
+        [format(expected.termMonths), format(expected.averageAmountRub === null ? null : expected.averageAmountRub / 1e6)]);
+    }
+    assert.equal(await page.getByLabel('Месяц параметров кредита', { exact: true }).inputValue(), latestTermPeriod);
+    await checkTerms(latestTermPeriod);
+    await page.getByLabel('Месяц параметров кредита', { exact: true }).selectOption(termPeriods[0]);
+    await checkTerms(termPeriods[0]);
+    await page.getByLabel('Месяц параметров кредита', { exact: true }).selectOption(latestTermPeriod);
     assert.equal(await page.locator('#mortgage-page .chart-canvas').count(), 5);
     assert.equal(await page.getByLabel('Регион ипотечного кредитования', { exact: true }).inputValue(), 'msk');
     assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), firstMarketPeriod);
@@ -95,7 +113,8 @@ async function main() {
       await pause(350);
       const state = await page.evaluate(() => ({
         overflow: document.documentElement.scrollWidth > innerWidth + 1,
-        clipped: [...document.querySelectorAll('.mortgage-page h1, .mortgage-page h2, .mortgage-page select, .mortgage-term-segment dd')].filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.textContent),
+        clipped: [...document.querySelectorAll('.mortgage-page h1, .mortgage-page h2, .mortgage-page select, .mortgage-term-stat dt, .mortgage-term-stat dd')].filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.textContent),
+        termFontSizes: [...document.querySelectorAll('.mortgage-term-stat dd')].map(el => parseFloat(getComputedStyle(el).fontSize)),
         charts: [...document.querySelectorAll('#mortgage-page .chart-canvas')].map(el => {
           const rect = el.getBoundingClientRect(), canvas = el.querySelector('canvas'), colors = new Set();
           if (canvas?.width && canvas.height) {
@@ -109,11 +128,16 @@ async function main() {
       }));
       assert.equal(state.overflow, false, `${width}: page overflow`);
       assert.deepEqual(state.clipped, [], `${width}: clipped text`);
+      assert.deepEqual(state.termFontSizes, [48, 48], `${width}: prominent overall credit parameters`);
+      await checkTerms(latestTermPeriod);
       assert.equal(state.charts.length, 5);
       for (const chart of state.charts) { assert.ok(chart.colors > 3); assert.equal(chart.outside, false); assert.equal(chart.scroll, false); }
       assert.equal(await page.locator('#mortgage-page details[open], #mortgage-page .chart-data-panel').count(), 0);
       layouts.push(width);
-      if ([360, 1280, 1920].includes(width)) await page.screenshot({ path: path.join(output, `${outputPrefix}-${width}.png`), fullPage: true });
+      if ([360, 1280, 1920].includes(width)) {
+        await page.screenshot({ path: path.join(output, `${outputPrefix}-${width}.png`), fullPage: true });
+        await terms.screenshot({ path: path.join(output, `${outputPrefix}-terms-${width}.png`) });
+      }
     }
     await page.setViewportSize({ width: 1280, height: 1000 });
     const canvas = page.locator('.mortgage-rates-section .chart-canvas').first();

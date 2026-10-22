@@ -99,7 +99,7 @@ export function mortgageRange(rows: MortgageMonth[], from: string | null, to: st
   return { from: start, to: end, rows: rows.filter(row => row.period >= start && row.period <= end).sort((a, b) => a.period.localeCompare(b.period)) };
 }
 export function mortgageMetricPeriods(rows: MortgageMonth[]): string[] {
-  return rows.filter(row => mortgageSegments.some(segment => row[segment.id].termMonths !== null || row[segment.id].averageAmountRub !== null)).map(row => row.period).sort();
+  return rows.filter(row => row.all.termMonths !== null || row.all.averageAmountRub !== null).map(row => row.period).sort();
 }
 export function mortgageHistory(rows: MortgageMonth[], metric: MortgageMetric | 'rates'): MortgageMonth[] {
   const field = metric === 'volume' ? 'volumeRub' : metric === 'count' ? 'count' : 'ratePct', segments = metric === 'rates' ? mortgageSegments : mortgageSegments.filter(segment => segment.id !== 'all');

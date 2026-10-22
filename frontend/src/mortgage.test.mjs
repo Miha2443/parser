@@ -79,9 +79,10 @@ test('local observed ranges default to full history, never invert and preserve m
   assert.deepEqual(data, before);
 });
 
-test('credit metrics picker includes source terms or sizes only, and keeps zero', () => {
-  const rows = [month('2025-12', {}, {}, { termMonths: 0 }), month('2026-01', { ratePct: 10 }), month('2026-02', { averageAmountRub: 0 })];
-  assert.deepEqual(mortgageMetricPeriods(rows), ['2025-12', '2026-02']);
+test('credit metrics picker includes overall source terms or sizes only, and keeps zero', () => {
+  const rows = [month('2025-11', { termMonths: 0 }), month('2025-12', {}, {}, { termMonths: 0 }), month('2026-01', { ratePct: 10 }), month('2026-02', { averageAmountRub: 0 })];
+  assert.deepEqual(mortgageMetricPeriods(rows), ['2025-11', '2026-02']);
+  assert.deepEqual(mortgageMetricPeriods([month('2026-03', { volumeRub: 100, count: 10 })]), []);
   assert.equal(mortgagePeriodLabel('2026-02'), 'Февраль 2026');
   assert.equal(mortgageCumulativeLabel(10), 'янв–окт');
 });

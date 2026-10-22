@@ -44,7 +44,13 @@ function MonthlyChart({ data, metric, theme, params, change }: { data: MortgageR
 }
 function Terms({ data, params, change }: { data: MortgageReport; params: URLSearchParams; change: CommissioningChange }) {
   const periods = mortgageMetricPeriods(data.monthly), selected = periods.includes(params.get('mortgage_terms') ?? '') ? params.get('mortgage_terms')! : periods.at(-1) ?? '', row = data.monthly.find(row => row.period === selected);
-  return <section className="mortgage-terms" aria-labelledby="mortgage-terms-title"><div className="mortgage-terms-heading"><h3 id="mortgage-terms-title">Параметры выданных кредитов</h3><div className="cp-controls"><PeriodSelect label="Месяц параметров кредита" periods={periods} value={selected} onChange={value => change({ mortgage_terms: value })} /></div></div>{row ? <div className="mortgage-term-grid">{mortgageSegments.map(segment => <div className="mortgage-term-segment" key={segment.id}><h4><i style={{ background: segment.color }} />{segment.label}</h4><dl><div><dt>Средний срок кредита</dt><dd>{number(row[segment.id].termMonths, 1)}<span>мес.</span></dd></div><div><dt>Средняя сумма кредита</dt><dd>{number(row[segment.id].averageAmountRub === null ? null : row[segment.id].averageAmountRub! / 1e6, 1)}<span>млн руб.</span></dd></div></dl></div>)}</div> : <ConstructionEmpty>Средний срок и сумма кредита не предоставлены источником.</ConstructionEmpty>}</section>;
+  return <section className="mortgage-terms" aria-labelledby="mortgage-terms-title">
+    <div className="mortgage-terms-heading"><h3 id="mortgage-terms-title">Параметры выданных кредитов</h3><div className="cp-controls"><PeriodSelect label="Месяц параметров кредита" periods={periods} value={selected} onChange={value => change({ mortgage_terms: value })} /></div></div>
+    {row ? <dl className="mortgage-term-grid">
+      <div className="mortgage-term-stat"><dt>Средний срок кредита</dt><dd>{number(row.all.termMonths, 1)}<span>мес.</span></dd></div>
+      <div className="mortgage-term-stat"><dt>Средняя сумма кредита</dt><dd>{number(row.all.averageAmountRub === null ? null : row.all.averageAmountRub / 1e6, 1)}<span>млн руб.</span></dd></div>
+    </dl> : <ConstructionEmpty>Средний срок и сумма кредита не предоставлены источником.</ConstructionEmpty>}
+  </section>;
 }
 function Rates({ data, theme, params, change }: { data: MortgageReport; theme: Theme; params: URLSearchParams; change: CommissioningChange }) {
   const history = mortgageHistory(data.monthly, 'rates'), range = mortgageRange(history, params.get('mortgage_rates_from'), params.get('mortgage_rates_to'));

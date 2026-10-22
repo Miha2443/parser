@@ -1,4 +1,4 @@
-// Isolated synthetic QA only. No files are written into production data paths.
+// Isolated QA. An optional real source is copied read-only into a temporary root.
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -11,6 +11,12 @@ const repo = path.resolve(__dirname, '../..');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mortgage-browser-'));
 const source = path.join(temporary, 'data/raw/realty/nashdom/mortgage_history.json');
 const output = path.join(os.tmpdir(), 'mortgage-browser-checks');
+const realSource = process.env.MORTGAGE_BROWSER_SOURCE;
+const sourceBytes = realSource ? fs.readFileSync(path.resolve(realSource)) : null;
+const sourceDocument = sourceBytes ? JSON.parse(sourceBytes.toString('utf8')) : fixture();
+const outputPrefix = realSource ? 'mortgage-live' : 'mortgage-fixture';
+const firstMarketPeriod = sourceDocument.records.filter(row => row.region === 'msk'
+  && row.segment !== 'all' && row.volumeRub !== null).map(row => row.period).sort()[0];
 const children = [];
 function fixture() {
   const records = [];
@@ -55,7 +61,7 @@ async function ready(url, child) {
 async function main() {
   fs.mkdirSync(path.dirname(source), { recursive: true });
   fs.mkdirSync(output, { recursive: true });
-  fs.writeFileSync(source, JSON.stringify(fixture()));
+  fs.writeFileSync(source, JSON.stringify(sourceDocument));
   const apiPort = await freePort(), webPort = await freePort();
   const api = `http://127.0.0.1:${apiPort}`, web = `http://127.0.0.1:${webPort}`;
   const backend = start(process.env.DASHBOARD_TEST_PYTHON || 'python', ['-X', 'utf8', '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', String(apiPort)],
@@ -74,7 +80,7 @@ async function main() {
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
     assert.equal(await page.locator('#mortgage-page .chart-canvas').count(), 5);
     assert.equal(await page.getByLabel('Регион ипотечного кредитования', { exact: true }).inputValue(), 'msk');
-    assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), '2011-01');
+    assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), firstMarketPeriod);
     const countFrom = await page.getByLabel('Количество договоров: с', { exact: true }).inputValue();
     await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption('2025-01');
     assert.equal(await page.getByLabel('Количество договоров: с', { exact: true }).inputValue(), countFrom);
@@ -83,7 +89,7 @@ async function main() {
     await annualLoaded;
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
     assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), '2025-01');
-    await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption('2011-01');
+    await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption(firstMarketPeriod);
     for (const width of [320, 360, 768, 1280, 1920]) {
       await page.setViewportSize({ width, height: 1000 });
       await pause(350);
@@ -107,7 +113,7 @@ async function main() {
       for (const chart of state.charts) { assert.ok(chart.colors > 3); assert.equal(chart.outside, false); assert.equal(chart.scroll, false); }
       assert.equal(await page.locator('#mortgage-page details[open], #mortgage-page .chart-data-panel').count(), 0);
       layouts.push(width);
-      if ([360, 1280, 1920].includes(width)) await page.screenshot({ path: path.join(output, `mortgage-fixture-${width}.png`), fullPage: true });
+      if ([360, 1280, 1920].includes(width)) await page.screenshot({ path: path.join(output, `${outputPrefix}-${width}.png`), fullPage: true });
     }
     await page.setViewportSize({ width: 1280, height: 1000 });
     const canvas = page.locator('.mortgage-rates-section .chart-canvas').first();
@@ -121,7 +127,7 @@ async function main() {
     await page.getByRole('button', { name: 'Скачать все ипотечные данные Excel', exact: true }).click();
     const file = await download;
     assert.equal(await file.failure(), null);
-    await file.saveAs(path.join(output, 'mortgage-fixture.xlsx'));
+    await file.saveAs(path.join(output, `${outputPrefix}.xlsx`));
     const rfLoaded = page.waitForResponse(response => response.url().includes('/api/v1/mortgage?region=rf') && response.status() === 200);
     await page.getByLabel('Регион ипотечного кредитования', { exact: true }).selectOption('rf');
     await rfLoaded;
@@ -131,11 +137,11 @@ async function main() {
     await page.reload();
     await page.locator('#mortgage-page [role="alert"]').waitFor();
     assert.equal(await page.locator('#mortgage-page .chart-canvas').count(), 0);
-    fs.writeFileSync(source, JSON.stringify(fixture()));
+    fs.writeFileSync(source, JSON.stringify(sourceDocument));
     await page.getByRole('button', { name: /Повторить/ }).click();
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ layouts, charts: 5, independentFilters: true, hover: true, excel: true, sourceFailureAndRecovery: true, errors, fixtureOnly: true, output }));
+    console.log(JSON.stringify({ layouts, charts: 5, independentFilters: true, hover: true, excel: true, sourceFailureAndRecovery: true, errors, fixtureOnly: !realSource, output }));
   } finally {
     if (browser) await browser.close();
     for (const child of children) {
@@ -145,6 +151,7 @@ async function main() {
     }
     assert.equal(path.dirname(path.resolve(temporary)), path.resolve(os.tmpdir()));
     assert.ok(path.basename(temporary).startsWith('mortgage-browser-'));
+    if (sourceBytes) assert.deepEqual(fs.readFileSync(path.resolve(realSource)), sourceBytes);
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }

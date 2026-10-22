@@ -41,12 +41,14 @@ def create_chrome(
     *,
     headless: bool = True,
     page_load_strategy: str = "normal",
+    performance_logs: bool = False,
 ) -> webdriver.Chrome:
     """Возвращает Chrome-драйвер с настроенной папкой скачивания.
 
     `headless=False` — для отладки селекторов на локальной машине.
     Режим headless управляется env `HEADLESS_MODE` (=new по умолчанию,
     =old если в `=new` сайт ломается).
+    `performance_logs=True` включает чтение сетевых событий; по умолчанию выключено.
 
     Каждый инстанс получает СВОЙ user-data-dir. Иначе при параллельном
     запуске (update_realty: 4 Chrome'а одновременно — rasprod, kvart,
@@ -55,6 +57,8 @@ def create_chrome(
     → fedstat падает с `appendChild on null`.
     """
     opts = Options()
+    if performance_logs:
+        opts.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
     # Изолированный профиль (per-инстанс tempdir с auto-cleanup).
     profile_dir = tempfile.mkdtemp(prefix="chrome-profile-")

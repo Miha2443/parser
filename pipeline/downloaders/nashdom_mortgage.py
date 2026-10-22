@@ -19,11 +19,14 @@ from pipeline.mortgage_history import (
     METRICS, SOURCE_URL, HistoryValidationError, load_checkpoint, load_published,
     plan_years, publish_history, record_failure, save_checkpoint, validate_bundle,
 )
+from pipeline.downloaders.nashdom_mortgage_api import ENDPOINTS, normalize_month
+from pipeline.downloaders.nashdom_mortgage_network import MortgageResponseCapture, ResponseCaptureError
 
 
 REGION_VALUES = {"rf": "1", "msk": "1762"}
 RAW_PATH = Path("data/raw/realty/nashdom")
-COLLECTOR_VERSION = "mortgage-dom-month-v1"
+COLLECTOR_VERSION = "mortgage-browser-response-month-v2"
+LEGACY_COLLECTOR_VERSION = "mortgage-dom-month-v1"
 
 
 class AccessVerificationRequired(RuntimeError):
@@ -84,6 +87,11 @@ def year_bundle(region, year, observations):
         if (monthly.get("region") != region or monthly.get("period") != period
                 or monthly.get("basis") != "month"):
             raise ValueError("Mortgage observation identity/basis mismatch")
+        if monthly.get("sourcePrecision") != "raw response":
+            raise ValueError("Mortgage year requires exact response observations, not rounded cards")
+        exact = normalize_month(region, period, monthly.get("rawMetrics", {}).get("exchanges"))
+        if exact["metrics"] != monthly["metrics"]:
+            raise ValueError("Mortgage observation differs from its exact response evidence")
         for segment in ("all", "primary", "secondary"):
             values = monthly["metrics"][segment]
             rows.append({"region": region, "period": period, "segment": segment,
@@ -95,8 +103,8 @@ def year_bundle(region, year, observations):
                             "sourceDate": None, "collectedAt": utc_now(), "records": rows,
                             "availableMonths": months, "evidence": evidence,
                             "collector": COLLECTOR_VERSION,
-                            "method": "literal rendered page; single-month control only",
-                            "precision": "as published on source cards; no hidden decimals"})
+                            "method": "ordinary page controls; matching monthly general/details responses",
+                            "precision": "raw response; no rendered-card rounding"})
 
 
 class BrowserClient:
@@ -104,13 +112,18 @@ class BrowserClient:
     def __init__(self, raw_dir, *, timeout=60):
         self.raw_dir, self.timeout = Path(raw_dir), timeout
         self.driver = None
+        self.responses = None
+        self._interaction = 0
 
     def __enter__(self):
         from pipeline.selenium_utils import create_chrome
         from pipeline.downloaders.nashdom_operational_browser import TRACK_REQUESTS
         try:
-            self.driver = create_chrome(headless=os.environ.get("HEADLESS", "1") != "0")
+            self.driver = create_chrome(headless=os.environ.get("HEADLESS", "1") != "0",
+                                        performance_logs=True)
             self.driver.set_page_load_timeout(self.timeout)
+            self.responses = MortgageResponseCapture(self.driver)
+            self.responses.enable()
             self.driver.get(SOURCE_URL)
             self._access_check()
             self.driver.execute_script(TRACK_REQUESTS)
@@ -122,6 +135,7 @@ class BrowserClient:
 
     def __exit__(self, *args):
         driver, self.driver = self.driver, None
+        self.responses = None
         if driver is not None:
             driver.quit()
 
@@ -153,26 +167,35 @@ class BrowserClient:
         """)
 
     def _mark(self):
-        self.driver.execute_script("""
+        self.responses.poll()
+        not_before = self.driver.execute_script("""
           const t=window.__operationalHistoryRequests;
           if(!t || t.pending) throw Error('Mortgage page is not idle');
           t.finished=[];t.changed=performance.now();
+          return (performance.timeOrigin+performance.now())/1000;
         """)
+        self._interaction = self.responses.begin_interaction(not_before=not_before)
 
     def _wait(self, *, region=None, period=None, basis=None, year=None, requested=False):
         from selenium.webdriver.support.ui import WebDriverWait
         from pipeline.downloaders.nashdom_mortgage_dom import discover_page, parse_page
         previous, stable = None, 0
+        generation = self._interaction
+        if requested and generation == 0:
+            raise ResponseCaptureError("Mortgage UI interaction was not marked before selection")
 
         def ready(driver):
             nonlocal previous, stable
             self._access_check()
+            self.responses.poll()
             network = self._network()
             if (not network or network["pending"] or network["idle"] < 500
                     or requested and not network["finished"]):
                 stable = 0
                 return False
-            if any(item.get("status") != 200 for item in network["finished"]):
+            details_errors = [item for item in network["finished"] if item.get("status") != 200]
+            if any(type(item.get("status")) is not int or item["status"] != 500
+                   or item.get("url") != ENDPOINTS["details"] for item in details_errors):
                 raise RuntimeError("Mortgage page data request failed")
             html = self._html()
             try:
@@ -186,6 +209,19 @@ class BrowserClient:
             except ValueError:
                 return False
             require_scope(meta)
+            if details_errors and meta["basis"] != "month":
+                raise RuntimeError("Mortgage details failure is not a verified monthly observation")
+            if meta["basis"] == "month":
+                exact = self.responses.month(meta["region"], meta["period"], generation=generation)
+                if exact is None:
+                    stable = 0
+                    return False
+                if details_errors and not any(item.get("status") == 500
+                        and item.get("url") == ENDPOINTS["details"]
+                        for item in exact["rawMetrics"]["exchanges"]):
+                    raise RuntimeError("Mortgage details failure has no matching exact response")
+                exact["rawMetrics"]["renderedPage"] = observation.get("rawMetrics", {})
+                observation = exact
             signature = hashlib.sha256(json.dumps(observation, sort_keys=True).encode()).hexdigest()
             stable = stable + 1 if signature == previous else 0
             previous = signature
@@ -193,10 +229,13 @@ class BrowserClient:
                 return False
             observation["selectionEvidence"] = {"renderStable": True, "pendingRequests": 0,
                 "completedRequests": network["finished"], "region": meta["region"],
-                "period": meta["period"], "basis": meta["basis"]}
+                "period": meta["period"], "basis": meta["basis"],
+                "interactionGeneration": generation,
+                "responseCapture": meta["basis"] == "month"}
             return meta, observation
 
-        return WebDriverWait(self.driver, self.timeout, poll_frequency=0.3).until(ready)
+        return WebDriverWait(self.driver, self.timeout, poll_frequency=0.3).until(
+            ready, message="Mortgage page did not establish stable scope-matched exact monthly responses")
 
     def _choose(self, selector):
         from selenium.webdriver.common.by import By
@@ -253,6 +292,40 @@ class BrowserClient:
         return year_bundle(region, year, observations)
 
 
+def details_failure_scopes(document):
+    """Only a validated explicit source error warrants repairing old parameters."""
+    failures = set()
+    for row in document.get("records", []) if document else []:
+        if row.get("segment") != "all":
+            continue
+        evidence = row.get("sourceEvidence")
+        exchanges = evidence.get("exchanges") if isinstance(evidence, dict) else None
+        if not isinstance(exchanges, list) or not any(isinstance(item, dict)
+                and item.get("url") == ENDPOINTS["details"]
+                and type(item.get("status")) is int and item["status"] == 500 for item in exchanges):
+            continue
+        try:
+            normalize_month(row["region"], row["period"], exchanges)
+        except ValueError:
+            continue
+        failures.add((row["region"], int(row["period"][:4])))
+    return failures
+
+
+def collection_plan(available, previous, *, force=False):
+    """Migrate rounded-card years and repair explicit temporary source failures."""
+    planned = set(plan_years(available, previous, force=force))
+    sources = previous.get("yearSources", {}) if previous else {}
+    for region, years in available.items():
+        for year in years:
+            source = sources.get(region, {}).get(str(year), {})
+            if source.get("collector") == LEGACY_COLLECTOR_VERSION:
+                planned.add((region, year))
+    planned.update((region, year) for region, year in details_failure_scopes(previous)
+                   if year in available[region])
+    return sorted(planned)
+
+
 def collect(root, *, client_factory=BrowserClient, force=False):
     raw_dir = Path(root) / RAW_PATH
     with collection_lock(raw_dir):
@@ -262,7 +335,7 @@ def collect(root, *, client_factory=BrowserClient, force=False):
             available = client.discover()
             if set(available) != set(REGION_VALUES) or any(not available[key] for key in REGION_VALUES):
                 raise ValueError("Mortgage source did not publish years for both regions")
-            planned = plan_years(available, previous, force=force)
+            planned = collection_plan(available, previous, force=force)
             requested = {region: [year for key, year in planned if key == region] for region in REGION_VALUES}
             # Collect both latest regions first, so an interrupted bootstrap can
             # already publish useful real observations and resume older years.
@@ -274,8 +347,11 @@ def collect(root, *, client_factory=BrowserClient, force=False):
                         cached = None
                     already_published = previous and any(row["region"] == region and
                         int(row["period"][:4]) == year for row in previous["records"])
-                    if (not force and not already_published and cached is not None
+                    source = previous.get("yearSources", {}).get(region, {}).get(str(year), {}) if previous else {}
+                    legacy = source.get("collector") == LEGACY_COLLECTOR_VERSION
+                    if (not force and (not already_published or legacy) and cached is not None
                             and cached.get("collector") == COLLECTOR_VERSION
+                            and (region, year) not in details_failure_scopes(cached)
                             and year < max(available[region])):
                         bundle = cached
                         print(f"Mortgage checkpoint resumed: {region}/{year}", flush=True)
@@ -305,6 +381,12 @@ def collect(root, *, client_factory=BrowserClient, force=False):
                     published=published)
             if load_published(raw_dir) is None:
                 raise RuntimeError("Mortgage history has no publishable observations for both regions")
+            missing_parameters = details_failure_scopes(previous)
+            if missing_parameters:
+                raise CollectionIncomplete(
+                    "Mortgage calendar collected; parameters remain unavailable after explicit "
+                    f"details source errors in {len(missing_parameters)} region-years",
+                    published=published)
             return previous
 
 

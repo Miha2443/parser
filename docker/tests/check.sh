@@ -10,7 +10,7 @@ printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
 
-docker compose run --rm --no-deps updater python -m unittest tests.test_mortgage_dom tests.test_nashdom_mortgage tests.test_mortgage_history tests.test_mortgage_publication backend.tests.test_mortgage -v
+docker compose run --rm --no-deps updater python -m unittest tests.test_mortgage_dom tests.test_nashdom_mortgage tests.test_nashdom_mortgage_api tests.test_nashdom_mortgage_network tests.test_mortgage_capture_import tests.test_mortgage_history tests.test_mortgage_publication backend.tests.test_mortgage -v
 docker compose run --rm --no-deps updater python -m unittest tests.test_docker_offline_repair tests.test_construction_page_coverage tests.test_domrf_history_publication tests.test_nashdom_operational_api tests.test_nashdom_current_browser tests.test_nashdom_operational_browser tests.test_permit_empty_supplements backend.tests.test_construction_pages backend.tests.test_domrf_history -v
 docker compose run --rm --no-deps updater python scripts/check_nashdom_operational_history.py
 

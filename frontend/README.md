@@ -571,8 +571,13 @@ synthetic fixtures, checks five charts at 320/360/768/1280/1920 px, independent
 filters, hover, Excel and source-loss recovery, then stops its own servers. Set
 `DASHBOARD_TEST_PYTHON` to the Python executable and provide Playwright through
 the normal test environment. These screenshots are fixture QA, not source data.
-Live mortgage collection remains unverified while DOM.RF requires access
-verification on the development machine; see the root README.
+Set `MORTGAGE_BROWSER_SOURCE` to a real `mortgage_history.json` to run the same
+checks on a read-only copy in the temporary test root. Artifacts then use the
+`mortgage-live-*` prefix; the original file is checked unchanged.
+On 2026-10-22 the confirmed browser session collected all source-offered months
+from 2009-01 through 2026-08 for Russia and Moscow. Primary/secondary values begin
+in 2016. Actual API values and Excel were checked; this does not verify access
+from the Debian Docker collector. See the root README for offline import.
 
 ## Brand Assets
 

@@ -113,7 +113,7 @@ for (const theme of ['light', 'dark']) {
       assert.ok(!option.tooltip.formatter({ dataIndex: 0, seriesIndex: 1 }).includes('382'));
       assert.match(option.tooltip.formatter({ dataIndex: 0, seriesIndex: 1 }), /Годовое значение/);
       assert.equal(option.series[0].label.show, true);
-      assert.equal(mortgageAnnualOption(rows, metric, theme, 100).series[0].label.show, false);
+      assert.equal(mortgageAnnualOption(rows, metric, theme, 100).series[0].label.show, true);
       assert.deepEqual(rows, before);
     });
     test(`monthly ${metric} (${theme}) stacks only observed primary/secondary and retains calendar gaps`, () => {
@@ -144,10 +144,66 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
+for (const theme of ['light', 'dark']) for (const metric of ['volume', 'count']) {
+  test(`annual ${metric} (${theme}) labels every bar above and inside, even without a gray remainder`, () => {
+    const divisor = metric === 'volume' ? 1e9 : 1000;
+    const rows = [annual(2023), annual(2024), annual(2025), annual(2026)];
+    rows[0][metric] = annualValue({ annual: 10 * divisor, selected: 10 * divisor, actualThroughMonth: 12 });
+    rows[1][metric] = annualValue({ annual: 15 * divisor, selected: 5 * divisor, actualThroughMonth: 5 });
+    rows[2][metric] = annualValue({ selected: 0, actualThroughMonth: 5 });
+    rows[3][metric] = annualValue({ selected: 7 * divisor, actualThroughMonth: 5 });
+    const before = structuredClone(rows);
+    for (const width of [240, 360, 700, 1500]) {
+      const option = mortgageAnnualOption(rows, metric, theme, width);
+      assert.equal(option.xAxis[1].axisLabel.interval, 0);
+      assert.equal(option.xAxis[1].axisLabel.hideOverlap, false);
+      assert.equal(option.series[0].label.show, true);
+      assert.equal(option.series[0].labelLayout.hideOverlap, false);
+      assert.equal(option.series[0].label.position, 'insideBottom');
+      assert.deepEqual(option.graphic.map(label => label.children[0].style.text), ['10', '15', '0', '7']);
+      assert.deepEqual(option.series[0].data.map((value, dataIndex) => option.series[0].label.formatter({ value, dataIndex }).replace(/\{small\|([^}]*)\}/g, '$1')), ['10', '5', '0', '7']);
+      assert.deepEqual(option.series[1].data, [null, 10, null, null]);
+      assert.equal(option.series[1].label.show, false);
+      assert.ok(option.graphic.every(label => label.x > 0 && label.x < width && label.y > 90 && label.y < 400));
+    }
+    assert.deepEqual(rows, before);
+    const narrow = mortgageAnnualOption(Array.from({ length: 18 }, (_, index) => ({ ...rows[3], year: 2009 + index })), metric, theme, 270);
+    assert.equal(narrow.graphic.length, 18);
+    assert.equal(narrow.xAxis[1].axisLabel.rotate, 90);
+    assert.equal(narrow.xAxis[1].axisLabel.formatter('2026', 17), '2026 янв–май');
+    assert.equal(narrow.series[0].label.rotate, 90);
+    const missing = mortgageAnnualOption([annual(2026)], metric, theme, 270);
+    assert.deepEqual(missing.graphic, []);
+    assert.equal(missing.series[0].label.formatter({ dataIndex: 0, value: null }), '');
+  });
+}
+
+test('monthly charts divide calendar years independently of selected range, missing months and theme', () => {
+  const rows = [month('2016-11', { ratePct: 9 }, { volumeRub: 10, count: 2 }), month('2017-02', { ratePct: 10 }, {}, { volumeRub: 15, count: 3 }), month('2018-03', { ratePct: 11 })];
+  const before = structuredClone(rows);
+  for (const theme of ['light', 'dark']) {
+    for (const option of [mortgageMonthlyOption(rows, 'volume', theme), mortgageMonthlyOption(rows, 'count', theme), mortgageRatesOption(rows, theme)]) {
+      assert.equal(option.xAxis.splitLine.show, true);
+      assert.equal(option.xAxis.splitLine.showMinLine, false);
+      assert.equal(option.xAxis.splitLine.showMaxLine, false);
+      const divisions = option.xAxis.data.filter((period, index) => index > 0 && option.xAxis.splitLine.interval(index, period));
+      assert.deepEqual(divisions, ['2017-01', '2018-01']);
+      assert.equal(option.xAxis.splitLine.interval(0, '2016-11'), true);
+      assert.equal(option.xAxis.splitLine.interval(3, '2017-02'), false);
+      assert.equal(option.xAxis.splitLine.lineStyle.width, 1);
+      assert.equal(option.xAxis.splitLine.lineStyle.color, theme === 'light' ? '#c5d0d7' : '#64717c');
+    }
+    const oneYear = mortgageMonthlyOption([rows[0]], 'volume', theme);
+    assert.deepEqual(oneYear.xAxis.data.filter((period, index) => index > 0 && oneYear.xAxis.splitLine.interval(index, period)), []);
+  }
+  assert.deepEqual(rows, before);
+});
+
 test('large annual and monthly measurements remove decimals consistently across each chart', () => {
   const rows = [annual(2024, { annual: 1020.2e9, selected: 300.2e9, actualThroughMonth: 5, selectedYoYPct: 13.2 }), annual(2026, { selected: 399.2e9, actualThroughMonth: 5 })];
   const option = mortgageAnnualOption(rows, 'volume', 'light', 900);
   assert.equal(option.yAxis[1].axisLabel.formatter(300.2), '300');
+  assert.deepEqual(option.graphic.map(label => label.children[0].style.text), [new Intl.NumberFormat('ru-RU').format(1020), '399']);
   assert.match(option.series[0].label.formatter({ dataIndex: 0, value: 300.2 }), /^300\n\{up\|\+13%\}$/);
   const months = [month('2026-01', {}, { volumeRub: 600.2e9 }, { volumeRub: 500.2e9 }), month('2026-02', {}, { volumeRub: 300.2e9 }, { volumeRub: 399.2e9 })];
   const monthly = mortgageMonthlyOption(months, 'volume', 'light');

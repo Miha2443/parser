@@ -75,6 +75,8 @@ async function main() {
     await ready(web, frontend);
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', acceptDownloads: true });
+    let echartsModuleUrl;
+    page.on('response', response => { if (new URL(response.url()).pathname.endsWith('/echarts_core.js')) echartsModuleUrl = response.url(); });
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(web + '/economics/mortgage');
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
@@ -97,6 +99,7 @@ async function main() {
     await checkTerms(termPeriods[0]);
     await page.getByLabel('Месяц параметров кредита', { exact: true }).selectOption(latestTermPeriod);
     assert.equal(await page.locator('#mortgage-page .chart-canvas').count(), 5);
+    await checkChartAnnotations();
     assert.equal(await page.getByLabel('Регион ипотечного кредитования', { exact: true }).inputValue(), 'msk');
     assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), firstMarketPeriod);
     const countFrom = await page.getByLabel('Количество договоров: с', { exact: true }).inputValue();
@@ -108,6 +111,50 @@ async function main() {
     await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
     assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), '2025-01');
     await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption(firstMarketPeriod);
+    async function checkChartAnnotations() {
+      assert.ok(echartsModuleUrl, 'Loaded ECharts module is available to inspect rendered chart geometry');
+      const state = await page.evaluate(async url => {
+        const echarts = await import(url);
+        const annual = [...document.querySelectorAll('.mortgage-annual-chart .chart-canvas')].map(element => {
+          const chart = echarts.getInstanceByDom(element), model = chart.getModel(), option = chart.getOption();
+          const labels = model.getComponent('xAxis', 1).axis.getViewLabels();
+          const totals = model.getComponent('graphic').option.elements.filter(item => item.id.startsWith('mortgage-total-'));
+          const data = model.getSeriesByIndex(0).getData();
+          return {
+            years: labels.map(label => label.rawLabel), expectedYears: option.xAxis[1].data,
+            topCount: totals.length, expectedTopCount: option.series[0].data.filter(value => value !== null).length,
+            inside: option.series[0].data.map((value, index) => value === null || Boolean(data.getItemGraphicEl(index)?.getTextContent()?.style.text)),
+            positions: totals.map(label => {
+              const year = label.id.slice('mortgage-total-'.length), index = option.xAxis[1].data.indexOf(year);
+              const height = option.series[0].data[index] + (option.series[1].data[index] ?? 0);
+              return { dx: label.x - chart.convertToPixel({ xAxisIndex: 1 }, year), dy: label.y + 7 - chart.convertToPixel({ yAxisIndex: 1 }, height) };
+            }),
+          };
+        });
+        const monthly = [...document.querySelectorAll('.mortgage-monthly-section .chart-canvas, .mortgage-rates-section > .chart-block .chart-canvas')].map(element => {
+          const chart = echarts.getInstanceByDom(element), axis = chart.getModel().getComponent('xAxis'), periods = chart.getOption().xAxis[0].data;
+          const ticks = axis.axis.getTicksCoords({ tickModel: axis.getModel('splitLine') }).slice(1, -1);
+          const expected = periods.map((period, index) => period.endsWith('-01') && index > 0 ? index : null).filter(index => index !== null);
+          return { actual: ticks.map(tick => tick.tickValue), expected, positions: ticks.map(tick => {
+            const start = chart.convertToPixel({ xAxisIndex: 0 }, periods[tick.tickValue]);
+            const previous = chart.convertToPixel({ xAxisIndex: 0 }, periods[tick.tickValue - 1]);
+            return axis.axis.toGlobalCoord(tick.coord) - (start + previous) / 2;
+          }) };
+        });
+        return { annual, monthly };
+      }, echartsModuleUrl);
+      for (const chart of state.annual) {
+        assert.deepEqual(chart.years, chart.expectedYears);
+        assert.equal(chart.topCount, chart.expectedTopCount);
+        assert.ok(chart.inside.every(Boolean), 'Every measured selected-period value is rendered');
+        for (const position of chart.positions) assert.ok(Math.abs(position.dx) < 1.1 && position.dy < 1.1, JSON.stringify(position));
+      }
+      assert.equal(state.monthly.length, 3);
+      for (const chart of state.monthly) {
+        assert.deepEqual(chart.actual, chart.expected);
+        assert.ok(chart.positions.every(distance => Math.abs(distance) < .01), 'Year dividers fall between December and January');
+      }
+    }
     for (const width of [320, 360, 768, 1280, 1920]) {
       await page.setViewportSize({ width, height: 1000 });
       await pause(350);
@@ -130,6 +177,7 @@ async function main() {
       assert.deepEqual(state.clipped, [], `${width}: clipped text`);
       assert.deepEqual(state.termFontSizes, [48, 48], `${width}: prominent overall credit parameters`);
       await checkTerms(latestTermPeriod);
+      await checkChartAnnotations();
       assert.equal(state.charts.length, 5);
       for (const chart of state.charts) { assert.ok(chart.colors > 3); assert.equal(chart.outside, false); assert.equal(chart.scroll, false); }
       assert.equal(await page.locator('#mortgage-page details[open], #mortgage-page .chart-data-panel').count(), 0);
@@ -137,8 +185,17 @@ async function main() {
       if ([360, 1280, 1920].includes(width)) {
         await page.screenshot({ path: path.join(output, `${outputPrefix}-${width}.png`), fullPage: true });
         await terms.screenshot({ path: path.join(output, `${outputPrefix}-terms-${width}.png`) });
+        await page.locator('.mortgage-annual-chart').first().screenshot({ path: path.join(output, `${outputPrefix}-annual-${width}.png`) });
+        await page.locator('.mortgage-monthly-section').first().screenshot({ path: path.join(output, `${outputPrefix}-monthly-${width}.png`) });
       }
     }
+    await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption('2025-11');
+    await page.getByLabel('Объём кредитов: по', { exact: true }).selectOption('2026-02');
+    await checkChartAnnotations();
+    await page.getByLabel('Объём кредитов: по', { exact: true }).selectOption('2025-12');
+    await checkChartAnnotations();
+    await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption(firstMarketPeriod);
+    await page.getByLabel('Объём кредитов: по', { exact: true }).selectOption(sourceDocument.records.filter(row => row.region === 'msk').map(row => row.period).sort().at(-1));
     await page.setViewportSize({ width: 1280, height: 1000 });
     const canvas = page.locator('.mortgage-rates-section .chart-canvas').first();
     await canvas.scrollIntoViewIfNeeded();

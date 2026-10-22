@@ -1,5 +1,6 @@
 """Complete browser captures import atomically; partial or wrong scopes do not."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +8,7 @@ import unittest
 
 from pipeline.downloaders.nashdom_mortgage import RAW_PATH
 from pipeline.mortgage_history import SOURCE_URL
+from pipeline.mortgage_calculations import build_report
 from scripts.import_mortgage_capture import import_capture, prepare_capture
 from tests.test_nashdom_mortgage_api import exchanges
 
@@ -110,6 +112,62 @@ class CaptureImportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     import_capture(file, root)
                 self.assertEqual({path: path.read_bytes() for path in raw.rglob("*.json")}, before)
+
+
+class ArchivedCaptureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.capture = (Path(__file__).resolve().parents[1] / "data/imports" /
+                       "mortgage-capture-2026-10-22-precise.json")
+        cls.tmp = TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.root = Path(cls.tmp.name)
+        cls.history = import_capture(cls.capture, cls.root)
+
+    def test_reviewed_archive_bytes_are_unchanged(self):
+        self.assertEqual(hashlib.sha256(self.capture.read_bytes()).hexdigest(),
+                         "b167adc78bb3d8bfb8a406132110c27dbb05662508ce4b13812993e6ffd38aca")
+        self.assertEqual(self.history["collectedAt"], "2026-10-22T04:47:44.491Z")
+
+    def test_complete_monthly_calendar_for_both_regions(self):
+        self.assertEqual(len(self.history["records"]), 1272)
+        expected = {f"{year}-{month:02d}" for year in range(2009, 2027)
+                    for month in range(1, 13) if year < 2026 or month <= 8}
+        for region in ("rf", "msk"):
+            rows = [row for row in self.history["records"] if row["region"] == region]
+            self.assertEqual(len(rows), 636)
+            for segment in ("all", "primary", "secondary"):
+                self.assertEqual({row["period"] for row in rows if row["segment"] == segment}, expected)
+
+    def test_report_retains_exact_values_and_incomplete_latest_year(self):
+        report = build_report(self.history, "msk", 12)
+        self.assertEqual(report["annual"][-2]["volume"]["annual"], 549849000000)
+        self.assertEqual(report["annual"][-1]["volume"]["selected"], 373814000000)
+        self.assertEqual(report["annual"][-1]["count"]["selected"], 48116)
+        self.assertEqual(report["annual"][-1]["volume"]["actualThroughMonth"], 8)
+        self.assertIsNone(report["annual"][-1]["volume"]["annual"])
+        self.assertEqual(report["monthly"][-1]["period"], "2026-08")
+        self.assertEqual(report["monthly"][-1]["all"]["volumeRub"], 47478000000)
+
+    def test_unavailable_source_values_are_not_invented(self):
+        for region in ("rf", "msk"):
+            monthly = build_report(self.history, region, 12)["monthly"]
+            for period in ("2015-12", "2016-10"):
+                row = next(item for item in monthly if item["period"] == period)
+                self.assertIsNotNone(row["all"]["volumeRub"])
+                self.assertIsNone(row["all"]["termMonths"])
+                self.assertIsNone(row["all"]["averageAmountRub"])
+            for row in monthly:
+                if row["period"] < "2016-01":
+                    for segment in ("primary", "secondary"):
+                        self.assertTrue(all(value is None for value in row[segment].values()))
+
+    def test_repeated_manual_import_is_idempotent(self):
+        path = self.root / RAW_PATH / "mortgage_history.json"
+        before = path.read_bytes()
+        imported = import_capture(self.capture, self.root)
+        self.assertEqual(imported, self.history)
+        self.assertEqual(path.read_bytes(), before)
 
 
 if __name__ == "__main__":

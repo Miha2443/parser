@@ -5,9 +5,11 @@ import { LineChart } from 'echarts/charts';
 import { Chart } from './Chart';
 import { ApiError, request } from './data';
 import { date, exportCsv, number } from './format';
-import { economicsChartOption, economicsChartRows, economicsOptions, economicsQueryValue, economicsRepairs, economicsTablePage, economicsTableRows, economicsUrl } from './economicsData';
+import { economicsChartOption, economicsChartRows, economicsOptions, economicsQueryValue, economicsReleasePeriods, economicsRepairs, economicsTablePage, economicsTableRows, economicsUrl } from './economicsData';
 import type { EconomicsCatalog, EconomicsChart, EconomicsFamily, EconomicsMetadata, EconomicsOption, EconomicsReport, EconomicsSelection, EconomicsTable, EconomicsValue } from './economicsData';
 import { useEconomicsData } from './useEconomicsData';
+import { NextRelease } from './NextRelease';
+import { nextReleaseDate } from './releaseSchedule';
 import type { Theme } from './types';
 import './economics.css';
 
@@ -17,6 +19,13 @@ const titles = { salary: 'Среднемесячная заработная пл
 const labels: Record<string, string> = { period: 'Период', region: 'Регион', views: 'Отрасли', regions: 'Регионы', months: 'Месяцы', quarters: 'Кварталы', index_base: 'Тип индекса',
   structure_region: 'Регион структуры', structure_mode: 'Показатель структуры', structure_industries: 'Отрасли структуры', index_region: 'Регион индекса', index_industries: 'Отрасли индекса' };
 function Empty({ text = 'Нет данных для выбранных параметров.' }: { text?: string }) { return <div className="empty-state"><Database size={20} /><span>{text}</span></div>; }
+function ReleaseDates({ catalog, selected, blockId }: { catalog: EconomicsCatalog; selected: EconomicsSelection; blockId?: string }) {
+  const rule = catalog.family, releases = economicsReleasePeriods(catalog, selected, blockId);
+  if (!releases.length) return null;
+  const differentDates = new Set(releases.map(period => nextReleaseDate(rule, period))).size > 1;
+  if (!differentDates) return <NextRelease rule={rule} period={releases[0]} />;
+  return <>{releases.map(period => <NextRelease key={period.region} rule={rule} period={period} regionLabel={catalog.regions?.find(r => r.id === period.region)?.label ?? period.region} />)}</>;
+}
 
 function MultiSelect({ label, options, selected, onChange }: { label: string; options: EconomicsOption[]; selected: (string | number)[]; onChange: (values: (string | number)[]) => void }) {
   const ref = useRef<HTMLDetailsElement>(null), [search, setSearch] = useState('');
@@ -96,13 +105,13 @@ export default function Economics({ family, theme, query, change }: { family: Ec
   const renderChart = (chart?: EconomicsChart) => chart ? <><Chart key={`${family}-${data?.version}-${JSON.stringify(data?.selection)}-${chart.id}`} option={economicsChartOption(chart, theme)} theme={theme} label={chart.title} rows={economicsChartRows(chart)} filename={`economics-${family}-${chart.id}`} height={320} dataContent={<ChartTables chart={chart} pivot={data?.tables.find(t => t.id === `${chart.id}_pivot`)} params={params} change={change} />} />{!chart.series.some(s => s.points.some(p => p.y !== null)) && <Empty />}
     </> : !data && !error ? <div className="economics-chart-loading" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка показателей…</span></div> : <Empty />;
   return <main className="economics-page" id="economics-page" data-family={family}>
-    <div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА</div><h1>{titles[family]}</h1></div></div>
+    <div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА</div><h1>{titles[family]}</h1>{family !== 'accounts' && catalog && selection && <ReleaseDates catalog={catalog} selected={selection} />}</div></div>
     <div className="economics-actions"><a className="source-anchor" href="#economics-sources"><Database size={15} />Источники<ChevronRight size={14} /></a><button className="icon-button" title="Обновить показатели" aria-label="Обновить показатели" onClick={retry}><RefreshCw size={16} /></button><ExcelExport family={family} data={data} retry={retry} /></div>
 
     {error && <div className="load-state" role="alert"><AlertCircle size={26} /><h2>Экономические показатели API недоступны</h2><p>{error}</p><button onClick={retry}><RefreshCw size={15} />Повторить</button></div>}
     {!catalog && !error && <div className="load-state" role="status"><RefreshCw size={26} className="loading-icon" /><p>Загрузка каталога экономики…</p></div>}
     {family === 'accounts' && catalog && selection ? <>{catalog.blocks?.map((block, i) => <section className="section economics-chart-section" id={`econ-${block.id}`} key={block.id} aria-label={block.title}>
-      <div className="section-heading"><div><h2>{i + 1}. {block.title}</h2><p>{data?.charts.find(c => c.id === block.id)?.unit ?? block.unit ?? (selection.structure_mode === 'share' ? '%' : 'трлн руб')} · с {catalog.minimumYear} года</p></div></div>
+      <div className="section-heading"><div><h2>{i + 1}. {block.title}</h2><ReleaseDates catalog={catalog} selected={selection} blockId={block.id} /><p>{data?.charts.find(c => c.id === block.id)?.unit ?? block.unit ?? (selection.structure_mode === 'share' ? '%' : 'трлн руб')} · с {catalog.minimumYear} года</p></div></div>
       <div className="economics-block-filters">{i < 4 ? <Control catalog={catalog} selected={selection} name={block.regionControl} label={`Регионы блока ${i + 1}`} change={change} /> : i === 4 ? <><Control catalog={catalog} selected={selection} name="structure_region" change={change} /><Control catalog={catalog} selected={selection} name="structure_mode" change={change} /><Control catalog={catalog} selected={selection} name="structure_industries" change={change} /></> : <><Control catalog={catalog} selected={selection} name="index_region" change={change} /><Control catalog={catalog} selected={selection} name="index_industries" change={change} /><Control catalog={catalog} selected={selection} name="show_total" label="Всего по всем отраслям" change={change} /></>}</div>
       {renderChart(data?.charts.find(c => c.id === block.id))}
     </section>)}</> : catalog && !error && <section className="section economics-chart-section" aria-label={titles[family]}><div className="section-heading"><div><h2>{data?.charts[0]?.title ?? titles[family]}</h2><p>{family === 'salary' ? 'руб.' : '%'}</p></div></div>{catalog && selection && family !== 'accounts' && <div className="filters economics-filters"><Control catalog={catalog} selected={selection} name="period" change={change} /><Control catalog={catalog} selected={selection} name={family === 'salary' ? 'region' : 'regions'} change={change} />{family === 'salary' && <Control catalog={catalog} selected={selection} name="views" change={change} />}

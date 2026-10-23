@@ -7,6 +7,7 @@ import json
 import threading
 import time
 from datetime import datetime, timezone
+from math import isfinite
 from numbers import Real
 from pathlib import Path
 
@@ -22,6 +23,49 @@ from pipeline.economics_calculations import (
 from pipeline.profile_calculations import records
 
 LOADERS = {"salary": "load_salary", "ipc": "load_ipc", "accounts": "load_national_accounts"}
+ACCOUNT_RELEASE_METRICS = {metric for block in ACCOUNT_BLOCKS for metric in block[:2]} | {
+    "vds_value", "vds_structure", "vds_index",
+}
+
+
+def _release_integer(value, minimum, maximum):
+    return (isinstance(value, Real) and not isinstance(value, bool)
+            and minimum <= value <= maximum and int(value) == value)
+
+
+def release_periods(family, df):
+    """Latest measured periods per region/metric, before any display selection."""
+    required = {"region", "year", "value", "period_type"}
+    required |= {"metric"} if family == "accounts" else {"month"}
+    if family == "salary":
+        required.add("view")
+    if df.empty or not required.issubset(df.columns):
+        return []
+    if family == "accounts":
+        sub = df.loc[df["period_type"].eq("year") & df["metric"].isin(ACCOUNT_RELEASE_METRICS),
+                     ["region", "metric", "year", "value"]].copy()
+        sub["month"] = None
+    else:
+        if family == "salary":
+            # Either primary view can establish availability; annual rows cannot.
+            eligible = df["period_type"].isin(["month", "ytd"]) & df["view"].isin(VIEWS)
+        else:
+            # CPI stores its monthly base in period_type, not index_base.
+            eligible = df["period_type"].eq("month_to_month")
+        sub = df.loc[eligible, ["region", "year", "month", "value"]].copy()
+        sub["metric"] = family
+    if sub.empty:
+        return []
+    valid = sub["region"].map(lambda value: isinstance(value, str) and bool(value.strip()))
+    valid &= sub["year"].map(lambda value: _release_integer(value, 1, 9999))
+    valid &= sub["value"].map(lambda value: isinstance(value, Real) and not isinstance(value, bool) and isfinite(value))
+    if family != "accounts":
+        valid &= sub["month"].map(lambda value: _release_integer(value, 1, 12))
+    latest = (sub.loc[valid].sort_values(["year", "month"])
+              .drop_duplicates(["region", "metric"], keep="last").sort_values(["region", "metric"]))
+    return [{"region": row.region, "metric": row.metric, "year": int(row.year),
+             "month": None if family == "accounts" else int(row.month)}
+            for row in latest.itertuples(index=False)]
 
 
 def options(values):
@@ -169,6 +213,7 @@ class EconomicsService:
         files = [self._relative(item[0]) for item in signature[1] if item[1] is not None]
         metadata = {"schemaVersion": 1, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
                     "generatedAt": datetime.now(timezone.utc).isoformat(),
+                    "releasePeriods": release_periods(self.family, data),
                     "source": {"date": dates.max().strftime("%d.%m.%Y") if dates.notna().any() else None,
                                "files": files, "issues": [list(item) for item in access.issues], "fileEvidence": "candidates",
                                "recordedSources": names, "recordedSourceEvidence": "source_file values in loaded rows, not verified raw selection",

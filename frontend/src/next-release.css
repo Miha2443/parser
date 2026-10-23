@@ -1,0 +1,3 @@
+.cp-page .next-release, .economics-page .next-release { display: flex; align-items: baseline; gap: 7px; margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.next-release > svg { align-self: flex-start; margin-top: 3px; }
+.next-release time { color: var(--text); font-weight: 600; }

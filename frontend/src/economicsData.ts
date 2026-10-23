@@ -9,7 +9,8 @@ export type EconomicsValue = string | boolean | (string | number)[];
 export type EconomicsSelection = Record<string, EconomicsValue>;
 export type EconomicsOption = { id: string | number; label: string; unit?: string };
 export type EconomicsTable = { id: string; title: string; columns: { id: string; label: string }[]; rows: Record<string, EconomicsCell>[] };
-export type EconomicsMetadata = { schemaVersion: 1; version: string; generatedAt: string; source: {
+export type EconomicsReleasePeriod = { region: string; metric: string; year: number; month: number | null };
+export type EconomicsMetadata = { schemaVersion: 1; version: string; generatedAt: string; releasePeriods?: EconomicsReleasePeriod[]; source: {
   date: string | null; files: string[]; issues: [string, string][]; fileEvidence: string;
   recordedSources: string[]; recordedSourceEvidence: string; dateEvidence: string;
   downloadSummary: string; provenance: Pick<EconomicsTable, 'columns' | 'rows'>;
@@ -64,10 +65,17 @@ function rowsTable(value: unknown): Pick<EconomicsTable, 'columns' | 'rows'> {
   return { columns, rows };
 }
 function table(value: unknown): EconomicsTable { const v = obj(value); return { id: id(v.id), title: str(v.title), ...rowsTable(v) }; }
+function releasePeriod(value: unknown): EconomicsReleasePeriod {
+  const v = obj(value), region = id(v.region), metric = id(v.metric), year = numeric(v.year), month = v.month === null ? null : numeric(v.month);
+  if (!region.trim() || !metric.trim() || !Number.isInteger(year) || year < 1 || year > 9999 ||
+    month !== null && (!Number.isInteger(month) || month < 1 || month > 12)) throw invalid();
+  return { region, metric, year, month };
+}
 function metadata(v: Obj): EconomicsMetadata {
   if (v.schemaVersion !== 1 || !Number.isFinite(Date.parse(str(v.generatedAt)))) throw invalid();
   const source = obj(v.source);
-  return { schemaVersion: 1, version: id(v.version), generatedAt: str(v.generatedAt), source: {
+  return { schemaVersion: 1, version: id(v.version), generatedAt: str(v.generatedAt),
+    ...(v.releasePeriods === undefined ? {} : { releasePeriods: list(v.releasePeriods, releasePeriod) }), source: {
     date: source.date === null ? null : str(source.date), files: list(source.files, str),
     issues: list(source.issues, value => { if (!Array.isArray(value) || value.length !== 2) throw invalid(); return [str(value[0]), str(value[1])]; }),
     fileEvidence: str(source.fileEvidence), recordedSources: list(source.recordedSources, str),
@@ -117,6 +125,33 @@ export function readEconomicsReport(value: unknown, family: EconomicsFamily, exp
       ...(c.totals === undefined ? {} : { totals: list(c.totals, point) }) } as EconomicsChart;
   }));
   return { ...metadata(v), family, selection: selected, charts, tables: unique(list(v.tables, table)) };
+}
+
+const accountsReleaseMetrics: Record<string, Record<string, string>> = {
+  na_block1: { 'Москва': 'vrp_total', 'Российская Федерация': 'gdp_total' },
+  na_block2: { 'Москва': 'vrp_per_capita', 'Российская Федерация': 'gdp_pc_total' },
+  na_block3: { 'Москва': 'vrp_index', 'Российская Федерация': 'gdp_index' },
+  na_block4: { 'Москва': 'vrp_per_capita_index', 'Российская Федерация': 'gdp_pc_index' },
+};
+export function economicsReleasePeriods(catalog: EconomicsCatalog, selected: EconomicsSelection, blockId?: string): EconomicsReleasePeriod[] {
+  let targets: { region: string; metric: string | undefined }[];
+  if (catalog.family === 'salary') targets = [{ region: String(selected.region), metric: 'salary' }];
+  else if (catalog.family === 'ipc') targets = (selected.regions as string[]).map(region => ({ region, metric: 'ipc' }));
+  else {
+    const block = catalog.blocks?.find(b => b.id === blockId);
+    if (!block) return [];
+    const value = selected[block.regionControl], regions = Array.isArray(value) ? value.map(String) : typeof value === 'string' ? [value] : [];
+    targets = regions.map(region => ({ region, metric: block.id === 'na_block5' ? selected.structure_mode === 'share' ? 'vds_structure' : 'vds_value'
+      : block.id === 'na_block6' ? 'vds_index' : accountsReleaseMetrics[block.id]?.[region] }));
+  }
+  return targets.flatMap(({ region, metric }) => {
+    // Only observed annual accounts or monthly salary/CPI periods are scheduling evidence.
+    const matching = (catalog.releasePeriods ?? []).filter(p => p.region === region && p.metric === metric &&
+      (catalog.family === 'accounts' ? p.month === null : p.month !== null));
+    const latest = matching.reduce<EconomicsReleasePeriod | null>((latest, p) => !latest || p.year > latest.year ||
+      p.year === latest.year && (p.month ?? 0) > (latest.month ?? 0) ? p : latest, null);
+    return latest ? [latest] : [];
+  });
 }
 
 export function economicsOptions(catalog: EconomicsCatalog, key: string, selected: EconomicsSelection): EconomicsOption[] {

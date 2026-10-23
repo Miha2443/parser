@@ -359,6 +359,11 @@ axis fits the viewport; narrow screens rotate captions without chart scrolling.
 Linear uses `/api/v1/linear/dashboard`: six tiles and six yearly charts in order
 roads, bridges/tunnels/overpasses, pedestrian crossings, metro stations, metro
 tunnels, depots. Real zero remains zero; missing facts/plans remain unavailable.
+Depot facts for 2011–2025 are the agreed static counts from
+`электродепо11-25.xlsx`; the optional fourth source is `static_depots`.
+They appear only as completed annual depot facts, including zeros, and never
+replace the current-year KPI or a forecast. Chart CSV and full Excel retain
+the static-source provenance. A code-only server upgrade installs the series.
 Each metric retains its own forecast horizon. Current facts are explicitly
 partial-year observations. Pinned full Excel uses `/linear/dashboard/export`;
 charts also expose CSV/PNG. The old quarterly API remains compatible but is no

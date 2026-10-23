@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { exportCsv } from './format.ts';
 import { linearDashboardUrl, linearHistoryOption, linearMetricIds, linearValue, linearYearRows, loadLinearDashboard, readLinearDashboard } from './linearDashboardData.ts';
 
 function fixture() {
   const row = { year: 2026, fact: null, factKind: null, factPeriod: null, factSource: null, plan: null, forecast: null };
   return { schemaVersion: 1, currentYear: 2026, version: 'linear-v1', generatedAt: '2026-10-21T10:00:00Z', sources: ['dsti', 'monitoring', 'forecast'].map(id => ({ id, file: null, date: null, sheet: null })), notes: [], metrics: linearMetricIds.map(id => ({ id, label: id, unit: ['roads', 'metro_tunnels'].includes(id) ? 'км' : 'ед.', fact: null, factPeriod: null, factSource: null, annualPlan: null, forecast: null, target: null, targetKind: null, percent: null, remaining: null, years: [{ ...row }] })) };
+}
+
+const staticDepotValues = [0, 0, 0, 1, 0, 1, 0, 2, 1, 0, 0, 0, 1, 1, 2];
+function staticDepotFixture() {
+  const raw = fixture();
+  raw.sources.push({ id: 'static_depots', file: 'электродепо11-25.xlsx', date: null, sheet: 'Лист1' });
+  raw.metrics[5].years.unshift(...staticDepotValues.map((fact, index) => ({ year: 2011 + index, fact, factKind: 'annual', factPeriod: `За ${2011 + index} год`, factSource: 'static_depots', plan: null, forecast: null })));
+  return raw;
 }
 
 test('exact six metric order, absent values remain null, no fabricated 2011 history', () => {
@@ -16,6 +25,85 @@ test('exact six metric order, absent values remain null, no fabricated 2011 hist
   assert.equal(linearYearRows(raw.metrics[0])[1][1], null);
   raw.metrics.pop();
   assert.throws(() => readLinearDashboard(raw));
+});
+
+test('optional static source preserves the original three sources without inventing history', () => {
+  const raw = fixture(), legacy = structuredClone(raw);
+  raw.sources.push(staticDepotFixture().sources[3]);
+  const parsed = readLinearDashboard(raw);
+  assert.deepEqual(parsed.sources.slice(0, 3), legacy.sources);
+  assert.deepEqual(parsed.sources[3], { id: 'static_depots', file: 'электродепо11-25.xlsx', date: null, sheet: 'Лист1' });
+  assert.deepEqual(parsed.metrics, legacy.metrics);
+  for (const mutation of [value => value.sources.splice(2, 1), value => value.sources.push({ ...value.sources[3] }), value => value.sources[3].id = 'unknown', value => delete value.sources[3].date]) {
+    const invalid = structuredClone(raw); mutation(invalid); assert.throws(() => readLinearDashboard(invalid));
+  }
+});
+
+test('static depot annual history retains real zeros, gaps and absent current KPI values', () => {
+  const raw = staticDepotFixture(), metric = raw.metrics[5];
+  metric.years.unshift({ ...metric.years.at(-1), year: 2010 });
+  const parsed = readLinearDashboard(raw), depots = parsed.metrics[5];
+  assert.deepEqual(parsed, raw);
+  assert.equal(depots.unit, 'ед.');
+  assert.deepEqual(depots.years.slice(1, -1).map(row => [row.year, row.fact, row.factKind, row.factPeriod, row.factSource]), staticDepotValues.map((fact, index) => [2011 + index, fact, 'annual', `За ${2011 + index} год`, 'static_depots']));
+  for (const key of ['fact', 'factPeriod', 'factSource', 'annualPlan', 'forecast', 'target', 'targetKind', 'percent', 'remaining']) assert.equal(depots[key], null, key);
+  assert.deepEqual(parsed.metrics.slice(0, 5), fixture().metrics.slice(0, 5));
+  for (const theme of ['light', 'dark']) {
+    const option = linearHistoryOption(depots, parsed.currentYear, theme);
+    assert.deepEqual(option.xAxis.data, ['2010', ...staticDepotValues.map((_, index) => String(2011 + index)), '2026\nфакт']);
+    assert.deepEqual(option.series[0].data, [null, ...staticDepotValues, null]);
+    assert.ok(option.series[1].data.every(value => value === null));
+    assert.match(option.tooltip.formatter({ name: '2011', value: 0, seriesName: 'Факт', dataIndex: 1 }), /0 ед\.<br\/>За 2011 год/);
+  }
+});
+
+test('static depot CSV exports every annual count and source while missing values remain empty', async t => {
+  const metric = readLinearDashboard(staticDepotFixture()).metrics[5], rows = linearYearRows(metric);
+  assert.deepEqual(rows[0], ['Год', 'Факт, ед.', 'Период факта', 'Источник факта', 'Прогноз, ед.']);
+  assert.deepEqual(rows.slice(1), [...staticDepotValues.map((fact, index) => [2011 + index, fact, `За ${2011 + index} год`, 'static_depots', null]), [2026, null, null, null, null]]);
+  const originalDocument = globalThis.document, link = { click: t.mock.fn() };
+  let blob;
+  t.mock.method(URL, 'createObjectURL', value => { blob = value; return 'blob:static-depots'; });
+  t.mock.method(URL, 'revokeObjectURL', () => {});
+  t.mock.method(globalThis, 'setTimeout', callback => { callback(); });
+  try {
+    globalThis.document = { createElement: tag => { assert.equal(tag, 'a'); return link; } };
+    exportCsv(rows, 'linear-depots.csv');
+    assert.equal(link.download, 'linear-depots.csv');
+    assert.equal(link.href, 'blob:static-depots');
+    assert.equal(link.click.mock.callCount(), 1);
+    assert.deepEqual((await blob.text()).split('\r\n').slice(1), [...staticDepotValues.map((fact, index) => `"${2011 + index}";"${fact}";"За ${2011 + index} год";"static_depots";""`), '"2026";"";"";"";""']);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
+
+test('static depot evidence is rejected for other metrics, current KPI, nonannual and missing facts', () => {
+  for (let index = 0; index < 5; index++) {
+    const raw = staticDepotFixture();
+    raw.metrics[index].years.unshift({ ...raw.metrics[5].years[0] });
+    assert.throws(() => readLinearDashboard(raw), raw.metrics[index].id);
+  }
+  for (const [label, mutation] of [
+    ['unregistered source', raw => raw.sources.pop()],
+    ['unknown fact source', raw => raw.metrics[5].years[0].factSource = 'static_other'],
+    ['partial historical fact', raw => raw.metrics[5].years[0].factKind = 'partial'],
+    ['missing fact', raw => Object.assign(raw.metrics[5].years[0], { fact: null, factKind: null })],
+    ['missing period', raw => raw.metrics[5].years[0].factPeriod = null],
+    ['current annual fact', raw => raw.currentYear = 2025],
+    ['current partial fact', raw => {
+      Object.assign(raw.metrics[5], { fact: 0, factPeriod: 'Неполный год', factSource: 'monitoring' });
+      Object.assign(raw.metrics[5].years.at(-1), { fact: 0, factKind: 'partial', factPeriod: 'Неполный год', factSource: 'static_depots' });
+    }],
+    ['current KPI', raw => {
+      Object.assign(raw.metrics[5], { fact: 0, factPeriod: 'Неполный год', factSource: 'static_depots' });
+      Object.assign(raw.metrics[5].years.at(-1), { fact: 0, factKind: 'partial', factPeriod: 'Неполный год', factSource: 'monitoring' });
+    }],
+    ['future annual fact', raw => raw.metrics[5].years.push({ ...raw.metrics[5].years[0], year: 2027 })],
+  ]) {
+    const raw = staticDepotFixture(); mutation(raw); assert.throws(() => readLinearDashboard(raw), label);
+  }
 });
 
 test('zero source plan cannot replace a positive forecast target', () => {

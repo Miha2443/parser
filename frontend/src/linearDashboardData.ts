@@ -14,10 +14,17 @@ const nullableNumber = (v: unknown) => v === null || typeof v === 'number' && Nu
 const nullableString = (v: unknown) => v === null || typeof v === 'string';
 const year = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 1900 && v <= 2200;
 const invalid = () => new Error('Данные линейных объектов не соответствуют схеме дашборда.');
-const evidence = (v: ObjectValue) => nullableString(v.factPeriod) && nullableString(v.factSource) && (v.fact === null ? v.factPeriod === null && v.factSource === null : typeof v.factPeriod === 'string' && ['dsti', 'monitoring'].includes(String(v.factSource)));
+const evidence = (v: ObjectValue, staticDepotHistory = false) => nullableString(v.factPeriod) && nullableString(v.factSource) && (v.fact === null ? v.factPeriod === null && v.factSource === null : typeof v.factPeriod === 'string' && (['dsti', 'monitoring'].includes(String(v.factSource)) || staticDepotHistory && v.factSource === 'static_depots'));
 export function readLinearDashboard(value: unknown): LinearDashboard {
   const raw = object(value);
   if (raw.schemaVersion !== 1 || typeof raw.version !== 'string' || !raw.version || typeof raw.generatedAt !== 'string' || !Number.isFinite(Date.parse(raw.generatedAt)) || !year(raw.currentYear) || !Array.isArray(raw.metrics) || raw.metrics.length !== 6 || !Array.isArray(raw.sources) || !Array.isArray(raw.notes) || raw.notes.some(v => typeof v !== 'string')) throw invalid();
+  const sourceIds: string[] = [];
+  for (const value of raw.sources) {
+    const source = object(value);
+    if (typeof source.id !== 'string' || !['dsti', 'monitoring', 'forecast', 'static_depots'].includes(source.id) || sourceIds.includes(source.id) || !['file', 'date', 'sheet'].every(key => nullableString(source[key])) || source.date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(source.date))) throw invalid();
+    sourceIds.push(source.id);
+  }
+  if (!['dsti', 'monitoring', 'forecast'].every(id => sourceIds.includes(id))) throw invalid();
   for (const [index, value] of raw.metrics.entries()) {
     const metric = object(value);
     if (metric.id !== linearMetricIds[index] || typeof metric.label !== 'string' || !metric.label || metric.unit !== (['roads', 'metro_tunnels'].includes(String(metric.id)) ? 'км' : 'ед.') || !['fact', 'annualPlan', 'forecast', 'target', 'percent', 'remaining'].every(key => nullableNumber(metric[key])) || ![null, 'plan', 'forecast'].includes(metric.targetKind as null) || !evidence(metric) || !Array.isArray(metric.years)) throw invalid();
@@ -29,7 +36,8 @@ export function readLinearDashboard(value: unknown): LinearDashboard {
     let previous = 0;
     for (const value of metric.years) {
       const row = object(value);
-      if (!year(row.year) || Number(row.year) <= previous || !['fact', 'plan', 'forecast'].every(key => nullableNumber(row[key])) || ![null, 'annual', 'partial'].includes(row.factKind as null) || !evidence(row)) throw invalid();
+      const staticDepotHistory = sourceIds.includes('static_depots') && metric.id === 'depots' && Number(row.year) < Number(raw.currentYear) && row.factKind === 'annual';
+      if (!year(row.year) || Number(row.year) <= previous || !['fact', 'plan', 'forecast'].every(key => nullableNumber(row[key])) || ![null, 'annual', 'partial'].includes(row.factKind as null) || !evidence(row, staticDepotHistory)) throw invalid();
       if (row.fact === null ? row.factKind !== null : row.factKind !== (Number(row.year) === raw.currentYear ? 'partial' : 'annual')) throw invalid();
       if (Number(row.year) > Number(raw.currentYear) && row.fact !== null || Number(row.year) < Number(raw.currentYear) && row.forecast !== null) throw invalid();
       previous = Number(row.year);
@@ -37,13 +45,6 @@ export function readLinearDashboard(value: unknown): LinearDashboard {
     const current = metric.years.map(object).find(row => row.year === raw.currentYear);
     if (metric.fact !== (current?.fact ?? null) || metric.annualPlan !== (current?.plan ?? null) || metric.forecast !== (current?.forecast ?? null)) throw invalid();
   }
-  const sourceIds: string[] = [];
-  for (const value of raw.sources) {
-    const source = object(value);
-    if (typeof source.id !== 'string' || !['dsti', 'monitoring', 'forecast'].includes(source.id) || sourceIds.includes(source.id) || !['file', 'date', 'sheet'].every(key => nullableString(source[key])) || source.date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(source.date))) throw invalid();
-    sourceIds.push(source.id);
-  }
-  if (sourceIds.length !== 3) throw invalid();
   return raw as LinearDashboard;
 }
 

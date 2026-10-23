@@ -14,7 +14,8 @@ from openpyxl import load_workbook
 from app.linear_objects import latest_source, period_summary, read_linear_objects, source_date
 from backend.profile_service import FilterUnavailable, SourceUnavailable
 from pipeline.data_access import DataAccess, DataContext, file_signature
-from pipeline.linear_dashboard import HISTORY_SHEET, build_dashboard, read_history
+from pipeline.linear_dashboard import (HISTORY_SHEET, STATIC_DEPOT_HISTORY, STATIC_DEPOT_SOURCE,
+                                       build_dashboard, read_history)
 from pipeline.report_values import records
 
 
@@ -105,7 +106,8 @@ class LinearService:
         files = access.source_files("commissioning_forecasts")
         monitoring = max(files, key=lambda path: path.stat().st_mtime) if files else None
         return dsti, monitoring, (file_signature(dsti) if dsti else None,
-                                  access.data_version("load_commissioning_forecasts"), date.today().isoformat())
+                                  access.data_version("load_commissioning_forecasts"), date.today().isoformat(),
+                                  STATIC_DEPOT_HISTORY, tuple(STATIC_DEPOT_SOURCE.items()))
 
     def dashboard(self):
         with self._lock:
@@ -146,14 +148,17 @@ class LinearService:
                  "sheet": HISTORY_SHEET},
                 {"id": "forecast", "file": forecasts.get("source_file"), "date": forecasts.get("source_date"),
                  "sheet": "Прогнозы"},
+                dict(STATIC_DEPOT_SOURCE),
             ]
             payload = {"schemaVersion": 1, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
                        "generatedAt": datetime.now(timezone.utc).isoformat(), "sources": sources,
                        "notes": notes + forecasts.get("notes", []) + [
                            "Прогноз не является фактом. Пустые значения не считаются нулём.",
                            "Процент выполнения и остаток рассчитаны только от годового прогноза листа «Прогнозы»; без прогноза они неизвестны.",
-                           "Факт текущего года неполный; история депо без отдельного источника не восстанавливается."],
-                       **build_dashboard(data, history, forecasts, sources, date.today())}
+                           "Факт текущего года неполный.",
+                           "История электродепо за 2011–2025 годы закреплена как статичные годовые значения из файла «электродепо11-25.xlsx», лист «Лист1», ячейки D1:R2; нули сохранены."],
+                       **build_dashboard(data, history, forecasts, sources, date.today(),
+                                         static_depots=STATIC_DEPOT_HISTORY)}
             if self._dashboard_inputs(access) != (dsti, monitoring, signature):
                 raise SourceUnavailable("Linear dashboard sources changed during loading")
             json.dumps(payload, allow_nan=False)

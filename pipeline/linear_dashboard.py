@@ -14,6 +14,14 @@ METRICS = (
     ("depots", "Электродепо", "ед.", "электродепо", None),
 )
 HISTORY_SHEET = "Данные с 2011 года"
+# Agreed annual counts: электродепо11-25.xlsx, Лист1, D1:R2.
+STATIC_DEPOT_HISTORY = (
+    (2011, 0), (2012, 0), (2013, 0), (2014, 1), (2015, 0),
+    (2016, 1), (2017, 0), (2018, 2), (2019, 1), (2020, 0),
+    (2021, 0), (2022, 0), (2023, 1), (2024, 1), (2025, 2),
+)
+STATIC_DEPOT_SOURCE = {"id": "static_depots", "file": "электродепо11-25.xlsx",
+                       "date": None, "sheet": "Лист1"}
 
 
 def number(value):
@@ -78,7 +86,7 @@ def read_history(book):
     return result, []
 
 
-def build_dashboard(dsti, history, forecasts, sources, today: date):
+def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_depots=()):
     current = today.year
     source_by_id = {source["id"]: source for source in sources}
     monitoring_date = source_by_id["monitoring"]["date"]
@@ -132,6 +140,11 @@ def build_dashboard(dsti, history, forecasts, sources, today: date):
             measured[year] = {"fact": value, "factKind": "annual" if annual else "partial",
                               "factPeriod": f"За {year} год" if annual else f"На {monitoring_date} · неполный год",
                               "factSource": "monitoring"}
+        if key == "depots":
+            for year, value in static_depots:
+                if year < current:
+                    measured[year] = {"fact": value, "factKind": "annual",
+                                      "factPeriod": f"За {year} год", "factSource": "static_depots"}
         forecast_years = {year for year, row in forecast_rows.items()
                           if year >= current and number(row.get(key)) is not None}
         years = sorted(observed_years | set(measured) | set(plans) | forecast_years)

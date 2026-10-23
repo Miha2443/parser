@@ -151,7 +151,11 @@ export function annualChartOption(c: AnnualChart, theme: Theme, visibleNames?: s
   }] : [];
   return {
     grid: { left: 6, right: 14, top: 36, bottom: 12, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => `<strong>${escape(p.name).replaceAll('\n', ' · ')} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(c.unit)}${p.seriesName === 'Прогноз' && c.forecast ? `<br/>${escape(c.forecast.metric)}` : ''}` },
+    tooltip: { trigger: 'item', confine: true, className: 'commissioning-tooltip', formatter: (p: { name: string; seriesName: string; value: number | null }) => {
+      const smallArea = c.unit === 'млн м²' && p.value !== null && p.value > 0 && p.value < .05;
+      const value = smallArea ? `${format(p.value! * 1000)} тыс. м²` : `${format(p.value)} ${escape(c.unit)}`;
+      return `<strong>${escape(p.name).replaceAll('\n', ' · ')} · ${escape(p.seriesName)}</strong><br/>${value}${p.seriesName === 'Прогноз' && c.forecast ? `<br/>${escape(c.forecast.metric)}` : ''}`;
+    } },
     xAxis: { type: 'category', data: [...c.rows.map(r => annualFactYear(c, r)), ...forecastPoints.map(point => `${point.year}\nпрогноз`)], axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, interval: 0, fontSize: 10, lineHeight: 14, hideOverlap: true } },
     yAxis: { type: 'value', name: c.unit, nameTextStyle: { color: t.muted }, axisLabel: { color: t.muted, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
     series: [...c.series.map(s => ({ type: 'bar', stack: c.id, name: s.name, data: [...s.points.map(p => p.y), ...forecastPoints.map(() => null)], itemStyle: { color: s.color }, barMaxWidth: 50, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: !single }, label: { show: labelled(s.id), position: 'top', color: t.muted, fontSize: 10, formatter: (p: { dataIndex: number }) => {

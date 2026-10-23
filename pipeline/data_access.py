@@ -835,7 +835,7 @@ class DataAccess:
         """The single source registry used by loaders, UI versions and mart builds."""
         if mart == "kvartirografia":
             return self._raw_files(self.KVART_PATHS, ["kvartirografia_*.json", "kvartirografia_*.xlsx"])
-        if mart in {"monitoring_2_0", "monitoring_2011_2026_static", "monitoring_operational_history", "commissioning_forecasts"}:
+        if mart in {"monitoring_2_0", "monitoring_2011_2026_static", "monitoring_operational_history", "monitoring_annual_ihs", "commissioning_forecasts"}:
             return self._raw_files(self.MONITORING_PATHS, ["monitoring_2_0_*.xlsx"])
         if mart == "erzrf_top":
             return self._raw_files(self.ERZRF_PATHS, ["top_*.xlsx", "TOP_EXCEL*.xlsx", "top_developers_*.json"], recursive=True)
@@ -883,7 +883,7 @@ class DataAccess:
         else:
             mart = loader.removeprefix("load_")
             inputs = self.source_files(mart)
-            if mart not in {"emiss_34118_periods", "monitoring_2011_2026_static", "monitoring_operational_history", "commissioning_forecasts"}:
+            if mart not in {"emiss_34118_periods", "monitoring_2011_2026_static", "monitoring_operational_history", "monitoring_annual_ihs", "commissioning_forecasts"}:
                 inputs += [self.DATA_MARTS_REALTY / "manifest.json", self.DATA_MARTS_REALTY / f"{mart}.pkl"]
         return tuple(file_signature(path) for path in sorted(set(inputs)))
 
@@ -2166,6 +2166,29 @@ class DataAccess:
             result = empty_forecasts(filename, filename_date(path))
             result["notes"].append("Не удалось прочитать сохранённый лист прогноза.")
             return result
+
+    def load_monitoring_annual_ihs(self) -> pd.DataFrame:
+        """Completed Moscow IHS years with cell provenance, in million m²."""
+        from pipeline.commissioning_forecasts import filename_date
+        from pipeline.monitoring_annual import COLUMNS, SHEET, read_annual_ihs
+
+        files = self.source_files("monitoring_annual_ihs")
+        if not files:
+            return pd.DataFrame(columns=COLUMNS)
+        latest = max(files, key=lambda path: path.stat().st_mtime)
+        try:
+            filename = latest.resolve().relative_to(self.context.root).as_posix()
+        except ValueError:
+            filename = latest.name
+        try:
+            frame = pd.read_excel(latest, sheet_name=SHEET, header=None)
+            result = read_annual_ihs(frame, filename, filename_date(latest))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self._report_issue("warning", f"Annual Moscow IHS history unavailable: {type(exc).__name__}")
+            return pd.DataFrame(columns=COLUMNS)
+        if result.empty:
+            self._report_issue("warning", "No confirmed annual Moscow IHS cells; historical values remain unknown")
+        return result
 
     def load_monitoring_operational_history(self) -> dict[str, object]:
         """Monthly Moscow commissioning history from `Данные с 2011 года`.

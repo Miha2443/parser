@@ -1,7 +1,8 @@
 """Approved permit controls, complete month selection and honest compositions."""
+from io import BytesIO
 import unittest
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from backend.tests import test_construction_pages as fixtures
 from pipeline.permit_page_calculations import (FORECAST_SHEET, HISTORICAL_FIELDS, HISTORY_SHEET,
@@ -51,6 +52,65 @@ class CanonicalPermitTests(unittest.TestCase):
             row = next(row for row in block["rows"] if row["year"] == 2026)
             self.assertEqual(row["actualMonth"], 9)
             self.assertIsNotNone(row[block["aggregateField"]])
+
+    def test_default_main_and_structure_months_use_source_observations_per_kind(self):
+        self.fixture.edit_book(OKS_SHEET, {"B44": None})
+        for kind, expected in (("housing", 9), ("nonresidential", 10), ("total", 10)):
+            with self.subTest(kind=kind):
+                payload = self.service.report(kind)
+                self.assertEqual(payload["selection"]["month"], expected)
+                self.assertEqual(payload["selection"]["structure"]["monthTo"], expected)
+                for month in range(1, 13):
+                    chosen = self.service.report(kind, month, structure_month_to=month)
+                    self.assertEqual(chosen["selection"]["month"], month)
+                    self.assertEqual(chosen["selection"]["structure"]["monthTo"], month)
+
+    def test_default_structure_ignores_future_registry_months_but_keeps_explicit_december(self):
+        self.fixture.write_book()
+        payload = self.service.report("total")
+        self.assertEqual(payload["selection"]["month"], 10)
+        self.assertEqual(payload["selection"]["structure"]["monthTo"], 10)
+        self.assertEqual(self.service.report("total", 12, structure_month_to=12)["selection"]["structure"]["monthTo"], 12)
+
+    def test_default_months_distinguish_missing_measurements_from_observed_zero(self):
+        self.fixture.edit_book(OKS_SHEET, {"B44": None, "Q45": None})
+        for kind in ("housing", "nonresidential", "total"):
+            selection = self.service.report(kind)["selection"]
+            self.assertEqual(selection["month"], 9)
+            self.assertEqual(selection["structure"]["monthTo"], 9)
+        self.fixture.edit_book(OKS_SHEET, {"Q45": 0})
+        selection = self.service.report("nonresidential")["selection"]
+        self.assertEqual(selection["month"], 10)
+        self.assertEqual(selection["structure"]["monthTo"], 10)
+
+    def test_api_and_export_share_default_months_and_preserve_explicit_periods(self):
+        self.fixture.edit_book(OKS_SHEET, {"B44": None})
+        client = self.fixture.client()
+        url = "/api/v1/construction/permits"
+        for month in (None, 12):
+            params = {"permit_kind": "housing"}
+            if month is not None:
+                params.update(month=month, structure_month_to=month)
+            payload = client.get(url, params=params).json()
+            expected = 9 if month is None else month
+            self.assertEqual(payload["selection"]["month"], expected)
+            self.assertEqual(payload["selection"]["structure"]["monthTo"], expected)
+            response = client.get(url + "/export", params={**params, "required_version": payload["version"]})
+            self.assertEqual(response.status_code, 200)
+            book = load_workbook(BytesIO(response.content))
+            selected = dict(book["Selection"].values)
+            self.assertEqual(selected["month"], expected)
+            self.assertEqual(selected["structure.monthTo"], expected)
+
+    def test_default_uses_observed_month_without_filename_date_and_after_year_rollover(self):
+        renamed = self.fixture.book_path.with_name("monitoring_2_0_unknown.xlsx")
+        self.fixture.book_path.rename(renamed)
+        self.assertEqual(self.service.report("housing")["selection"]["month"], 10)
+        self.assertEqual(self.service.report("housing")["selection"]["structure"]["monthTo"], 10)
+        renamed.rename(renamed.with_name("monitoring_2_0_20270105.xlsx"))
+        payload = self.service.report("housing")
+        self.assertEqual(payload["selection"]["month"], 10)
+        self.assertEqual(payload["selection"]["structure"]["monthTo"], 10)
 
     def test_main_and_structure_share_approved_controls_without_rescaling_mop(self):
         for kind, field, block in (("housing", "living", "housing_components"),

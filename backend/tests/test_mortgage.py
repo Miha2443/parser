@@ -229,6 +229,26 @@ class MortgageServiceTests(unittest.TestCase):
         for region in ("", "unknown", "msk"):
             self.assertEqual(self.client().get("/api/v1/mortgage", params={"region": region}).status_code, 404)
 
+    def test_default_month_uses_latest_measured_period_per_region_for_reports_and_exports(self):
+        self.write({**source([observation("2025-12"), observation("2026-09"), observation("2026-01"),
+                              observation("2026-12", region="rf"), observation("2027-01", region="rf"),
+                              observation("9999-12", volume=None, count=None)]), "sourceDate": "2030-12-31"})
+        client = self.client()
+        for region, expected in (("msk", 9), ("rf", 1)):
+            with self.subTest(region=region):
+                payload = self.service.report(region)
+                self.assertEqual(payload["selection"], {"region": region, "month": expected})
+                self.assertEqual(self.service.export_snapshot(region)[0]["selection"], payload["selection"])
+                self.assertEqual(client.get("/api/v1/mortgage", params={"region": region}).json()["selection"], payload["selection"])
+                exported = client.get("/api/v1/mortgage/export", params={"region": region, "required_version": payload["version"]})
+                self.assertEqual(exported.status_code, 200)
+                book = load_workbook(BytesIO(exported.content))
+                meta = dict(book["Report"].values)
+                self.assertEqual({key: meta[key] for key in ("region", "month")}, payload["selection"])
+                for month in range(1, 13):
+                    chosen = client.get("/api/v1/mortgage", params={"region": region, "month": month})
+                    self.assertEqual(chosen.json()["selection"]["month"], month)
+
     def test_null_only_population_is_not_advertised_but_observed_zero_is_available(self):
         self.write(source([observation("2026-01", volume=None, count=None),
                            observation("2026-01", region="rf", volume=0, count=None),

@@ -57,9 +57,25 @@ test('null and zero remain distinct; source average sizes and terms are not fill
 test('global region and annual month do not consume monthly range or metrics controls', () => {
   const c = readMortgageCatalog(catalog());
   assert.equal(mortgageSelection(null, new URLSearchParams()), null);
-  assert.deepEqual(mortgageSelection(c, new URLSearchParams()), { region: 'msk', month: 12 });
+  assert.deepEqual(mortgageSelection(c, new URLSearchParams()), { region: 'msk', month: 2 });
   assert.deepEqual(mortgageSelection(c, new URLSearchParams('region=rf&annualMonth=4&mortgage_volume_from=2026-01&mortgage_rates_to=2026-03&mortgage_terms=2026-01')), { region: 'rf', month: 4 });
-  assert.deepEqual(mortgageSelection(c, new URLSearchParams('region=spb&annualMonth=13&month=5')), { region: 'msk', month: 12 });
+  assert.deepEqual(mortgageSelection(c, new URLSearchParams('region=spb&annualMonth=13&month=5')), { region: 'msk', month: 2 });
+});
+
+test('cumulative mortgage defaults follow the latest regional source year, not old December or collection date', () => {
+  const raw = catalog();
+  raw.regions[0].periods = ['2026-09', '2025-12', '2026-01'];
+  raw.regions[1].periods = ['2026-12', '2027-01'];
+  raw.source.date = '2030-12-31';
+  const c = readMortgageCatalog(raw), before = structuredClone(c);
+  assert.deepEqual(mortgageSelection(c, new URLSearchParams()), { region: 'msk', month: 9 });
+  assert.deepEqual(mortgageSelection(c, new URLSearchParams('region=rf')), { region: 'rf', month: 1 });
+  for (let month = 1; month <= 12; month++) {
+    assert.deepEqual(mortgageSelection(c, new URLSearchParams(`region=rf&annualMonth=${month}`)), { region: 'rf', month });
+  }
+  assert.deepEqual(c, before);
+  raw.regions[0].periods = [];
+  assert.throws(() => readMortgageCatalog(raw));
 });
 
 test('mortgage exports pin generation and canonical filters', () => {

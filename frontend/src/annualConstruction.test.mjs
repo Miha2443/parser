@@ -29,6 +29,22 @@ test('compatibility permit chart uses the agreed annual-values legend', () => {
   const report = readConstructionReport(fixtures.constructionReport(), constructionSelection);
   assert.equal(permitChartOption(report.permits, 'light').series[1].name, 'Годовые значения');
 });
+
+test('small annual IHS measurements remain nonzero in hover without changing chart or export values', () => {
+  const chart = readAnnualReport(fixtures.annualReport(), annualSelection).charts[1];
+  chart.series[1].points[0].y = .0258;
+  chart.rows[0][chart.series[1].id] = .0258;
+  const before = structuredClone(chart);
+  for (const theme of ['light', 'dark']) {
+    const option = annualChartOption(chart, theme);
+    assert.match(option.tooltip.formatter({ name: '2011', seriesName: 'ИЖС', value: .0258 }), /25,8 тыс\. м²/);
+    assert.match(option.tooltip.formatter({ name: '2012', seriesName: 'ИЖС', value: .2218 }), /0,2 млн м²/);
+    assert.match(option.tooltip.formatter({ name: '2013', seriesName: 'ИЖС', value: 0 }), /0 млн м²/);
+    assert.equal(option.series[1].data[0], .0258);
+  }
+  assert.equal(annualChartRows(chart)[1][2], .0258);
+  assert.deepEqual(chart, before);
+});
 test('annual stack label follows highest visible series and sums only visible segments without changing source data', () => {
   const c = readAnnualReport(fixtures.annualReport(), annualSelection).charts[0], before = structuredClone(c), visible = c.series.slice(0, 2).map(s => s.name), o = annualChartOption(c, 'dark', visible);
   assert.deepEqual(o.series.map(s => s.label.show), [false, true, false, false]); assert.equal(o.series[1].label.formatter({ dataIndex: 5 }), '3,7'); assert.ok(o.media[0].option.series.every(s => s.label.show === false)); assert.deepEqual(c, before);

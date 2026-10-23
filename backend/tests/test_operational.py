@@ -178,6 +178,30 @@ class HistoricalMonthTests(unittest.TestCase):
         self.assertEqual(self.options["currentYear"], 2026)
         self.assertEqual(self.options["years"], [2026, 2025])
 
+    def test_default_uses_latest_rv_month_including_current_source_month_without_august_fallback(self):
+        rv = self.data["load_monitoring_2_0"]["rv"]
+        for source_date, month, expected in (("28.09.2026", "сентябрь", 9),
+                                              ("2026-10-01", "октябрь", 10),
+                                              ("05.01.2027", "декабрь", 12),
+                                              (None, "ноябрь", 11),
+                                              ("invalid", "ноябрь", 11),
+                                              ("05.01.2026", "январь", 1)):
+            with self.subTest(source_date=source_date, month=month):
+                rv.loc[2, "Месяц ввода по Мосстату"] = month
+                self.data["load_monitoring_operational_history"]["source_date"] = source_date
+                options = catalog(self.data)
+                self.assertEqual(options["defaultMonth"], expected)
+                payload = build_report(self.data, options)
+                self.assertEqual(payload["selection"]["month"], expected)
+                self.assertEqual(payload["structure"]["actualMonth"], expected)
+                self.assertEqual(payload["structure"]["sourceDate"], source_date)
+                self.assertEqual(build_report(self.data, options, month=12)["selection"]["month"], 12)
+
+    def test_future_rv_month_does_not_replace_latest_observed_source_month(self):
+        rv = self.data["load_monitoring_2_0"]["rv"]
+        rv.loc[len(rv)] = {**rv.iloc[2].to_dict(), "Месяц ввода по Мосстату": "декабрь"}
+        self.assertEqual(catalog(self.data)["defaultMonth"], 8)
+
     def test_reconstruction_estimate_export_retains_source_area_and_coefficient(self):
         rv = self.data["load_monitoring_2_0"]["rv"]
         rv["Группировка"] = "Жилье"

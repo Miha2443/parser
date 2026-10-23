@@ -101,15 +101,31 @@ async function main() {
     assert.equal(await page.locator('#mortgage-page .chart-canvas').count(), 5);
     await checkChartAnnotations();
     assert.equal(await page.getByLabel('Регион ипотечного кредитования', { exact: true }).inputValue(), 'msk');
+    const latestPeriod = sourceDocument.records.filter(row => row.region === 'msk'
+      && ['volumeRub', 'count', 'ratePct', 'termMonths', 'averageAmountRub'].some(metric => row[metric] !== null)).map(row => row.period).sort().at(-1);
+    const annualPeriod = page.getByLabel('Накопленный период ипотеки', { exact: true });
+    assert.equal(await annualPeriod.inputValue(), String(Number(latestPeriod.slice(5))));
     assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), firstMarketPeriod);
     const countFrom = await page.getByLabel('Количество договоров: с', { exact: true }).inputValue();
     await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption('2025-01');
     assert.equal(await page.getByLabel('Количество договоров: с', { exact: true }).inputValue(), countFrom);
-    const annualLoaded = page.waitForResponse(response => response.url().includes('/api/v1/mortgage?') && response.status() === 200);
-    await page.getByLabel('Накопленный период ипотеки', { exact: true }).selectOption('5');
-    await annualLoaded;
-    await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
-    assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), '2025-01');
+    for (const month of ['12', '5']) {
+      if (await annualPeriod.inputValue() !== month) {
+        const annualLoaded = page.waitForResponse(response => response.url().includes('/api/v1/mortgage?')
+          && new URL(response.url()).searchParams.get('month') === month && response.status() === 200);
+        await annualPeriod.selectOption(month);
+        await annualLoaded;
+        await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
+      }
+      assert.equal(await annualPeriod.inputValue(), month);
+      assert.equal(await page.getByLabel('Объём кредитов: с', { exact: true }).inputValue(), '2025-01');
+      if (month === '12') {
+        await page.waitForURL(url => url.searchParams.get('annualMonth') === '12');
+        await page.reload();
+        await page.locator('#mortgage-page .mortgage-term-grid').waitFor();
+        assert.equal(await annualPeriod.inputValue(), '12');
+      }
+    }
     await page.getByLabel('Объём кредитов: с', { exact: true }).selectOption(firstMarketPeriod);
     async function checkChartAnnotations() {
       assert.ok(echartsModuleUrl, 'Loaded ECharts module is available to inspect rendered chart geometry');

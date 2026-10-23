@@ -19,6 +19,11 @@ TREE_LABELS = [("total", "Всего"), ("housing_objects", "Жилые объе
                ("social", "Социальные"), ("other", "Прочее"), ("nonres_total", "Всё нежильё")]
 
 
+def _source_date(value):
+    date = pd.to_datetime(value, format="ISO8601", errors="coerce")
+    return date if pd.notna(date) else pd.to_datetime(value, dayfirst=True, errors="coerce")
+
+
 def catalog(data):
     rv = data["load_monitoring_2_0"].get("rv", pd.DataFrame())
     if rv.empty:
@@ -27,9 +32,14 @@ def catalog(data):
     selected = rv[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").eq(current_year)]
     months = sorted({MONTHS_RU.get(str(value).strip().casefold())
                      for value in selected["Месяц ввода по Мосстату"]} - {None})
-    date = pd.to_datetime(data["load_monitoring_operational_history"].get("source_date", ""), dayfirst=True, errors="coerce")
-    closed = 12 if pd.notna(date) and date.month == 1 else int(date.month) - 1 if pd.notna(date) else 8
-    default = max([m for m in months if m <= closed], default=min(max(months), 8)) if months else 8
+    date = _source_date(data["load_monitoring_operational_history"].get("source_date"))
+    available = [m for m in months if pd.isna(date) or (current_year, m) <= (date.year, date.month)]
+    if available:
+        default = max(available)
+    elif pd.notna(date) and current_year == date.year:
+        default = int(date.month)
+    else:
+        raise ValueError("Monitoring RV has no available month observations")
     years = sorted(pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").dropna().astype(int).unique(), reverse=True)
     # The YTD selector covers historical years, not just the latest RV year.
     return {"months": [{"id": m, "label": MONTH_LABELS[m - 1]} for m in range(1, 13)],
@@ -76,7 +86,9 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
     tree_growth = {key: (value - previous_tree[key]) / previous_tree[key] * 100
                    if previous_tree is not None and previous_tree[key] != 0 else None
                    for key, value in tree.items()}
-    structure = monthly_structure(rv, year, month, history.get("source_date"))
+    source_date = _source_date(history.get("source_date"))
+    structure = monthly_structure(rv, year, month, source_date if pd.notna(source_date) else None)
+    structure["sourceDate"] = history.get("source_date") or None
     return {"selection": {"month": month, "year": year, "quarter": quarter, "cumulative": cumulative,
                            "excludeMkd": exclude_mkd}, "periodLabel": MONTH_LABELS[month - 1],
             "currentYear": options["currentYear"], "region": "Москва", "tables": tables, "tree": tree,

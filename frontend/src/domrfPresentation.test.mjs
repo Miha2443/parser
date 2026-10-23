@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { domrfDonutOption, domrfLineOption, domrfPriceNote, domrfRealizationHistoryOption } from './domrfPresentation.ts';
+import { domrfDonutOption, domrfFundsLabel, domrfLineOption, domrfPriceNote, domrfRealizationHistoryOption } from './domrfPresentation.ts';
 
 const text = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 const observation = (period, sold = 7440.2) => ({
@@ -68,7 +68,11 @@ test('DOMRF page keeps only million-area history, page-scoped CSS and literal so
   assert.doesNotMatch(source, /charts\.filter\(c => c\.id === 'monthly_volume'\)/);
   assert.doesNotMatch(source, /className="cp-donut-area"/);
   assert.match(domrfPriceNote, /млн руб\.\) \/ проданная площадь \(млн м²\) = руб\.\/м²/);
-  assert.equal(domrfPriceNote, 'Объём привлечённых средств (млн руб.) / проданная площадь (млн м²) = руб./м².');
+  assert.equal(domrfFundsLabel, 'Объём привлечённых средств по счетам эскроу');
+  assert.equal(domrfPriceNote, `${domrfFundsLabel} (млн руб.) / проданная площадь (млн м²) = руб./м².`);
+  assert.match(source, /label=\{domrfFundsLabel\} value=\{metrics\.funds_million_rub\}/);
+  const legacy = readFileSync(new URL('./Construction.tsx', import.meta.url), 'utf8');
+  assert.match(legacy, /label=\{domrfFundsLabel\} value=\{numeric\(sales\.funds_million_rub\)\}/);
   const css = readFileSync(new URL('./domrf-page.css', import.meta.url), 'utf8');
   for (const rule of css.split('\n').filter(line => line.includes('{') && !line.startsWith('@'))) assert.ok(rule.trimStart().startsWith('.domrf-page'), rule);
 });

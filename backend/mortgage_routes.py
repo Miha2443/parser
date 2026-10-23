@@ -91,11 +91,11 @@ def create_router(context, call, service=None):
         return call(service.catalog, scope="Mortgage")
 
     @router.get("")
-    def report(region: str | None = None, month: int = 12):
+    def report(region: str | None = None, month: int | None = None):
         return call(service.report, region, month, scope="Mortgage")
 
     @router.get("/export")
-    def export(required_version: str = Query(min_length=1, max_length=128), region: str | None = None, month: int = 12):
+    def export(required_version: str = Query(min_length=1, max_length=128), region: str | None = None, month: int | None = None):
         payload, source = call(service.export_snapshot, region, month, scope="Mortgage")
         if required_version != payload["version"]:
             raise HTTPException(409, "Source changed; refresh the displayed mortgage report before exporting",

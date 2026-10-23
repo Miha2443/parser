@@ -51,6 +51,7 @@ export function readMortgageCatalog(value: unknown): MortgageCatalog {
   const raw = record(value), meta = metadata(raw);
   if (!Array.isArray(raw.regions) || !raw.regions.length || !Array.isArray(raw.months)) fail();
   const regions = array(raw.regions).map(value => { const row = record(value); return { id: region(row.id), label: text(row.label), periods: unique(array(row.periods).map(period)).sort() }; });
+  if (regions.some(row => !row.periods.length)) fail();
   unique(regions.map(row => row.id));
   const defaultRegion = region(raw.defaultRegion);
   if (!regions.some(row => row.id === defaultRegion)) fail();
@@ -79,9 +80,10 @@ export function readMortgageReport(value: unknown, expected: MortgageSelection):
 }
 export function mortgageSelection(catalog: MortgageCatalog | null, params: URLSearchParams): MortgageSelection | null {
   if (!catalog) return null;
-  const selected = catalog.regions.find(row => row.id === params.get('region'))?.id ?? catalog.defaultRegion;
+  const selected = catalog.regions.find(row => row.id === params.get('region')) ?? catalog.regions.find(row => row.id === catalog.defaultRegion)!;
   const month = Number(params.get('annualMonth'));
-  return { region: selected, month: Number.isInteger(month) && month >= 1 && month <= 12 ? month : 12 };
+  const latest = [...selected.periods].sort().at(-1)!;
+  return { region: selected.id, month: Number.isInteger(month) && month >= 1 && month <= 12 ? month : Number(latest.slice(5)) };
 }
 export function mortgageUrl(selection: MortgageSelection, requiredVersion?: string): string {
   const params = new URLSearchParams({ region: selection.region, month: String(selection.month) });

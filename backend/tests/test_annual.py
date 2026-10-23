@@ -1,6 +1,7 @@
 """Real-source parity with execution of all original annual charts and exports."""
 import ast
 import copy
+import json
 from io import BytesIO
 from pathlib import Path
 import unittest
@@ -106,6 +107,19 @@ class AnnualTests(unittest.TestCase):
             self.assertEqual(chart["unit"], "млн м²")
             self.assertEqual(book[chart["id"]].max_row, len(chart["rows"]) + 1)
 
+    def test_real_monitoring_annual_ihs_2011_2014_reaches_chart_and_provenance(self):
+        history = self.data["load_monitoring_annual_ihs"]
+        if history.empty:
+            self.skipTest("Saved monitoring has no annual IHS block")
+        chart = next(chart for chart in annual_charts(self.data, "Москва") if chart["id"] == "b2_1")
+        rows = {row["year"]: row for row in chart["rows"]}
+        provenance = {row["year"]: row for row in chart["categoryProvenance"]}
+        for year, cell, value in ((2011, "S24", .0258), (2012, "S25", .2218),
+                                  (2013, "S26", .3124), (2014, "S27", .4974)):
+            self.assertAlmostEqual(rows[year]["ИЖС"], value)
+            self.assertEqual(provenance[year]["ИЖС_source_cell"], cell)
+            self.assertEqual(provenance[year]["ИЖС_source_sheet"], "Данные с 2011 года")
+
 
 class AnnualForecastTests(unittest.TestCase):
     def setUp(self):
@@ -188,6 +202,56 @@ class AnnualForecastTests(unittest.TestCase):
             self.assertTrue(all(row[1] == "Прогноз" for row in forecast_rows[1:]))
         self.assertIn("load_commissioning_forecasts", LOADERS)
         self.assertIn("commissioning_forecasts", create_service(DataContext(ROOT)).families)
+
+    def test_annual_ihs_is_moscow_only_with_missing_years_and_independent_categories(self):
+        rf_before = annual_charts(self.data, "РФ")
+        previous = self.data["load_vvod_static"]["msk_residential"]
+        previous["ИЖС_source_file"] = "old.xlsx"
+        previous["ИЖС_source_rows"] = [[999]] * len(previous)
+        previous["ИЖС_сельское"] = .01
+        history = pd.DataFrame([
+            {"region": "Москва", "year": year, "month": 12, "period_type": "year", "ИЖС": value,
+             "ИЖС_source_file": "monitoring.xlsx", "ИЖС_source_sheet": "Данные с 2011 года",
+             "ИЖС_source_cell": cell, "ИЖС_source_unit": "тыс. м²", "ИЖС_source_value": value * 1000}
+            for year, value, cell in ((2011, .0258, "S24"), (2013, .3124, "S26"),
+                                       (2014, .4974, "S27"), (2025, .6015, "S38"), (2026, 999, "S39"))])
+        history = pd.concat([history, pd.DataFrame([
+            {"region": "РФ", "year": 2012, "month": 12, "period_type": "year", "ИЖС": 999},
+            {"region": "Москва", "year": 2016, "month": 12, "period_type": "ytd", "ИЖС": 999},
+            {"region": "Москва", "year": 2017, "month": 8, "period_type": "year", "ИЖС": 999},
+        ])], ignore_index=True)
+        self.data["load_monitoring_annual_ihs"] = history
+        snapshot = copy.deepcopy(self.data)
+        payload = report(self.data, catalog(self.data))
+        chart = next(chart for chart in payload["charts"] if chart["id"] == "b2_1")
+        rows = {row["year"]: row for row in chart["rows"]}
+        for year, value in ((2011, .0258), (2013, .3124), (2014, .4974), (2025, .6015)):
+            self.assertAlmostEqual(rows[year]["ИЖС"], value)
+            self.assertEqual(rows[year]["МКД"], 3)
+        self.assertEqual(rows[2011]["TOTAL"], 3)
+        self.assertIsNone(rows[2012]["ИЖС"])
+        self.assertIsNone(rows[2026]["ИЖС"])
+        self.assertEqual(rows[2016]["ИЖС"], 1)
+        self.assertEqual(rows[2017]["ИЖС"], 1)
+        self.assertIsNone(next(value["value"] for value in chart["summaries"][0]["values"] if value["id"] == "ИЖС"))
+        provenance = {row["year"]: row for row in chart["categoryProvenance"]}
+        self.assertEqual(provenance[2011]["ИЖС_source_cell"], "S24")
+        self.assertEqual(provenance[2011]["ИЖС_source_file"], "monitoring.xlsx")
+        self.assertIsNone(provenance[2011]["ИЖС_source_rows"])
+        self.assertFalse(any("до 2015" in note for note in payload["notes"]))
+        self.assertEqual(annual_charts(self.data, "РФ"), rf_before)
+        pd.testing.assert_frame_equal(self.data["load_monitoring_annual_ihs"], snapshot["load_monitoring_annual_ihs"])
+        pd.testing.assert_frame_equal(previous, snapshot["load_vvod_static"]["msk_residential"])
+
+        book = load_workbook(BytesIO(export_workbook(dict(version="test", generatedAt="test", source={}, **payload))))
+        ihs_column = next(index for index, column in enumerate(chart["columns"], 1) if column["id"] == "ИЖС")
+        self.assertAlmostEqual(book["b2_1"].cell(2, ihs_column).value, .0258)
+        self.assertIsNone(book["b2_1"].cell(3, ihs_column).value)
+        metadata = dict(book["Report"].values)
+        exported = json.loads(metadata["b2_1/categoryProvenance"])
+        self.assertEqual(next(row for row in exported if row["year"] == 2011)["ИЖС_source_cell"], "S24")
+        self.assertIn("load_monitoring_annual_ihs", LOADERS)
+        self.assertIn("monitoring_annual_ihs", create_service(DataContext(ROOT)).families)
 
 
 if __name__ == "__main__":

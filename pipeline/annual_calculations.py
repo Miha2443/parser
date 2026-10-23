@@ -165,7 +165,7 @@ def _monitoring_housing_categories(rv, year):
     return row
 
 
-def _housing_composition(frame):
+def _housing_composition(frame, *, confirmed_ihs_years=()):
     frame = frame.copy()
     for column in ('TOTAL', 'МКД', 'ИЖС'):
         if column not in frame:
@@ -182,9 +182,9 @@ def _housing_composition(frame):
     frame['Остальное_жильё'] = residual.where(frame['TOTAL'].notna() & known.notna() & residual.gt(threshold))
     unknown = frame[['МКД', 'ИЖС']].isna().all(axis=1)
     frame.loc[unknown, 'Остальное_жильё'] = frame.loc[unknown, 'TOTAL']
-    before_ihs = frame['year'].lt(2015)
-    # Raw pre-2015 IHS remains in the source/provenance but is not a comparable
-    # display series. Never turn just that hidden value into a grey segment.
+    before_ihs = frame['year'].lt(2015) & ~frame['year'].isin(confirmed_ihs_years)
+    # Early IHS needs a confirmed annual source. Other raw early values remain
+    # available in provenance, without turning a hidden value into a segment.
     frame.loc[before_ihs & frame['МКД'].isna(), 'Остальное_жильё'] = frame.loc[before_ihs & frame['МКД'].isna(), 'TOTAL']
     frame.loc[before_ihs, 'ИЖС'] = float('nan')
     return frame
@@ -311,12 +311,29 @@ def annual_charts(data, region):
     b2_1.loc[absent, 'TOTAL_source_file'] = 'static_vvod_rs_2011_2025.xlsx' if is_msk else 'vvod.xlsx'
     b2_1.loc[absent, 'TOTAL_source_label'] = 'Утверждённый годовой контроль жилья'
     b2_1.loc[absent, 'TOTAL_source_precision_million'] = 0.001
+    confirmed_ihs_years = ()
     if is_msk:
+        history = data.get('load_monitoring_annual_ihs', pd.DataFrame())
+        if not history.empty:
+            history = history.loc[history['region'].eq('Москва') & history['period_type'].eq('year')
+                                  & history['month'].eq(12) & history['year'].between(YF, YT - 1)
+                                  & history['ИЖС'].notna()]
+            confirmed_ihs_years = tuple(history['year'])
+            # Replace only IHS and its provenance; TOTAL/MKD/rural are independent.
+            columns = sorted({column for source in (b2_1, history) for column in source
+                              if column == 'ИЖС' or column.startswith('ИЖС_source_')})
+            b2_1 = b2_1.merge(history.reindex(columns=['year', *columns]), on='year', how='outer',
+                              suffixes=('_previous', ''), validate='one_to_one')
+            for column in columns:
+                previous = column + '_previous'
+                if previous in b2_1:
+                    b2_1[column] = b2_1[column].where(b2_1['year'].isin(confirmed_ihs_years), b2_1[previous])
+                    b2_1 = b2_1.drop(columns=previous)
         row26 = _monitoring_housing_categories(rv, 2026)
         if row26:
             b2_1 = _upsert_year(b2_1, row26)
     raw_categories = records(b2_1[[column for column in ('year', 'TOTAL', 'МКД', 'ИЖС') if column in b2_1]])
-    b2_1 = _housing_composition(b2_1)
+    b2_1 = _housing_composition(b2_1, confirmed_ihs_years=confirmed_ihs_years)
     series = [('МКД', 'МКД', C_ZH), ('ИЖС', 'ИЖС', C_IZHS)]
     if b2_1['Остальное_жильё'].notna().any():
         series.append(('Остальное_жильё', 'Жильё без подтверждённого вида', '#7B8794'))

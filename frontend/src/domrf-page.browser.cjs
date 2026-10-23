@@ -32,9 +32,11 @@ const output = path.join(process.env.TEMP || '.', 'dashboard-domrf-presentation'
       assert.equal(await page.getByRole('heading', { name: 'Объём жилищного строительства, тыс. м²', exact: true }).count(), 0);
       assert.equal(await page.locator('.cp-donut-area').count(), 0);
       assert.equal(await page.locator('main details[open], main .chart-data-panel').count(), 0);
+      assert.equal(await page.locator('.domrf-realization .cp-metric > span').filter({ hasText: /^Объём привлечённых средств по счетам эскроу$/ }).count(), 1);
       const layout = await page.evaluate(() => ({
         overflow: document.documentElement.scrollWidth > innerWidth + 1,
         kpiFont: getComputedStyle(document.querySelector('.domrf-construction .cp-metric > strong')).fontSize,
+        clippedMetrics: [...document.querySelectorAll('.domrf-realization .cp-metric > span')].filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.textContent),
         charts: [...document.querySelectorAll('.domrf-page .chart-canvas')].map(element => {
           const rect = element.getBoundingClientRect(), canvas = element.querySelector('canvas'), colors = new Set();
           const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -44,6 +46,7 @@ const output = path.join(process.env.TEMP || '.', 'dashboard-domrf-presentation'
         }),
       }));
       assert.equal(layout.overflow, false, `${width}: page overflow`);
+      assert.deepEqual(layout.clippedMetrics, [], `${width}: escrow label clipped`);
       assert.ok(parseFloat(layout.kpiFont) >= 38, `${width}: KPI not emphasized`);
       for (const chart of layout.charts) {
         assert.ok(chart.colors > 3, `${width}: blank chart`);
@@ -62,6 +65,7 @@ const output = path.join(process.env.TEMP || '.', 'dashboard-domrf-presentation'
       assert.match(tooltip, /млн м².*%/, `${width}: sales hover lost area or percentage`);
       await page.mouse.move(0, 0);
       await page.screenshot({ path: path.join(output, `domrf-${width}.png`), fullPage: true });
+      await page.locator('.domrf-realization .cp-metrics-two').last().screenshot({ path: path.join(output, `domrf-escrow-${width}.png`) });
       checks.push({ width, kpiFont: layout.kpiFont, charts: layout.charts.length });
     }
     assert.deepEqual(errors, []);

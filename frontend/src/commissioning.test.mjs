@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fixtures from './commissioning.browser.cjs';
+import { operationalScopeParams } from './operationalViewData.ts';
 import { commissioningParams, commissioningUrl, groupedStructure, linearDigits, linearFilters, linearSummaryOption, linearTable, linearTrendOption, loadCommissioningCatalog, loadCommissioningReport, operationalChartOption, operationalChartRows, operationalFilters, readLinearCatalog, readLinearReport, readOperationalCatalog, readOperationalReport, reportTablePage, structureRows, tableRows } from './commissioningData.ts';
 
 test('operational catalog defaults are server-defined, filters validate available months and years', () => {
@@ -14,6 +15,23 @@ test('linear defaults use catalog latest year and latest complete quarter, not l
   assert.deepEqual(linearFilters(c, new URLSearchParams()), fixtures.linearSelection);
   assert.deepEqual(linearFilters(c, new URLSearchParams('year=2025&quarter=4&indicator=missing')), { year: 2025, quarter: 2, cumulative: false, indicator: '1.1' });
   assert.equal(linearFilters(c, new URLSearchParams('quarter=4')).quarter, 4);
+});
+
+test('all operational blocks inherit source defaults independently and keep every explicitly selected month', () => {
+  const c = readOperationalCatalog({ ...fixtures.operationalCatalog, defaultMonth: 9,
+    months: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, label: String(i + 1) })) });
+  const read = (query, scope) => operationalFilters(c, operationalScopeParams(new URLSearchParams(query), scope));
+  for (const scope of ['housing', 'nonres', 'structure']) assert.equal(read('', scope).month, 9);
+  assert.equal(read('housingMonth=5', 'structure').month, 9);
+  assert.equal(read('housingMonth=5', 'nonres').month, 9);
+  assert.equal(read('month=12', 'housing').month, 12);
+  assert.equal(read('month=12', 'nonres').month, 12);
+  for (let month = 1; month <= 12; month++) {
+    const query = `structureMonth=${month}&housingMonth=5&nonresMonth=3`;
+    assert.equal(read(query, 'structure').month, month);
+    assert.equal(read(query, 'housing').month, 5);
+    assert.equal(read(query, 'nonres').month, 3);
+  }
 });
 test('operational reports retain both full sixteen-year tables and record-wrapped chart values without conversion', () => {
   const raw = fixtures.operationalReport(), data = readOperationalReport(raw, fixtures.operationalSelection); assert.deepEqual(data, raw);

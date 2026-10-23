@@ -5,7 +5,8 @@ import type { RealizationObservation } from './constructionPagesData';
 import type { SalesChart } from './salesData';
 import type { Theme } from './types';
 
-export const domrfPriceNote = 'Объём привлечённых средств (млн руб.) / проданная площадь (млн м²) = руб./м².';
+export const domrfFundsLabel = 'Объём привлечённых средств по счетам эскроу';
+export const domrfPriceNote = `${domrfFundsLabel} (млн руб.) / проданная площадь (млн м²) = руб./м².`;
 
 export function domrfLineOption(chart: SalesChart, theme: Theme): EChartsCoreOption {
   const option = readinessChartOption(chart, theme);

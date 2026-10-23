@@ -70,6 +70,18 @@ def _date(path):
     return None
 
 
+def _default_month(periods, source_date, fallback=None):
+    snapshot = tuple(map(int, source_date[:7].split("-"))) if source_date else None
+    available = [period for period in periods if snapshot is None or period <= snapshot]
+    if available:
+        return max(available)[1]
+    if snapshot:
+        return snapshot[1]
+    if fallback is not None:
+        return fallback
+    raise SourceUnavailable("Permit source has no available month observations")
+
+
 class PermitSelectionInvalid(ValueError):
     """Syntactically invalid structure selection, distinct from unavailable source filters."""
 
@@ -151,9 +163,27 @@ class PermitsPageService:
                    "source": {"date": _date(path), "files": [self._relative(item) for item in files],
                               "fileEvidence": "selected", "issues": issues},
                    "controls": controls}
+        structures = structure_base(detailed, payload["source"]["date"], main_sources)
+        source_default = _default_month([(int(row.year), int(row.month))
+                                         for row in operational["permits"].itertuples()], payload["source"]["date"])
+        default_months, structure_months = {}, {}
+        # Availability defaults do not restrict the twelve explicit calendar choices.
+        for kind in controls["monthsByKind"]:
+            kinds = ("housing", "nonresidential") if kind == "total" else (kind,)
+            periods = {period for k in kinds for period, row in main_sources["monthly"][k].items()
+                       if row["value"] is not None}
+            default_months[kind] = _default_month(periods, payload["source"]["date"],
+                                                  source_default)
+            block_id = {"housing": "housing_components", "nonresidential": "nonresidential_components",
+                        "total": "area_composition"}[kind]
+            block = structures[block_id]
+            fields = ["nonresidential"] if kind == "nonresidential" else [field for field, _ in block["fields"]]
+            periods = [period for period, row in block["monthly"].items()
+                       if any(row.get(field) is not None for field in fields)]
+            structure_months[kind] = _default_month(periods, payload["source"]["date"], default_months[kind])
         generation = {"payload": payload, "data": data, "forecast": forecast,
-                      "structures": structure_base(detailed, _date(path), main_sources), "main_sources": main_sources,
-                      "default_months": {kind: max(months) for kind, months in discovered["monthsByKind"].items()}}
+                      "structures": structures, "main_sources": main_sources,
+                      "default_months": default_months, "structure_months": structure_months}
         json.dumps([payload, forecast], allow_nan=False)
         if self._inputs()[1] != signature:
             raise SourceUnavailable("Permit sources changed during loading")
@@ -191,10 +221,6 @@ class PermitsPageService:
             months = controls["monthsByKind"][permit_kind]
             if month is None:
                 month = generation["default_months"][permit_kind]
-                source_date = payload["source"]["date"]
-                latest_year = int(generation["data"]["load_construction_operational"]["permits"]["year"].max())
-                if source_date is not None and latest_year == int(source_date[:4]):
-                    month = min(month, int(source_date[5:7]))
             if month not in months:
                 raise FilterUnavailable("Permit month is unavailable")
             structures = generation["structures"]
@@ -202,9 +228,8 @@ class PermitsPageService:
             years = structure_options["years"]
             if any(value is not None and value not in years for value in (structure_year_from, structure_year_to)):
                 raise FilterUnavailable("Structure year is unavailable")
-            latest = max(years) if years else None
-            latest_months = [m for row in structure_options["coverage"] if row["year"] == latest for m in row["months"]]
-            end = structure_month_to if structure_month_to is not None else max(latest_months, default=12)
+            end = structure_month_to if structure_month_to is not None else max(
+                structure_month_from, generation["structure_months"][permit_kind])
             if structure_month_from > end:
                 raise PermitSelectionInvalid("Structure month interval is reversed")
             structure_selection = {"mode": structure_mode, "monthFrom": structure_month_from, "monthTo": end,

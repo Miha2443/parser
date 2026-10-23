@@ -65,18 +65,23 @@ class MortgageService:
         catalog = self._generation["catalog"]
         if region is None:
             region = catalog["defaultRegion"]
-        if region not in [row["id"] for row in catalog["regions"]] or type(month) is not int or not 1 <= month <= 12:
+        selected = next((row for row in catalog["regions"] if row["id"] == region), None)
+        if selected is None:
+            raise FilterUnavailable("Mortgage region or month is unavailable")
+        if month is None:
+            month = int(max(selected["periods"])[5:])
+        if type(month) is not int or not 1 <= month <= 12:
             raise FilterUnavailable("Mortgage region or month is unavailable")
         report = build_report(self._generation["document"], region, month)
         report.update({key: copy.deepcopy(catalog[key]) for key in ("schemaVersion", "version", "generatedAt", "source")})
         json.dumps(report, allow_nan=False)
         return report
 
-    def report(self, region=None, month=12):
+    def report(self, region=None, month=None):
         with self._lock:
             return self._report(region, month)
 
-    def export_snapshot(self, region=None, month=12):
+    def export_snapshot(self, region=None, month=None):
         with self._lock:
             payload = self._report(region, month)
             return payload, copy.deepcopy(self._generation["document"])

@@ -21,6 +21,9 @@ async function main() {
       if (route.includes('linear')) await page.locator('.linear-kpi').first().waitFor({ timeout: 180000 });
       await page.waitForTimeout(600);
     };
+    const catalogResponse = await page.request.get(base + '/api/v1/commissioning/operational/catalog', { timeout: 180000 });
+    assert.equal(catalogResponse.ok(), true);
+    const sourceDefault = String((await catalogResponse.json()).defaultMonth);
     await ready('/commissioning/operational?year=2021');
     const structureYear = page.getByLabel('Год структуры ввода', { exact: true });
     assert.deepEqual(await structureYear.locator('option').evaluateAll(options => options.map(option => option.value)), ['2026', '2025', '2024', '2023']);
@@ -31,13 +34,24 @@ async function main() {
     assert.equal(await page.locator('.operational-series .chart-legend').getByRole('button', { name: 'Годовые значения', exact: true }).count(), 2);
     assert.equal(await page.getByLabel('Квартал', { exact: true }).count(), 0);
     const nonres = await page.getByLabel('Период: Ввод нежилой недвижимости', { exact: true }).inputValue();
+    assert.equal(nonres, sourceDefault);
+    assert.equal(await page.getByLabel('Период: Ввод жилья', { exact: true }).inputValue(), sourceDefault);
+    assert.equal(await page.getByLabel('Период структуры ввода', { exact: true }).inputValue(), sourceDefault);
     await page.getByLabel('Период: Ввод жилья', { exact: true }).selectOption('5');
     await page.locator('.operational-series canvas').first().waitFor();
-    assert.equal(await page.getByLabel('Период структуры ввода', { exact: true }).inputValue(), '12');
+    assert.equal(await page.getByLabel('Период структуры ввода', { exact: true }).inputValue(), sourceDefault);
     assert.equal(await page.getByLabel('Период: Ввод нежилой недвижимости', { exact: true }).inputValue(), nonres);
     await page.getByLabel('Период структуры ввода', { exact: true }).selectOption('9');
     await page.locator('.commissioning-structure-main .large').waitFor();
     assert.equal(await page.getByLabel('Период: Ввод жилья', { exact: true }).inputValue(), '5');
+    await ready('/commissioning/operational?housingMonth=12&nonresMonth=12&structureMonth=12');
+    for (const label of ['Период: Ввод жилья', 'Период: Ввод нежилой недвижимости', 'Период структуры ввода']) {
+      assert.equal(await page.getByLabel(label, { exact: true }).inputValue(), '12');
+    }
+    await page.getByLabel('Период: Ввод жилья', { exact: true }).selectOption('5');
+    await page.waitForURL(url => url.searchParams.get('housingMonth') === '5');
+    assert.equal(await page.getByLabel('Период структуры ввода', { exact: true }).inputValue(), '12');
+    assert.equal(await page.getByLabel('Период: Ввод нежилой недвижимости', { exact: true }).inputValue(), '12');
     for (const route of ['/commissioning/operational', '/commissioning/annual', '/commissioning/linear']) {
       await ready(route);
       for (const theme of ['light']) {

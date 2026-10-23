@@ -5,7 +5,7 @@ export function operationalScopeParams(params: URLSearchParams, scope: 'housing'
   if (scope === 'structure') {
     if (operationalStructureYears.includes(Number(params.get('year')))) selected.set('year', params.get('year')!);
     for (const key of ['quarter', 'cumulative']) if (params.has(key)) selected.set(key, params.get(key)!);
-    selected.set('month', params.get('structureMonth') ?? '12');
+    if (params.has('structureMonth')) selected.set('month', params.get('structureMonth')!);
   } else {
     const month = params.get(`${scope}Month`) ?? params.get('month');
     if (month) selected.set('month', month);

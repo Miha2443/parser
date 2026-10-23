@@ -211,6 +211,9 @@ if command=='run':
         die(2 if state.get('collected_partial') else 0 if state.get('collected_success') else 1)
     if 'CONSTRUCTION_HISTORY_REFRESH=0' in args:
         state['current_only_collections']=state.get('current_only_collections',0)+1
+    if 'pipeline.downloaders.domrf_preferential' in args:
+        state['preferential_collections']=state.get('preferential_collections',0)+1
+        state['downloads']+=1; die(state.get('preferential_status', 0 if state.get('collected_success') else 1))
     state['downloads']+=1; die(0 if state.get('collected_success') else 1)
 if command=='exec':
     assert '-T' in args and '--interactive=false' in args, 'Readiness must not attach an interactive terminal'
@@ -444,6 +447,30 @@ class HostRecoveryTests(unittest.TestCase):
         self.assertEqual(self.state['web_starts'], 1)
         self.assertIn('construction_current', result.stdout)
 
+    def test_preferential_success_publishes_then_restarts_once(self):
+        self.state.update(served='releases/new', preferential_status=0)
+        result = self.run_host('--preferential-mortgage')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.state['preferential_collections'], self.state['downloads'], self.state['publications']), (1, 1, 1))
+        self.assertEqual((self.state['stops'], self.state['restarts'], self.state['web_starts']), (0, 1, 1))
+        self.assertFalse((self.root / 'runtime/pending.json').exists())
+
+    def test_preferential_retained_seed_publishes_then_reports_warning(self):
+        self.state.update(served='releases/new', preferential_status=2)
+        result = self.run_host('--preferential-mortgage')
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual((self.state['publications'], self.state['restarts'], self.state['web_starts']), (1, 1, 1))
+        self.assertIn('preferential_mortgage_retained', result.stdout)
+        self.assertFalse((self.root / 'runtime/pending.json').exists())
+
+    def test_preferential_failure_without_source_cannot_publish_or_restart(self):
+        self.state.update(served='releases/new', preferential_status=1)
+        result = self.run_host('--preferential-mortgage')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.state.get('publications', 0), 0)
+        self.assertEqual((self.state['stops'], self.state['restarts']), (0, 0))
+        self.assertEqual(self.state['served'], 'releases/new')
+
     def test_code_upgrade_proves_backend_before_web_without_source_collection(self):
         self.state['served'] = 'releases/new'
         result = self.run_host('--upgrade-code')
@@ -488,14 +515,14 @@ class HostRecoveryTests(unittest.TestCase):
 
     def test_new_modes_keep_missing_live_and_pending_recovery_guards(self):
         (self.root / 'runtime/live').unlink()
-        for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
+        for mode in ('--construction-current', '--construction-history', '--preferential-mortgage', '--upgrade-code'):
             with self.subTest(mode=mode, guard='missing-live'):
                 result = self.run_host(mode)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('reason=live_missing', result.stdout)
         (self.root / 'runtime/live').symlink_to('releases/new')
         (self.root / 'runtime/pending.json').write_text(json.dumps({'previous': None, 'next': 'releases/new'}))
-        for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
+        for mode in ('--construction-current', '--construction-history', '--preferential-mortgage', '--upgrade-code'):
             with self.subTest(mode=mode, guard='pending-recovery'):
                 result = self.run_host(mode)
                 self.assertNotEqual(result.returncode, 0)
@@ -511,7 +538,7 @@ class HostRecoveryTests(unittest.TestCase):
         (self.root / 'logs/docker-update_previous.log').write_text('previous run')
         with (self.root / 'state/.docker-update.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            for mode in ('--construction-current', '--construction-history', '--upgrade-code'):
+            for mode in ('--construction-current', '--construction-history', '--preferential-mortgage', '--upgrade-code'):
                 with self.subTest(mode=mode):
                     result = self.run_host(mode)
                     self.assertNotEqual(result.returncode, 0)

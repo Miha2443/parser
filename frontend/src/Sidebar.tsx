@@ -28,7 +28,7 @@ export default function Sidebar({ open, onClose, compact, onCompact, path, onNav
           {group('profile', 'Профиль застройщика', null, <>{local('Профиль', '/', <UserRound size={15} />)}{local('Квартирография по застройщику', '/apartments/developer')}</>, true)}
         </>)}
         {group('statistics', 'Мосстат / Росстат', <Landmark size={17} />, <>{local('ВВП и ВРП', '/economics/accounts')}{local('ИПЦ', '/economics/ipc')}{local('Заработная плата', '/economics/salary')}</>)}
-        {group('cbr', 'ЦБ РФ', <Landmark size={17} />, <>{local('Ипотечное кредитование', '/economics/mortgage')}</>)}
+        {group('cbr', 'ЦБ РФ', <Landmark size={17} />, <>{local('Ипотечное кредитование', '/economics/mortgage')}{local('Льготное ипотечное кредитование', '/economics/preferential-mortgage')}</>)}
         {group('service', 'Сервис', <Settings2 size={17} />, <>{local('Отправка в TDM', '/tdm')}{local('Журнал обновлений', '/updates')}</>)}
       </nav>
       <div className="sidebar-bottom"><button className="icon-button collapse-nav" onClick={onCompact} title={compact ? 'Развернуть боковую панель' : 'Свернуть боковую панель'}>{compact ? <ChevronLeft className="rotate" size={17} /> : <PanelLeftClose size={17} />}</button></div>

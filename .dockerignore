@@ -19,6 +19,9 @@ _to_delete
 
 downloads
 data/*
+!data/imports
+data/imports/*
+!data/imports/preferential-mortgage-2026-10-11.json
 !data/derived
 data/derived/*
 !data/derived/missing_geocode_addresses.csv

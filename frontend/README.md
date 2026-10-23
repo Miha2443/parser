@@ -11,6 +11,25 @@ consumer prices, national accounts, map, home, updates and TDM. Streamlit remain
 available separately for comparison and rollback. Analytics never change input
 files; TDM sends only after an explicit user action.
 
+## Preferential Mortgage
+
+`/economics/preferential-mortgage` reads `/api/v1/preferential-mortgage`.
+Moscow/Russia and the three requested programs have annual and independent
+January-through-month issuance comparisons from 2018. Six characteristics use
+published annual aggregates and verified weighted cumulative values, never
+arithmetic averages of monthly rates. Unknown values stay missing. Metric- and
+program-specific coverage is retained in tooltips, CSV and pinned Excel; the
+latest operational month is explicitly marked incomplete when applicable.
+The mixed operational/reimbursement workbook does not establish one exact next
+publication date, so this page shows the configured publication rule instead.
+
+`node --test src/preferentialMortgage.test.mjs` checks the schema, source defaults,
+stacking, missing totals, precision and coverage. With Playwright available,
+`node src/preferential-mortgage.browser.cjs` starts isolated temporary services
+and checks both regions, period controls, actual total labels, Excel, six viewport
+sizes and nonblank chart pixels against the bundled official source slice.
+See the root README for installation and daily refresh.
+
 ## Ready Construction Tree
 
 `/construction/tree` displays the ready values from column `Итог` of worksheet

@@ -317,6 +317,10 @@ def verify_inventory(root, publication):
     if mortgage is not None:
         from docker.mortgage import verify_snapshot
         verify_snapshot(root, mortgage)
+    preferential = supplemental.get("preferential_mortgage")
+    if preferential is not None:
+        from docker.preferential import verify_snapshot as verify_preferential
+        verify_preferential(root, preferential)
 
 
 def verify_manifest(root):
@@ -374,6 +378,13 @@ def manifest_signature(root):
     mortgage_file = root / mortgage_relative
     if mortgage_file.exists() or mortgage is not None and mortgage.get("state") != "unavailable":
         files.add(mortgage_file)
+    preferential = supplemental.get("preferential_mortgage")
+    if preferential is not None and not isinstance(preferential, dict):
+        raise RuntimeError("Invalid preferential mortgage source declaration")
+    from docker.preferential import RELATIVE as preferential_relative
+    preferential_file = root / preferential_relative
+    if preferential_file.exists() or preferential is not None and preferential.get("state") != "unavailable":
+        files.add(preferential_file)
     for identifier in indicator_ids({alias for alias, row in publication.get("sources", {}).items() if row["state"] != "unavailable"}):
         path = root / "data/processed" / (identifier + ".pkl")
         if path.exists():

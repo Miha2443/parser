@@ -400,7 +400,11 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
             # Repair only the private candidate, then keep the normal proofs.
             build_candidate_processed(candidate, {"fedstat", "rosstat"})
         from docker.mortgage import select_source as select_mortgage
-        metadata["supplemental_sources"] = {"mortgage": select_mortgage(candidate, runtime / previous if previous else None)}
+        from docker.preferential import select_source as select_preferential
+        metadata["supplemental_sources"] = {
+            "mortgage": select_mortgage(candidate, runtime / previous if previous else None),
+            "preferential_mortgage": select_preferential(candidate, runtime / previous if previous else baseline),
+        }
         build_candidate(candidate)
         metadata["full_marts_built"] = True
         if selection is not None:
@@ -414,6 +418,8 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
         print("Candidate sources: " + json.dumps({key: {"state": row["state"], "reason_code": row["reason_code"]}
               for key, row in metadata.get("sources", {}).items()} if "sources" in metadata else selection), flush=True)
         validate(candidate)
+        from docker.preferential import verify_snapshot as verify_preferential
+        verify_preferential(candidate, metadata["supplemental_sources"]["preferential_mortgage"])
         final = releases / identifier
         candidate.rename(final)
         # Persist recovery metadata before switching, never prune an old release.
@@ -513,6 +519,8 @@ def run_action(action, root, runtime):
             # A failed core provider must not skip the independent daily check.
             from docker.mortgage import collect as collect_mortgage
             collect_mortgage(root)
+            from docker.preferential import collect as collect_preferential
+            collect_preferential(root)
             result = subprocess.run([sys.executable, "-u", "scripts/update_realty.py", *sorted(expected), "--retries", "0", "--collect-only"],
                                     cwd=root, check=False)
             status = read_status(root)

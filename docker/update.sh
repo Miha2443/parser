@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 test -f .env || { echo '.env is required' >&2; exit 1; }
 mode="${1:-update}"
-[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --mortgage || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
-  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-current|--construction-history|--mortgage|--upgrade-code|--recover]' >&2; exit 1;
+[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --mortgage || "$mode" == --preferential-mortgage || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
+  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-current|--construction-history|--mortgage|--preferential-mortgage|--upgrade-code|--recover]' >&2; exit 1;
 }
 mkdir -p state logs runtime/releases
 exec 9>state/.docker-update.lock
@@ -202,12 +202,25 @@ fi
 
 event updater_start "mode=$mode"
 history_partial=0
+preferential_retained=0
 if [[ "$mode" == --publish-existing ]]; then
   run_updater() { control publish; }
 elif [[ "$mode" == --construction-current ]]; then
   run_updater() {
     event construction_current 'collect ordinary current pages only; history is independent'
     docker compose run --rm --no-deps -T --interactive=false -e CONSTRUCTION_HISTORY_REFRESH=0 updater python -u scripts/update_realty.py construction --retries 0 --collect-only --require-collected </dev/null || return
+    control publish
+  }
+elif [[ "$mode" == --preferential-mortgage ]]; then
+  run_updater() {
+    event preferential_mortgage 'discover official regional XLSX; validate and atomically refresh normalized source'
+    preferential_status=0
+    docker compose run --rm --no-deps -T --interactive=false updater python -u -m pipeline.downloaders.domrf_preferential </dev/null || preferential_status=$?
+    case "$preferential_status" in
+      0) ;;
+      2) preferential_retained=1; event preferential_mortgage_warning 'No live refresh; publish validated retained/seed source' ;;
+      *) return "$preferential_status" ;;
+    esac
     control publish
   }
 elif [[ "$mode" == --mortgage ]]; then
@@ -260,6 +273,10 @@ bounded 120 docker compose up -d --no-deps web
 # Archival errors cannot roll back a healthy acknowledged site.
 if ! control archive; then event archive_warning 'Healthy site retained; old releases remain available'; fi
 event complete "live=$(readlink runtime/live)"
+if [[ "$preferential_retained" == 1 ]]; then
+  event preferential_mortgage_retained 'Verified retained/seed source published; live acquisition did not refresh it; exit=2'
+  exit 2
+fi
 if [[ "$history_partial" == 1 ]]; then
   event history_pending 'Verified history progress published; current data unchanged; rerun --construction-history to resume; exit=2'
   exit 2

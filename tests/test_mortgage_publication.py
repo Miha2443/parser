@@ -40,6 +40,7 @@ class MortgagePublicationTests(unittest.TestCase):
                 patch.object(publication, "requested_sources", return_value=publication.SOURCES), \
                 patch.object(publication, "bootstrap_baseline", return_value=nullcontext("baseline")), \
                 patch("docker.mortgage.collect", side_effect=lambda root: events.append("mortgage") or {"status": mortgage_status}) as mortgage, \
+                patch("docker.preferential.collect", return_value={"status": "failed"}), \
                 patch.object(publication.subprocess, "run", side_effect=lambda *args, **kwargs:
                              events.append("core") or subprocess.CompletedProcess(args[0], int(core_failure))), \
                 patch.object(publication, "require_success", side_effect=RuntimeError("core failed") if core_failure else None), \

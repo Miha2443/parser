@@ -369,6 +369,11 @@ partial-year observations. Pinned full Excel uses `/linear/dashboard/export`;
 charts also expose CSV/PNG. The old quarterly API remains compatible but is no
 longer the linear page's primary presentation.
 
+Every observed linear-history bar, including zero and supplied forecasts, has
+its value above it. Dense labels rotate without changing the centered year slots
+or forecast hatching. Counts stay integers; distances use up to one decimal,
+unless a plotted value reaches 1,000, when the whole chart uses integers.
+
 Current checks: `node --test src/*.test.mjs tests/*.test.mjs`,
 `node src/commissioning-refresh.browser.cjs` (set `DASHBOARD_TEST_URL` if needed),
 and the focused `src/annualForecast.browser.cjs` / `src/linearDashboard.browser.cjs`.
@@ -541,6 +546,20 @@ Tables preserve original values and nulls; search/pagination affect display
 only. CSV and version-pinned Excel retain complete selected data. Each bar
 segment and line point has its own unit-aware hover; all charts support PNG.
 Sources distinguish file dates from recorded download dates.
+
+Annual CPI and national-accounts bars show numeric values above the columns.
+Stacked structure bars show the supplied total, or the complete visible sum
+after a legend selection. Missing values are not labelled as zero. Dense
+regional comparisons rotate and vertically separate labels rather than hiding
+them. Salary bars and economic line charts retain their existing presentation;
+tables and exports retain source precision.
+
+`node src/bar-values.browser.cjs` starts and stops private API/Vite instances and
+checks rendered labels, bounds, collisions, canvas pixels and legend selections
+at six widths from 360 to 1920 px. Economics use fixtures by default; set
+`BAR_VALUES_LIVE=1` to additionally check the local real economics sources.
+Linear charts use the local API. Screenshots and results are written to
+`%TEMP%/dashboard-bar-values`, or `BAR_VALUES_OUTPUT` when supplied.
 
 Verification: `node src/economics.browser.cjs` exercises isolated fixture and
 live API cases (set `DASHBOARD_CHECK_LIVE=1` for live cases). Screenshots/reports

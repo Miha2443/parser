@@ -267,7 +267,8 @@ function seriesColors(series: EconomicsChart['series'], theme: Theme) {
   }
   return colors;
 }
-export function economicsChartOption(chart: EconomicsChart, theme: Theme): EChartsCoreOption {
+export type EconomicsChartView = { width?: number; hidden?: string[]; showBarValues?: boolean };
+export function economicsChartOption(chart: EconomicsChart, theme: Theme, view: EconomicsChartView = {}): EChartsCoreOption {
   const colors = seriesColors(chart.series, theme);
   const slots: { x: string | number; occurrence: number }[] = [];
   const indexed = chart.series.map(series => {
@@ -285,25 +286,67 @@ export function economicsChartOption(chart: EconomicsChart, theme: Theme): EChar
   const order = (x: string | number) => orders.get(x) ?? (typeof x === 'number' ? x * 100 : /^\d{4}$/.test(x) ? Number(x) * 100 : 0);
   slots.sort((a, b) => order(a.x) - order(b.x) || a.occurrence - b.occurrence);
   const muted = theme === 'light' ? '#606975' : '#b2bac5', line = theme === 'light' ? '#e4e8ed' : '#363a40';
+  const values = indexed.map(points => slots.map(slot => points.find(point => point.x === slot.x && point.occurrence === slot.occurrence)?.y ?? null));
+  const visible = chart.series.map((series, index) => view.hidden?.includes(series.name) ? -1 : index).filter(index => index >= 0);
+  const showBarValues = chart.kind === 'bar' && (view.showBarValues ?? /^(na_|ipc_)/.test(chart.id));
   const indexValues = chart.series.flatMap(series => series.points.map(point => point.y)).filter((value): value is number => value !== null);
   const totals = slots.map(slot => chart.totals?.find(total => total.x === slot.x));
-  const format = chartNumberFormatter([...indexValues, ...totals.map(total => total?.y)]);
+  const stackTotals = slots.map((_, index) => {
+    if (!visible.length) return null;
+    if (visible.length === chart.series.length && totals[index]) return totals[index]!.y;
+    const selected = visible.map(series => values[series][index]);
+    return selected.every(value => value !== null) ? selected.reduce<number>((sum, value) => sum + value!, 0) : null;
+  });
+  const topSeries = slots.map((_, index) => visible.reduce((last, series) => values[series][index] !== null ? series : last, -1));
+  const format = chartNumberFormatter([...indexValues, ...totals.map(total => total?.y), ...(showBarValues && chart.stack ? stackTotals : [])]);
   const indexedAxis = chart.unit === '%' && !chart.stack && indexValues.length > 0;
   // Index ticks are coordinates, not rounded measurements; keep adjacent ticks distinct.
   const coordinateFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
   const low = indexedAxis ? Math.min(...indexValues) : 0, high = indexedAxis ? Math.max(...indexValues) : 0;
   const padding = Math.max((high - low) * .15, .2);
+  const labelValues = chart.stack ? stackTotals : visible.flatMap(index => values[index]);
+  const labelLength = Math.max(1, ...labelValues.filter(value => value !== null).map(value => format(value).length));
+  const slotWidth = Math.max(1, (view.width ?? 900) - 80) / Math.max(1, slots.length) / (chart.stack ? 1 : Math.max(1, visible.length));
+  const rotateLabels = showBarValues && slotWidth < labelLength * 6 + 10;
+  const labelHeight = rotateLabels ? labelLength * 6 + 10 : 22;
+  const labelRows = rotateLabels ? Math.max(1, Math.ceil(11 / slotWidth)) : 1;
+  const placedLabels = new Map<string, { x: number; y: number; width: number; height: number }>();
+  const labelLayout = (point: { seriesIndex: number; dataIndex?: number; text: string; labelRect: { x: number; y: number; width: number; height: number } }) => {
+    if (!point.text) return { hideOverlap: false };
+    const key = `${point.seriesIndex}:${point.dataIndex}`;
+    // A repeated label starts a new layout pass after resize or legend changes.
+    if (placedLabels.has(key)) placedLabels.clear();
+    const rect = { ...point.labelRect };
+    let overlap;
+    do {
+      overlap = [...placedLabels.values()].find(other => rect.x < other.x + other.width + 2 && rect.x + rect.width + 2 > other.x && rect.y < other.y + other.height + 2 && rect.y + rect.height + 2 > other.y);
+      if (overlap) rect.y = overlap.y - rect.height - 2;
+    } while (overlap);
+    placedLabels.set(key, rect);
+    return { hideOverlap: false, x: rect.x + rect.width / 2, y: rect.y + rect.height };
+  };
+  const visibleValues = visible.flatMap(index => values[index]).filter((value): value is number => value !== null);
+  const barHigh = Math.max(0, ...(chart.stack ? slots.map((_, index) => visible.reduce((sum, series) => sum + Math.max(0, values[series][index] ?? 0), 0)) : visibleValues));
+  const upperPadding = showBarValues ? Math.max(padding, (high - low) * .3, .5) : padding;
   return {
-    grid: { left: 6, right: 16, top: 36, bottom: 12, containLabel: true },
+    grid: { left: 6, right: 16, top: showBarValues ? Math.max(44, labelHeight * labelRows + 20) : 36, bottom: 12, containLabel: true },
     tooltip: { trigger: 'item', confine: true, className: 'economics-tooltip', formatter: (p: { seriesIndex: number; seriesName: string; name: string; value: number | null; dataIndex: number }) => {
       const total = totals[p.dataIndex];
       return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(chart.series[p.seriesIndex].unit)}${total ? `<br/>Всего: ${format(total.y)} ${escape(chart.unit)}` : ''}`;
     } },
     xAxis: { type: 'category', data: slots.map(p => String(p.x)), boundaryGap: chart.kind === 'bar', axisLine: { show: false }, axisTick: { show: false },
       axisLabel: { color: muted, fontSize: 11, hideOverlap: true, interval: 'auto', alignMinLabel: 'left', alignMaxLabel: 'right' } },
-    yAxis: { type: 'value', name: chart.unit, ...(indexedAxis ? { scale: true, min: Math.floor((low - padding) * 10) / 10, max: Math.ceil((high + padding) * 10) / 10 } : {}), nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 11, formatter: indexedAxis ? (n: number) => coordinateFormat.format(n) : format }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
+    yAxis: { type: 'value', name: chart.unit, ...(indexedAxis ? { scale: true, min: Math.floor((low - padding) * 10) / 10, max: Math.ceil((high + upperPadding) * 10) / 10 } : showBarValues ? { max: barHigh > 0 ? barHigh * 1.25 : 1 } : {}), nameTextStyle: { color: muted, align: 'left' }, axisLabel: { color: muted, fontSize: 11, formatter: indexedAxis ? (n: number) => coordinateFormat.format(n) : format }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
     series: chart.series.map((series, i) => ({ name: series.name, type: chart.kind, ...(chart.stack ? { stack: 'structure' } : {}),
-      data: slots.map(slot => indexed[i].find(p => p.x === slot.x && p.occurrence === slot.occurrence)?.y ?? null),
+      data: values[i],
+      ...(showBarValues ? { labelLayout, label: { show: true, position: 'top', distance: 6, rotate: rotateLabels ? 90 : 0,
+        align: rotateLabels ? 'left' : 'center', verticalAlign: rotateLabels ? 'middle' : 'bottom', fontSize: rotateLabels ? 9 : 11,
+        color: theme === 'light' ? '#35414b' : '#e1e7ed', formatter: (point: { dataIndex: number; value: number | null }) => {
+          if (point.value == null || view.hidden?.includes(series.name)) return '';
+          if (!chart.stack) return format(point.value);
+          const total = stackTotals[point.dataIndex];
+          return topSeries[point.dataIndex] === i && total !== null ? format(total) : '';
+        } } } : {}),
       itemStyle: { color: colors.get(series.name) }, lineStyle: { color: colors.get(series.name), width: 2, type: series.id === 'total' ? 'dashed' : 'solid' },
       symbolSize: 7, showSymbol: true, showAllSymbol: true, connectNulls: false, barMaxWidth: 40, emphasis: { focus: 'series' } })),
   };

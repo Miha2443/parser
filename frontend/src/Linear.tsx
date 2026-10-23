@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownToLine, Building2, Database, FileSpreadsheet, Footprints, RefreshCw, Route, TrainFront, TramFront, Waypoints } from 'lucide-react';
 import { Chart } from './Chart';
 import { ApiError, request } from './data';
@@ -57,11 +57,19 @@ export default function Linear({ theme }: { theme: Theme; query: string; change:
   </main>;
 }
 function History({ metric, year, theme, version }: { metric: LinearMetric; year: number; theme: Theme; version: string }) {
+  const ref = useRef<HTMLElement>(null), [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new ResizeObserver(entries => setWidth(entries[0].contentRect.width));
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  const option = useMemo(() => linearHistoryOption(metric, year, theme, width), [metric, year, theme, width]);
   const current = metric.years.find(row => row.year === year);
   const periods = metric.years.filter(row => row.fact !== null).map(row => row.year);
   const range = periods.length ? `${Math.min(...periods)}–${Math.max(...periods)}` : null;
-  return <section className="section linear-year-chart" data-history={metric.id} aria-label={`История: ${metric.label}`}>
+  return <section ref={ref} className="section linear-year-chart" data-history={metric.id} aria-label={`История: ${metric.label}`}>
     <div className="section-heading"><div><h2>{metric.label}</h2><p>{range ? `${range} · ` : ''}{metric.unit} · {year}: {current?.factPeriod ?? 'факт отсутствует'}</p></div></div>
-    {metric.years.some(row => row.fact !== null || row.forecast !== null) ? <Chart key={`${version}-${metric.id}`} option={linearHistoryOption(metric, year, theme)} theme={theme} label={`Годовой ввод: ${metric.label}`} rows={linearYearRows(metric)} filename={`linear-${metric.id}-yearly`} height={290} legendHints={{ Прогноз: 'Годовой прогноз мониторинга, не фактический ввод' }} /> : <CommissioningEmpty text="Годовые факты и прогнозы в источниках отсутствуют." />}
+    {metric.years.some(row => row.fact !== null || row.forecast !== null) ? <Chart key={`${version}-${metric.id}`} option={option} theme={theme} label={`Годовой ввод: ${metric.label}`} rows={linearYearRows(metric)} filename={`linear-${metric.id}-yearly`} height={290} legendHints={{ Прогноз: 'Годовой прогноз мониторинга, не фактический ввод' }} /> : <CommissioningEmpty text="Годовые факты и прогнозы в источниках отсутствуют." />}
   </section>;
 }

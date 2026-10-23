@@ -98,11 +98,22 @@ function Evidence({ metadata, params, change }: { metadata: EconomicsMetadata; p
     <details className="economics-evidence"><summary><Database size={17} /><span>Исходные файлы и даты</span></summary><p className="muted">{source.downloadSummary}</p>{source.issues.map(([level, message], i) => <p className="method-note warning-text" key={i}><AlertCircle size={14} /><span>{level}: {message}</span></p>)}<p className="muted">Дата формирования: <time dateTime={metadata.generatedAt}>{metadata.generatedAt}</time> · версия: <code>{metadata.version}</code> · схема: {metadata.schemaVersion}</p><p className="muted">Дата исходных файлов (МСК): {date(source.date)}</p><p className="muted">Дата файла — время изменения, не дата скачивания. Файлы-кандидаты не подтверждают участие каждой строки.</p><div className="source-list"><div><strong>Файлы-кандидаты</strong><span>{source.files.length}</span><div>{source.files.map(file => <code key={file}>{file}</code>)}</div></div><div><strong>Источники в загруженных строках</strong><span>{source.recordedSources.length}</span><div>{source.recordedSources.map(file => <code key={file}>{file}</code>)}</div></div></div><p className="muted">{source.dateEvidence}</p><p className="muted">{source.recordedSourceEvidence}</p><TableView table={provenance} unit="" scope="provenance" params={params} change={change} /></details>
   </section>;
 }
+function EconomicsPlot({ chart, family, theme, pivot, params, change }: { chart: EconomicsChart; family: EconomicsFamily; theme: Theme; pivot?: EconomicsTable; params: URLSearchParams; change: EconomicsChange }) {
+  const ref = useRef<HTMLDivElement>(null), [width, setWidth] = useState(900), [hidden, setHidden] = useState<string[]>([]);
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new ResizeObserver(entries => setWidth(entries[0].contentRect.width));
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  const option = useMemo(() => economicsChartOption(chart, theme, { width, hidden, showBarValues: family !== 'salary' }), [chart, theme, width, hidden, family]);
+  return <div ref={ref}><Chart option={option} theme={theme} label={chart.title} rows={economicsChartRows(chart)} filename={`economics-${family}-${chart.id}`} height={320} onLegendChange={setHidden} dataContent={<ChartTables chart={chart} pivot={pivot} params={params} change={change} />} /></div>;
+}
 export default function Economics({ family, theme, query, change }: { family: EconomicsFamily; theme: Theme; query: string; change: EconomicsChange }) {
   const params = useMemo(() => new URLSearchParams(query), [query]), { catalog, selection, data, error, retry } = useEconomicsData(family, params);
   useEffect(() => { if (catalog && data) { const repairs = economicsRepairs(catalog, params, data.selection); if (Object.keys(repairs).length) change(repairs, true); } }, [catalog, data, params]);
   const metadata = data ?? catalog;
-  const renderChart = (chart?: EconomicsChart) => chart ? <><Chart key={`${family}-${data?.version}-${JSON.stringify(data?.selection)}-${chart.id}`} option={economicsChartOption(chart, theme)} theme={theme} label={chart.title} rows={economicsChartRows(chart)} filename={`economics-${family}-${chart.id}`} height={320} dataContent={<ChartTables chart={chart} pivot={data?.tables.find(t => t.id === `${chart.id}_pivot`)} params={params} change={change} />} />{!chart.series.some(s => s.points.some(p => p.y !== null)) && <Empty />}
+  const renderChart = (chart?: EconomicsChart) => chart ? <><EconomicsPlot key={`${family}-${data?.version}-${JSON.stringify(data?.selection)}-${chart.id}`} chart={chart} family={family} theme={theme} pivot={data?.tables.find(t => t.id === `${chart.id}_pivot`)} params={params} change={change} />{!chart.series.some(s => s.points.some(p => p.y !== null)) && <Empty />}
     </> : !data && !error ? <div className="economics-chart-loading" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка показателей…</span></div> : <Empty />;
   return <main className="economics-page" id="economics-page" data-family={family}>
     <div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА</div><h1>{titles[family]}</h1>{family !== 'accounts' && catalog && selection && <ReleaseDates catalog={catalog} selected={selection} />}</div></div>

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as echarts from 'echarts/core.js';
+import { BarChart } from 'echarts/charts.js';
+import { GridComponent, TooltipComponent } from 'echarts/components.js';
+import { SVGRenderer } from 'echarts/renderers.js';
 import { exportCsv } from './format.ts';
 import { linearDashboardUrl, linearHistoryOption, linearMetricIds, linearValue, linearYearRows, loadLinearDashboard, readLinearDashboard } from './linearDashboardData.ts';
+
+echarts.use([BarChart, GridComponent, TooltipComponent, SVGRenderer]);
 
 function fixture() {
   const row = { year: 2026, fact: null, factKind: null, factPeriod: null, factSource: null, plan: null, forecast: null };
@@ -14,6 +20,15 @@ function staticDepotFixture() {
   raw.sources.push({ id: 'static_depots', file: 'электродепо11-25.xlsx', date: null, sheet: 'Лист1' });
   raw.metrics[5].years.unshift(...staticDepotValues.map((fact, index) => ({ year: 2011 + index, fact, factKind: 'annual', factPeriod: `За ${2011 + index} год`, factSource: 'static_depots', plan: null, forecast: null })));
   return raw;
+}
+
+function historyMetric(index = 0) {
+  const metric = fixture().metrics[index];
+  metric.years = Array.from({ length: 25 }, (_, index) => {
+    const year = 2011 + index, fact = year <= 2026 && year !== 2013 ? index === 0 ? 0 : 12.34 + index : null;
+    return { year, fact, factKind: fact === null ? null : year === 2026 ? 'partial' : 'annual', factPeriod: fact === null ? null : `За ${year} год`, factSource: fact === null ? null : 'monitoring', plan: 900000, forecast: year >= 2026 && year !== 2031 ? year === 2027 ? 0 : 90.65 + index : null };
+  });
+  return metric;
 }
 
 test('exact six metric order, absent values remain null, no fabricated 2011 history', () => {
@@ -190,6 +205,124 @@ test('fact and forecast have separate centered year slots with aligned hover val
   assert.ok(option.series.every(series => series.barGap === '-100%'));
   assert.match(option.tooltip.formatter({ name: '2026', value: 7, seriesName: 'Факт', dataIndex: 1 }), /На октябрь 2026/);
   assert.doesNotMatch(option.tooltip.formatter({ name: '2026', value: 50, seriesName: 'Прогноз', dataIndex: 2 }), /На октябрь/);
+});
+
+test('every supplied annual fact and forecast slot keeps its label, including zeros and years after 2030', () => {
+  for (const [index, id] of linearMetricIds.entries()) {
+    const metric = historyMetric(index);
+    const slots = [...metric.years.filter(row => row.year <= 2026).map(row => [String(row.year), row.fact]), ...metric.years.filter(row => row.year >= 2026 && row.forecast !== null).map(row => [`${row.year}\nпрогноз`, row.forecast])];
+    slots.find(slot => slot[0] === '2026')[0] = '2026\nфакт';
+    for (const theme of ['light', 'dark']) for (const width of [360, 600, 768, 1000, 1920]) {
+      const option = linearHistoryOption(metric, 2026, theme, width);
+      assert.deepEqual(option.xAxis.data, slots.map(slot => slot[0]), `${id}: every year slot`);
+      assert.equal(option.xAxis.data.at(-1), '2035\nпрогноз');
+      for (const series of option.series) {
+        assert.equal(series.label.show, true);
+        assert.equal(series.label.position, 'top');
+        assert.equal(series.labelLayout.hideOverlap, false);
+        assert.equal(series.label.fontSize, 9);
+        assert.equal(series.barGap, '-100%');
+        assert.equal(series.stack, undefined);
+        assert.equal(series.data.length, slots.length);
+        const expected = slots.map(([name, value]) => name.includes('прогноз') === (series.name === 'Прогноз') ? value : null);
+        assert.deepEqual(series.data, expected);
+        for (const value of expected) assert.equal(series.label.formatter({ value }), value === null ? '' : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: metric.unit === 'км' ? 1 : 0 }).format(value));
+        assert.equal(series.label.formatter({ value: 0 }), '0');
+        assert.equal(series.label.formatter({ value: null }), '');
+        if (width <= 600) assert.equal(series.label.rotate, 90);
+        if (width === 1920) assert.equal(series.label.rotate, 0);
+      }
+      assert.equal(option.media[0].option.xAxis.axisLabel.rotate, 90);
+      assert.equal(option.media[0].option.xAxis.axisLabel.hideOverlap, false);
+      assert.equal(option.media[0].option.xAxis.axisLabel.formatter('2026\nпрогноз'), '2026 прогноз');
+    }
+  }
+});
+
+test('labels, tooltips and axis ticks share plotted-value rounding, not unplotted plans or KPI values', () => {
+  for (const [unit, largeSlot, expected] of [
+    ['км', null, '12,3'], ['ед.', null, '12'], ['км', 'fact', '12'], ['км', 'forecast', '12'], ['км', 'threshold', '12'],
+  ]) {
+    const metric = historyMetric();
+    metric.unit = unit;
+    metric.fact = 200000;
+    metric.forecast = 200000;
+    metric.years[0].fact = largeSlot === 'fact' ? 200000.75 : 999.94;
+    metric.years[1].fact = 12.34;
+    metric.years.at(-1).forecast = largeSlot === 'forecast' ? 200000.75 : largeSlot === 'threshold' ? 1000 : 55.56;
+    const option = linearHistoryOption(metric, 2026, 'light');
+    for (const series of option.series) {
+      assert.equal(series.label.formatter({ value: 12.34 }), expected);
+      assert.equal(series.label.formatter({ value: 0 }), '0');
+      assert.equal(series.label.formatter({ value: null }), '');
+      const dataIndex = series.data.findIndex(value => value !== null);
+      assert.match(option.tooltip.formatter({ name: 'year', seriesName: series.name, dataIndex, value: 12.34 }), new RegExp(`<br/>${expected.replace('.', '\\.')} ${unit}`));
+    }
+    assert.equal(option.yAxis.axisLabel.formatter(12.34), expected);
+    assert.equal(option.series[0].label.formatter({ value: 999.94 }), unit === 'км' && largeSlot === null ? '999,9' : '1\u00a0000');
+    if (largeSlot === 'forecast') {
+      const series = option.series[1], dataIndex = series.data.length - 1;
+      assert.equal(series.label.formatter({ value: series.data[dataIndex] }), '200\u00a0001');
+      assert.match(option.tooltip.formatter({ name: '2035', seriesName: series.name, dataIndex, value: series.data[dataIndex] }), /200\u00a0001 км/);
+    }
+  }
+});
+
+test('history options, formatters and resizing never mutate source data or export values', () => {
+  const metric = historyMetric(), original = structuredClone(metric), rows = linearYearRows(metric);
+  for (const row of metric.years) Object.freeze(row);
+  Object.freeze(metric.years);
+  Object.freeze(metric);
+  for (const theme of ['light', 'dark']) for (const width of [360, 768, 1920, 360]) {
+    const option = linearHistoryOption(metric, 2026, theme, width);
+    for (const series of option.series) series.data.forEach((value, dataIndex) => {
+      series.label.formatter({ value });
+      option.tooltip.formatter({ name: option.xAxis.data[dataIndex], value, seriesName: series.name, dataIndex });
+    });
+    assert.deepEqual(metric, original);
+    assert.deepEqual(linearYearRows(metric), rows);
+  }
+});
+
+test('rendered labels stay above centered bars, inside the canvas and separate with 200k at the axis ceiling', () => {
+  const metric = historyMetric();
+  for (const row of metric.years) {
+    if (row.fact !== null) row.fact = 200000;
+    if (row.forecast !== null && row.forecast !== 0) row.forecast = 200000;
+  }
+  for (const width of [312, 360, 600, 768, 1000, 1920]) {
+    const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width, height: 290 });
+    try {
+      const option = linearHistoryOption(metric, 2026, 'light', width);
+      chart.setOption({ ...option, animation: false, textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif' } });
+      const bounds = [];
+      option.series.forEach((series, seriesIndex) => {
+        const data = chart.getModel().getSeriesByIndex(seriesIndex).getData();
+        series.data.forEach((value, dataIndex) => {
+          if (value === null) return;
+          const bar = data.getItemGraphicEl(dataIndex), label = bar.getTextContent(), layout = data.getItemLayout(dataIndex);
+          assert.ok(label && !label.ignore, `${width}: visible ${series.name} ${dataIndex}`);
+          assert.equal(label.style.text, series.label.formatter({ value }));
+          const rect = label.getBoundingRect().clone();
+          rect.applyTransform(label.getComputedTransform());
+          const center = chart.convertToPixel({ xAxisIndex: 0 }, dataIndex);
+          assert.ok(Math.abs(layout.x + layout.width / 2 - center) <= 1, `${width}: centered bar`);
+          assert.ok(Math.abs(rect.x + rect.width / 2 - center) <= 1, `${width}: centered label`);
+          assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= width && rect.y + rect.height <= 290, `${width}: label within canvas ${JSON.stringify(rect)}`);
+          assert.ok(rect.y + rect.height <= layout.y + Math.min(0, layout.height), `${width}: label above bar`);
+          bounds.push(rect);
+        });
+      });
+      bounds.sort((a, b) => a.x - b.x);
+      for (let index = 1; index < bounds.length; index++) assert.equal(bounds[index].intersect(bounds[index - 1]), false, `${width}: adjacent labels overlap`);
+      const unit = chart.getZr().storage.getDisplayList(true).find(element => element.style?.text === metric.unit);
+      assert.ok(unit);
+      const unitBounds = unit.getBoundingRect().clone();
+      unitBounds.applyTransform(unit.getComputedTransform());
+      for (const rect of bounds) assert.equal(rect.intersect(unitBounds), false, `${width}: label overlaps unit caption`);
+      assert.equal(bounds.length, option.series.flatMap(series => series.data).filter(value => value !== null).length);
+    } finally { chart.dispose(); }
+  }
 });
 
 test('version-pinned export URL and abortable fresh API fetch', async () => {

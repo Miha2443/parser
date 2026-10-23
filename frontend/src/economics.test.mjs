@@ -1,8 +1,113 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as echarts from 'echarts/core.js';
+import { BarChart } from 'echarts/charts.js';
+import { GridComponent, TooltipComponent } from 'echarts/components.js';
+import { SVGRenderer } from 'echarts/renderers.js';
 import fixture from './economics.browser.cjs';
 import { economicsChartOption, economicsChartRows, economicsFilterKey, economicsFilters, economicsOptions, economicsQueryValue, economicsRepairs, economicsTablePage, economicsTableRows, economicsUrl, loadEconomicsCatalog, loadEconomicsPage, loadEconomicsReport, readEconomicsCatalog, readEconomicsReport } from './economicsData.ts';
 const families = ['salary', 'ipc', 'accounts'];
+echarts.use([BarChart, GridComponent, TooltipComponent, SVGRenderer]);
+
+test('VRP and annual CPI label every observed bar above it, including real zeros', () => {
+  for (const family of ['accounts', 'ipc']) for (const theme of ['light', 'dark']) {
+    const selected = fixture.catalog(family).defaults;
+    if (family === 'ipc') selected.period = 'year';
+    const chart = fixture.report(family, selected).charts[0];
+    chart.series[0].points[0].y = 0;
+    chart.series[0].points[1].y = 12.345;
+    chart.series[0].points[2].y = null;
+    const before = structuredClone(chart), option = economicsChartOption(chart, theme);
+    assert.equal(option.series[0].label.show, true);
+    assert.equal(option.series[0].label.position, 'top');
+    assert.equal(option.series[0].label.formatter({ dataIndex: 0, value: 0 }), '0');
+    assert.equal(option.series[0].label.formatter({ dataIndex: 1, value: 12.345 }), '12,3');
+    assert.equal(option.series[0].label.formatter({ dataIndex: 2, value: null }), '');
+    assert.equal(option.series[0].labelLayout({ text: '' }).hideOverlap, false);
+    assert.deepEqual(chart, before);
+  }
+});
+test('bar value labels rotate rather than disappear when years or grouped regions are dense', () => {
+  const selected = fixture.catalog('accounts').defaults; selected.block1_regions = [fixture.MSK, fixture.RF];
+  const chart = fixture.report('accounts', selected).charts[0];
+  const wide = economicsChartOption(chart, 'light', { width: 1500 }), narrow = economicsChartOption(chart, 'light', { width: 300 });
+  assert.equal(wide.series[0].label.rotate, 0);
+  assert.equal(narrow.series[0].label.rotate, 90);
+  assert.equal(narrow.series[1].label.show, true);
+  assert.ok(narrow.grid.top > wide.grid.top);
+  assert.equal(narrow.series[0].label.align, 'left');
+  assert.equal(narrow.series[0].label.verticalAlign, 'middle');
+});
+test('structure labels show the supplied aggregate only on the top visible segment', () => {
+  const chart = fixture.report('accounts').charts.find(row => row.id === 'na_block5');
+  chart.series = [{ id: 'industry', name: 'Строительство', unit: chart.unit, points: [{ x: 2025, y: 1.1 }] }, { id: 'rest', name: 'Остальные отрасли', unit: chart.unit, points: [{ x: 2025, y: 2.2 }] }];
+  chart.rows = [{ year: 2025 }]; chart.totals = [{ x: 2025, y: 3.4 }];
+  const before = structuredClone(chart), all = economicsChartOption(chart, 'light');
+  assert.equal(all.series[0].label.formatter({ dataIndex: 0, value: 1.1 }), '');
+  assert.equal(all.series[1].label.formatter({ dataIndex: 0, value: 2.2 }), '3,4');
+  const hidden = economicsChartOption(chart, 'light', { hidden: ['Остальные отрасли'] });
+  assert.equal(hidden.series[0].label.formatter({ dataIndex: 0, value: 1.1 }), '1,1');
+  assert.equal(hidden.series[1].label.formatter({ dataIndex: 0, value: 2.2 }), '');
+  const none = economicsChartOption(chart, 'light', { hidden: chart.series.map(row => row.name) });
+  assert.ok(none.series.every(series => series.label.formatter({ dataIndex: 0, value: 1.1 }) === ''));
+  assert.deepEqual(chart, before);
+});
+
+test('rendered grouped labels never collide or clip, including equal regional CPI values on mobile', () => {
+  for (const family of ['accounts', 'ipc']) {
+    const selected = fixture.catalog(family).defaults;
+    if (family === 'ipc') { selected.period = 'year'; selected.regions = [fixture.MSK, fixture.RF]; }
+    else selected.block1_regions = [fixture.MSK, fixture.RF];
+    const source = fixture.report(family, selected).charts[0];
+    if (family === 'ipc') for (const series of source.series) for (const point of series.points) if (point.y !== null) point.y = 100.123;
+    for (const width of [272, 312, 360, 768, 1440]) {
+      const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width, height: 320 });
+      try {
+        const option = economicsChartOption(source, 'light', { width });
+        chart.setOption({ ...option, animation: false, textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif' } });
+        const bounds = [];
+        option.series.forEach((series, seriesIndex) => {
+          const data = chart.getModel().getSeriesByIndex(seriesIndex).getData();
+          series.data.forEach((value, dataIndex) => {
+            if (value === null) return;
+            const label = data.getItemGraphicEl(dataIndex)?.getTextContent(), layout = data.getItemLayout(dataIndex);
+            assert.ok(label && !label.ignore && label.style.text, `${family} ${width}: missing label`);
+            const rect = label.getBoundingRect().clone(); rect.applyTransform(label.getComputedTransform());
+            assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= width && rect.y + rect.height <= 320, `${family} ${width}: clipped ${JSON.stringify(rect)}`);
+            assert.ok(rect.y + rect.height <= layout.y + Math.min(0, layout.height), `${family} ${width}: not above bar`);
+            for (const other of bounds) assert.equal(rect.intersect(other), false, `${family} ${width}: overlapping labels`);
+            bounds.push(rect);
+          });
+        });
+        assert.equal(bounds.length, source.series.flatMap(series => series.points).filter(point => point.y !== null).length);
+      } finally { chart.dispose(); }
+    }
+  }
+});
+test('missing structure components without an authoritative total never become a fabricated sum', () => {
+  const chart = fixture.report('accounts').charts.find(row => row.id === 'na_block5');
+  delete chart.totals; chart.series[0].points[0].y = null;
+  const option = economicsChartOption(chart, 'light');
+  assert.equal(option.series.at(-1).label.formatter({ dataIndex: 0, value: chart.series.at(-1).points[0].y }), '');
+  const last = chart.series.at(-1); last.points[0].y = 0;
+  const zero = economicsChartOption(chart, 'light', { hidden: [chart.series[0].name] });
+  assert.equal(zero.series.at(-1).label.formatter({ dataIndex: 0, value: 0 }), '0');
+});
+test('label precision follows the entire chart and leaves source exports unrounded', () => {
+  const chart = fixture.report('accounts').charts[0], values = [1020.2, 300.2, 399.2];
+  chart.series[0].points = values.map((y, index) => ({ x: 2020 + index, y }));
+  const rows = economicsChartRows(chart), option = economicsChartOption(chart, 'light');
+  assert.deepEqual(values.map((value, dataIndex) => option.series[0].label.formatter({ value, dataIndex })), ['1\u00a0020', '300', '399']);
+  assert.deepEqual(economicsChartRows(chart), rows);
+  assert.equal(option.tooltip.formatter({ dataIndex: 1, seriesIndex: 0, seriesName: chart.series[0].name, name: '2021', value: 300.2 }).includes('300 трлн руб'), true);
+});
+test('existing salary bars and economic line series are not given unsolicited value labels', () => {
+  const selected = fixture.catalog('salary').defaults; selected.period = 'year';
+  assert.equal(economicsChartOption(fixture.report('salary', selected).charts[0], 'light').series[0].label, undefined);
+  for (const chart of fixture.report('accounts').charts.filter(row => row.kind === 'line')) {
+    assert.ok(economicsChartOption(chart, 'light').series.every(series => series.label === undefined));
+  }
+});
 
 test('annual residual-only years remain chronologically aligned with missing industry observations', () => {
   const chart = { ...fixture.report('accounts').charts[4], rows: [{ year: 2020 }, { year: 2022 }],

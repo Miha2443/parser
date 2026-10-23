@@ -1,5 +1,5 @@
 import { request } from './data.ts';
-import { number } from './format.ts';
+import { chartNumberFormatter, number } from './format.ts';
 import type { EChartsCoreOption } from 'echarts/core';
 import type { Theme } from './types';
 
@@ -55,23 +55,30 @@ export function linearYearRows(metric: LinearMetric): (string | number | null)[]
   return [['Год', `Факт, ${metric.unit}`, 'Период факта', 'Источник факта', `Прогноз, ${metric.unit}`], ...metric.years.map(row => [row.year, row.fact, row.factPeriod, row.factSource, row.forecast])];
 }
 const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
-export function linearHistoryOption(metric: LinearMetric, currentYear: number, theme: Theme): EChartsCoreOption {
+export function linearHistoryOption(metric: LinearMetric, currentYear: number, theme: Theme, width = 1000): EChartsCoreOption {
   const muted = theme === 'light' ? '#737b87' : '#a3aab5', line = theme === 'light' ? '#edf0f3' : '#363a40';
   const palette: Record<LinearMetricId, string> = { roads: '#367ba4', bridges: '#448a76', crossings: '#a77b32', metro_stations: '#b75160', metro_tunnels: '#6e7e45', depots: '#697c92' };
   const color = palette[metric.id];
   const slots = [...metric.years.filter(row => row.year <= currentYear).map(row => ({ row, forecast: false })),
     ...metric.years.filter(row => row.year >= currentYear && row.forecast !== null).map(row => ({ row, forecast: true }))];
+  const values = slots.map(slot => slot.forecast ? slot.row.forecast : slot.row.fact);
+  const format = chartNumberFormatter(values, metric.unit === 'км' ? 1 : 0);
+  const fontSize = 9, distance = 5;
+  // Reserve the full rotated text extent, even when the largest bar reaches the axis ceiling.
+  const labelWidth = Math.max(1, ...values.map(value => value === null ? 0 : format(value).length)) * fontSize * 0.7;
+  const vertical = width <= 600 || (width - 80) / Math.max(1, slots.length) < labelWidth + 8;
+  const label = { show: true, position: 'top', distance, rotate: vertical ? 90 : 0, align: vertical ? 'left' : 'center', verticalAlign: vertical ? 'middle' : 'bottom', color: muted, fontSize, lineHeight: fontSize, formatter: (p: { value: number | null }) => p.value === null ? '' : format(p.value) };
   return {
-    grid: { left: 8, right: 12, top: 30, bottom: 8, containLabel: true },
+    grid: { left: 8, right: 12, top: Math.ceil(24 + distance + (vertical ? labelWidth : 12)), bottom: 8, containLabel: true },
     tooltip: { trigger: 'item', confine: true, formatter: (p: { name: string; value: number | null; seriesName: string; dataIndex: number }) => {
       const row = slots[p.dataIndex].row;
-      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${linearValue(p.value, metric.unit)} ${escape(metric.unit)}${p.seriesName === 'Факт' && row.factPeriod ? `<br/>${escape(row.factPeriod)}` : ''}`;
+      return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} ${escape(metric.unit)}${p.seriesName === 'Факт' && row.factPeriod ? `<br/>${escape(row.factPeriod)}` : ''}`;
     } },
     xAxis: { type: 'category', data: slots.map(({ row, forecast }) => forecast ? `${row.year}\nпрогноз` : row.year === currentYear ? `${row.year}\nфакт` : String(row.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, interval: 0, hideOverlap: true, fontSize: 10, lineHeight: 14 } },
-    yAxis: { type: 'value', name: metric.unit, min: 0, minInterval: metric.unit === 'км' ? undefined : 1, nameTextStyle: { color: muted }, axisLabel: { color: muted }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
+    yAxis: { type: 'value', name: metric.unit, min: 0, minInterval: metric.unit === 'км' ? undefined : 1, nameTextStyle: { color: muted, align: 'right' }, axisLabel: { color: muted, formatter: format }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
     series: [
-      { name: 'Факт', type: 'bar', barMaxWidth: 38, barGap: '-100%', itemStyle: { color }, data: slots.map(slot => slot.forecast ? null : slot.row.fact) },
-      { name: 'Прогноз', type: 'bar', barMaxWidth: 38, barGap: '-100%', itemStyle: { color: theme === 'light' ? '#fafafa' : '#282b30', borderColor: color, borderWidth: 1.5, borderType: 'dashed', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: `${color}88` } }, data: slots.map(slot => slot.forecast ? slot.row.forecast : null) },
+      { name: 'Факт', type: 'bar', barMaxWidth: 38, barGap: '-100%', label, labelLayout: { hideOverlap: false }, itemStyle: { color }, data: slots.map(slot => slot.forecast ? null : slot.row.fact) },
+      { name: 'Прогноз', type: 'bar', barMaxWidth: 38, barGap: '-100%', label: { ...label }, labelLayout: { hideOverlap: false }, itemStyle: { color: theme === 'light' ? '#fafafa' : '#282b30', borderColor: color, borderWidth: 1.5, borderType: 'dashed', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: `${color}88` } }, data: slots.map(slot => slot.forecast ? slot.row.forecast : null) },
     ],
     media: [{ query: { maxWidth: 600 }, option: { xAxis: { axisLabel: { rotate: 90, fontSize: 9, hideOverlap: false, formatter: (value: string) => value.replaceAll('\n', ' ') } } } }],
   };

@@ -21,8 +21,8 @@ export function readLinearDashboard(value: unknown): LinearDashboard {
   for (const [index, value] of raw.metrics.entries()) {
     const metric = object(value);
     if (metric.id !== linearMetricIds[index] || typeof metric.label !== 'string' || !metric.label || metric.unit !== (['roads', 'metro_tunnels'].includes(String(metric.id)) ? 'км' : 'ед.') || !['fact', 'annualPlan', 'forecast', 'target', 'percent', 'remaining'].every(key => nullableNumber(metric[key])) || ![null, 'plan', 'forecast'].includes(metric.targetKind as null) || !evidence(metric) || !Array.isArray(metric.years)) throw invalid();
-    const target = metric.annualPlan ?? metric.forecast;
-    const targetKind = metric.annualPlan !== null ? 'plan' : metric.forecast !== null ? 'forecast' : null;
+    const target = metric.forecast;
+    const targetKind = metric.forecast !== null ? 'forecast' : null;
     const percent = metric.fact !== null && typeof target === 'number' && target > 0 ? Number(metric.fact) / target * 100 : null;
     const remaining = metric.fact !== null && typeof target === 'number' ? Math.max(0, target - Number(metric.fact)) : null;
     if (metric.target !== target || metric.targetKind !== targetKind || metric.percent !== percent || metric.remaining !== remaining) throw invalid();
@@ -51,24 +51,27 @@ export const linearDashboardUrl = (version?: string) => `/api/v1/linear/dashboar
 export async function loadLinearDashboard(signal: AbortSignal) { return readLinearDashboard(await (await request(linearDashboardUrl(), signal)).json()); }
 export const linearValue = (value: number | null, unit: string) => number(value, unit === 'км' ? 1 : 0);
 export function linearYearRows(metric: LinearMetric): (string | number | null)[][] {
-  return [['Год', `Факт, ${metric.unit}`, 'Период факта', 'Источник факта', `Годовой план, ${metric.unit}`, `Прогноз, ${metric.unit}`], ...metric.years.map(row => [row.year, row.fact, row.factPeriod, row.factSource, row.plan, row.forecast])];
+  return [['Год', `Факт, ${metric.unit}`, 'Период факта', 'Источник факта', `Прогноз, ${metric.unit}`], ...metric.years.map(row => [row.year, row.fact, row.factPeriod, row.factSource, row.forecast])];
 }
 const escape = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 export function linearHistoryOption(metric: LinearMetric, currentYear: number, theme: Theme): EChartsCoreOption {
   const muted = theme === 'light' ? '#737b87' : '#a3aab5', line = theme === 'light' ? '#edf0f3' : '#363a40';
   const palette: Record<LinearMetricId, string> = { roads: '#367ba4', bridges: '#448a76', crossings: '#a77b32', metro_stations: '#b75160', metro_tunnels: '#6e7e45', depots: '#697c92' };
   const color = palette[metric.id];
+  const slots = [...metric.years.filter(row => row.year <= currentYear).map(row => ({ row, forecast: false })),
+    ...metric.years.filter(row => row.year >= currentYear && row.forecast !== null).map(row => ({ row, forecast: true }))];
   return {
     grid: { left: 8, right: 12, top: 30, bottom: 8, containLabel: true },
     tooltip: { trigger: 'item', confine: true, formatter: (p: { name: string; value: number | null; seriesName: string; dataIndex: number }) => {
-      const row = metric.years[p.dataIndex];
+      const row = slots[p.dataIndex].row;
       return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${linearValue(p.value, metric.unit)} ${escape(metric.unit)}${p.seriesName === 'Факт' && row.factPeriod ? `<br/>${escape(row.factPeriod)}` : ''}`;
     } },
-    xAxis: { type: 'category', data: metric.years.map(row => String(row.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, interval: 'auto', hideOverlap: true, fontSize: 11 } },
+    xAxis: { type: 'category', data: slots.map(({ row, forecast }) => forecast ? `${row.year}\nпрогноз` : row.year === currentYear ? `${row.year}\nфакт` : String(row.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: muted, interval: 0, hideOverlap: true, fontSize: 10, lineHeight: 14 } },
     yAxis: { type: 'value', name: metric.unit, min: 0, minInterval: metric.unit === 'км' ? undefined : 1, nameTextStyle: { color: muted }, axisLabel: { color: muted }, splitLine: { lineStyle: { color: line, type: 'dashed' } } },
     series: [
-      { name: 'Факт', type: 'bar', barMaxWidth: 38, itemStyle: { color }, data: metric.years.map(row => row.year <= currentYear ? row.fact : null) },
-      { name: 'Прогноз', type: 'bar', barMaxWidth: 38, itemStyle: { color: theme === 'light' ? '#fafafa' : '#282b30', borderColor: color, borderWidth: 1.5, borderType: 'dashed', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: `${color}88` } }, data: metric.years.map(row => row.year >= currentYear ? row.forecast : null) },
+      { name: 'Факт', type: 'bar', barMaxWidth: 38, barGap: '-100%', itemStyle: { color }, data: slots.map(slot => slot.forecast ? null : slot.row.fact) },
+      { name: 'Прогноз', type: 'bar', barMaxWidth: 38, barGap: '-100%', itemStyle: { color: theme === 'light' ? '#fafafa' : '#282b30', borderColor: color, borderWidth: 1.5, borderType: 'dashed', decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4, color: `${color}88` } }, data: slots.map(slot => slot.forecast ? slot.row.forecast : null) },
     ],
+    media: [{ query: { maxWidth: 600 }, option: { xAxis: { axisLabel: { rotate: 90, fontSize: 9, hideOverlap: false, formatter: (value: string) => value.replaceAll('\n', ' ') } } } }],
   };
 }

@@ -120,7 +120,7 @@ class LinearService:
                 except (OSError, ValueError, BadZipFile) as exc:
                     raise SourceUnavailable("DSTI source cannot be read") from exc
             else:
-                notes.append("Источник ДСТИ отсутствует; квартальные факты и годовой план недоступны.")
+                notes.append("Источник ДСТИ отсутствует; квартальные факты недоступны.")
             forecasts = access.load_commissioning_forecasts()
             if monitoring:
                 with monitoring.open("rb") as stream:
@@ -151,7 +151,7 @@ class LinearService:
                        "generatedAt": datetime.now(timezone.utc).isoformat(), "sources": sources,
                        "notes": notes + forecasts.get("notes", []) + [
                            "Прогноз не является фактом. Пустые значения не считаются нулём.",
-                           "Годовой план ДСТИ — сумма четырёх заполненных квартальных планов.",
+                           "Процент выполнения и остаток рассчитаны только от годового прогноза листа «Прогнозы»; без прогноза они неизвестны.",
                            "Факт текущего года неполный; история депо без отдельного источника не восстанавливается."],
                        **build_dashboard(data, history, forecasts, sources, date.today())}
             if self._dashboard_inputs(access) != (dsti, monitoring, signature):

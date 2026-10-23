@@ -53,6 +53,18 @@ async function csv(page) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(base + '/construction/tree?okrug=ЦАО&developer=ignored');
       await ready(page); await geometry(page);
+      const reference = await page.evaluate(() => {
+        const left = document.querySelector('[data-metric="embedded"] .ct-area strong');
+        const right = document.querySelector('.ct-reference .ct-area strong');
+        const area = right.getBoundingClientRect(), label = document.querySelector('.ct-reference > p').getBoundingClientRect();
+        return { left: left.getBoundingClientRect().top, right: area.top, below: label.top >= area.bottom,
+          leftFont: getComputedStyle(left).fontSize, rightFont: getComputedStyle(right).fontSize,
+          leftWeight: getComputedStyle(left).fontWeight, rightWeight: getComputedStyle(right).fontWeight };
+      });
+      assert.equal(reference.leftFont, reference.rightFont);
+      assert.equal(reference.leftWeight, reference.rightWeight);
+      assert.equal(reference.below, true);
+      if (width >= 1280) assert.ok(Math.abs(reference.left - reference.right) <= 1, `Reference area not aligned: ${JSON.stringify(reference)}`);
       assert.equal(await page.locator('main details[open]').count(), 0);
       await page.screenshot({ path: path.join(output, `fixture-${width}.png`), fullPage: true });
       layouts.push({ mode: 'fixture', width });

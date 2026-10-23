@@ -4,14 +4,19 @@ import copy
 import json
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import pandas as pd
 import plotly.graph_objects as go
 from openpyxl import load_workbook
 
-from backend.annual_routes import LOADERS, catalog, create_service, export_workbook, report
-from pipeline.annual_calculations import annual_charts, annual_fact_period, annual_forecast
+from backend.annual_routes import LOADERS, catalog, create_router, create_service, export_workbook, report
+from pipeline.annual_calculations import (
+    _housing_composition, _moscow_housing_composition, annual_charts, annual_fact_period, annual_forecast,
+)
 from pipeline.data_access import DataAccess, DataContext, monitoring_by_year, month_label, quarter_label
 from pipeline.report_values import records
 from scripts.check_apartments_parity import Capture
@@ -63,8 +68,8 @@ class AnnualTests(unittest.TestCase):
                 self.assertEqual(len(ui.figures), count)
                 self.assertEqual(len(ui.exports), count)
                 for chart, figure, frame in zip(charts, ui.figures, ui.exports):
-                    # Explicit categories replace the legacy total-minus-IHS
-                    # split; their source/null rules have dedicated tests.
+                    # Moscow's agreed classification and RF's source taxonomy
+                    # have separate category/null/provenance tests.
                     if chart["id"] == "b2_1":
                         self.assertEqual(chart["controlTotal"], "TOTAL")
                         self.assertNotIn("TOTAL", [series["id"] for series in chart["series"]])
@@ -114,11 +119,106 @@ class AnnualTests(unittest.TestCase):
         chart = next(chart for chart in annual_charts(self.data, "Москва") if chart["id"] == "b2_1")
         rows = {row["year"]: row for row in chart["rows"]}
         provenance = {row["year"]: row for row in chart["categoryProvenance"]}
-        for year, cell, value in ((2011, "S24", .0258), (2012, "S25", .2218),
-                                  (2013, "S26", .3124), (2014, "S27", .4974)):
+        raw = {row["year"]: row for row in chart["rawCategoryValues"]}
+        self.assertEqual([series["id"] for series in chart["series"]], ["МКД", "ИЖС"])
+        self.assertNotIn("Остальное_жильё", [column["id"] for column in chart["columns"]])
+        for year, cell, total, value, mkd in ((2011, "S24", 2.2, .0258, 2.1742),
+                                            (2012, "S25", 3.05, .2218, 2.8282),
+                                            (2013, "S26", 3.146, .3124, 2.8336),
+                                            (2014, "S27", 3.342, .4974, 2.8446)):
             self.assertAlmostEqual(rows[year]["ИЖС"], value)
+            self.assertAlmostEqual(rows[year]["TOTAL"], total)
+            self.assertAlmostEqual(rows[year]["МКД"], mkd)
+            self.assertIsNone(raw[year]["МКД"])
             self.assertEqual(provenance[year]["ИЖС_source_cell"], cell)
             self.assertEqual(provenance[year]["ИЖС_source_sheet"], "Данные с 2011 года")
+        # The old positive grey remainder is now included in Moscow's MKD.
+        self.assertAlmostEqual(raw[2015]["МКД"], 3.2591)
+        self.assertAlmostEqual(rows[2015]["МКД"], 3.3455)
+        for row in chart["rows"]:
+            with self.subTest(year=row["year"]):
+                self.assertEqual(row["TOTAL"], raw[row["year"]]["TOTAL"])
+                self.assertEqual(row["ИЖС"], raw[row["year"]]["ИЖС"])
+                if row["TOTAL"] is not None and row["ИЖС"] is not None and row["TOTAL"] >= row["ИЖС"]:
+                    self.assertAlmostEqual(row["TOTAL"], row["МКД"] + row["ИЖС"], places=12)
+                    proof = provenance[row["year"]]
+                    self.assertEqual(proof["МКД_source_kind"], "user_agreed_calculation")
+                    self.assertEqual(proof["МКД_source_formula"], "МКД = TOTAL - ИЖС")
+                    self.assertIn("Пользовательское согласование", proof["МКД_source_label"])
+                    for suffix in ("file", "sheet", "cell", "row", "rows", "value"):
+                        self.assertIsNone(proof.get("МКД_source_" + suffix))
+        payload = dict(version="test", generatedAt="test", source={}, **report(self.data, catalog(self.data)))
+        book = load_workbook(BytesIO(export_workbook(payload)))
+        for excel_row, row in zip(list(book["b2_1"].values)[1:], chart["rows"]):
+            for actual, column in zip(excel_row, chart["columns"]):
+                expected = row[column["id"]]
+                if expected is None:
+                    self.assertIsNone(actual)
+                else:
+                    self.assertAlmostEqual(actual, expected, places=12)
+        metadata = dict(book["Report"].values)
+        for field in ("rawCategoryValues", "rawCategoryProvenance", "categoryProvenance"):
+            self.assertEqual(json.loads(metadata["b2_1/" + field]), chart[field])
+
+
+class MoscowHousingCompositionTests(unittest.TestCase):
+    def test_agreed_difference_includes_old_grey_without_claiming_a_source_cell(self):
+        original = pd.DataFrame([
+            {"year": 2011, "TOTAL": 3, "МКД": None, "ИЖС": .25},
+            {"year": 2015, "TOTAL": 4, "МКД": 3, "ИЖС": .5},
+            {"year": 2020, "TOTAL": 3, "МКД": 4, "ИЖС": .5},
+            {"year": 2024, "TOTAL": 3, "МКД": None, "ИЖС": 0},
+            {"year": 2025, "TOTAL": 0, "МКД": None, "ИЖС": 0},
+        ])
+        original["МКД_source_file"] = "old.xlsx"
+        original["МКД_source_cell"] = "B12"
+        original["МКД_source_rows"] = [[12]] * len(original)
+        original["МКД_source_value"] = 3000
+        original["TOTAL_source_precision_million"] = .001
+        original["ИЖС_source_precision_million"] = .0001
+        snapshot = original.copy(deep=True)
+        composition = _housing_composition(original, confirmed_ihs_years=(2011,))
+        self.assertAlmostEqual(composition.loc[1, "Остальное_жильё"], .5)
+        shown = _moscow_housing_composition(composition)
+        self.assertEqual(shown["МКД"].tolist(), [2.75, 3.5, 2.5, 3, 0])
+        pd.testing.assert_series_equal(shown["TOTAL"], original["TOTAL"])
+        pd.testing.assert_series_equal(shown["ИЖС"], original["ИЖС"])
+        self.assertTrue(shown["Остальное_жильё"].isna().all())
+        for column in ("file", "cell", "rows", "value"):
+            self.assertTrue(shown["МКД_source_" + column].isna().all())
+        self.assertTrue(shown["МКД_source_kind"].eq("user_agreed_calculation").all())
+        self.assertTrue(shown["МКД_source_formula"].eq("МКД = TOTAL - ИЖС").all())
+        self.assertTrue(shown["МКД_source_precision_million"].eq(.0011).all())
+        pd.testing.assert_frame_equal(original, snapshot)
+
+    def test_missing_or_conflicting_controls_never_imply_zero_or_a_confirmed_remainder(self):
+        original = pd.DataFrame([
+            {"year": 2015, "TOTAL": None, "МКД": 2, "ИЖС": 1},
+            {"year": 2016, "TOTAL": 3, "МКД": 2, "ИЖС": None},
+            {"year": 2017, "TOTAL": 3, "МКД": None, "ИЖС": None},
+            {"year": 2018, "TOTAL": None, "МКД": None, "ИЖС": .5},
+            {"year": 2019, "TOTAL": .5, "МКД": 2, "ИЖС": 1},
+            {"year": 2020, "TOTAL": 3, "МКД": 2, "ИЖС": -1},
+            {"year": 2021, "TOTAL": float("inf"), "МКД": 2, "ИЖС": 1},
+            {"year": 2022, "TOTAL": 3, "МКД": 2, "ИЖС": float("inf")},
+            {"year": 2023, "TOTAL": -1, "МКД": 2, "ИЖС": 0},
+            {"year": 2024, "TOTAL": None, "МКД": -1, "ИЖС": None},
+            {"year": 2025, "TOTAL": 1, "МКД": 2, "ИЖС": None},
+        ])
+        original["МКД_source_cell"] = "B12"
+        composition = _housing_composition(original)
+        shown = _moscow_housing_composition(composition)
+        self.assertEqual(shown.loc[:1, "МКД"].tolist(), [2, 2])
+        self.assertEqual(shown.loc[:1, "МКД_source_cell"].tolist(), ["B12", "B12"])
+        self.assertTrue(shown.loc[2:, "МКД"].isna().all())
+        self.assertTrue(shown.loc[2:, "МКД_source_cell"].isna().all())
+        self.assertTrue(shown.loc[4:8, "МКД_source_kind"].eq("unresolved_conflict").all())
+        self.assertEqual(shown.loc[10, "МКД_source_kind"], "unresolved_conflict")
+        self.assertTrue(shown["МКД_source_formula"].isna().all())
+        self.assertTrue(shown["МКД_source_reason"].notna().all())
+        self.assertTrue(shown["Остальное_жильё"].isna().all())
+        pd.testing.assert_series_equal(shown["TOTAL"], original["TOTAL"])
+        pd.testing.assert_series_equal(shown["ИЖС"], original["ИЖС"])
 
 
 class AnnualForecastTests(unittest.TestCase):
@@ -203,7 +303,7 @@ class AnnualForecastTests(unittest.TestCase):
         self.assertIn("load_commissioning_forecasts", LOADERS)
         self.assertIn("commissioning_forecasts", create_service(DataContext(ROOT)).families)
 
-    def test_annual_ihs_is_moscow_only_with_missing_years_and_independent_categories(self):
+    def test_annual_ihs_is_moscow_only_with_missing_years_and_preserved_source_categories(self):
         rf_before = annual_charts(self.data, "РФ")
         previous = self.data["load_vvod_static"]["msk_residential"]
         previous["ИЖС_source_file"] = "old.xlsx"
@@ -227,7 +327,7 @@ class AnnualForecastTests(unittest.TestCase):
         rows = {row["year"]: row for row in chart["rows"]}
         for year, value in ((2011, .0258), (2013, .3124), (2014, .4974), (2025, .6015)):
             self.assertAlmostEqual(rows[year]["ИЖС"], value)
-            self.assertEqual(rows[year]["МКД"], 3)
+            self.assertAlmostEqual(rows[year]["МКД"], rows[year]["TOTAL"] - value)
         self.assertEqual(rows[2011]["TOTAL"], 3)
         self.assertIsNone(rows[2012]["ИЖС"])
         self.assertIsNone(rows[2026]["ИЖС"])
@@ -238,8 +338,17 @@ class AnnualForecastTests(unittest.TestCase):
         self.assertEqual(provenance[2011]["ИЖС_source_cell"], "S24")
         self.assertEqual(provenance[2011]["ИЖС_source_file"], "monitoring.xlsx")
         self.assertIsNone(provenance[2011]["ИЖС_source_rows"])
+        raw = {row["year"]: row for row in chart["rawCategoryValues"]}
+        self.assertEqual(raw[2011]["МКД"], 3)
+        self.assertEqual(raw[2011]["ИЖС_сельское"], .01)
+        self.assertEqual([series["id"] for series in chart["series"]], ["МКД", "ИЖС"])
         self.assertFalse(any("до 2015" in note for note in payload["notes"]))
+        self.assertFalse(any("не называется МКД" in note or "Серый сегмент" in note for note in payload["notes"]))
         self.assertEqual(annual_charts(self.data, "РФ"), rf_before)
+        rf = report(self.data, catalog(self.data), region="rf")
+        self.assertTrue(any("не называется МКД" in note for note in rf["notes"]))
+        self.assertTrue(any("Серый сегмент" in note for note in rf["notes"]))
+        self.assertNotIn("rawCategoryProvenance", rf["charts"][1])
         pd.testing.assert_frame_equal(self.data["load_monitoring_annual_ihs"], snapshot["load_monitoring_annual_ihs"])
         pd.testing.assert_frame_equal(previous, snapshot["load_vvod_static"]["msk_residential"])
 
@@ -252,6 +361,60 @@ class AnnualForecastTests(unittest.TestCase):
         self.assertEqual(next(row for row in exported if row["year"] == 2011)["ИЖС_source_cell"], "S24")
         self.assertIn("load_monitoring_annual_ihs", LOADERS)
         self.assertIn("monitoring_annual_ihs", create_service(DataContext(ROOT)).families)
+
+    def test_api_chart_summaries_and_excel_share_moscow_classification_and_raw_evidence(self):
+        self.data["load_vvod_static"]["msk_total"].loc[1, "жильё"] = 4
+        self.data["load_vvod_static"]["msk_residential"]["МКД_source_file"] = "explicit.xlsx"
+        self.data["load_vvod_static"]["msk_residential"]["МКД_source_cell"] = "B12"
+        self.data["load_vvod_static"]["msk_residential"]["МКД_source_value"] = 3000
+        self.data["load_monitoring_annual_ihs"] = pd.DataFrame([
+            {"region": "Москва", "year": year, "month": 12, "period_type": "year", "ИЖС": .25,
+             "ИЖС_source_file": "annual.xlsx", "ИЖС_source_cell": f"S{year - 1987}"}
+            for year in range(2011, 2026)])
+        options = catalog(self.data)
+        service = SimpleNamespace(report=lambda region: dict(
+            version="test", generatedAt="test", source={}, **report(self.data, options, region)))
+        app = FastAPI()
+        app.include_router(create_router(None, lambda action, **kwargs: action(), service=service))
+        with TestClient(app) as client:
+            response = client.get("/api/v1/commissioning/annual?region=msk")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            json.dumps(payload, allow_nan=False)
+            response = client.get("/api/v1/commissioning/annual/export?region=msk&required_version=test")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["X-Data-Version"], payload["version"])
+        chart = next(chart for chart in payload["charts"] if chart["id"] == "b2_1")
+        self.assertEqual([column["id"] for column in chart["columns"]], ["year", "МКД", "ИЖС", "TOTAL"])
+        self.assertEqual(chart["rows"][0], {"year": 2011, "МКД": 2.75, "ИЖС": .25, "TOTAL": 3})
+        self.assertIsNone(chart["rows"][-1]["ИЖС"])
+        book = load_workbook(BytesIO(response.content))
+        excel_rows = list(book["b2_1"].values)
+        self.assertEqual(excel_rows[0], tuple(column["label"] for column in chart["columns"]))
+        self.assertEqual(excel_rows[1:], [tuple(row[column["id"]] for column in chart["columns"]) for row in chart["rows"]])
+        for series in chart["series"]:
+            self.assertEqual(series["points"], [{"x": str(row["year"]), "y": row[series["id"]]} for row in chart["rows"]])
+        expected_totals = []
+        for period in chart["summaries"]:
+            for value in period["values"]:
+                measurements = [row[value["id"]] for row in chart["rows"] if period["from"] <= row["year"] <= period["to"]]
+                expected = None if None in measurements else sum(measurements)
+                self.assertEqual(value["value"], expected)
+                expected_totals.append((period["from"], period["to"], value["label"], expected))
+        self.assertEqual(list(book["b2_1_totals"].values)[1:], expected_totals)
+        self.assertEqual(chart["summaries"][0]["values"][0]["value"], 55.25)
+        self.assertIsNone(chart["summaries"][1]["values"][1]["value"])
+        metadata = dict(book["Report"].values)
+        for field in ("rawCategoryValues", "rawCategoryProvenance", "categoryProvenance"):
+            self.assertEqual(json.loads(metadata["b2_1/" + field]), chart[field])
+        original = chart["rawCategoryProvenance"][0]
+        self.assertEqual(original["МКД_source_file"], "explicit.xlsx")
+        self.assertEqual(original["МКД_source_cell"], "B12")
+        self.assertEqual(original["МКД_source_value"], 3000)
+        self.assertEqual(chart["rawCategoryValues"][0]["МКД"], 3)
+        calculated = chart["categoryProvenance"][0]
+        self.assertIsNone(calculated["МКД_source_cell"])
+        self.assertEqual(calculated["МКД_source_kind"], "user_agreed_calculation")
 
 
 if __name__ == "__main__":

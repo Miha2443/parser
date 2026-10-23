@@ -64,8 +64,8 @@ function ReadyTree({ data }: { data: ConstructionTreeData }) {
         <li className="ct-branch ct-nonresidential">
           <div className="ct-branch-heading" data-metric="nonresidential"><h3><Building2 size={19} aria-hidden="true" />Нежилые объекты</h3><Area value={values.nonresidential} /></div>
           <div className="ct-reference" role="note" aria-label="Справочно: нежильё в составе жилья">
+            <Area value={values.embedded} /><p>Нежильё в составе жилых объектов</p>
             <div className="ct-reference-heading"><Info size={16} aria-hidden="true" /><span>Справочно · уже учтено в жилье</span></div>
-            <p>Нежильё в составе жилых объектов</p><Area value={values.embedded} />
           </div>
         </li>
       </ul>

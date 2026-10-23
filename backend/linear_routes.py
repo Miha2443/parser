@@ -26,16 +26,16 @@ def export_dashboard(payload):
     for note in payload["notes"]:
         notes.append([note])
     yearly = book.create_sheet("Yearly data")
-    yearly.append(["id", "indicator", "unit", "year", "fact", "factKind", "factPeriod", "factSource", "plan", "forecast"])
+    yearly.append(["id", "indicator", "unit", "year", "fact", "factKind", "factPeriod", "factSource", "forecast"])
     forecasts = book.create_sheet("Forecasts")
     forecasts.append(["id", "indicator", "unit", "year", "forecast"])
     kpis = book.create_sheet("Current year")
-    kpis.append(["id", "indicator", "unit", "fact", "factPeriod", "annualPlan", "forecast", "targetKind", "percent", "remaining"])
+    kpis.append(["id", "indicator", "unit", "fact", "factPeriod", "forecast", "targetKind", "percent", "remaining"])
     for metric in payload["metrics"]:
         base = [metric[key] for key in ("id", "label", "unit")]
-        kpis.append(base + [metric[key] for key in ("fact", "factPeriod", "annualPlan", "forecast", "targetKind", "percent", "remaining")])
+        kpis.append(base + [metric[key] for key in ("fact", "factPeriod", "forecast", "targetKind", "percent", "remaining")])
         for row in metric["years"]:
-            yearly.append(base + [row[key] for key in ("year", "fact", "factKind", "factPeriod", "factSource", "plan", "forecast")])
+            yearly.append(base + [row[key] for key in ("year", "fact", "factKind", "factPeriod", "factSource", "forecast")])
             if row["year"] >= payload["currentYear"]:
                 forecasts.append(base + [row["year"], row["forecast"]])
     for tab in book:

@@ -342,13 +342,13 @@ def structure_base(data, source_date, annual_sources=None):
              "11 — гостиницы, остальные и отсутствующие коды — прочие. Столбцы ФНО не используются. "
              "Для согласованного полного года разница между итогом и суммой категорий относится в «Прочие» со знаком, "
              "без изменения остальных категорий. Исходные значения и корректировка сохранены отдельно. "
-             "Если исходная разбивка неполна, итог остаётся без детализации."])]
+             "Если исходная разбивка неполна, известный итог относится в «Прочие»; "
+             "неизвестная площадь остаётся null."])]
     result = {identifier: {"id": identifier, "title": title, "fields": fields, "aggregateField": aggregate,
                          "monthly": monthly, "unknown": unknown, "notes": basis + notes,
                          "coverage": _coverage(identifier, monthly, [key for key, _ in fields], unknown, source_date, evidence)}
             for identifier, title, fields, aggregate, monthly, unknown, evidence, notes in specifications}
     unified_block = result["nonresidential_components"]
-    unified_block["fields"] += (("undetailed", "Без детализации"),)
     unified_block["coverage"] = [{**row, "blockId": "nonresidential_components"}
                                   for key in ("nonresidential_historical", "nonresidential_native")
                                   for row in result[key]["coverage"]]
@@ -476,9 +476,7 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
                 if total is not None and (subtotal is None or not math.isclose(subtotal, total, abs_tol=1e-6)):
                     for field in applicable:
                         row[field] = None
-                    row["undetailed"] = total
-                else:
-                    row["undetailed"] = None
+                    row["other"] = total
             rows.append(row)
             evidence.extend(coverage["evidence"])
         raw_fields = sorted({key for row in rows for key in row if key.startswith("source_")})

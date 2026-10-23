@@ -170,7 +170,7 @@ def _housing_composition(frame, *, confirmed_ihs_years=()):
     for column in ('TOTAL', 'МКД', 'ИЖС'):
         if column not in frame:
             frame[column] = float('nan')
-    # Residual is explicitly unclassified housing, never relabelled as MKD.
+    # Source composition stays unclassified; Moscow's agreement is applied later.
     known = frame[['МКД', 'ИЖС']].sum(axis=1, min_count=1)
     residual = frame['TOTAL'] - known
     both = frame[['МКД', 'ИЖС']].notna().all(axis=1)
@@ -188,6 +188,44 @@ def _housing_composition(frame, *, confirmed_ihs_years=()):
     frame.loc[before_ihs & frame['МКД'].isna(), 'Остальное_жильё'] = frame.loc[before_ihs & frame['МКД'].isna(), 'TOTAL']
     frame.loc[before_ihs, 'ИЖС'] = float('nan')
     return frame
+
+
+def _moscow_housing_composition(frame):
+    """Apply the user-agreed Moscow classification, not source-cell taxonomy."""
+    frame = frame.copy()
+    values = {column: pd.to_numeric(frame[column], errors='coerce') for column in ('TOTAL', 'МКД', 'ИЖС')}
+    valid = {column: value.notna() & value.ge(0) & value.map(math.isfinite)
+             for column, value in values.items()}
+    both = valid['TOTAL'] & valid['ИЖС']
+    calculated = both & values['TOTAL'].ge(values['ИЖС'])
+    invalid = (frame['TOTAL'].notna() & ~valid['TOTAL']) | (frame['ИЖС'].notna() & ~valid['ИЖС'])
+    conflict = invalid | (both & values['TOTAL'].lt(values['ИЖС']))
+    conflict |= ~calculated & valid['TOTAL'] & valid['МКД'] & values['МКД'].gt(values['TOTAL'])
+    replaced = calculated | conflict | ~valid['МКД']
+    # A calculated value must not inherit an original MKD cell/row attribution.
+    for column in frame.columns:
+        if column.startswith('МКД_source_'):
+            frame.loc[replaced, column] = None
+    frame.loc[replaced, 'МКД'] = float('nan')
+    frame.loc[calculated, 'МКД'] = values['TOTAL'] - values['ИЖС']
+    frame['МКД_source_kind'] = 'source_category'
+    frame['МКД_source_formula'] = None
+    frame['МКД_source_reason'] = 'Неполный баланс: сохранён только исходный МКД; неизвестный остаток не переносится.'
+    frame.loc[replaced, 'МКД_source_kind'] = 'insufficient_measurements'
+    frame.loc[replaced, 'МКД_source_reason'] = 'Недостаточно измерений TOTAL/ИЖС и нет подтверждённого МКД; ноль не подставляется.'
+    frame.loc[conflict, 'МКД_source_kind'] = 'unresolved_conflict'
+    frame.loc[conflict, 'МКД_source_reason'] = 'Недопустимое значение TOTAL/ИЖС, TOTAL < ИЖС или исходный МКД > TOTAL при неизвестном ИЖС; МКД остаётся неизвестным.'
+    frame.loc[calculated, 'МКД_source_kind'] = 'user_agreed_calculation'
+    frame.loc[calculated, 'МКД_source_formula'] = 'МКД = TOTAL - ИЖС'
+    frame.loc[calculated, 'МКД_source_label'] = 'Пользовательское согласование: МКД = общий ввод - ИЖС'
+    frame.loc[calculated, 'МКД_source_reason'] = 'Не прямое измерение исходной ячейки; всё жильё кроме ИЖС отнесено к МКД.'
+    precision = [pd.to_numeric(frame.get(column + '_source_precision_million', pd.Series(float('nan'), index=frame.index)),
+                               errors='coerce') for column in ('TOTAL', 'ИЖС')]
+    frame.loc[calculated, 'МКД_source_precision_million'] = precision[0] + precision[1]
+    # Without both controls the old grey remainder is not confirmed non-IHS.
+    frame['Остальное_жильё'] = float('nan')
+    return frame
+
 
 def _upsert_year(df: pd.DataFrame, row: dict) -> pd.DataFrame:
     row_df = pd.DataFrame([row])
@@ -319,7 +357,7 @@ def annual_charts(data, region):
                                   & history['month'].eq(12) & history['year'].between(YF, YT - 1)
                                   & history['ИЖС'].notna()]
             confirmed_ihs_years = tuple(history['year'])
-            # Replace only IHS and its provenance; TOTAL/MKD/rural are independent.
+            # Select IHS independently, before the Moscow presentation rule.
             columns = sorted({column for source in (b2_1, history) for column in source
                               if column == 'ИЖС' or column.startswith('ИЖС_source_')})
             b2_1 = b2_1.merge(history.reindex(columns=['year', *columns]), on='year', how='outer',
@@ -332,13 +370,20 @@ def annual_charts(data, region):
         row26 = _monitoring_housing_categories(rv, 2026)
         if row26:
             b2_1 = _upsert_year(b2_1, row26)
-    raw_categories = records(b2_1[[column for column in ('year', 'TOTAL', 'МКД', 'ИЖС') if column in b2_1]])
+    raw_columns = ('year', 'TOTAL', 'МКД', 'ИЖС', 'ИЖС_сельское', 'Жилые_здания') if is_msk else ('year', 'TOTAL', 'МКД', 'ИЖС')
+    raw_categories = records(b2_1[[column for column in raw_columns if column in b2_1]])
+    if is_msk:
+        raw_provenance = records(b2_1[['year', *[column for column in b2_1 if '_source_' in column]]])
     b2_1 = _housing_composition(b2_1, confirmed_ihs_years=confirmed_ihs_years)
+    if is_msk:
+        b2_1 = _moscow_housing_composition(b2_1)
     series = [('МКД', 'МКД', C_ZH), ('ИЖС', 'ИЖС', C_IZHS)]
     if b2_1['Остальное_жильё'].notna().any():
         series.append(('Остальное_жильё', 'Жильё без подтверждённого вида', '#7B8794'))
     append_chart(charts, b2_1, series, year_from=YF, year_to=YT, key='b2_1', height=300)
     charts[-1]['rawCategoryValues'] = raw_categories
+    if is_msk:
+        charts[-1]['rawCategoryProvenance'] = raw_provenance
     if is_msk:
         nb = monitoring_by_year(rv, gruppirovka='Жилье', istochnik=['Внебюджет'], value_col='Жилая площадь', year_from=2026, year_to=2026).rename(columns={'value': 'Небюджет'})
         bd = monitoring_by_year(rv, gruppirovka='Жилье', istochnik=['Городской бюджет', 'Федеральный бюджет'], value_col='Жилая площадь', year_from=2026, year_to=2026).rename(columns={'value': 'Бюджет'})

@@ -178,7 +178,7 @@ class CanonicalPermitTests(unittest.TestCase):
         block = payload["breakdowns"][0]
         self.assertEqual([row["year"] for row in block["rows"]], [*range(2011, 2022), 2025, 2026])
         old, modern = self.block(payload, block["id"], 2011), self.block(payload, block["id"], 2026)
-        self.assertIsNone(old["undetailed"])
+        self.assertNotIn("undetailed", old)
         self.assertAlmostEqual(old["offices"], 234.535 * 12)
         self.assertAlmostEqual(old["source_offices"], 234.535 * 12)
         self.assertAlmostEqual(old["source_other"], 79.811 * 12)
@@ -205,7 +205,7 @@ class CanonicalPermitTests(unittest.TestCase):
                     self.assertAlmostEqual(row["other_adjustment"], difference)
                     self.assertAlmostEqual(row["source_other"], source_other)
                     self.assertAlmostEqual(row["offices"], row["source_offices"])
-                    self.assertIsNone(row["undetailed"])
+                    self.assertNotIn("undetailed", row)
                     self.assertAlmostEqual(sum(series["points"][0]["y"] or 0 for series in payload["breakdowns"][0]["series"]), row["nonresidential"])
                     columns = {column["id"] for column in payload["breakdowns"][0]["columns"]}
                     self.assertIn("other_adjustment", columns)
@@ -260,7 +260,7 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertEqual(self.block(after, "nonresidential_components", 2011),
                          self.block(before, "nonresidential_components", 2011))
         block = after["breakdowns"][0]
-        self.assertEqual([series["id"] for series in block["series"]], [field for field, _ in HISTORICAL_FIELDS] + ["undetailed"])
+        self.assertEqual([series["id"] for series in block["series"]], [field for field, _ in HISTORICAL_FIELDS])
         coverage = next(item for item in after["controls"]["structure"]["coverage"] if item["year"] == 2025)
         self.assertTrue(any("D/F/Q/R/AR" in note for note in coverage["evidence"]))
         self.assertFalse(any("/AT" in note for note in coverage["evidence"]))
@@ -273,13 +273,106 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertTrue(all(row[field] == 0 for field, _ in HISTORICAL_FIELDS if field != "other"))
         self.assertTrue(any("Заголовок AR" in note for note in payload["breakdowns"][0]["notes"]))
 
-    def test_incomplete_annual_categories_remain_undetailed_instead_of_fabricating_other(self):
+    def test_incomplete_categories_use_other_and_preserve_source_details_in_both_modes(self):
+        before = {mode: self.service.report("nonresidential", 5, structure_mode=mode, structure_month_to=5)
+                  for mode in ("annual", "period")}
         self.fixture.edit_book(HISTORY_SHEET, {"J115": None})
-        payload = self.service.report("nonresidential", 12, structure_mode="annual")
-        row = self.block(payload, "nonresidential_components", 2011)
-        self.assertEqual(row["undetailed"], 7777.123456789)
-        self.assertIsNone(row["other_adjustment"])
-        self.assertIsNone(row["other"])
+        for mode, months, total in (("annual", 12, 7777.123456789), ("period", 5, 327.442 * 5)):
+            with self.subTest(mode=mode):
+                payload = self.service.report("nonresidential", 5, structure_mode=mode, structure_month_to=5)
+                self.assertEqual(payload["permits"], before[mode]["permits"])
+                row = self.block(payload, "nonresidential_components", 2011)
+                self.assertAlmostEqual(row["nonresidential"], total)
+                self.assertEqual(row["other"], row["nonresidential"])
+                self.assertNotIn("undetailed", row)
+                self.assertIsNone(row["other_adjustment"])
+                self.assertAlmostEqual(row["source_nonresidential"], 327.442 * months)
+                self.assertAlmostEqual(row["source_other"], 79.811 * months)
+                self.assertIsNone(row["source_offices"])
+                self.assertAlmostEqual(row["source_social"], 13.096 * months)
+                self.assertEqual(row["source_trade"], 0)
+                self.assertTrue(all(row[field] is None for field, _ in HISTORICAL_FIELDS if field != "other"))
+                self.assertTrue(any("I115:O115" in note for note in payload["breakdowns"][0]["notes"]))
+
+    def test_missing_category_range_puts_known_annual_control_in_other_in_both_modes(self):
+        self.fixture.edit_book(HISTORY_SHEET, {"J114": "Unavailable category header"})
+        for mode in ("annual", "period"):
+            with self.subTest(mode=mode):
+                payload = self.service.report("nonresidential", 12, structure_mode=mode, structure_month_to=12)
+                row = self.block(payload, "nonresidential_components", 2011)
+                self.assertEqual(row["nonresidential"], 7777.123456789)
+                self.assertEqual(row["other"], row["nonresidential"])
+                self.assertTrue(all(row[field] is None for field, _ in HISTORICAL_FIELDS if field != "other"))
+                self.assertIsNone(row["other_adjustment"])
+
+    def test_unknown_area_is_not_zero_but_known_zero_is_other_in_both_modes(self):
+        for value in (None, 0):
+            self.fixture.edit_book(HISTORY_SHEET, {"C8": value, "I115": value, "J115": None, "O115": None})
+            for mode in ("annual", "period"):
+                with self.subTest(value=value, mode=mode):
+                    payload = self.service.report("nonresidential", 1, structure_mode=mode, structure_month_to=1)
+                    row = self.block(payload, "nonresidential_components", 2011)
+                    self.assertEqual(row["nonresidential"], value)
+                    self.assertEqual(row["other"], value)
+                    self.assertIsNone(row["source_other"])
+                    self.assertIsNone(row["source_offices"])
+                    self.assertIsNone(row["other_adjustment"])
+
+    def test_unknown_modern_month_or_area_stays_null_in_both_modes(self):
+        for edits in ({"D27": None}, {"D27": "2026-01-02", "Q27": None, "AR27": None}):
+            self.fixture.edit_book(OKS_SHEET, edits)
+            for mode in ("annual", "period"):
+                with self.subTest(edits=edits, mode=mode):
+                    payload = self.service.report("nonresidential", 1, structure_mode=mode, structure_month_to=1)
+                    row = self.block(payload, "nonresidential_components", 2026)
+                    self.assertIsNone(row["nonresidential"])
+                    self.assertIsNone(row["other"])
+                    self.assertIsNone(row["source_other"])
+                    self.assertFalse(row["periodComplete"])
+
+    def test_api_series_tables_and_download_share_other_without_undetailed(self):
+        self.fixture.edit_book(HISTORY_SHEET, {"J115": None})
+        client = self.fixture.client()
+        url = "/api/v1/construction/permits"
+        for kind in ("nonresidential", "total"):
+            for mode, end in (("annual", 5), ("period", 5), ("period", 12)):
+                with self.subTest(kind=kind, mode=mode, end=end):
+                    params = {"permit_kind": kind, "month": 5, "structure_mode": mode, "structure_month_to": end}
+                    response = client.get(url, params=params)
+                    self.assertEqual(response.status_code, 200)
+                    payload = response.json()
+                    index, block = next((i, block) for i, block in enumerate(payload["breakdowns"], 1)
+                                        if block["id"] == "nonresidential_components")
+                    self.assertEqual([series["id"] for series in block["series"]], [field for field, _ in HISTORICAL_FIELDS])
+                    self.assertEqual([column["id"] for column in block["columns"] if column["label"] == "Прочие"], ["other"])
+                    self.assertFalse(any(column["id"] in ("unknown", "undetailed") or column["label"] == "Без детализации"
+                                         for column in block["columns"]))
+                    for row_index, row in enumerate(block["rows"]):
+                        values = [series["points"][row_index]["y"] for series in block["series"]]
+                        self.assertAlmostEqual(sum(value for value in values if value is not None), row["nonresidential"])
+                        for series in block["series"]:
+                            self.assertEqual(series["points"][row_index]["y"], row[series["id"]])
+                    download = client.get(url + "/export", params={**params, "required_version": payload["version"]})
+                    self.assertEqual(download.status_code, 200)
+                    book = load_workbook(BytesIO(download.content))
+                    try:
+                        exported = list(book[f"Breakdown {index}"].values)
+                        self.assertEqual(exported[0], tuple(column["label"] for column in block["columns"]) +
+                                         ("periodComplete", "annualComplete"))
+                        self.assertEqual(len(exported) - 1, len(block["rows"]))
+                        for row, cells in zip(block["rows"], exported[1:]):
+                            for column, value in zip(block["columns"], cells):
+                                expected = row[column["id"]]
+                                if isinstance(expected, float):
+                                    self.assertAlmostEqual(value, expected)
+                                else:
+                                    self.assertEqual(value, expected)
+                        full = {row[0]: (row[1], row[3]) for row in book["Full Payload"].iter_rows(min_row=2, values_only=True)}
+                        pointer = f"/breakdowns/{index - 1}/rows/0"
+                        self.assertAlmostEqual(full[pointer + "/other"][1], block["rows"][0]["other"])
+                        self.assertEqual(full[pointer + "/source_offices"], ("null", None))
+                    finally:
+                        book.close()
 
     def test_periods_use_category_total_not_incompatible_auxiliary_nonresidential(self):
         payload = self.service.report("nonresidential", 5, structure_month_to=5)

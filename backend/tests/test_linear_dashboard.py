@@ -120,7 +120,7 @@ class LinearDashboardTests(unittest.TestCase):
         roads = self.service.dashboard()["metrics"][0]
         self.assertEqual(roads["annualPlan"], 0)
         self.assertEqual(roads["fact"], 0)
-        self.assertEqual(roads["remaining"], 0)
+        self.assertIsNone(roads["remaining"])
         self.assertIsNone(roads["percent"])
         self.write_monitoring()
         roads = self.service.dashboard()["metrics"][0]
@@ -128,7 +128,34 @@ class LinearDashboardTests(unittest.TestCase):
         self.assertEqual(roads["factSource"], "monitoring")
         self.assertEqual(roads["annualPlan"], 0)
         self.assertEqual(roads["forecast"], 50)
-        self.assertEqual(roads["targetKind"], "plan")
+        self.assertEqual(roads["targetKind"], "forecast")
+        self.assertEqual(roads["target"], 50)
+        self.assertAlmostEqual(roads["percent"], 14)
+        self.assertEqual(roads["remaining"], 43)
+
+    def test_only_forecast_defines_target_with_missing_zero_or_exceeded_values(self):
+        self.write_dsti(fact=2, plan=100)
+        roads = self.service.dashboard()["metrics"][0]
+        self.assertEqual(roads["annualPlan"], 400)
+        for key in ("target", "targetKind", "percent", "remaining"):
+            self.assertIsNone(roads[key])
+        self.write_monitoring()
+        book = load_workbook(self.monitoring)
+        book[HISTORY_SHEET].cell(256, 8, 70)
+        book.save(self.monitoring)
+        book.close()
+        roads = self.service.dashboard()["metrics"][0]
+        self.assertEqual(roads["target"], 50)
+        self.assertEqual(roads["percent"], 140)
+        self.assertEqual(roads["remaining"], 0)
+        book = load_workbook(self.monitoring)
+        book["Прогнозы"].cell(40, 4, 0)
+        book.save(self.monitoring)
+        book.close()
+        roads = self.service.dashboard()["metrics"][0]
+        self.assertEqual(roads["target"], 0)
+        self.assertIsNone(roads["percent"])
+        self.assertEqual(roads["remaining"], 0)
 
     def test_complete_historical_dsti_only_when_all_four_measured(self):
         rows = self.write_dsti()
@@ -193,6 +220,9 @@ class LinearDashboardTests(unittest.TestCase):
         self.assertEqual(book["Yearly data"].max_row, 1 + sum(len(metric["years"]) for metric in payload["metrics"]))
         self.assertEqual(book["Forecasts"].max_row, 24)
         self.assertEqual(book["Current year"].max_row, 7)
+        for sheet in ("Current year", "Yearly data"):
+            self.assertNotIn("annualPlan", [cell.value for cell in book[sheet][1]])
+            self.assertNotIn("plan", [cell.value for cell in book[sheet][1]])
         self.write_monitoring(horizon=1)
         self.assertEqual(client.get("/api/v1/linear/dashboard/export", params={"required_version": payload["version"]}).status_code, 409)
 

@@ -41,10 +41,9 @@
 .ct-node-note { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 6px; }
 .ct-living-children { margin-left: 0; }
 .ct-living-children .ct-area > strong { font-size: 20px; }
-.ct-reference { margin-top: 26px; padding: 0 0 0 16px; border-left: 2px dashed var(--line); }
-.ct-reference-heading { display: flex; align-items: start; gap: 7px; color: var(--muted); font-size: 11px; line-height: 1.6; margin-bottom: 10px; }
-.ct-reference > p { font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
-.ct-reference .ct-area > strong { font-size: 22px; font-weight: 500; }
+.ct-reference { display: flex; flex-direction: column; align-items: start; margin-top: 20px; padding: 0 0 0 16px; border-left: 2px dashed var(--line); }
+.ct-reference-heading { display: flex; align-items: start; gap: 7px; color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 6px; }
+.ct-reference > p { font-size: 13px; line-height: 1.6; margin-top: 15px; }
 .ct-source { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 18px 0; min-width: 0; }
 .ct-source > summary { display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
 .ct-source > summary::-webkit-details-marker { display: none; }

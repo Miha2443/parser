@@ -18,9 +18,13 @@ async function main(playwright = require('playwright')) {
     const ids = ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'];
     assert.deepEqual(await page.locator('[data-metric]').evaluateAll(nodes => nodes.map(node => node.dataset.metric)), ids);
     assert.deepEqual(await page.locator('[data-history]').evaluateAll(nodes => nodes.map(node => node.dataset.history)), ids);
+    assert.equal(await page.getByText('План на год', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('Прогноз на год', { exact: true }).count(), 6);
     for (const metric of payload.metrics) {
       const expected = metric.fact === null ? '—' : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: metric.unit === 'км' ? 1 : 0, maximumFractionDigits: metric.unit === 'км' ? 1 : 0 }).format(metric.fact);
       assert.equal(await page.locator(`[data-metric="${metric.id}"] .linear-kpi-fact strong`).textContent(), expected);
+      assert.equal(metric.target, metric.forecast);
+      assert.equal(metric.targetKind, metric.forecast === null ? null : 'forecast');
     }
     const themes = await page.getByTitle('Включить тёмную тему', { exact: true }).count() ? ['light', 'dark'] : ['light'];
     for (const theme of themes) {
@@ -48,6 +52,21 @@ async function main(playwright = require('playwright')) {
         if (width <= 390) assert.deepEqual(layout.rows, [1, 1, 1, 1, 1, 1]);
         assert.equal(layout.canvases.length, 6);
         assert.ok(layout.canvases.every(canvas => canvas.width > 0 && canvas.height > 0 && canvas.different > 150));
+        const centered = await page.evaluate(async () => {
+          const resource = performance.getEntriesByType('resource').find(entry => /echarts_core\.js/.test(entry.name));
+          const echarts = await import(resource.name);
+          return [...document.querySelectorAll('.linear-year-chart .chart-canvas')].flatMap(element => {
+            const instance = echarts.getInstanceByDom(element), option = instance.getOption(), offsets = [];
+            option.series.forEach((series, seriesIndex) => series.data.forEach((value, dataIndex) => {
+              if (value === null) return;
+              const layout = instance.getModel().getSeriesByIndex(seriesIndex).getData().getItemLayout(dataIndex);
+              const axis = instance.convertToPixel({ xAxisIndex: 0 }, dataIndex);
+              offsets.push(Math.abs(layout.x + layout.width / 2 - axis));
+            }));
+            return offsets;
+          });
+        });
+        assert.ok(centered.length > 0 && centered.every(offset => Number.isFinite(offset) && offset <= 1), `Off-center bars: ${JSON.stringify(centered)}`);
         checks.push({ theme, width, ...layout });
         if ([360, 1440].includes(width)) {
           await page.screenshot({ path: path.join(output, `${theme}-${width}.png`) });

@@ -141,13 +141,13 @@ def build_dashboard(dsti, history, forecasts, sources, today: date):
                   for year in years]
         fact = measured.get(current, {})
         plan, forecast = plans.get(current), number(forecast_rows.get(current, {}).get(key))
-        target = plan if plan is not None else forecast
+        target = forecast
         value = fact.get("fact")
         percent = value / target * 100 if value is not None and target is not None and target > 0 else None
         result.append({"id": key, "label": label, "unit": unit, "fact": value,
                        "factPeriod": fact.get("factPeriod"), "factSource": fact.get("factSource"),
                        "annualPlan": plan, "forecast": forecast, "target": target,
-                       "targetKind": "plan" if plan is not None else "forecast" if forecast is not None else None,
+                       "targetKind": "forecast" if forecast is not None else None,
                        "percent": percent,
                        "remaining": max(0, target - value) if target is not None and value is not None else None,
                        "years": yearly})

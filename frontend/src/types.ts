@@ -10,8 +10,8 @@ export interface Source {
   files: string[];
   note?: string;
 }
-export interface AnnualRow extends Areas { year: number }
-export interface Structure { title: string; areas: Areas; sourceId: string; note?: string }
+export interface AnnualRow extends Areas { year: number; complete?: boolean; total?: number | null }
+export interface Structure { title: string; areas: Areas; sourceId: string; note?: string; complete?: boolean; total?: number | null }
 export interface Rating { label: string; region: string; place: number | null; score?: number | null; note?: string }
 export interface Apartment { label: string; count: number | null; area: number | null; share: number | null }
 export interface Sales { sold: number | null; readiness: number | null; ratio: number | null; period: string | null; note?: string }

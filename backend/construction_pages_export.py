@@ -60,6 +60,10 @@ def export_workbook(payload):
                                "growth", "periodComplete", "annualComplete", "observedThrough"]
         sheet("Permit Presentation", presentation_fields, [[row.get(field) for field in presentation_fields] for row in presentation])
         sheet("Permit Evidence", ["Year", "Evidence"], [[row["year"], ref] for row in presentation for ref in row["evidence"]])
+        for name, variant in payload.get("areaVariants", {}).items():
+            points = variant["permits"]["presentation"]["rows"]
+            sheet(f"Permit {name} Area", presentation_fields, [[row.get(field) for field in presentation_fields] for row in points])
+            sheet(f"Permit {name} Evidence", ["Year", "Evidence"], [[row["year"], ref] for row in points for ref in row["evidence"]])
         coverage = payload["controls"]["structure"]["coverage"]
         sheet("Structure Coverage", ["Block", "Year", "Months", "Complete months", "Full year", "Observed through"],
               [[row["blockId"], row["year"], ",".join(map(str, row["months"])), ",".join(map(str, row["completeMonths"])),

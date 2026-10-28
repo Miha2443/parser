@@ -10,8 +10,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 
 from pipeline.data_access import DataAccess, DataContext
-from pipeline.dev_name_utils import normalize_developer_name as norm
-from pipeline.profile_calculations import apartment_regions, clean, make_profile
+from pipeline.profile_calculations import apartment_regions, clean, construction_developers, make_profile
 
 FAMILIES = {
     "monitoring_2_0": ("monitoring_2_0_*.xlsx",),
@@ -76,20 +75,13 @@ class ProfileService:
         if self._versions(access) != versions:
             raise SourceUnavailable("Source files changed during loading; retry the request")
         monitoring = data["monitoring_2_0"]
-        names = monitoring.get("developers", [])
-        if not names:
-            raise SourceUnavailable("Monitoring data is absent or contains no developers")
-        aliases = {}
-        for name in names:
-            key = norm(name)
-            if key:
-                aliases.setdefault(key, []).append(name)
         developers = []
-        for key, options in aliases.items():
-            canonical = min(options, key=lambda name: (len(name), name))
+        for company in construction_developers(monitoring):
+            key = company["developerKey"]
             regions = [r for r in apartment_regions(data["kvartirografia"], key) if r in ("msk", "rf")] or ["msk"]
-            developers.append({"developer": canonical, "developerKey": key, "regions": regions})
-        developers.sort(key=lambda item: (item["developerKey"] != "пик", item["developerKey"]))
+            developers.append({**company, "regions": regions})
+        if not developers:
+            raise SourceUnavailable("Monitoring has no confirmed Moscow developers with active construction")
         dates = {name: access.latest_realty_mart_source_date(name) or access.latest_raw_source_date(*patterns) or None
                  for name, patterns in FAMILIES.items()}
         evidence = {}
@@ -106,7 +98,7 @@ class ProfileService:
                 evidence[name]["availabilityNote"] = ("Данные ЕРЗ отсутствуют; остальные источники доступны." if state == "unavailable" else
                                                        "ЕРЗ не обновлялся: используются сохранённые данные с указанной датой." if state == "retained" else "ЕРЗ обновлён в этом прогоне.")
         self._metadata = {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(),
-                          "version": hashlib.sha256(repr(versions).encode()).hexdigest(), "sourceDates": dates,
+                          "version": hashlib.sha256(repr(("active-construction-renovation-v2", versions)).encode()).hexdigest(), "sourceDates": dates,
                           "controls": {"developers": developers, "frozen": False, "regionControl": "apartmentsOnly"},
                           "provenance": {"sources": evidence, "issues": clean(access.issues)}}
         self._data = data

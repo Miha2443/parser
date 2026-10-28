@@ -33,8 +33,8 @@ See the root README for installation and daily refresh.
 ## Ready Construction Tree
 
 `/construction/tree` displays the ready values from column `Итог` of worksheet
-`Дерево текущ стр во` in the latest monitoring workbook. It has no filters and
-does not recalculate OKS areas. Source adjustments are preserved; embedded
+`Дерево текущ стр во` in the latest monitoring workbook. Its ten canonical totals
+are never recalculated from OKS areas. Source adjustments are preserved; embedded
 nonresidential area appears on the right as a reference, not a second addition.
 
 The page requests `/api/v1/construction/tree`, polls every minute while visible,
@@ -43,12 +43,51 @@ reporting date. The initially closed source panel contains all ten exact values,
 their cells, file/version metadata, and complete CSV. Errors remove the old tree;
 neither older workbooks nor a demonstration snapshot are substituted.
 
+The residential branch starts with living area and its investor/renovation
+children, followed by `Нежилье в жилье` and MOP. The nonresidential branch shows
+OSM sectors only when the explicitly selected registry cohort reconciles to the
+ready total. Missing sector evidence does not replace or redistribute that total.
+
+The date selector switches between current data and immutable weekly snapshots.
+`/api/v1/construction-tree/history` lists the available Sundays, and
+`/api/v1/construction-tree/history/{YYYY-MM-DD}` returns the exact published
+payload, including sectors and source dates. A missing snapshot never falls
+back to current data. Publication owns the journal and captures the last proven
+pre-Monday release, not the new Monday workbook. Run `--publish-existing` once
+after the code upgrade to establish the baseline without downloads.
+
 Docker must publish a monitoring workbook containing this sheet. Code updates
 alone do not add it to an existing data release.
 
 `node src/construction-tree.browser.cjs` checks 320/360/768/1280/1920 px, CSV,
 polling, null/zero, and failure recovery. Set `DASHBOARD_CHECK_LIVE=1` to add three
 live-data layouts and complete CSV checks. Results: `%TEMP%/dashboard-construction-tree`.
+
+## Demonstration And Resolution
+
+`/demo` uses the same live data adapters and chart option builders as the report
+pages. Thirteen source groups share each report between lazy, real chart previews
+and the viewer; failed sources have independent retry and are not replaced with
+sample values. Select a subset, choose 15–1800 seconds (default 120), and start
+the cyclic viewer. Institutional branding remains visible. Pause, keyboard
+navigation, fullscreen fallback, Escape, focus restoration and exit are supported.
+
+The full navigation brand links home. The enlarged Home link remains outside
+the sidebar's scrolling section list. Home no longer loads or displays the last
+update block. Developer selection supports search and retains the API's descending
+Moscow active-construction ranking, rather than sorting alphabetically.
+
+`responsiveChart.ts` keeps canvas backing resolution synchronized with device
+pixel ratio and visual-viewport scale, including browser zoom and screen changes.
+It preserves options and legend state while recreating a renderer and cleans up
+all observers on unmount. A shared, visibility-aware resolution check covers
+browsers that omit DPI media-query events.
+
+`node src/demo.browser.cjs` checks all live option builders with fixtures,
+selection, timing, fullscreen, errors and responsive layouts. It expects a Vite
+URL in `DEMO_TEST_URL`. `node src/site-refresh.browser.cjs` starts private services
+against local real sources, checks every chart page at multiple pixel densities,
+search, brand navigation and tree ordering, then stops its own processes.
 
 ## Current Construction Pages (linux-docker)
 

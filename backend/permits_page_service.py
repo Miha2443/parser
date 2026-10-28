@@ -24,6 +24,8 @@ from pipeline.permit_page_calculations import (OKS_SHEET, apply_main_presentatio
                                                read_forecast, read_main_sources, read_static_annual,
                                                select_forecast, structure_base, structure_controls)
 
+CALCULATION_REVISION = "permits-confirmed-area-variants-same-period-yoy-v3"
+
 
 _SOURCE_ERRORS = (OSError, ValueError, TypeError, LookupError, RuntimeError, OverflowError,
                   BadZipFile, InvalidFileException, ParseError, EOFError, DecompressionError)
@@ -158,7 +160,8 @@ class PermitsPageService:
             raise SourceUnavailable("Permit loader reported a source error")
         if not forecast["rows"]:
             issues.append({"level": "warning", "message": "Прогноз недоступен; см. forecast.notes."})
-        payload = {"schemaVersion": 1, "contractRevision": 2, "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
+        payload = {"schemaVersion": 1, "contractRevision": 2, "calculationRevision": CALCULATION_REVISION,
+                   "version": hashlib.sha256(repr((CALCULATION_REVISION, signature)).encode()).hexdigest(),
                    "generatedAt": datetime.now(timezone.utc).isoformat(),
                    "source": {"date": _date(path), "files": [self._relative(item) for item in files],
                               "fileEvidence": "selected", "issues": issues},
@@ -241,12 +244,25 @@ class PermitsPageService:
             table = report(generation["data"], controls, permit_kind=permit_kind, month=month)["permits"]
             apply_main_presentation(table, main_presentation(table, generation["main_sources"], selected_forecast,
                                                              permit_kind, month, payload["source"]["date"]))
+            area_variants = {}
+            for key, living_only in (("living", True), ("full", False)):
+                variant_forecast = select_forecast(generation["forecast"], permit_kind, living_only)
+                variant_table = copy.deepcopy(table)
+                apply_main_presentation(variant_table, main_presentation(
+                    variant_table, generation["main_sources"], variant_forecast, permit_kind, month,
+                    payload["source"]["date"], living_only=living_only))
+                area_variants[key] = {"permits": variant_table, "forecast": variant_forecast}
             result = {
                 **payload, "controls": {**controls, "structure": structure_options},
                 "selection": {"permitKind": permit_kind, "month": month, "structure": structure_selection},
                 "permits": table, "forecast": selected_forecast,
+                "areaVariants": area_variants,
                 "breakdowns": breakdowns(structures, permit_kind, structure_selection, generation["main_sources"], payload["source"]["date"]),
-                "notes": ["Разрешения относятся только к Москве, без фильтра действующего статуса РС. "
+                "notes": ["Варианты areaVariants.living/full используют только явно обозначенную жилую/общую площадь жилья. "
+                          "При отсутствии подтверждённого ряда показано null. Утверждённые годовые контроли без указания вида "
+                          "площади сохранены отдельно в исходной таблице permits и не переименованы в жилую площадь. "
+                          "Всего в обоих вариантах также включает отдельно стоящее нежильё; его годовой итог берётся из утверждённого источника.",
+                          "Разрешения относятся только к Москве, без фильтра действующего статуса РС. "
                           "«Жильё» означает жилую площадь; «Всего» включает её, МОП и встроенное нежильё, а также нежилые объекты.",
                           "Презентационный остаток = годовой прогноз либо подтверждённый полный год минус выбранный факт, "
                           "не ниже нуля. Неполный итог текущего года не является годовым ориентиром. "

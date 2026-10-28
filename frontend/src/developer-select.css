@@ -1,0 +1,17 @@
+.developer-combobox { position: relative; min-width: 0; width: 100%; }
+.developer-combobox-input { position: relative; }
+.developer-combobox-input input { width: 100%; min-width: 0; height: 40px; padding: 8px 34px 8px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); font: inherit; }
+.developer-combobox-input input::placeholder { color: var(--text); opacity: 1; }
+.developer-combobox-input > svg { position: absolute; right: 11px; top: 12px; pointer-events: none; color: var(--muted); }
+.developer-combobox-options { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; right: 0; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 5px 18px #00000016; }
+.developer-combobox-options > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; border-radius: 0; text-align: left; color: var(--text); background: transparent; font: inherit; }
+.developer-combobox-options > button > span { min-width: 0; overflow-wrap: anywhere; }
+.developer-combobox-options > button > svg { flex-shrink: 0; }
+.developer-combobox-options > button.is-highlighted { background: var(--bg); }
+.developer-combobox-options > button[aria-selected="true"] { font-weight: 650; }
+.developer-combobox-empty { padding: 12px; color: var(--muted); }
+.developer-combobox-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 960px) { .filters > .developer-filter { width: 300px; } }
+@media (max-width: 680px) { .filters > .developer-filter { width: 100%; } }
+.filters > .developer-filter { display: grid; gap: 7px; width: 330px; min-width: 0; }
+.filters > .developer-filter > span { color: var(--muted); font-size: 11px; }

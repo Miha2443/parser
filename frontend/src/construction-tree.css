@@ -10,6 +10,10 @@
 .ct-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 24px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .ct-context > span { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .ct-context svg { align-self: center; margin-right: 3px; }
+.ct-history-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; font-size: 12px; }
+.ct-history-toolbar label, .ct-history-toolbar > span { color: var(--muted); }
+.ct-history-toolbar select { min-height: 36px; width: 240px; max-width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); padding: 6px 28px 6px 10px; font: inherit; }
+.ct-sector-source { margin-top: 24px; }
 .ct-update-status { min-height: 26px; padding-top: 5px; color: var(--muted); font-size: 11px; }
 .ct-diagram { padding: 8px 0 24px; }
 .ct-total { position: relative; display: flex; justify-content: space-between; align-items: end; gap: 16px 32px; padding: 8px 0 28px; border-bottom: 1px solid var(--line); }
@@ -41,6 +45,7 @@
 .ct-node-note { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 6px; }
 .ct-living-children { margin-left: 0; }
 .ct-living-children .ct-area > strong { font-size: 20px; }
+.ct-sectors .ct-area > strong { font-size: 19px; }
 .ct-reference { display: flex; flex-direction: column; align-items: start; margin-top: 20px; padding: 0 0 0 16px; border-left: 2px dashed var(--line); }
 .ct-reference-heading { display: flex; align-items: start; gap: 7px; color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 6px; }
 .ct-reference > p { font-size: 13px; line-height: 1.6; margin-top: 15px; }

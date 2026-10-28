@@ -8,7 +8,7 @@ from openpyxl import Workbook
 
 from backend.generation_service import GenerationService
 from backend.profile_service import FilterUnavailable, SourceUnavailable
-from pipeline.annual_calculations import annual_charts, annual_fact_period, annual_forecast
+from pipeline.annual_calculations import ANNUAL_CALCULATION_REVISION, annual_charts, annual_fact_period, annual_forecast
 
 LOADERS = ("load_vvod_static", "load_emiss_34118", "load_emiss_34118_periods", "load_monitoring_2_0", "load_monitoring_2011_2026_static", "load_monitoring_annual_ihs", "load_commissioning_forecasts")
 
@@ -47,7 +47,7 @@ def report(data, options, region="msk"):
                       "Годовой ИЖС Москвы с 2011 года берётся из колонки «Год» блока «Ввод ИЖС, тыс. кв. м» листа «Данные с 2011 года» мониторинга 2.0; только завершённые годы с заполненным годовым итогом. Пропуски не восстанавливаются суммой месяцев.",
                       "2026 год по Москве дополняется мониторингом 2.0; исторические значения МОП и реновации сохранены из утверждённой страницы.",
                       "Дополнительные отрасли показываются при покрытии мониторингом не менее 95% годового объёма; иначе площадь остаётся в «Прочем».",
-                      "Состав отраслей фиксирован для всех лет: доля более 10% хотя бы в одном году и не менее шести крупнейших групп."])
+                      "Состав отраслей фиксирован для всех лет: доля более 10% хотя бы в одном году и не менее шести крупнейших групп; торговые объекты показываются отдельно независимо от порога."])
     result = {"region": chosen, "charts": charts, "notes": notes}
     if region == "msk" and forecasts:
         result["forecastSource"] = {"file": forecasts.get("source_file"), "date": forecasts.get("source_date"),
@@ -57,7 +57,7 @@ def report(data, options, region="msk"):
 
 def create_service(context, check_interval=5):
     return GenerationService(context, LOADERS, tuple(name.removeprefix("load_") for name in LOADERS),
-                             catalog, report, check_interval)
+                             catalog, report, check_interval, calculation_revision=ANNUAL_CALCULATION_REVISION)
 
 
 def export_workbook(payload):

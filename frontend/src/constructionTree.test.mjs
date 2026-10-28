@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeIds, constructionTreeLabels, loadConstructionTree, readConstructionTree, watchConstructionTree } from './constructionTreeData.ts';
+import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeIds, constructionTreeLabels, loadConstructionTree, loadConstructionTreeHistory, readConstructionTree, watchConstructionTree } from './constructionTreeData.ts';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -22,6 +22,9 @@ const fixture = () => ({
     ['nonbudget', 'Внебюджет', null, 'L14'],
   ].map(([id, label, value, cell]) => ({ id, label, value, cell })),
 });
+const snapshot = () => ({ date: '2026-11-01', capturedAt: '2026-11-02T04:00:00Z', publishedAt: '2026-10-30T14:00:00Z', release: 'releases/friday', delayedCapture: false, sha256: 'a'.repeat(64) });
+const sectors = () => ({ status: 'available', sheet: 'Реестр ОКС', filters: { 'Назначение': 'Нежилье', 'Статус объекта': 'Строящийся', 'Статус РС': 'Действует' }, areaColumn: 'Q', sectorColumn: 'AR', canonicalValue: 13.73172749, registryValue: 13.73172749,
+  items: [{ id: 'sector-1', label: '03 ДОУ', value: 13.73172749, rows: [5, 8], count: 2 }] });
 
 test('READY tree preserves all ten original values, source labels, cell addresses and metadata', () => {
   const raw = fixture(), before = structuredClone(raw), parsed = readConstructionTree(raw);
@@ -169,7 +172,7 @@ function environment(t, initialVisibility = 'visible') {
     if (previous) Object.defineProperty(globalThis, 'document', previous); else delete globalThis.document;
   });
   return {
-    watch(update) { const feed = watchConstructionTree(update); feeds.push(feed); return feed; },
+    watch(update, asOf) { const feed = watchConstructionTree(update, asOf); feeds.push(feed); return feed; },
     tick: () => interval(),
     visibility(state) { document.visibilityState = state; document.dispatchEvent(new Event('visibilitychange')); },
     cleared: () => cleared,
@@ -255,7 +258,7 @@ test('initial hidden page waits until visible and abort rejection cannot publish
   assert.equal(states.length, count);
 });
 
-test('page has stable QA hooks, no filters/collapses in the tree, and one default-closed source disclosure', () => {
+test('page has stable QA hooks, a date selector, requested residential ordering and one source disclosure', () => {
   const page = readFileSync(new URL('./ConstructionTree.tsx', import.meta.url), 'utf8');
   const data = readFileSync(new URL('./constructionTreeData.ts', import.meta.url), 'utf8');
   const css = readFileSync(new URL('./construction-tree.css', import.meta.url), 'utf8');
@@ -269,13 +272,74 @@ test('page has stable QA hooks, no filters/collapses in the tree, and one defaul
   assert.match(page, /Не прибавляется к нежилым объектам или общей площади/);
   assert.match(page, /Повтор показателя/);
   assert.doesNotMatch(page.slice(page.indexOf('function ReadyTree')), /ct-provenance|Повтор показателя|Без пересчёта/);
-  assert.match(page, /Отчётный период: не указан в источнике/);
+  assert.doesNotMatch(page, /Отчётный период/);
+  assert.match(page, /Актуальные данные/);
+  assert.match(page, /Данные на/);
+  assert.ok(page.indexOf("leaf('living')") < page.indexOf("leaf('embedded')"));
+  assert.ok(page.indexOf("leaf('embedded')") < page.indexOf("leaf('mop'"));
+  assert.equal(constructionTreeLabels.embedded, 'Нежилье в жилье');
   assert.equal((page.match(/<details\b/g) ?? []).length, 1);
   assert.match(page, /<details className="ct-source">/);
-  assert.doesNotMatch(page, /<select\b|<input\b|\.filter\(|\.reduce\(|localStorage|sessionStorage|OKS|ОКС/);
+  assert.doesNotMatch(page, /<input\b|\.filter\(|\.reduce\(|localStorage|sessionStorage|OKS|ОКС/);
   assert.doesNotMatch(page, /<svg\b|<path\b/);
   assert.doesNotMatch(data, /51\.65728716|37\.92555967|5\.09855928|13\.73172749|profile-snapshot|\/export/);
   assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /@media \(max-width: 760px\)/);
   assert.doesNotMatch(css, /overflow(?:-x)?:\s*(?:auto|scroll)|100vw|url\(|gradient|letter-spacing:\s*-/);
+});
+
+test('compatible schema retains dated snapshots and reconciled sector rows in exports', () => {
+  const raw = { ...fixture(), snapshot: snapshot(), nonresidentialSectors: sectors() };
+  const parsed = readConstructionTree(raw);
+  assert.deepEqual(parsed, raw);
+  const csv = constructionTreeCsv(parsed);
+  assert.ok(csv.includes('2026-11-01'));
+  assert.ok(csv.includes(raw.snapshot.publishedAt));
+  assert.ok(csv.includes('"sector-1";"03 ДОУ";"03 ДОУ";"13.73172749";"5,8"'));
+  assert.ok(constructionTreeFilename(parsed).startsWith('construction-tree-2026-11-01-'));
+  assert.equal(readConstructionTree({ ...fixture(), nonresidentialSectors: { status: 'unavailable', items: [] } }).nonresidentialSectors.status, 'unavailable');
+  for (const change of [s => s.items[0].value++, s => s.filters['Статус РС'] = 'Не действует', s => s.items[0].rows = [5, 5], s => s.items[0].count = 3, s => s.registryValue++, s => s.canonicalValue = 0, s => s.items[0].value = NaN]) {
+    const invalid = { ...fixture(), nonresidentialSectors: sectors() }; change(invalid.nonresidentialSectors);
+    assert.throws(() => readConstructionTree(invalid));
+  }
+  for (const change of [s => s.date = '2026-11-02', s => s.capturedAt = '', s => s.capturedAt = '2026-10-30T12:00:00Z', s => s.publishedAt = '2026-11-02T01:00:00Z', s => s.sha256 = 'missing', s => s.delayedCapture = 'true']) {
+    const invalid = { ...fixture(), snapshot: snapshot() }; change(invalid.snapshot);
+    assert.throws(() => readConstructionTree(invalid));
+  }
+});
+
+test('history list and dated loader enforce selected identity, no-store and no current fallback', async t => {
+  const calls = [], signal = new AbortController().signal;
+  let response = { schemaVersion: 1, snapshots: [snapshot()] };
+  t.mock.method(globalThis, 'fetch', async (url, options) => { calls.push({ url, options }); return new Response(JSON.stringify(response)); });
+  assert.deepEqual(await loadConstructionTreeHistory(signal), [snapshot()]);
+  assert.equal(calls[0].url, '/api/v1/construction-tree/history');
+  response = { ...fixture(), snapshot: snapshot(), nonresidentialSectors: sectors() };
+  assert.equal((await loadConstructionTree(signal, '2026-11-01')).snapshot.date, '2026-11-01');
+  assert.equal(calls.at(-1).url, '/api/v1/construction-tree/history/2026-11-01');
+  assert.equal(calls.at(-1).options.cache, 'no-store');
+  await assert.rejects(loadConstructionTree(signal, '2026-11-08'));
+  await assert.rejects(loadConstructionTree(signal));
+  response = fixture();
+  await assert.rejects(loadConstructionTree(signal, '2026-11-01'));
+  t.mock.method(globalThis, 'fetch', async () => new Response('missing', { status: 404 }));
+  await assert.rejects(loadConstructionTree(signal, '2026-11-01'), /404/);
+});
+
+test('dated selection disposal aborts old response and failures hide all stale selected data', async t => {
+  const env = environment(t), states = [];
+  let resolve;
+  t.mock.method(globalThis, 'fetch', () => new Promise(done => resolve = done));
+  const current = env.watch(state => states.push(state));
+  current.stop();
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ ...fixture(), snapshot: snapshot() })));
+  const archived = env.watch(state => states.push(state), '2026-11-01');
+  await settle();
+  resolve(new Response(JSON.stringify({ ...fixture(), version: 'must-not-leak' }))); await settle();
+  assert.equal(states.at(-1).data.snapshot.date, '2026-11-01');
+  assert.notEqual(states.at(-1).data.version, 'must-not-leak');
+  t.mock.method(globalThis, 'fetch', async () => new Response('unavailable', { status: 503 }));
+  await archived.refresh();
+  assert.equal(states.at(-1).data, null);
+  assert.ok(states.at(-1).error);
 });

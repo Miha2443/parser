@@ -4,6 +4,9 @@ import math
 import pandas as pd
 from pipeline.data_access import MONTH_NAMES_RU, monitoring_by_year, month_label, quarter_label
 from pipeline.report_values import records
+from pipeline.renovation import renovation_living_by_year
+
+ANNUAL_CALCULATION_REVISION = "annual-independent-trade-shared-renovation-v2"
 
 COLORS = {"green": "#2c9869", "amber": "#d6a23f", "blue": "#398dcc", "teal": "#329d9c"}
 
@@ -92,8 +95,7 @@ C_BUDG = COLORS['blue']
 C_NZH_IN = COLORS['teal']
 C_MOP = COLORS['amber']
 BRANCH_COLORS = ['#2459A6', '#18864B', '#A45A00', '#A63876', '#6743A7', '#087E8B', '#B14730', '#5A748A', '#697586']
-BRANCH_LABELS = {'офисы': 'Офисы', 'соц': 'Социальные объекты', 'пром': 'Промышленные', 'гостиницы': 'Гостиницы', 'торговля': 'Торговля', 'транспорт': 'Транспорт', 'склады': 'Склады', 'жкх': 'ЖКХ'}
-RENOVATION_VALUES = {2017: 0.3, 2018: 0.2, 2019: 0.2, 2020: 0.4, 2021: 1.2, 2022: 0.8, 2023: 1.2, 2024: 1.3, 2025: 2.3}
+BRANCH_LABELS = {'офисы': 'Офисы', 'соц': 'Социальные объекты', 'пром': 'Промышленные', 'гостиницы': 'Гостиницы', 'торговля': 'Торговые объекты', 'транспорт': 'Транспорт', 'склады': 'Склады', 'жкх': 'ЖКХ'}
 MOP_VALUES = {2011: 1.2, 2012: 1.3, 2013: 1.8, 2014: 1.4, 2015: 1.8, 2016: 1.7, 2017: 2.1, 2018: 2.3, 2019: 3.3, 2020: 3.2, 2021: 4.7, 2022: 3.9, 2023: 4.5, 2024: 4.1, 2025: 4.9}
 
 def ru_num(value, digits=1):
@@ -390,15 +392,7 @@ def annual_charts(data, region):
         live_b2_2 = pd.merge(nb, bd, on='year', how='outer')
         b2_2 = _budget_split_with_2026(monitoring_static['residential_budget_split'], live_b2_2)
         append_chart(charts, b2_2, [('Небюджет', 'Небюджет', C_NEBUDG), ('Бюджет', 'Бюджет', C_BUDG)], year_from=YF, year_to=YT, key='b2_2', height=300)
-        b2_3 = pd.DataFrame([{'year': year, 'Реновация': value} for year, value in RENOVATION_VALUES.items()])
-        if not rv.empty and {'Год ввода по Мосстату', 'Инвестор для Реновации', 'Жилая площадь'}.issubset(rv.columns):
-            ren_rows = rv[rv['Инвестор для Реновации'].fillna('').astype(str).str.strip().str.casefold().eq('да')].copy()
-            if not ren_rows.empty:
-                ren_rows['year'] = pd.to_numeric(ren_rows['Год ввода по Мосстату'], errors='coerce')
-                ren_rows['area'] = pd.to_numeric(ren_rows['Жилая площадь'], errors='coerce').fillna(0)
-                for year, part in ren_rows.groupby('year'):
-                    if 2022 <= year <= YT:
-                        b2_3 = _upsert_year(b2_3, {'year': int(year), 'Реновация': float(part['area'].sum()) / 1000000.0})
+        b2_3 = renovation_living_by_year(rv, YT)
         append_chart(charts, b2_3, [('Реновация', 'Реновация', C_ZH)], year_from=2017, year_to=YT, key='b2_3', height=280, totals=False)
     if not is_msk:
         return charts
@@ -435,7 +429,8 @@ def annual_charts(data, region):
         yearly_shares = detailed[branch_cols].div(detailed['нежильё'].replace(0, float('nan')), axis=0)
         over_ten_percent = yearly_shares.gt(0.1).any(axis=0)
         leading = set(totals_by_branch.head(6).index)
-        selected = [col for col in branch_cols if col in leading or over_ten_percent[col]]
+        # Trade is an independent source category, even below the display cutoff.
+        selected = [col for col in branch_cols if col == 'торговля' or col in leading or over_ten_percent[col]]
         selected_sum = br[selected].sum(axis=1)
         scale = (br['нежильё'].fillna(0) / selected_sum.replace(0, float('nan'))).clip(upper=1).fillna(1)
         br[selected] = br[selected].mul(scale, axis=0)

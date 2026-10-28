@@ -33,6 +33,7 @@ else:
 
 SHEET = "\u0414\u0435\u0440\u0435\u0432\u043e \u0442\u0435\u043a\u0443\u0449 \u0441\u0442\u0440 \u0432\u043e"
 COLUMN = "\u0418\u0442\u043e\u0433"
+VERSION_DOMAIN = b"tree-v2-sectors\x00"
 METRICS = (
     ("total", "\u0412\u0441\u0435\u0433\u043e"),
     ("housing", "\u0416\u0438\u043b\u044c\u0435"),
@@ -107,6 +108,59 @@ def _file_date(path):
     return None
 
 
+def _read_sectors(path, canonical, canonical_cell):
+    """Only the explicit active-permit cohort reconciled to the ready total."""
+    unavailable = {"status": "unavailable", "reason": "Registry scope cannot be reconciled to the ready nonresidential total", "items": []}
+    with path.open("rb") as source:
+        book = load_workbook(source, read_only=True, data_only=True)
+        try:
+            sheet_name = "Реестр ОКС"
+            if sheet_name not in book.sheetnames or canonical is None:
+                return unavailable
+            sheet = book[sheet_name]
+            rows = sheet.iter_rows()
+            headers = next(rows, ())
+            required = ("Назначение", "Статус объекта", "Статус РС", "Общая площадь", "ОСМ код")
+            positions = {}
+            for label in required:
+                matches = [i for i, c in enumerate(headers) if _normalize(c.value) == _normalize(label)]
+                if len(matches) != 1:
+                    return unavailable
+                positions[label] = matches[0]
+            groups = {}
+            filters = {"Назначение": "Нежилье", "Статус объекта": "Строящийся", "Статус РС": "Действует"}
+            for row in rows:
+                if len(row) <= max(positions.values()):
+                    continue
+                if not all(_normalize(row[positions[k]].value) == _normalize(v) for k, v in filters.items()):
+                    continue
+                area = row[positions["Общая площадь"]]
+                sector = row[positions["ОСМ код"]]
+                try:
+                    value = _metric_value(area)
+                except SourceUnavailable:
+                    return unavailable
+                if value is None or not isinstance(sector.value, str) or not sector.value.strip():
+                    return unavailable
+                label = " ".join(sector.value.split())
+                group = groups.setdefault(label, {"label": label, "areas": [], "rows": []})
+                group["areas"].append(value)
+                group["rows"].append(area.row)
+            total = math.fsum(math.fsum(g["areas"]) for g in groups.values()) / 1_000_000
+            if not groups or not math.isclose(total, canonical, rel_tol=0, abs_tol=1e-8):
+                return {**unavailable, "registryValue": total, "canonicalValue": canonical}
+            return {"status": "available", "sheet": sheet_name, "filters": filters,
+                    "areaColumn": get_column_letter(positions["Общая площадь"] + 1),
+                    "sectorColumn": get_column_letter(positions["ОСМ код"] + 1),
+                    "canonicalCell": canonical_cell,
+                    "canonicalValue": canonical, "registryValue": total,
+                    "items": [{"id": "sector-" + hashlib.sha256(label.encode()).hexdigest()[:12],
+                               "label": label, "value": math.fsum(g["areas"]) / 1_000_000,
+                               "rows": g["rows"], "count": len(g["rows"])} for label, g in sorted(groups.items())]}
+        finally:
+            book.close()
+
+
 class ConstructionTreeService:
     def __init__(self, context: DataContext, check_interval: float = 5):
         self.context = context
@@ -143,15 +197,17 @@ class ConstructionTreeService:
             name = path.resolve().relative_to(self.context.root).as_posix()
         except ValueError:
             name = path.name
+        nonresidential = next(m for m in metrics if m["id"] == "nonresidential")
         payload = {
             "schemaVersion": 1,
-            "version": hashlib.sha256(repr(signature).encode()).hexdigest(),
+            "version": hashlib.sha256(VERSION_DOMAIN + path.read_bytes()).hexdigest(),
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "unit": "million_m2",
             "source": {"file": name, "sheet": SHEET, "column": COLUMN,
                        "downloadedAt": datetime.fromtimestamp(signature[2] / 1_000_000_000, timezone.utc).isoformat(),
                        "fileDate": _file_date(path)},
             "metrics": metrics,
+            "nonresidentialSectors": _read_sectors(path, nonresidential["value"], nonresidential["cell"]),
         }
         json.dumps(payload, allow_nan=False)
         if self._inputs(access) != (path, signature):
@@ -161,6 +217,10 @@ class ConstructionTreeService:
     def report(self):
         with self._lock:
             try:
+                from pipeline.construction_tree_history import read_current
+                frozen = read_current(self.context.root)
+                if frozen is not None:
+                    return frozen
                 self._refresh()
             except _SOURCE_ERRORS as exc:
                 # Invalidate throttling as well: subsequent requests must retry

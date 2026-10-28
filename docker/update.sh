@@ -201,6 +201,7 @@ if [[ "$mode" == --upgrade-code ]]; then
 fi
 
 event updater_start "mode=$mode"
+control prepare-tree-history
 history_partial=0
 preferential_retained=0
 if [[ "$mode" == --publish-existing ]]; then

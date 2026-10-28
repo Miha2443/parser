@@ -27,6 +27,51 @@ export function permitGrowth(rows: PermitPresentationRow[], row: PermitPresentat
   const previous = rows.find(r => r.year === row.year - 1);
   return row.periodComplete && previous?.periodComplete && row.selected !== null && previous.selected !== null && previous.selected !== 0 ? row.growth : null;
 }
+export type PermitGrowthPoint = { year: number; value: number | null; reason: string };
+export function permitGrowthPoints(rows: { year: number; value: number | null; complete: boolean }[]): PermitGrowthPoint[] {
+  return rows.map(row => {
+    const previous = rows.find(other => other.year === row.year - 1);
+    const reason = !row.complete || row.value === null ? 'Нет полного факта за выбранный период' : !previous?.complete || previous.value === null ? 'Нет полного факта за аналогичный период прошлого года' : previous.value === 0 ? 'Значение прошлого года равно нулю' : '';
+    const growth = reason || !previous ? null : (row.value! / previous.value! - 1) * 100;
+    return { year: row.year, value: growth !== null && Number.isFinite(growth) ? growth : null, reason: reason || (growth !== null && !Number.isFinite(growth) ? 'Темп роста не является конечным числом' : '') };
+  });
+}
+export function permitMainGrowth(data: PermitsData) {
+  return permitGrowthPoints(data.permits.presentation.rows.map(row => ({ year: row.year, value: row.selected, complete: row.periodComplete })));
+}
+export function permitBreakdownGrowth(data: PermitBreakdown) {
+  const annual = data.periodLabel === 'За год';
+  return permitGrowthPoints(data.rows.map(row => ({ year: row.year, value: typeof row[data.aggregateField] === 'number' ? row[data.aggregateField] as number : null, complete: (annual ? row.annualComplete : row.periodComplete) === true })));
+}
+export function permitGrowthOption(points: PermitGrowthPoint[], theme: Theme, view: PermitChartView = {}): EChartsCoreOption {
+  const width = Math.max(160, view.width ?? 900), muted = theme === 'light' ? '#737b87' : '#a3aab5';
+  const grid = { left: width < 380 ? 42 : 54, right: 12, top: 39, bottom: 16 };
+  const band = (width - grid.left - grid.right) / Math.max(1, points.length), dense = band < 44;
+  const values = points.flatMap(point => point.value === null ? [] : [point.value]);
+  const measure = chartNumberFormatter(values);
+  const low = Math.min(0, ...values), high = Math.max(0, ...values), span = Math.max(1, high - low);
+  const text = (value: number) => `${value > 0 ? '+' : ''}${measure(value)} %`;
+  const missing = points.flatMap((point, index) => point.value === null && values.length ? [{ id: `missing-${point.year}`, type: 'text', x: grid.left + band * (index + .5), y: (view.height ?? 120) - 8, rotation: dense ? Math.PI / 2 : 0, silent: true,
+    style: { text: 'н/д', fill: muted, font: '9px Segoe UI', align: dense ? 'left' : 'center', verticalAlign: 'middle' } }] : []);
+  return {
+    animation: false, grid, aria: { enabled: true, label: { description: `Изменение к прошлому году. ${points.map(point => `${point.year}: ${point.value === null ? `нет данных, ${point.reason}` : text(point.value)}`).join('; ')}.` } },
+    backgroundColor: theme === 'light' ? '#ffffff' : '#202225',
+    graphic: values.length ? missing : [{ type: 'text', left: 'center', top: 'middle', silent: true, style: { text: 'Нет полного сравнимого периода', fill: muted, font: '11px Segoe UI' } }],
+    tooltip: { trigger: 'item', confine: true, formatter: (point: { dataIndex: number }) => {
+      const value = points[point.dataIndex];
+      return value ? `<strong>${value.year}</strong><br/>К прошлому году: ${value.value === null ? `н/д · ${escape(value.reason)}` : text(value.value)}` : '';
+    } },
+    xAxis: { type: 'category', boundaryGap: true, data: points.map(point => String(point.year)), show: false },
+    yAxis: { type: 'value', name: '%', min: low - span * .2, max: high + span * .35, splitNumber: 2,
+      nameTextStyle: { color: muted, align: 'left', fontSize: 10 }, axisLabel: { color: muted, fontSize: 9, formatter: (value: number) => measure(Math.abs(value) < 1e-8 ? 0 : value) },
+      splitLine: { lineStyle: { color: theme === 'light' ? '#edf0f3' : '#363a40', type: 'dashed' } } },
+    series: [{ type: 'line', id: 'permit-yoy', name: 'К прошлому году, %', data: points.map(point => point.value), connectNulls: false,
+      symbol: 'circle', symbolSize: 4, lineStyle: { width: 1.5, color: '#359a79' }, itemStyle: { color: '#359a79' },
+      label: { show: true, position: 'top', rotate: dense ? 90 : 0, distance: 5, color: theme === 'light' ? '#252a33' : '#edf0f3', fontSize: 10,
+        formatter: (point: { value: number | null }) => point.value === null ? '' : text(point.value) },
+      labelLayout: { hideOverlap: true }, emphasis: { scale: 1.5 } }],
+  };
+}
 export function permitCoverageComplete(coverage: PermitCoverage | undefined, mode: 'annual' | 'period', from: number, to: number) {
   if (from < 1 || to > 12 || from > to) return false;
   return !!coverage && (mode === 'annual' ? coverage.annualComplete : Array.from({ length: to - from + 1 }, (_, i) => from + i).every(m => coverage.completeMonths.includes(m)));
@@ -50,9 +95,9 @@ function barOption(years: number[], series: PlotSeries[], totals: (number | null
   const pixels = plotHeight / (maximum - axisMinimum);
   const band = plotWidth / Math.max(1, years.length), barWidth = Math.min(52, band * .72);
   const muted = theme === 'light' ? '#737b87' : '#a3aab5', text = theme === 'light' ? '#252a33' : '#edf0f3';
-  // Graphics are reference labels, not another data series. They survive all legend toggles.
+  // A source total is meaningful only while every component is visible.
   const graphic = totals.flatMap((total, i) => {
-    if (total === null) return [];
+    if (total === null || series.some(s => hidden.has(s.name) && s.data[i] !== null && s.data[i] !== 0)) return [];
     const label = measure(total), compact = band < label.length * 6.2 + 4;
     return [{ id: `total-${years[i]}`, type: 'group', x: grid.left + band * (i + .5), y: grid.top + (maximum - visibleHeights[i]) * pixels - 8,
       rotation: compact ? Math.PI / 2 : 0, silent: true, z: 20,
@@ -89,13 +134,13 @@ export function permitsMainOption(data: PermitsData, theme: Theme, view: PermitC
   return barOption(rows.map(r => r.year), series, rows.map(r => r.selected === null ? r.annualForecast : r.selected + (permitRemainder(r) ?? 0)), theme, view, data.permits.periodLabel, data.permits.unit, periods, rows.map(r => r.selected !== null && !r.periodComplete ? permitActualPeriod(r, data.selection.month) : null));
 }
 
-export function permitsMainRows(data: PermitsData): Cell[][] {
+export function permitsMainRows(data: PermitsData, approved?: PermitsData['permits']): Cell[][] {
   return [['Год', `Факт: ${data.permits.periodLabel}, тыс. м²`, 'Подтверждённый январь–декабрь, тыс. м²', 'Годовой прогноз, тыс. м²', 'Основание годового ориентира', 'Ориентир минус выбранный период, тыс. м²', 'Неотрицательный остаток, тыс. м²', 'Изменение к аналогичному полному периоду прошлого года, %', 'Период полный', 'Январь–декабрь подтверждён', 'Наблюдения по', 'Основание источника', 'Единица прогноза', 'Версия источника'],
     ...data.permits.presentation.rows.map(r => {
       const basis = permitAnnualBasis(r);
       return [r.year, r.selected, r.annualActual, r.annualForecast, basis?.label ?? 'Нет годового основания', basis === null || r.selected === null ? null : basis.value - r.selected, permitRemainder(r), permitGrowth(data.permits.presentation.rows, r), r.periodComplete ? 'Да' : 'Нет', r.annualComplete ? 'Да' : 'Нет', r.observedThrough, r.evidence.join('; '), basis?.kind === 'forecast' ? data.forecast.unitBasis : '', data.version];
     }),
-  ];
+  ].map((row, index) => approved ? [...row, index === 0 ? 'Утверждённый годовой legacy-контроль (вид площади не подтверждён), тыс. м²' : approved.presentation.rows.find(r => r.year === row[0])?.annualActual ?? null] : row);
 }
 
 export function breakdownChart(data: PermitBreakdown): SalesChart {
@@ -114,7 +159,7 @@ export function breakdownOption(data: PermitBreakdown, theme: Theme, view: Permi
   return barOption(data.rows.map(r => r.year), chart.series.map((s, i) => ({ id: s.id, name: s.name, color: palette[i % palette.length], data: s.points.map(p => p.y) })), data.rows.map((_, i) => breakdownReconciliation(data, i).total), theme, view, data.periodLabel, data.unit, periods, data.rows.map((r, i) => r.periodComplete === false && typeof r.actualMonth === 'number' ? periods[i] : null));
 }
 export function permitBreakdownRows(data: PermitBreakdown, version: string): Cell[][] {
-  return [[...data.columns.map(c => `${c.label}${c.id === 'year' ? '' : ', тыс. м²'}${c.id === data.aggregateField ? ' (итог источника)' : ''}`), 'Период полный', 'Год полный', 'Версия источника'],
+  return [[...data.columns.map(c => `${c.label}${c.id === 'year' || c.id === 'growth' ? '' : ', тыс. м²'}${c.id === data.aggregateField ? ' (итог источника)' : ''}`), 'Период полный', 'Год полный', 'Версия источника'],
     ...data.rows.map(row => [...data.columns.map(c => typeof row[c.id] === 'number' ? row[c.id] as number : null), row.periodComplete === undefined ? null : row.periodComplete ? 'Да' : 'Нет', row.annualComplete === undefined ? null : row.annualComplete ? 'Да' : 'Нет', version]),
   ];
 }

@@ -367,7 +367,7 @@ test('permit structure source aggregate stays a label without fake balancing or 
   assert.ok(!option.series.some(s => /balance|total/.test(s.id)));
 });
 
-test('permit labels stay on responsive plot, omit inside values that cannot fit, and survive every series hidden', () => {
+test('permit labels stay on responsive plot, omit values that cannot fit, and hide totals with their components', () => {
   const data = readPermitsData(permitsFixture());
   data.permits.presentation.rows = Array.from({ length: 16 }, (_, i) => ({ ...data.permits.presentation.rows[1], year: 2011 + i, selected: 1000 + i }));
   for (const width of [160, 240, 320, 375, 768, 1280, 1920]) {
@@ -376,8 +376,8 @@ test('permit labels stay on responsive plot, omit inside values that cannot fit,
     assert.equal(option.graphic.length, 16); assert.equal(option.series.length, 2);
     assert.ok(option.graphic.every(g => g.x > 0 && g.x < width && g.y > 0 && g.y < 390));
     const hidden = permitsMainOption(data, 'light', { width, height: 390, hidden: option.series.map(s => s.name) });
-    assert.equal(hidden.graphic.length, 16); assert.equal(hidden.yAxis.max, option.yAxis.max);
-    assert.equal(hidden.series.length, 2); assert.equal(hidden.graphic[0].children[0].style.text, option.graphic[0].children[0].style.text);
+    assert.equal(hidden.graphic.length, 0); assert.equal(hidden.yAxis.max, option.yAxis.max);
+    assert.equal(hidden.series.length, 2);
     assert.equal(option.series[0].label.formatter({ value: 0 }), '');
     if (width <= 375) assert.equal(option.series[0].label.formatter({ value: 1000 }), '');
     if (width === 768) assert.equal(option.series[0].label.formatter({ value: 1000.2 }), '1000');

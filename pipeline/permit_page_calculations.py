@@ -98,14 +98,27 @@ def read_forecast(book, source_file):
     return result
 
 
-def select_forecast(forecast, kind):
+def select_forecast(forecast, kind, living_only=None):
     # The caller owns this generation; selection never mutates the cached rows.
-    return {**forecast, "rows": [{**row, "value": row["housing_living"] if kind == "housing" else
-                                  row["nonresidential"] if kind == "nonresidential" else
-                                  strict_sum((row["housing_total"] if row["housing_total"] is not None else
-                                              strict_sum((row["housing_living"], row["mop_embedded"])),
-                                              row["nonresidential"]))}
-                                 for row in forecast["rows"]]}
+    rows = []
+    for row in forecast["rows"]:
+        housing_total = row["housing_total"] if row["housing_total"] is not None else strict_sum((row["housing_living"], row["mop_embedded"]))
+        housing = housing_total if living_only is False else row["housing_living"]
+        value = (housing if kind == "housing" else row["nonresidential"] if kind == "nonresidential" else
+                 strict_sum((housing if living_only is not None else housing_total, row["nonresidential"])))
+        rows.append({**row, "value": value})
+    return {**forecast, "rows": rows}
+
+
+def year_over_year(rows, value_field, complete_field="periodComplete"):
+    """Only adjacent, complete observations of the same selected interval."""
+    indexed = {row["year"]: row for row in rows}
+    for row in rows:
+        previous = indexed.get(row["year"] - 1, {})
+        value, denominator = row.get(value_field), previous.get(value_field)
+        row["growth"] = (number((value / denominator - 1) * 100)
+                         if row.get(complete_field) and previous.get(complete_field)
+                         and value is not None and denominator not in (None, 0) else None)
 
 
 def _gap(total, living, notes, source):
@@ -479,6 +492,7 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
                     row["other"] = total
             rows.append(row)
             evidence.extend(coverage["evidence"])
+        year_over_year(rows, block["aggregateField"], "annualComplete" if selection["mode"] == "annual" else "periodComplete")
         raw_fields = sorted({key for row in rows for key in row if key.startswith("source_")})
         source_labels = dict(block["fields"])
         for row in rows:
@@ -489,7 +503,8 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
         result.append({"id": identifier, "title": block["title"], "unit": "тыс. м²", "periodLabel": label,
                        "aggregateField": block["aggregateField"],
                        "columns": [{"id": "year", "label": "Год"}] + [{"id": key, "label": name} for key, name in block["fields"]] +
-                                  [{"id": key, "label": f"Исходное значение: {source_labels.get(key[7:], key[7:])}"} for key in raw_fields] + adjustment_columns,
+                                  [{"id": key, "label": f"Исходное значение: {source_labels.get(key[7:], key[7:])}"} for key in raw_fields] + adjustment_columns +
+                                  [{"id": "growth", "label": "Изменение к аналогичному периоду прошлого года, %"}],
                        "rows": rows, "series": [{"id": key, "name": name,
                                                   "points": [{"x": str(row["year"]), "y": row[key]} for row in rows]}
                                                  for key, name in block["fields"] if key != block["aggregateField"]],
@@ -501,11 +516,13 @@ def breakdowns(base, kind, selection, sources=None, source_date=None):
 def read_main_sources(book, detailed, source_file):
     """Shared literal components and approved annual controls for every permit view."""
     monthly = {"housing": {key: {"value": row["living"]} for key, row in detailed["housing"].items()},
+               "housing_total": {key: {"value": row["housing_total"]} for key, row in detailed["housing"].items()},
                "mop_embedded": {key: {"value": row["mop_embedded"]} for key, row in detailed["housing"].items()},
                "nonresidential": {key: {"value": row["nonresidential"]} for key, row in detailed["nonresidential"].items()}}
-    evidence = {"housing": {}, "mop_embedded": {}, "nonresidential": {}}
+    evidence = {kind: {} for kind in monthly}
     for (year, _), row in detailed["housing"].items():
         evidence["housing"].setdefault(year, []).append(f"{source_file}:{row['source']}")
+        evidence["housing_total"].setdefault(year, []).append(f"{source_file}:{row['source']}")
         evidence["mop_embedded"].setdefault(year, []).append(f"{source_file}:{row['source']}")
     for (year, _), row in detailed["nonresidential"].items():
         evidence["nonresidential"].setdefault(year, []).append(f"{source_file}:{row['source']}")
@@ -526,7 +543,7 @@ def read_main_sources(book, detailed, source_file):
                 if not detailed["nonresidential"]:
                     monthly["nonresidential"][key] = {"value": value / 1000 if value is not None and key not in monthly["nonresidential"] else None}
                     evidence["nonresidential"].setdefault(year, []).append(f"{source_file}:{HOUSING_SHEET}!G{label.row}")
-    unknown = {"housing": set(), "mop_embedded": set(), "nonresidential": set()}
+    unknown = {kind: set() for kind in monthly}
     grouped = {}
     for row in detailed["modern"]:
         kind, year, month = row["kind"], row["year"], row["month"]
@@ -534,6 +551,7 @@ def read_main_sources(book, detailed, source_file):
             unknown[kind].add(year)
             if kind == "housing":
                 unknown["mop_embedded"].add(year)
+                unknown["housing_total"].add(year)
         else:
             grouped.setdefault((year, month, kind), []).append(row)
     for (year, month, kind), rows in grouped.items():
@@ -541,8 +559,9 @@ def read_main_sources(book, detailed, source_file):
         monthly[kind][(year, month)] = {"value": strict_sum(row[field] for row in rows)}
         if kind == "housing":
             monthly["mop_embedded"][(year, month)] = {"value": strict_sum(row["mop_embedded"] for row in rows)}
+            monthly["housing_total"][(year, month)] = {"value": strict_sum(row["housing_total"] for row in rows)}
     for kind in monthly:
-        source_kind = "housing" if kind == "mop_embedded" else kind
+        source_kind = "housing" if kind in ("mop_embedded", "housing_total") else kind
         for year in {row["year"] for row in detailed["modern"] if row["kind"] == source_kind}:
             rows = [row for row in detailed["modern"] if row["kind"] == source_kind and row["year"] == year]
             evidence[kind][year] = [f"{source_file}:{OKS_SHEET}!D/F/Q/R, строки {_row_refs(rows)}; "
@@ -577,8 +596,10 @@ def read_static_annual(book, source_file):
     return result
 
 
-def main_presentation(table, sources, forecast, kind, month, source_date):
-    kinds = ("housing", "mop_embedded", "nonresidential") if kind == "total" else (kind,)
+def main_presentation(table, sources, forecast, kind, month, source_date, living_only=None):
+    housing_field = "housing_total" if living_only is False else "housing"
+    kinds = (("housing", "mop_embedded", "nonresidential") if living_only is None else
+             (housing_field, "nonresidential")) if kind == "total" else (housing_field,) if kind == "housing" else (kind,)
     monthly, evidence = {}, {}
     keys = set().union(*(sources["monthly"][k].keys() for k in kinds))
     for key in keys:
@@ -595,6 +616,13 @@ def main_presentation(table, sources, forecast, kind, month, source_date):
         refs = list(current.get("evidence", []))
         annual_values, annual_evidence = _annual_values(sources, year, source_date)
         annual = annual_values.get(kind)
+        if living_only is not None and kind != "nonresidential":
+            # Generic approved "housing" controls do not identify living/general
+            # area. The explicit checkbox must use confirmed component cells only.
+            snapshot = _as_date(source_date)
+            housing_annual = (_monthly_value(sources, housing_field, year, 1, 12)
+                              if snapshot is not None and year < snapshot.year else None)
+            annual = housing_annual if kind == "housing" else strict_sum((housing_annual, annual_values.get("nonresidential")))
         refs.extend(annual_evidence)
         actual_month = _available_month(year, month, source_date,
                                         [m for (y, m), item in monthly.items() if y == year and item["value"] is not None]) if year in actual else None
@@ -607,8 +635,9 @@ def main_presentation(table, sources, forecast, kind, month, source_date):
         reference = annual_forecast if basis == "forecast" else annual
         difference = number(reference - selected) if reference is not None and selected is not None else None
         if predicted:
-            fields = (("housing_total", "nonresidential") if predicted["housing_total"] is not None else
-                      ("housing_living", "mop_embedded", "nonresidential")) if kind == "total" else ("housing_living",) if kind == "housing" else ("nonresidential",)
+            housing_fields = (("housing_living",) if living_only is True or kind == "housing" and living_only is None else
+                              ("housing_total",) if predicted["housing_total"] is not None else ("housing_living", "mop_embedded"))
+            fields = housing_fields + ("nonresidential",) if kind == "total" else housing_fields if kind == "housing" else ("nonresidential",)
             refs.extend(f"{forecast['source']['file']}:{forecast['source']['sheet']}!{predicted['cells'][field]}; "
                         f"годовой прогноз, {forecast['unitBasis']}." for field in fields)
         rows.append({"year": year, "selected": selected, "annualActual": annual, "annualForecast": annual_forecast,
@@ -620,11 +649,7 @@ def main_presentation(table, sources, forecast, kind, month, source_date):
                      "actualMonth": actual_month,
                      "observedThrough": current.get("observedThrough") or (f"{year}-12-31" if annual is not None else None),
                      "evidence": refs})
-    by_year = {row["year"]: row for row in rows}
-    for row in rows:
-        previous = by_year.get(row["year"] - 1, {})
-        if row["selected"] is not None and previous.get("selected") not in (None, 0) and row["actualMonth"] == previous.get("actualMonth"):
-            row["growth"] = number((row["selected"] / previous["selected"] - 1) * 100)
+    year_over_year(rows, "selected")
     return {"rows": rows}
 
 

@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { ChevronDown, Download, ImageDown } from 'lucide-react';
 import { categories, chartNumberFormatter, download, exportCsv, number, sumAreas } from './format';
 import type { AnnualRow, Areas, CategoryKey, Delay, Theme } from './types';
+import { createResponsiveChart } from './responsiveChart';
 
 echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, GraphicComponent, AriaComponent, CanvasRenderer]);
 type ChartOption = echarts.EChartsCoreOption;
@@ -19,11 +20,9 @@ export function Chart({ option, theme, label, rows, filename, height = 310, lege
   const legendItems = series?.[0]?.type === 'pie' ? series[0].data?.map(d => ({ name: d.name, color: d.itemStyle?.color, borderType: d.itemStyle?.borderType })) ?? [] : series?.map(s => ({ name: s.name ?? '', color: s.itemStyle?.color, borderType: s.itemStyle?.borderType })) ?? [];
   useEffect(() => {
     if (!container.current) return;
-    const chart = echarts.init(container.current, undefined, { renderer: 'canvas' });
-    instance.current = chart;
-    const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(container.current);
-    return () => { observer.disconnect(); chart.dispose(); instance.current = undefined; };
+    const responsive = createResponsiveChart(container.current, undefined, chart => { instance.current = chart; });
+    instance.current = responsive.chart;
+    return () => { responsive.dispose(); instance.current = undefined; };
   }, []);
   useEffect(() => {
     instance.current?.setOption({ ...option, legend: { show: false, selected: Object.fromEntries(legendItems.map(item => [item.name, !hidden.includes(item.name)])) }, backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif', color: theme === 'light' ? '#454b54' : '#c3c9d1' }, aria: { enabled: true }, animationDuration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350 }, true);
@@ -44,7 +43,7 @@ export function annualOption(rows: AnnualRow[], theme: Theme): ChartOption {
   const format = chartNumberFormatter([...measurements, ...shares]);
   return {
     grid: { left: 8, right: 12, top: 32, bottom: 8, containLabel: true },
-    tooltip: { trigger: 'item', confine: true, formatter: (p: { seriesName: string; name: string; value: number; dataIndex: number }) => { const total = sumAreas(rows[p.dataIndex]); return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} тыс. м²${total && p.value != null ? `<br/>Доля в году: ${format(p.value * 1000 / total * 100)}%` : ''}`; } },
+    tooltip: { trigger: 'item', confine: true, formatter: (p: { seriesName: string; name: string; value: number; dataIndex: number }) => { const total = rows[p.dataIndex].complete === false ? null : sumAreas(rows[p.dataIndex]); return `<strong>${escape(p.name)} · ${escape(p.seriesName)}</strong><br/>${format(p.value)} тыс. м²${total && p.value != null ? `<br/>Доля в году: ${format(p.value * 1000 / total * 100)}%` : ''}`; } },
     xAxis: { type: 'category', data: rows.map(r => String(r.year)), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.muted, fontSize: 11, interval: 'auto', hideOverlap: true } },
     yAxis: { type: 'value', name: 'тыс. м²', nameTextStyle: { color: t.muted, align: 'left', padding: [0, 0, 0, 0] }, axisLabel: { color: t.muted, fontSize: 11, formatter: format }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
     series: categories.map(c => ({ type: 'bar', stack: 'area', name: c.label, barMaxWidth: 52, barCategoryGap: '38%', data: rows.map(r => r[c.key] == null ? null : r[c.key]! / 1000), itemStyle: { color: c.color }, emphasis: { focus: 'series' } })),

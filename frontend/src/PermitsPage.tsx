@@ -1,34 +1,42 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, ChevronDown, Database, Download, FileSpreadsheet, ImageDown, RefreshCw, RotateCcw } from 'lucide-react';
 import * as echarts from 'echarts/core';
-import { BarChart } from 'echarts/charts';
+import { BarChart, LineChart } from 'echarts/charts';
 import { AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { ApiError, request } from './data';
 import { date, download, exportCsv, number } from './format';
-import { breakdownOption, exactNumber, forecastBasisNote, forecastFields, loadPermitsSelection, permitKind, permitKindChange, permitPageFilters, permitStructureParams, permitsMainOption, permitsMainRows, permitsUrl } from './constructionPagesData';
-import { permitBreakdownRows } from './permitPresentation';
-import type { PermitChartView } from './permitPresentation';
+import { breakdownOption, exactNumber, forecastBasisNote, forecastFields, permitKind, permitKindChange, permitPageFilters, permitStructureParams, permitsMainOption, permitsMainRows, permitsUrl } from './constructionPagesData';
+import { permitBreakdownGrowth, permitBreakdownRows, permitGrowthOption, permitMainGrowth } from './permitPresentation';
+import { loadPermitPageSelection, permitLivingOnly, selectPermitArea } from './permitPageData';
+import { createResponsiveChart } from './responsiveChart';
+import type { PermitPageData } from './permitPageData';
+import type { PermitChartView, PermitGrowthPoint } from './permitPresentation';
 import type { Cell } from './commissioningData';
-import type { ConstructionPagesMetadata, PermitsData } from './constructionPagesData';
+import type { ConstructionPagesMetadata } from './constructionPagesData';
 import type { CommissioningChange } from './Operational';
 import type { Theme } from './types';
 import './construction-pages.css';
+import './permits.css';
 
-echarts.use([BarChart, AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-function PermitChart({ buildOption, theme, label, rows, filename, height = 390 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; height?: number }) {
+function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 390 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number }) {
   const container = useRef<HTMLDivElement>(null), instance = useRef<echarts.ECharts>();
+  const growthContainer = useRef<HTMLDivElement>(null), growthInstance = useRef<echarts.ECharts>();
   const [width, setWidth] = useState(600), [hidden, setHidden] = useState<string[]>([]), [showData, setShowData] = useState(false);
   const option = useMemo(() => buildOption({ width, height, hidden }), [buildOption, width, height, hidden]);
   const series = option.series as { name: string; itemStyle: { color: string; borderType?: string }; data: (number | null)[] }[];
   useEffect(() => {
-    if (!container.current) return;
-    const chart = echarts.init(container.current, undefined, { renderer: 'canvas' }); instance.current = chart;
-    const observer = new ResizeObserver(entries => { setWidth(entries[0].contentRect.width); chart.resize(); });
-    observer.observe(container.current); setWidth(container.current.clientWidth);
-    return () => { observer.disconnect(); chart.dispose(); instance.current = undefined; };
+    if (!container.current || !growthContainer.current) return;
+    const responsive = createResponsiveChart(container.current, setWidth, chart => { instance.current = chart; });
+    const responsiveGrowth = createResponsiveChart(growthContainer.current, undefined, chart => { growthInstance.current = chart; });
+    instance.current = responsive.chart;
+    growthInstance.current = responsiveGrowth.chart;
+    setWidth(container.current.clientWidth);
+    return () => { responsive.dispose(); responsiveGrowth.dispose(); instance.current = undefined; growthInstance.current = undefined; };
   }, []);
+  useEffect(() => { growthInstance.current?.setOption(permitGrowthOption(growth, theme, { width, height: 120 }), true); }, [growth, theme, width]);
   useEffect(() => {
     instance.current?.setOption({ ...option, legend: { show: false, selected: Object.fromEntries(series.map(s => [s.name, !hidden.includes(s.name)])) },
       backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif' }, aria: { enabled: true },
@@ -42,11 +50,30 @@ function PermitChart({ buildOption, theme, label, rows, filename, height = 390 }
     if (dataIndex >= 0) instance.current?.dispatchAction({ type: 'showTip', seriesIndex: index, dataIndex });
   }
   function clearHighlight() { instance.current?.dispatchAction({ type: 'downplay' }); instance.current?.dispatchAction({ type: 'hideTip' }); }
+  async function exportPng() {
+    const charts = [growthInstance.current, instance.current];
+    if (charts.some(chart => !chart)) return;
+    const backgroundColor = theme === 'light' ? '#ffffff' : '#202225', pixelRatio = Math.max(2, window.devicePixelRatio || 1);
+    const frames = await Promise.all(charts.map(chart => new Promise<HTMLImageElement | null>(resolve => {
+      const frame = new Image();
+      frame.onload = () => resolve(frame); frame.onerror = () => resolve(null);
+      frame.src = chart!.getDataURL({ type: 'png', pixelRatio, backgroundColor });
+    })));
+    if (frames.some(frame => !frame)) return;
+    const images = frames as HTMLImageElement[], canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+    if (!context) return;
+    canvas.width = Math.max(...images.map(frame => frame.naturalWidth)); canvas.height = images.reduce((sum, frame) => sum + frame.naturalHeight, 0);
+    context.fillStyle = backgroundColor; context.fillRect(0, 0, canvas.width, canvas.height);
+    let top = 0;
+    for (const frame of images) { context.drawImage(frame, 0, top); top += frame.naturalHeight; }
+    download(canvas.toDataURL('image/png'), `${filename}.png`);
+  }
   return <div className="chart-block permit-chart">
+    <div className="permit-growth"><p>К прошлому году, % · {growthLabel}</p><div ref={growthContainer} className="permit-growth-canvas" style={{ height: 120 }} role="img" aria-label={`${label}: изменение к прошлому году, ${growthLabel}`} /><div className="permit-growth-accessible"><table><caption>К прошлому году, % · {growthLabel}</caption><thead><tr>{growth.map(point => <th key={point.year} scope="col">{point.year}</th>)}</tr></thead><tbody><tr>{growth.map(point => <td key={point.year}>{point.value === null ? `н/д: ${point.reason}` : `${point.value > 0 ? '+' : ''}${number(point.value, 1)} %`}</td>)}</tr></tbody></table></div></div>
     <div className="legend chart-legend">{series.map((s, index) => <button key={s.name} type="button" className={hidden.includes(s.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(s.name)} title={`${hidden.includes(s.name) ? 'Показать' : 'Скрыть'}: ${s.name}`} onMouseEnter={() => highlight(index)} onMouseLeave={clearHighlight} onFocus={() => highlight(index)} onBlur={clearHighlight} onClick={() => { clearHighlight(); setHidden(previous => previous.includes(s.name) ? previous.filter(name => name !== s.name) : [...previous, s.name]); }}><i className={s.itemStyle.borderType === 'dashed' ? 'forecast-swatch' : undefined} style={{ background: s.itemStyle.color }} />{s.name}</button>)}</div>
     <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={label} />
     <div className="chart-data"><button type="button" className="data-toggle" onClick={() => setShowData(value => !value)} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
-    {showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button type="button" onClick={() => { const chart = instance.current; if (chart) download(chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: theme === 'light' ? '#ffffff' : '#202225' }), `${filename}.png`); }}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}
+    {showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}
   </div>;
 }
 
@@ -66,7 +93,7 @@ export function useConstructionFeed<T>(url: string, read: (value: unknown) => T)
 }
 
 function usePermitsFeed(filters: ReturnType<typeof permitPageFilters>) {
-  const [attempt, setAttempt] = useState(0), [result, setResult] = useState<{ key: string; canonicalKey?: string; data?: PermitsData; error?: string } | null>(null);
+  const [attempt, setAttempt] = useState(0), [result, setResult] = useState<{ key: string; canonicalKey?: string; data?: PermitPageData; error?: string } | null>(null);
   const key = JSON.stringify([permitsUrl(filters), attempt]);
   const matches = result?.key === key || result?.canonicalKey === key;
   useEffect(() => {
@@ -74,7 +101,7 @@ function usePermitsFeed(filters: ReturnType<typeof permitPageFilters>) {
     if (matches) return;
     const controller = new AbortController();
     setResult(null);
-    loadPermitsSelection(filters, controller.signal).then(data => {
+    loadPermitPageSelection(filters, controller.signal).then(data => {
       if (!controller.signal.aborted) setResult({ key, canonicalKey: JSON.stringify([permitsUrl(data.selection), attempt]), data });
     }).catch(error => { if (!controller.signal.aborted) setResult({ key, error: error instanceof Error ? error.message : 'Не удалось загрузить разрешения.' }); });
     return () => controller.abort();
@@ -124,7 +151,8 @@ const months = ['Январь', 'Февраль', 'Март', 'Апрель', '�
 
 export default function PermitsPage({ theme, query, change }: { theme: Theme; query: string; change: CommissioningChange }) {
   const params = useMemo(() => new URLSearchParams(query), [query]), filters = permitPageFilters(params);
-  const { data, error, retry } = usePermitsFeed(filters);
+  const { data: sourceData, error, retry } = usePermitsFeed(filters);
+  const livingOnly = permitLivingOnly(params), data = sourceData ? selectPermitArea(sourceData, livingOnly) : null;
   useEffect(() => {
     if (!data) return;
     const values: Record<string, string | null> = {};
@@ -137,15 +165,16 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
     if (Object.keys(values).length) change(values, true);
   }, [data, params, change]);
   const presentation = data?.permits.presentation.rows ?? [], structure = data?.selection.structure;
-  const filename = data && structure ? `permits-${data.selection.permitKind}-m${data.selection.month}-structure-${structure.mode}-${structure.yearFrom}-${structure.yearTo}-m${structure.monthFrom}-${structure.monthTo}` : 'permits';
+  const filename = data && structure ? `permits-${data.selection.permitKind}-${livingOnly ? 'living' : 'full'}-m${data.selection.month}-structure-${structure.mode}-${structure.yearFrom}-${structure.yearTo}-m${structure.monthFrom}-${structure.monthTo}` : 'permits';
   return <main className="permits-page cp-page" id="permits-page">
     <header className="cp-page-heading"><div><div className="eyebrow">ТЕКУЩЕЕ СТРОИТЕЛЬСТВО</div><h1>Разрешения на строительство</h1></div><button className="icon-button" type="button" title="Обновить разрешения" aria-label="Обновить разрешения" onClick={retry}><RefreshCw size={17} /></button></header>
     <p className="cp-context">Москва</p>
     {error || !data ? <><ConstructionLoadState error={error} retry={retry} label="разрешения на строительство" />{error && <div className="permit-recovery"><button type="button" onClick={() => change({ month: null, ...Object.fromEntries(Object.values(permitStructureParams).map(key => [key, null])) })}><RotateCcw size={15} />Сбросить фильтры разрешений</button></div>}</> : <>
       <section className="permit-main cp-section" aria-labelledby="permit-main-title">
-        <div className="cp-section-heading"><div><h2 id="permit-main-title">Выдача разрешений по годам</h2><p>{data.permits.region} · {data.permits.unit} · {date(data.source.date)}</p></div><ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}.xlsx`} label="Скачать разрешения Excel" refresh={retry} /></div>
+        <div className="cp-section-heading"><div><h2 id="permit-main-title">Выдача разрешений по годам</h2><p>{data.permits.region} · {data.permits.unit} · {date(data.source.date)}</p></div><ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}.xlsx`} label="Скачать исходные разрешения Excel: утверждённый ряд и оба варианта площади" refresh={retry} /></div>
         <div className="cp-controls permit-controls"><label><span>Вид объектов</span><select aria-label="Вид объектов" value={data.selection.permitKind} onChange={e => change(permitKindChange(data.controls, data.selection.month, permitKind(e.target.value)))}>{data.controls.permitKinds.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}</select></label><label><span>Накопленный период</span><select aria-label="Месяц разрешений" value={data.selection.month} disabled={!data.controls.monthsByKind[data.selection.permitKind].length} onChange={e => change({ month: e.target.value })}>{data.controls.monthsByKind[data.selection.permitKind].map(m => <option key={m} value={m}>{months[m - 1]}</option>)}</select></label><span className="cp-period-label">{data.permits.periodLabel}</span></div>
-        {presentation.some(r => r.selected !== null || r.annualForecast !== null) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${data.selection.month}`} buildOption={view => permitsMainOption(data, theme, view)} theme={theme} label="Разрешения по годам: выбранный период и остаток до годового прогноза или подтверждённого итога в одном столбце" rows={permitsMainRows(data)} filename={filename} /> : <ConstructionEmpty>Нет данных о выдаче разрешений за выбранный период.</ConstructionEmpty>}
+        {data.selection.permitKind !== 'nonresidential' && <label className="permit-area-toggle"><input type="checkbox" checked={livingOnly} onChange={e => change({ permit_living_only: e.target.checked ? null : '0' })} />Только жилая площадь</label>}
+        {presentation.some(r => r.selected !== null || r.annualForecast !== null) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${data.selection.month}-${livingOnly}`} buildOption={view => permitsMainOption(data, theme, view)} theme={theme} label="Разрешения по годам: выбранный период и остаток до годового прогноза или подтверждённого итога в одном столбце" rows={permitsMainRows(data, sourceData?.permits)} filename={filename} growth={permitMainGrowth(data)} growthLabel={data.permits.periodLabel} /> : <ConstructionEmpty>Нет данных о выдаче разрешений за выбранный период.</ConstructionEmpty>}
       </section>
       <section className="permit-breakdowns cp-section" aria-labelledby="permit-breakdowns-title"><div className="cp-section-heading"><div><h2 id="permit-breakdowns-title">Структура разрешённой площади</h2><p>Москва · тыс. м² · {date(data.source.date)}</p></div></div>
         <div className="cp-controls permit-structure-controls">
@@ -154,7 +183,7 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
         </div>
         {data.breakdowns.length ? data.breakdowns.map(b => {
           return <div className="cp-subsection" key={b.id}><div className="cp-section-heading"><div><h3>{b.title}</h3><p>Москва · {b.unit} · {date(data.source.date)}</p></div></div>
-            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={350} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
+            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={350} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
             <details className="cp-source cp-breakdown-source"><summary>Источник и основание: {b.title}</summary><div className="cp-source-content">{b.notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}</div></details></div>;
         }) : <ConstructionEmpty>Детализация отсутствует в источнике.</ConstructionEmpty>}
       </section>

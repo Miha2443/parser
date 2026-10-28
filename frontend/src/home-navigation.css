@@ -20,6 +20,15 @@
 .dashboard-navigation .nav-heading span, .dashboard-navigation .nav-link span { min-width: 0; overflow-wrap: anywhere; }
 .dashboard-navigation .nav-link { font-size: 12px; font-weight: 400; }
 .dashboard-navigation .nav-link.active { font-weight: 650; }
+.dashboard-navigation .navigation-brand { position: relative; flex-shrink: 0; }
+.dashboard-navigation .navigation-brand > .brand { width: 100%; text-decoration: none; }
+.dashboard-navigation .navigation-brand > .mobile-close { position: absolute; top: 26px; right: 0; }
+.dashboard-navigation .nav-caption, .dashboard-navigation .sidebar-bottom { flex-shrink: 0; }
+.dashboard-navigation .navigation-home { flex-shrink: 0; overflow: visible; padding-bottom: 9px; margin-top: 0; border-bottom: 1px solid var(--line); }
+.dashboard-navigation .navigation-home .nav-link { min-height: 46px; font-size: 16px; font-weight: 700; }
+.dashboard-navigation .navigation-home .nav-link svg { flex-shrink: 0; }
+.dashboard-navigation .navigation-sections { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 0; padding-top: 6px; }
+.dashboard-navigation a:focus-visible, .dashboard-navigation button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .annual-commissioning-page .annual-summary-disclosure { margin-top: 12px; border-top: 1px solid var(--line); }
 .annual-commissioning-page .annual-summary-disclosure > summary { padding: 14px 0; font-size: 12px; font-weight: 600; cursor: pointer; }
 .annual-commissioning-page .annual-summary-disclosure .annual-summaries { padding-top: 0; }
@@ -34,4 +43,7 @@
   .home-page .home-industry-panels { grid-template-columns: minmax(0, 1fr); }
   .home-page .home-support-sections { grid-template-columns: minmax(0, 1fr); }
   .home-page .home-market-panel { padding: 18px; }
+}
+@media (max-width: 960px) {
+  .dashboard-navigation .navigation-brand > .brand { padding-right: 32px; }
 }

@@ -6,6 +6,7 @@ from datetime import date, datetime
 
 import pandas as pd
 from pipeline.dev_name_utils import normalize_developer_name as norm
+from pipeline.renovation import renovation_living_by_year, renovation_rows
 
 CATEGORIES = [
     ("residential", "жилое", "Жилое"),
@@ -67,6 +68,35 @@ def rows_for(frame, column, key):
     return frame[frame[column].notna() & mask]
 
 
+def active_construction(frame):
+    if {"Статус РС", "Ввод в эксплуатацию"}.issubset(frame):
+        permit = frame["Статус РС"].fillna("").astype(str).str.strip().str.casefold()
+        status = frame["Ввод в эксплуатацию"].fillna("").astype(str).str.strip().str.casefold()
+        return frame[permit.eq("действует") & status.eq("в строительстве")], "Статус РС == Действует AND Ввод в эксплуатацию == В строительстве"
+    if "Статус объекта" in frame:
+        status = frame["Статус объекта"].fillna("").astype(str).str.strip().str.casefold()
+        return frame[status.eq("строящийся")], "Fallback: Статус объекта == Строящийся"
+    return frame.iloc[:0], "Construction status is unconfirmed; no objects selected"
+
+
+def construction_developers(monitoring):
+    active, _ = active_construction(monitoring.get("oks", pd.DataFrame()))
+    if active.empty or "Группа компаний" not in active:
+        return []
+    active = active.copy()
+    active["developerKey"] = active["Группа компаний"].map(lambda value: norm(str(value)) if pd.notna(value) else "")
+    result = []
+    for key, rows in active[active["developerKey"].ne("")].groupby("developerKey"):
+        names = rows["Группа компаний"].astype(str).unique()
+        area = pd.to_numeric(rows.get("Общая площадь", pd.Series(dtype=float)), errors="coerce")
+        area = area[area.ge(0) & area.lt(float("inf"))]
+        result.append({"developer": min(names, key=lambda name: (len(name), name)), "developerKey": key,
+                       "constructionAreaM2": float(area.sum()) if len(area) else None,
+                       "constructionObjectCount": len(rows)})
+    return sorted(result, key=lambda row: (row["constructionAreaM2"] is None, -(row["constructionAreaM2"] or 0),
+                                          -row["constructionObjectCount"], row["developerKey"]))
+
+
 def records(frame):
     return clean(frame.to_dict("records"))
 
@@ -124,6 +154,36 @@ def annual_data(rv):
         "sourceNote": "РВ groupby actual commissioning year; chart 2022..developer maximum year, "
                       "missing chart years zero-filled by the page; legend >=2022; chart unit thousand m2.",
     }
+
+
+def renovation_annual(rv, year_to):
+    result = annual_data(rv)
+    by_year = {row["year"]: row for row in result["allYears"]}
+    for row in renovation_living_by_year(rv, year_to).to_dict("records"):
+        year = int(row["year"])
+        record = by_year.setdefault(year, {"year": year, "valuesM2": {out: None for out, _, _ in CATEGORIES}})
+        record["valuesM2"]["residential"] = float(row["Реновация"]) * 1_000_000
+        values = list(record["valuesM2"].values())
+        record["totalM2"] = sum(values) if all(value is not None for value in values) else None
+    result["allYears"] = result["rows"] = [by_year[year] for year in sorted(by_year)]
+    result["sourceNote"] = "Renovation commissioning uses Инвестор для Реновации == да across all companies. Residential values match the annual renovation chart, including agreed historical controls; other categories retain registry values and unknowns."
+    return result
+
+
+def renovation_donut(identifier, title, annual, years):
+    selected = [row for row in annual["allYears"] if row["year"] in years]
+    values = {}
+    for out, _, _ in CATEGORIES:
+        parts = [row["valuesM2"].get(out) for row in selected]
+        values[out] = sum(parts) if parts and all(value is not None for value in parts) else None
+    total = sum(values.values()) if all(value is not None for value in values.values()) else None
+    return {"id": identifier, "title": title, "region": "msk", "years": years,
+            "status": ("partial" if total is None else "available") if any(value is not None and value > 0 for value in values.values()) else "noData",
+            "rowCount": len(selected), "totalM2": total,
+            "displayTotalThousandM2": ru_num(total / 1000) if total is not None else DASH,
+            "segments": [{"key": out, "label": label, "valueM2": values[out],
+                          "displayThousandM2": ru_num(values[out] / 1000) if values[out] is not None else DASH}
+                         for out, _, label in CATEGORIES], "sourceNote": annual["sourceNote"]}
 
 
 def top_row(top, sorting, region, key):
@@ -466,34 +526,38 @@ def object_tables(rv, oks):
 def make_profile(developer, region, data):
     key = norm(developer)
     mon = data["monitoring_2_0"]
-    rv = rows_for(mon["rv"], "Группа компаний", key)
+    is_renovation = key == norm("ФОНД РЕНОВАЦИИ")
+    company_rv = rows_for(mon["rv"], "Группа компаний", key)
+    rv = renovation_rows(mon["rv"]) if is_renovation else company_rv
+    if is_renovation and not rv.empty:
+        rv["category_жилое"] = pd.to_numeric(rv["Жилая площадь"], errors="coerce").fillna(0)
     oks_all = rows_for(mon["oks"], "Группа компаний", key)
-    oks = oks_all
-    filter_note = "No recognized status columns; page leaves ОКС unfiltered"
-    if not oks.empty:
-        if {"Статус РС", "Ввод в эксплуатацию"}.issubset(oks.columns):
-            oks = oks[(oks["Статус РС"] == "Действует") & (oks["Ввод в эксплуатацию"] == "В строительстве")]
-            filter_note = "Статус РС == Действует AND Ввод в эксплуатацию == В строительстве"
-        elif "Статус объекта" in oks.columns:
-            oks = oks[oks["Статус объекта"] == "Строящийся"]
-            filter_note = "Fallback: Статус объекта == Строящийся"
+    oks, filter_note = active_construction(oks_all)
     latest = mon["max_year"]
     previous = latest - 1 if latest else None
     last_rv = rv[rv["Год ввода по Мосстату"] == latest] if latest and not rv.empty else pd.DataFrame()
     prev_rv = rv[rv["Год ввода по Мосстату"] == previous] if previous and not rv.empty else pd.DataFrame()
     card = cards_row(data["erzrf_cards"], key)
     years = sorted(rv["Год ввода по Мосстату"].astype(int).unique().tolist()) if not rv.empty else []
+    annual = renovation_annual(rv, latest) if is_renovation else annual_data(rv)
+    if is_renovation:
+        years = [row["year"] for row in annual["allYears"]]
+    donuts = ([renovation_donut(identifier, title, annual, selected) for identifier, title, selected in (
+        ("commissionedAll", "Ввод за доступный период", years),
+        ("commissionedPrevious", f"Ввод за {previous} г.", [previous]),
+        ("commissionedLatest", f"Ввод за {latest} г.", [latest]))] if is_renovation else [
+        category_donut("commissionedAll", "Ввод с 2016 г.", rv, years),
+        category_donut("commissionedPrevious", f"Ввод за {previous} г.", prev_rv, [previous]),
+        category_donut("commissionedLatest", f"Ввод за {latest} г.", last_rv, [latest])])
     return {"id": f"{key}:{region}", "developer": developer, "developerKey": key, "region": region,
             "controls": {"developer": developer, "apartmentRegion": region, "latestMonitoringYear": latest,
-                         "previousMonitoringYear": previous, "constructionFilter": filter_note},
-            "ratings": ratings_data(data["erzrf_top"], key), "housingComparison": housing_data(rv, card, latest),
-            "categoryDonuts": [category_donut("commissionedAll", "Ввод с 2016 г.", rv, years),
-                               category_donut("commissionedPrevious", f"Ввод за {previous} г.", prev_rv, [previous]),
-                               category_donut("commissionedLatest", f"Ввод за {latest} г.", last_rv, [latest]),
-                               category_donut("construction", "В строительстве (Москва)", oks, [], construction=True)],
-            "annual": annual_data(rv), "rasprod": rasprod_data(data["rasprodannost"], key),
+                         "previousMonitoringYear": previous, "constructionFilter": filter_note,
+                         **({"commissioningScope": "renovation_program"} if is_renovation else {})},
+            "ratings": ratings_data(data["erzrf_top"], key), "housingComparison": housing_data(company_rv, card, latest),
+            "categoryDonuts": [*donuts, category_donut("construction", "В строительстве (Москва)", oks, [], construction=True)],
+            "annual": annual, "rasprod": rasprod_data(data["rasprodannost"], key),
             "apartments": apartment_data(data["kvartirografia"], key, region),
-            "delays": delay_data(data["erzrf_top"], card, rv, oks, key), "escrow": escrow_data(data["escrow_manual"], key),
+            "delays": delay_data(data["erzrf_top"], card, company_rv, oks, key), "escrow": escrow_data(data["escrow_manual"], key),
             "objects": object_tables(rv, oks_all),
             "sourceNotes": ["region applies only to квартирография; all other geography is unchanged from the page.",
                             "No geographic-coordinate, map eligibility, financing, housing-only or subtype restrictions added."]}

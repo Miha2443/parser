@@ -378,6 +378,8 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
     previous = live_target(runtime)
     if (runtime / "pending.json").exists():
         raise RuntimeError("Unfinished restart transaction; run docker/update.sh for recovery")
+    from pipeline.construction_tree_history import prepare as prepare_tree_history
+    prepare_tree_history(runtime)
     releases = runtime / "releases"
     if releases.is_symlink() or releases.resolve().parent != runtime.resolve():
         raise RuntimeError("Unsafe releases directory")
@@ -415,6 +417,8 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
                 row["reason"] = selection["reason"]
             metadata["status"] = "degraded" if any(row["state"] != "fresh" for row in metadata["optional_sources"].values()) else "success"
         (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
+        from pipeline.construction_tree_history import stage as stage_tree_history
+        stage_tree_history(candidate, runtime)
         print("Candidate sources: " + json.dumps({key: {"state": row["state"], "reason_code": row["reason_code"]}
               for key, row in metadata.get("sources", {}).items()} if "sources" in metadata else selection), flush=True)
         validate(candidate)
@@ -465,6 +469,8 @@ def transaction(runtime, action):
         if not record["previous"]:
             raise RuntimeError("No previous immutable release; refusing destructive rollback")
         swap(runtime, record["previous"])
+        from pipeline.construction_tree_history import restore_baseline
+        restore_baseline(runtime, record["previous"])
         return  # Keep journal until the restored backend becomes ready.
     if action == "activate-next":
         swap(runtime, record["next"])
@@ -473,17 +479,38 @@ def transaction(runtime, action):
         raise RuntimeError("Unknown recovery action")
     if not record["live"]:
         raise RuntimeError("Cannot acknowledge an unpublished bootstrap release")
+    from docker.release_history import _write_record
     if live_target(runtime) == record["next"]:
+        from pipeline.construction_tree_history import acknowledge as acknowledge_tree
+        acknowledge_tree(runtime, record["next"])
         # Retain the explicit rollback reserve even if newer failed releases exist.
-        from docker.release_history import _write_record
         _write_record(runtime / "previous-good.json", {
             "current": record["next"], "previous": record["previous"],
         })
+    else:
+        from pipeline.construction_tree_history import restore_baseline
+        restore_baseline(runtime, record["previous"])
+        reserve = runtime / "previous-good.json"
+        if reserve.is_symlink():
+            raise RuntimeError("Rollback reserve must not be a symlink")
+        previous_good = json.loads(reserve.read_text(encoding="utf-8")) if reserve.exists() else {}
+        if not isinstance(previous_good, dict):
+            raise RuntimeError("Invalid rollback reserve")
+        if previous_good.get("current") != record["previous"]:
+            # A failed next acknowledgement may have overwritten this reserve.
+            # The rejected next release must not survive as the recovery anchor.
+            _write_record(reserve, {"current": record["previous"], "previous": ""})
+    # Tree/reserve writes remain provisional until this final commit point.
     pending.unlink()
 
 
 def run_action(action, root, runtime):
-    if action == "archive":
+    if action == "prepare-tree-history":
+        if (runtime / "pending.json").exists():
+            raise RuntimeError("Resolve pending publication before closing tree history")
+        from pipeline.construction_tree_history import prepare
+        prepare(runtime)
+    elif action == "archive":
         from docker.release_history import archive_releases
         archive_releases(runtime, keep=int(os.environ.get("RELEASE_KEEP", "3")))
     elif action == "recovery-info":
@@ -516,6 +543,8 @@ def run_action(action, root, runtime):
         started = time.time()
         expected = requested_sources()
         with bootstrap_baseline(root, runtime) as baseline:
+            from pipeline.construction_tree_history import prepare as prepare_tree_history
+            prepare_tree_history(runtime)
             # A failed core provider must not skip the independent daily check.
             from docker.mortgage import collect as collect_mortgage
             collect_mortgage(root)
@@ -530,7 +559,7 @@ def run_action(action, root, runtime):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["update", "seed", "publish", "build-required-processed", "validate-api", "rollback", "ack", "archive", "recovery-info", "activate-next"])
+    parser.add_argument("action", choices=["update", "seed", "publish", "build-required-processed", "validate-api", "rollback", "ack", "archive", "recovery-info", "activate-next", "prepare-tree-history"])
     args = parser.parse_args()
     root, runtime = Path("/app"), Path("/runtime")
     if args.action == "validate-api":

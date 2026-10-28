@@ -13,19 +13,21 @@ from pipeline.data_access import DataAccess
 
 
 class GenerationService:
-    def __init__(self, context, loaders, families, catalog_builder, report_builder, check_interval=5):
+    def __init__(self, context, loaders, families, catalog_builder, report_builder, check_interval=5, *, calculation_revision=None):
         self.context = context
         self.loaders = loaders
         self.families = families
         self.catalog_builder = catalog_builder
         self.report_builder = report_builder
         self.check_interval = check_interval
+        self.calculation_revision = calculation_revision
         self._lock = threading.RLock()
         self._metadata = self._data = self._catalog = self._signature = None
         self._checked = 0.0
 
     def _versions(self, access):
-        return self.context.cache_key(), tuple((name, access.data_version(name)) for name in self.loaders)
+        signature = self.context.cache_key(), tuple((name, access.data_version(name)) for name in self.loaders)
+        return (self.calculation_revision, signature) if self.calculation_revision is not None else signature
 
     def _refresh(self):
         now = time.monotonic()

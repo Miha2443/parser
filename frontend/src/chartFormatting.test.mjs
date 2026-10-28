@@ -12,12 +12,14 @@ import construction from './annualConstruction.browser.cjs';
 const sourceRoot = new URL('./', import.meta.url).href;
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (context.parentURL?.startsWith(sourceRoot) && specifier === './Chart') return nextResolve('./Chart.tsx', context);
     if (context.parentURL?.startsWith(sourceRoot) && /^\.\.?\/[^.]+$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
     if (['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'].includes(specifier)) return nextResolve(`${specifier}.js`, context);
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
-    if (url.endsWith('/Chart.tsx')) return { format: 'module', shortCircuit: true, source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), {
+    if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: '' };
+    if (url.endsWith('/Chart.tsx') || url.endsWith('/ProfileStructure.tsx') || url.endsWith('/DemoProfileCharts.tsx')) return { format: 'module', shortCircuit: true, source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }, fileName: 'Chart.tsx',
     }).outputText };
     return nextLoad(url, context);
@@ -28,10 +30,41 @@ const { annualChartOption, annualSummaryRows, permitChartOption, permitChartRows
 const { operationalChartOption, operationalChartRows, linearSummaryOption, linearTrendOption, linearTable } = await import('./commissioningData.ts');
 const { economicsChartOption, economicsChartRows } = await import('./economicsData.ts');
 const { Chart, annualOption, donutOption, delayOption } = await import('./Chart.tsx');
+const { default: ProfileStructure } = await import('./ProfileStructure.tsx');
+const { demoProfileCharts } = await import('./DemoProfileCharts.tsx');
+const { normalizeSnapshot } = await import('./snapshot.ts');
 const { distributionOption, roomsOption } = await import('./apartmentCharts.ts');
 hooks.deregister();
 
 const themes = ['light', 'dark'];
+test('unknown profile composition renders known measurements without a complete donut or percentages', () => {
+  const structure = { title: 'Ввод за 2017–2026 гг.', areas: { housing: 8733679.999999, common: null, nonresidentialEmbedded: null, nonresidentialSeparate: null }, sourceId: 'monitoring', complete: false, total: null };
+  const html = renderToStaticMarkup(createElement(ProfileStructure, { structure, theme: 'light', filename: 'partial' }));
+  assert.match(html, /Состав площади подтверждён не полностью/);
+  assert.match(html, /8\s*734/);
+  assert.doesNotMatch(html, /chart-canvas|100%|100 %|role="img"/);
+  assert.equal((html.match(/—/g) || []).length, 3);
+});
+test('partial source composition retains its unknown total and is not offered as a complete demo ring', () => {
+  const raw = JSON.parse(readFileSync(new URL('../public/profile-snapshot.json', import.meta.url), 'utf8'));
+  raw.profiles = [raw.profiles[0]];
+  const donut = raw.profiles[0].categoryDonuts[0];
+  donut.status = 'partial'; donut.totalM2 = null;
+  raw.profiles[0].annual.allYears[0].totalM2 = null;
+  donut.segments.forEach((segment, index) => { segment.valueM2 = index === 0 ? 8733679.999999 : null; });
+  const snapshot = normalizeSnapshot(raw), developer = snapshot.developers[0], profile = developer.regions[0], structure = profile.structures[0];
+  assert.equal(structure.complete, false); assert.equal(structure.total, null);
+  assert.equal(structure.areas.housing, 8733679.999999); assert.equal(structure.areas.common, null);
+  assert.equal(profile.annual[0].complete, false); assert.equal(profile.annual[0].total, null);
+  const choices = demoProfileCharts(profile, { id: developer.id, name: developer.name, regions: ['msk'] }, snapshot);
+  assert.ok(!choices.some(chart => chart.id === 'profile/structure/0'));
+});
+test('profile and demo annual hover never treats a known residential subtotal as a complete-year composition', () => {
+  const option = annualOption([{ year: 2017, housing: 300000, common: null, nonresidentialEmbedded: null, nonresidentialSeparate: null, complete: false, total: null }], 'light');
+  const text = option.tooltip.formatter({ seriesName: 'Жилая площадь', name: '2017', value: 300, dataIndex: 0 });
+  assert.match(text, /300 тыс\. м²/);
+  assert.doesNotMatch(text, /Доля в году|100%/);
+});
 const missing = '\u2014';
 const tip = (option, value, extra = {}) => option.tooltip.formatter({ name: '2026', seriesName: 'Measured', seriesIndex: 0, dataIndex: 0, value, ...extra });
 const series = (values, unit = 'area', id = 'measured') => ({ id, name: id, unit, points: values.map((y, i) => ({ x: String(2026 + i), y })) });

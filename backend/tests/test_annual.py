@@ -75,6 +75,21 @@ class AnnualTests(unittest.TestCase):
                         self.assertNotIn("TOTAL", [series["id"] for series in chart["series"]])
                         self.assertTrue(chart["rawCategoryValues"])
                         continue
+                    if chart["id"] == "b3_3":
+                        # The new independent trade trace moves values out of the
+                        # legacy residual, without changing any annual total.
+                        trade = [series for series in chart["series"] if series["id"] == "торговля"]
+                        self.assertEqual(len(trade), 1)
+                        self.assertEqual(trade[0]["name"], "Торговые объекты")
+                        bars = [trace for trace in figure.data if trace.type == "bar"]
+                        for index, row in enumerate(chart["rows"]):
+                            self.assertAlmostEqual(sum(row[series["id"]] for series in chart["series"]),
+                                                   sum(float(trace.y[index]) for trace in bars), places=9)
+                        for summary in chart["summaries"]:
+                            subset = frame[frame["year"].between(summary["from"], summary["to"])].drop(columns="year")
+                            self.assertAlmostEqual(sum(value["value"] for value in summary["values"]),
+                                                   float(subset.sum().sum()), places=9)
+                        continue
                     bars = [trace for trace in figure.data if trace.type == "bar"]
                     self.assertEqual([row["name"] for row in chart["series"]], [trace.name for trace in bars])
                     for series, trace in zip(chart["series"], bars):

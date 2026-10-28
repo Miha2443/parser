@@ -1,0 +1,7 @@
+.profile-partial-structure { min-height: 200px; padding: 12px 0; }
+.profile-partial-structure > p { margin: 0 0 12px; color: var(--muted); font-size: 11px; }
+.profile-partial-structure dl { margin: 0; }
+.profile-partial-structure dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.profile-partial-structure dt { min-width: 0; overflow-wrap: anywhere; }
+.profile-partial-structure dd { margin: 0; white-space: nowrap; font-weight: 650; }
+.profile-partial-structure dd span { margin-left: 5px; color: var(--muted); font-size: 10px; font-weight: 400; }

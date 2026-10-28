@@ -112,7 +112,8 @@ class ConstructionTreeTests(unittest.TestCase):
 
     def test_exact_contract_values_cells_and_download_timestamp(self):
         payload = self.service.report()
-        self.assertEqual(set(payload), {"schemaVersion", "version", "generatedAt", "unit", "source", "metrics"})
+        self.assertEqual(set(payload), {"schemaVersion", "version", "generatedAt", "unit", "source", "metrics", "nonresidentialSectors"})
+        self.assertEqual(payload["nonresidentialSectors"]["status"], "unavailable")
         self.assertEqual(payload["schemaVersion"], 1)
         self.assertEqual(payload["unit"], "million_m2")
         self.assertIsInstance(payload["version"], str)
@@ -128,6 +129,53 @@ class ConstructionTreeTests(unittest.TestCase):
             for row, identifier, label, value in ROWS
         ])
         json.dumps(payload, allow_nan=False)
+
+    def registry(self, rows):
+        book = load_workbook(self.path)
+        sheet = book['Реестр ОКС']
+        sheet.delete_rows(1, sheet.max_row)
+        sheet.append(['Назначение', 'Статус объекта', 'Статус РС', 'Общая площадь', 'ОСМ код', 'Тип объекта'])
+        for row in rows:
+            sheet.append(row)
+        book.save(self.path)
+        book.close()
+        self.mtime += 1
+        os.utime(self.path, (self.mtime, self.mtime))
+
+    def test_sectors_use_explicit_cohort_and_original_registry_rows_including_vpp(self):
+        self.edit_book({'I9': 3.5})
+        self.registry([
+            ['Нежилье', 'Строящийся', 'Действует', 2_000_000, '03 ДОУ', 'ОКС'],
+            ['Нежилье', 'Строящийся', 'Действует', 1_500_000, '10 Торгово-бытовые', 'ВПП'],
+            ['Нежилье', 'Строящийся', 'Не действует', 999_000_000, '03 ДОУ', 'ОКС'],
+            ['Нежилье', 'Введенный', 'Действует', 999_000_000, '03 ДОУ', 'ОКС'],
+            ['Жилье', 'Строящийся', 'Действует', 999_000_000, '01 Жилые', 'ОКС'],
+        ])
+        sectors = self.service.report()['nonresidentialSectors']
+        self.assertEqual(sectors['status'], 'available')
+        self.assertEqual(sectors['registryValue'], 3.5)
+        self.assertEqual(sectors['areaColumn'], 'D')
+        self.assertEqual(sectors['sectorColumn'], 'E')
+        self.assertEqual([(r['label'], r['value'], r['rows']) for r in sectors['items']], [('03 ДОУ', 2, [2]), ('10 Торгово-бытовые', 1.5, [3])])
+
+    def test_mismatch_or_incomplete_sector_evidence_never_replaces_canonical_total(self):
+        for area, sector in [(10, '03 ДОУ'), (None, '03 ДОУ'), (True, '03 ДОУ'), (3.5e6, None)]:
+            with self.subTest(area=area, sector=sector):
+                self.edit_book({'I9': 3.5})
+                self.registry([['Нежилье', 'Строящийся', 'Действует', area, sector, 'ОКС']])
+                payload = self.service.report()
+                self.assertEqual(payload['nonresidentialSectors']['status'], 'unavailable')
+                self.assertEqual(next(m['value'] for m in payload['metrics'] if m['id'] == 'nonresidential'), 3.5)
+
+    def test_content_version_is_stable_across_release_copies_and_processes(self):
+        before = self.service.report()
+        other = Path(self.tmp.name) / 'releases/release-b'
+        shutil.copytree(self.root, other)
+        after = ConstructionTreeService(DataContext(other, use_marts=False)).report()
+        self.assertEqual(before['version'], after['version'])
+        with patch('backend.construction_tree_service.VERSION_DOMAIN', b'tree-v3-example\x00'):
+            changed = ConstructionTreeService(DataContext(other, use_marts=False)).report()
+        self.assertNotEqual(before['version'], changed['version'])
 
     def test_cached_formula_value_not_formula_or_recalculation(self):
         self.edit_book({"I2": "=999999"})

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { permitPageFixture } from './permitPageFixtures.mjs';
 import { loadPermitPageSelection, permitLivingOnly, readPermitPageData, selectPermitArea } from './permitPageData.ts';
 import { breakdownOption, permitBreakdownGrowth, permitBreakdownRows, permitGrowthOption, permitGrowthPoints, permitMainGrowth, permitsMainOption, permitsMainRows } from './permitPresentation.ts';
+import { mortgageAnnualOption, mortgageMonthlyOption, mortgageRatesOption } from './mortgageData.ts';
 
 test('living-only defaults checked and URL opt-out does not change the base request', () => {
   assert.equal(permitLivingOnly(new URLSearchParams()), true);
@@ -82,28 +83,122 @@ test('permit loader validates raw variants and preserves abort signal and one di
   } finally { globalThis.fetch = original; }
 });
 
-test('all permit charts have accessible growth strips and share parent DPR resize helper', () => {
+test('all permit charts use one accessible combined canvas and the shared DPR resize helper', () => {
   const page = readFileSync(new URL('./PermitsPage.tsx', import.meta.url), 'utf8');
   assert.ok(page.includes('createResponsiveChart(container.current'));
   assert.ok(!page.includes('echarts.init(') && !page.includes('new ResizeObserver'));
   assert.ok(page.includes('growth={permitMainGrowth(data)}') && page.includes('growth={permitBreakdownGrowth(b)}'));
   assert.ok(page.includes('type="checkbox" checked={livingOnly}'));
   assert.ok(page.includes('permit-growth-accessible') && page.includes('н/д: ${point.reason}'));
-  assert.ok(page.includes('permitGrowthOption(growth, theme'));
+  assert.ok(page.includes('includeGrowth: true'));
+  assert.ok(!page.includes('growthContainer') && !page.includes('growthInstance') && !page.includes('permit-growth-canvas'));
+  assert.equal((page.match(/createResponsiveChart\(/g) ?? []).length, 1);
+  assert.ok(page.includes('download(instance.current.getDataURL('));
+  assert.ok(!page.includes("document.createElement('canvas')"));
 });
 
-test('growth band is a separate percent line aligned to bar years, rotating labels at dense widths', () => {
+test('combined growth band uses an independent percent grid aligned to bar years at every size', () => {
   const data = selectPermitArea(readPermitPageData(permitPageFixture())), points = permitMainGrowth(data), before = structuredClone(points);
-  for (const width of [320, 1440]) {
-    const growth = permitGrowthOption(points, 'light', { width, height: 120 }), bars = permitsMainOption(data, 'light', { width });
-    assert.equal(growth.series[0].type, 'line'); assert.equal(growth.yAxis.name, '%');
-    assert.deepEqual(growth.xAxis.data, bars.xAxis.data);
-    assert.equal(growth.grid.left, bars.grid.left); assert.equal(growth.grid.right, bars.grid.right);
-    assert.equal(growth.xAxis.boundaryGap, true); assert.equal(growth.series[0].connectNulls, false);
-    assert.equal(growth.series[0].label.rotate, width === 320 ? 90 : 0);
-    assert.equal(growth.series[0].data[0], null); assert.equal(growth.series[0].data.at(-1), points.at(-1).value);
+  for (const theme of ['light', 'dark']) for (const width of [320, 375, 768, 1440]) for (const height of [350, 510, 900]) {
+    for (const [option, expected] of [[permitsMainOption(data, theme, { width, height, includeGrowth: true }), points], [breakdownOption(data.breakdowns[0], theme, { width, height, includeGrowth: true }), permitBreakdownGrowth(data.breakdowns[0])]]) {
+      const line = option.series.at(-1), bars = option.series.slice(0, -1);
+      assert.equal(line.type, 'line'); assert.equal(option.yAxis[0].name, '%'); assert.equal(option.yAxis[1].name, 'тыс. м²');
+      assert.deepEqual(option.xAxis[0].data, option.xAxis[1].data);
+      assert.equal(option.grid[0].left, option.grid[1].left); assert.equal(option.grid[0].right, option.grid[1].right);
+      assert.ok(option.grid[0].top + option.grid[0].height < option.grid[1].top);
+      assert.equal(option.xAxis[0].boundaryGap, true); assert.equal(option.xAxis[1].boundaryGap, true);
+      assert.equal(line.xAxisIndex, 0); assert.equal(line.yAxisIndex, 0); assert.equal(line.connectNulls, false);
+      assert.equal(line.smooth, .25); assert.equal(line.smoothMonotone, 'x');
+      assert.ok(bars.every(series => series.type === 'bar' && series.xAxisIndex === 1 && series.yAxisIndex === 1 && !series.smooth));
+      assert.equal(line.label.rotate, (width - option.grid[0].left - option.grid[0].right) / points.length < 44 ? 90 : 0);
+      assert.deepEqual(line.data, expected.map(point => point.value));
+      const totals = option.graphic.filter(item => item.id.startsWith('permit-total-'));
+      assert.ok(totals.every(item => item.y > option.grid[1].top && item.y < height - option.grid[1].bottom));
+      assert.ok(option.graphic.some(item => item.id === 'permit-growth-title'));
+      assert.ok(option.graphic.every(item => item.id.startsWith('permit-total-') || item.id.startsWith('permit-growth-')));
+      const tip = option.tooltip.formatter({ dataIndex: line.data.length - 1, seriesIndex: option.series.length - 1 });
+      assert.match(tip, /К прошлому году:/); assert.doesNotMatch(tip, /м²/);
+    }
   }
   assert.deepEqual(points, before);
+});
+
+test('combined legends independently hide growth and bar components without changing source totals or forecast', () => {
+  const data = selectPermitArea(readPermitPageData(permitPageFixture())), before = structuredClone(data);
+  const option = permitsMainOption(data, 'light', { includeGrowth: true });
+  const totals = chart => chart.graphic.filter(item => item.id.startsWith('permit-total-'));
+  const growthHidden = permitsMainOption(data, 'light', { includeGrowth: true, hidden: ['К прошлому году, %'] });
+  assert.deepEqual(totals(growthHidden), totals(option));
+  assert.equal(growthHidden.legend.selected['К прошлому году, %'], false);
+  assert.ok(!growthHidden.graphic.some(item => item.id.startsWith('permit-growth-missing-')));
+  const barHidden = permitsMainOption(data, 'light', { includeGrowth: true, hidden: [option.series[0].name] });
+  assert.equal(totals(barHidden).length, 0);
+  assert.deepEqual(barHidden.series.at(-1).data, option.series.at(-1).data);
+  assert.deepEqual(barHidden.series.find(series => series.id === 'forecast').itemStyle, option.series.find(series => series.id === 'forecast').itemStyle);
+  assert.deepEqual(barHidden.yAxis.map(axis => [axis.min, axis.max]), option.yAxis.map(axis => [axis.min, axis.max]));
+  assert.deepEqual(data, before);
+});
+
+test('combined growth never bridges missing, nonconsecutive, zero-base or incomplete periods', () => {
+  const data = selectPermitArea(readPermitPageData(permitPageFixture()));
+  const template = data.permits.presentation.rows.at(-1);
+  data.permits.presentation.rows = [
+    { ...template, year: 2019, selected: 100 }, { ...template, year: 2020, selected: 150 },
+    { ...template, year: 2022, selected: 180 }, { ...template, year: 2023, selected: 0 },
+    { ...template, year: 2024, selected: 200 }, { ...template, year: 2025, selected: null },
+    { ...template, year: 2026, selected: 300, periodComplete: false },
+  ];
+  const option = permitsMainOption(data, 'light', { includeGrowth: true });
+  assert.deepEqual(option.series.at(-1).data, [null, 50, null, -100, null, null, null]);
+  assert.equal(option.series.at(-1).connectNulls, false);
+  const tip = option.tooltip.formatter({ dataIndex: 6, seriesIndex: option.series.length - 1 });
+  assert.match(tip, /н\/д.*Нет полного факта/);
+  data.permits.presentation.rows.forEach(row => { row.periodComplete = false; });
+  const empty = permitsMainOption(data, 'light', { includeGrowth: true });
+  assert.ok(empty.graphic.some(item => item.id === 'permit-growth-empty'));
+  assert.ok(empty.series.at(-1).data.every(value => value === null));
+});
+
+test('presentation labels use uncapped final bar width and scaled fit checks without pre-scaling fonts or grids', () => {
+  const data = selectPermitArea(readPermitPageData(permitPageFixture())), template = data.permits.presentation.rows.at(-1);
+  data.permits.presentation.rows = Array.from({ length: 8 }, (_, index) => ({ ...template, year: 2019 + index, selected: 12345678.9 + index, annualForecast: null }));
+  const view = { width: 3840, height: 1800, includeGrowth: true };
+  const normal = permitsMainOption(data, 'light', view);
+  const option = permitsMainOption(data, 'light', { ...view, presentation: true, fontScale: 3.2 });
+  assert.equal(normal.series[0].label.formatter({ value: 12345678.9 }), '');
+  assert.notEqual(option.series[0].label.formatter({ value: 12345678.9 }), '');
+  const grid = option.grid[1], expectedWidth = (view.width - Math.round(grid.left * 3.2) - Math.round(grid.right * 3.2)) / 8 * .7;
+  assert.equal(option.series[0].barWidth, expectedWidth); assert.ok(expectedWidth > 52);
+  assert.deepEqual(option.grid, normal.grid);
+  assert.equal(option.series[0].label.fontSize, 10);
+  assert.equal(option.series.at(-1).label.fontSize, 10);
+  assert.deepEqual(option.graphic.filter(item => item.id.startsWith('permit-total-')).map(item => [item.x, item.y]), normal.graphic.filter(item => item.id.startsWith('permit-total-')).map(item => [item.x, item.y]));
+  const narrow = permitsMainOption(data, 'light', { ...view, width: 900, presentation: true, fontScale: 3.2 });
+  assert.equal(narrow.series[0].label.formatter({ value: 12345678.9 }), '');
+  assert.equal(narrow.series.at(-1).label.rotate, 90);
+  const block = breakdownOption(data.breakdowns[0], 'light', { ...view, presentation: true, fontScale: 3.2 });
+  assert.ok(block.series.filter(series => series.type === 'bar').every(series => series.barWidth > 52));
+  assert.equal(block.series[0].label.formatter({ value: .00001 }), '');
+});
+
+test('mortgage annual growth alone is smoothed and totals use the supplied canvas height', () => {
+  const value = { annual: 200e9, selected: 100e9, actualThroughMonth: 5, annualYoYPct: 10, selectedYoYPct: 15 };
+  const rows = [{ year: 2024, volume: { ...value, annualYoYPct: null }, count: value }, { year: 2025, volume: value, count: value }], before = structuredClone(rows);
+  const normal = mortgageAnnualOption(rows, 'volume', 'light', 900);
+  assert.deepEqual(normal.graphic, mortgageAnnualOption(rows, 'volume', 'light', 900, 400).graphic);
+  for (const height of [400, 720, 1080]) {
+    const option = mortgageAnnualOption(rows, 'volume', 'light', 900, height), grid = option.grid[1];
+    const pixels = (height - grid.top - grid.bottom) / option.yAxis[1].max;
+    assert.equal(option.graphic[1].y, height - grid.bottom - 200 * pixels - 7);
+    assert.equal(option.graphic[1].id, 'mortgage-total-2025');
+    assert.deepEqual(option.series[2].data, [null, 10]);
+    assert.equal(option.series[2].connectNulls, false);
+    assert.equal(option.series[2].smooth, .25); assert.equal(option.series[2].smoothMonotone, 'x');
+    assert.ok(option.series.slice(0, 2).every(series => series.smooth === undefined));
+  }
+  const month = { period: '2026-01', all: { ratePct: 10 }, primary: { volumeRub: 10, count: 2, ratePct: 6 }, secondary: { volumeRub: 20, count: 4, ratePct: 15 } };
+  for (const option of [mortgageMonthlyOption([month], 'volume', 'light'), mortgageRatesOption([month], 'light')]) assert.ok(option.series.every(series => !series.smooth));
+  assert.deepEqual(rows, before);
 });
 
 test('growth band applies one precision across labels, ticks and hover', () => {

@@ -68,9 +68,28 @@ live-data layouts and complete CSV checks. Results: `%TEMP%/dashboard-constructi
 `/demo` uses the same live data adapters and chart option builders as the report
 pages. Thirteen source groups share each report between lazy, real chart previews
 and the viewer; failed sources have independent retry and are not replaced with
-sample values. Select a subset, choose 15–1800 seconds (default 120), and start
-the cyclic viewer. Institutional branding remains visible. Pause, keyboard
-navigation, fullscreen fallback, Escape, focus restoration and exit are supported.
+sample values. Nothing is selected initially. Individual charts, whole sections
+(with mixed-state checkboxes), or all available charts can be selected. Choose
+15–1800 seconds (default 120) and start the cyclic viewer. Institutional branding
+remains visible. Pause, keyboard navigation, fullscreen fallback, Escape, focus
+restoration and exit are supported. Playback controls hide after three idle
+seconds and reappear near the bottom pointer position, on touch, or using the
+always-visible header control; they can also be pinned. There is no progress bar.
+
+`demoPresentation.ts` adapts measured chart dimensions using discrete display
+tiers, including 1080p and 4K. Axis/measurement fonts, ring totals and bar widths
+scale with the presentation; data, units, gaps and forecast styling are unchanged.
+Permits use one canvas with aligned, independently scaled growth and area grids.
+Only growth curves in permits and annual mortgage are smoothed, without bridging
+unknown observations. Presentation exports are hidden; original downloads remain
+on report pages.
+
+`node src/demoPresentation.browser.cjs` starts and stops a private Vite instance,
+checks chart pixels, numeric-label bounds, category widths, resolution and data
+invariance at 390/1440/1920/3840 px. Fixtures include nine preferential-mortgage
+years and 125 mortgage months. `DEMO_PRESENTATION_REAL=1` starts an isolated API
+against the local data instead of intercepting fixture responses. Screenshots
+and checks are written under `%TEMP%/dashboard-demo-presentation` by default.
 
 The full navigation brand links home. The enlarged Home link remains outside
 the sidebar's scrolling section list. Home no longer loads or displays the last

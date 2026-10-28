@@ -7,7 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { ApiError, request } from './data';
 import { date, download, exportCsv, number } from './format';
 import { breakdownOption, exactNumber, forecastBasisNote, forecastFields, permitKind, permitKindChange, permitPageFilters, permitStructureParams, permitsMainOption, permitsMainRows, permitsUrl } from './constructionPagesData';
-import { permitBreakdownGrowth, permitBreakdownRows, permitGrowthOption, permitMainGrowth } from './permitPresentation';
+import { permitBreakdownGrowth, permitBreakdownRows, permitMainGrowth } from './permitPresentation';
 import { loadPermitPageSelection, permitLivingOnly, selectPermitArea } from './permitPageData';
 import { createResponsiveChart } from './responsiveChart';
 import type { PermitPageData } from './permitPageData';
@@ -21,25 +21,21 @@ import './permits.css';
 
 echarts.use([BarChart, LineChart, AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 390 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number }) {
+function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 510 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number }) {
   const container = useRef<HTMLDivElement>(null), instance = useRef<echarts.ECharts>();
-  const growthContainer = useRef<HTMLDivElement>(null), growthInstance = useRef<echarts.ECharts>();
   const [width, setWidth] = useState(600), [hidden, setHidden] = useState<string[]>([]), [showData, setShowData] = useState(false);
-  const option = useMemo(() => buildOption({ width, height, hidden }), [buildOption, width, height, hidden]);
-  const series = option.series as { name: string; itemStyle: { color: string; borderType?: string }; data: (number | null)[] }[];
+  const option = useMemo(() => buildOption({ width, height, hidden, includeGrowth: true }), [buildOption, width, height, hidden]);
+  const series = option.series as { name: string; type: string; itemStyle: { color: string; borderType?: string }; data: (number | null)[] }[];
   useEffect(() => {
-    if (!container.current || !growthContainer.current) return;
+    if (!container.current) return;
     const responsive = createResponsiveChart(container.current, setWidth, chart => { instance.current = chart; });
-    const responsiveGrowth = createResponsiveChart(growthContainer.current, undefined, chart => { growthInstance.current = chart; });
     instance.current = responsive.chart;
-    growthInstance.current = responsiveGrowth.chart;
     setWidth(container.current.clientWidth);
-    return () => { responsive.dispose(); responsiveGrowth.dispose(); instance.current = undefined; growthInstance.current = undefined; };
+    return () => { responsive.dispose(); instance.current = undefined; };
   }, []);
-  useEffect(() => { growthInstance.current?.setOption(permitGrowthOption(growth, theme, { width, height: 120 }), true); }, [growth, theme, width]);
   useEffect(() => {
     instance.current?.setOption({ ...option, legend: { show: false, selected: Object.fromEntries(series.map(s => [s.name, !hidden.includes(s.name)])) },
-      backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif' }, aria: { enabled: true },
+      backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif' },
       animation: false,
     }, true);
   }, [option, theme, hidden]);
@@ -50,28 +46,15 @@ function PermitChart({ buildOption, theme, label, rows, filename, growth, growth
     if (dataIndex >= 0) instance.current?.dispatchAction({ type: 'showTip', seriesIndex: index, dataIndex });
   }
   function clearHighlight() { instance.current?.dispatchAction({ type: 'downplay' }); instance.current?.dispatchAction({ type: 'hideTip' }); }
-  async function exportPng() {
-    const charts = [growthInstance.current, instance.current];
-    if (charts.some(chart => !chart)) return;
+  function exportPng() {
+    if (!instance.current) return;
     const backgroundColor = theme === 'light' ? '#ffffff' : '#202225', pixelRatio = Math.max(2, window.devicePixelRatio || 1);
-    const frames = await Promise.all(charts.map(chart => new Promise<HTMLImageElement | null>(resolve => {
-      const frame = new Image();
-      frame.onload = () => resolve(frame); frame.onerror = () => resolve(null);
-      frame.src = chart!.getDataURL({ type: 'png', pixelRatio, backgroundColor });
-    })));
-    if (frames.some(frame => !frame)) return;
-    const images = frames as HTMLImageElement[], canvas = document.createElement('canvas'), context = canvas.getContext('2d');
-    if (!context) return;
-    canvas.width = Math.max(...images.map(frame => frame.naturalWidth)); canvas.height = images.reduce((sum, frame) => sum + frame.naturalHeight, 0);
-    context.fillStyle = backgroundColor; context.fillRect(0, 0, canvas.width, canvas.height);
-    let top = 0;
-    for (const frame of images) { context.drawImage(frame, 0, top); top += frame.naturalHeight; }
-    download(canvas.toDataURL('image/png'), `${filename}.png`);
+    download(instance.current.getDataURL({ type: 'png', pixelRatio, backgroundColor }), `${filename}.png`);
   }
   return <div className="chart-block permit-chart">
-    <div className="permit-growth"><p>К прошлому году, % · {growthLabel}</p><div ref={growthContainer} className="permit-growth-canvas" style={{ height: 120 }} role="img" aria-label={`${label}: изменение к прошлому году, ${growthLabel}`} /><div className="permit-growth-accessible"><table><caption>К прошлому году, % · {growthLabel}</caption><thead><tr>{growth.map(point => <th key={point.year} scope="col">{point.year}</th>)}</tr></thead><tbody><tr>{growth.map(point => <td key={point.year}>{point.value === null ? `н/д: ${point.reason}` : `${point.value > 0 ? '+' : ''}${number(point.value, 1)} %`}</td>)}</tr></tbody></table></div></div>
-    <div className="legend chart-legend">{series.map((s, index) => <button key={s.name} type="button" className={hidden.includes(s.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(s.name)} title={`${hidden.includes(s.name) ? 'Показать' : 'Скрыть'}: ${s.name}`} onMouseEnter={() => highlight(index)} onMouseLeave={clearHighlight} onFocus={() => highlight(index)} onBlur={clearHighlight} onClick={() => { clearHighlight(); setHidden(previous => previous.includes(s.name) ? previous.filter(name => name !== s.name) : [...previous, s.name]); }}><i className={s.itemStyle.borderType === 'dashed' ? 'forecast-swatch' : undefined} style={{ background: s.itemStyle.color }} />{s.name}</button>)}</div>
-    <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={label} />
+    <div className="legend chart-legend">{series.map((s, index) => <button key={s.name} type="button" className={hidden.includes(s.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(s.name)} title={`${hidden.includes(s.name) ? 'Показать' : 'Скрыть'}: ${s.name}`} onMouseEnter={() => highlight(index)} onMouseLeave={clearHighlight} onFocus={() => highlight(index)} onBlur={clearHighlight} onClick={() => { clearHighlight(); setHidden(previous => previous.includes(s.name) ? previous.filter(name => name !== s.name) : [...previous, s.name]); }}><i className={s.type === 'line' ? 'permit-growth-swatch' : s.itemStyle.borderType === 'dashed' ? 'forecast-swatch' : undefined} style={{ background: s.itemStyle.color }} />{s.name}</button>)}</div>
+    <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={`${label}; изменение к прошлому году, ${growthLabel}`} />
+    <div className="permit-growth-accessible"><table><caption>К прошлому году, % · {growthLabel}</caption><thead><tr>{growth.map(point => <th key={point.year} scope="col">{point.year}</th>)}</tr></thead><tbody><tr>{growth.map(point => <td key={point.year}>{point.value === null ? `н/д: ${point.reason}` : `${point.value > 0 ? '+' : ''}${number(point.value, 1)} %`}</td>)}</tr></tbody></table></div>
     <div className="chart-data"><button type="button" className="data-toggle" onClick={() => setShowData(value => !value)} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
     {showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}
   </div>;
@@ -183,7 +166,7 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
         </div>
         {data.breakdowns.length ? data.breakdowns.map(b => {
           return <div className="cp-subsection" key={b.id}><div className="cp-section-heading"><div><h3>{b.title}</h3><p>Москва · {b.unit} · {date(data.source.date)}</p></div></div>
-            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={350} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
+            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={470} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
             <details className="cp-source cp-breakdown-source"><summary>Источник и основание: {b.title}</summary><div className="cp-source-content">{b.notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}</div></details></div>;
         }) : <ConstructionEmpty>Детализация отсутствует в источнике.</ConstructionEmpty>}
       </section>

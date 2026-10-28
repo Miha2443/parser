@@ -121,20 +121,20 @@ const tones = (theme: Theme) => ({ text: theme === 'light' ? '#283b45' : '#eef2f
 const scale = (metric: MortgageMetric) => metric === 'volume' ? 1e9 : 1000;
 export const mortgageMetricUnit = (metric: MortgageMetric) => metric === 'volume' ? 'млрд руб.' : 'тыс. шт.';
 
-export function mortgageAnnualOption(rows: MortgageAnnual[], metric: MortgageMetric, theme: Theme, width = 700): EChartsCoreOption {
+export function mortgageAnnualOption(rows: MortgageAnnual[], metric: MortgageMetric, theme: Theme, width = 700, height = 400): EChartsCoreOption {
   const t = tones(theme), values = rows.map(row => row[metric]), divisor = scale(metric), unit = mortgageMetricUnit(metric);
   const measures = values.flatMap(row => [row.annual, row.selected].map(value => value === null ? null : value / divisor));
   const format = chartNumberFormatter([...measures, ...values.flatMap(row => [row.annualYoYPct, row.selectedYoYPct])]), pct = format;
   const left = width < 380 ? 40 : 52, slot = Math.max(1, width - left - 15) / Math.max(1, rows.length), compact = slot < 38, rotateYears = slot < 28, showGrowth = slot >= 48;
   const maximum = Math.max(1, ...measures.filter((value): value is number => value !== null));
   const grid = { left, right: 15, top: 154, bottom: rotateYears ? 87 : 51 }, axisMaximum = maximum * 1.25;
-  const pixels = (400 - grid.top - grid.bottom) / axisMaximum;
+  const pixels = (height - grid.top - grid.bottom) / axisMaximum;
   // Reference labels are independent of the gray remainder, including full and partial years.
   const graphic = values.flatMap((row, index) => {
     if (row.selected === null) return [];
     const total = (row.annual ?? row.selected) / divisor, label = format(total), rotated = slot < label.length * 6 + 6;
     const insideHeight = compact ? format(row.selected / divisor).length * 5.5 + 4 : 14;
-    return [{ id: `mortgage-total-${rows[index].year}`, type: 'group', x: left + slot * (index + .5), y: 400 - grid.bottom - Math.max(total * pixels, insideHeight) - 7,
+    return [{ id: `mortgage-total-${rows[index].year}`, type: 'group', x: left + slot * (index + .5), y: height - grid.bottom - Math.max(total * pixels, insideHeight) - 7,
       rotation: rotated ? Math.PI / 2 : 0, silent: true, z: 20,
       children: [{ type: 'text', style: { text: label, fill: t.text, font: `600 ${compact ? 9 : 11}px Segoe UI`, align: rotated ? 'left' : 'center', verticalAlign: rotated ? 'middle' : 'bottom' } }],
     }];
@@ -155,7 +155,7 @@ export function mortgageAnnualOption(rows: MortgageAnnual[], metric: MortgageMet
     series: [
       { name: 'Выбранный период', type: 'bar', stack: 'annual', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 47, data: values.map(row => row.selected === null ? null : row.selected / divisor), itemStyle: { color: '#dc6068' }, emphasis: { focus: 'series' }, labelLayout: { hideOverlap: false }, label: { show: true, position: 'insideBottom', distance: 4, rotate: compact ? 90 : 0, align: compact ? 'left' : 'center', verticalAlign: compact ? 'middle' : 'bottom', color: '#fff', textBorderColor: '#dc6068', textBorderWidth: 1, fontSize: compact ? 9 : 11, formatter: (point: { dataIndex: number; value: number | null }) => { const row = values[point.dataIndex]; if (point.value === null) return ''; const growth = row.selectedYoYPct, label = format(point.value); return `${point.value * pixels < 14 ? `{small|${label}}` : label}${showGrowth && growth !== null && point.value / maximum * 180 >= 49 ? `\n{${growth >= 0 ? 'up' : 'down'}|${growth > 0 ? '+' : ''}${pct(growth)}%}` : ''}`; }, rich: { small: { color: theme === 'light' ? '#a23946' : '#ffd7dc', textBorderWidth: 0, fontSize: compact ? 9 : 11 }, up: { color: '#fff', backgroundColor: '#358b75', padding: [2, 3], fontSize: 9, lineHeight: 23 }, down: { color: '#fff', backgroundColor: '#565f68', padding: [2, 3], fontSize: 9, lineHeight: 23 } } } },
       { name: 'Годовые значения', type: 'bar', stack: 'annual', xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 47, data: values.map(row => row.annual === null || row.selected === null || row.annual === row.selected ? null : (row.annual - row.selected) / divisor), itemStyle: { color: t.gray }, label: { show: false }, emphasis: { focus: 'series' } },
-      { name: 'Годовой прирост, %', type: 'line', xAxisIndex: 0, yAxisIndex: 0, connectNulls: false, data: values.map(row => row.annualYoYPct), itemStyle: { color: '#3b7787' }, lineStyle: { color: '#3b7787', type: 'dashed', width: 1.5 }, symbol: 'circle', symbolSize: 5, label: { show: slot >= 34, position: 'top', color: '#3b7787', fontSize: 10, formatter: (point: { value: number | null }) => point.value === null ? '' : `${point.value > 0 ? '+' : ''}${pct(point.value)}%` } },
+      { name: 'Годовой прирост, %', type: 'line', xAxisIndex: 0, yAxisIndex: 0, connectNulls: false, smooth: .25, smoothMonotone: 'x', data: values.map(row => row.annualYoYPct), itemStyle: { color: '#3b7787' }, lineStyle: { color: '#3b7787', type: 'dashed', width: 1.5 }, symbol: 'circle', symbolSize: 5, label: { show: slot >= 34, position: 'top', color: '#3b7787', fontSize: 10, formatter: (point: { value: number | null }) => point.value === null ? '' : `${point.value > 0 ? '+' : ''}${pct(point.value)}%` } },
     ],
   };
 }

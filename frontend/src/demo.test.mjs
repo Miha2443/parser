@@ -58,6 +58,30 @@ test('every chart page has an explicit source, without whole-page mounts, iframe
   assert.doesNotMatch(source, /<iframe|html2canvas|toDataURL|<img[^>]+(?:\.png|\.jpe?g)/);
   assert.match(source, /<Chart /); assert.match(source, /IntersectionObserver/); assert.match(source, /createPortal/);
 });
+
+test('demo starts with no selection, a disabled start action, and named section checkboxes', async () => {
+  const { createElement } = await import('react'), { renderToStaticMarkup } = await import('react-dom/server');
+  const { default: DemoPage } = await import('./DemoPage.tsx');
+  const html = renderToStaticMarkup(createElement(DemoPage, { theme: 'light' }));
+  assert.match(html, /Выбрано: 0 \/ 0/);
+  assert.match(html, /<button[^>]*class="demo-start"[^>]*disabled=""/);
+  assert.equal((html.match(/checked=""/g) ?? []).length, 1, 'only browser fullscreen is checked by default');
+  for (const source of demoSources) assert.ok(html.includes(`aria-label="Все графики раздела: ${source.title}"`));
+});
+
+test('presentation adapts the measured canvas only in the viewer, without extra growth canvases or progress UI', () => {
+  const source = readFileSync(new URL('./DemoPage.tsx', import.meta.url), 'utf8');
+  assert.match(source, /canvas \?\? element/);
+  assert.match(source, /width = Math\.round\(bounds\.width\), height = Math\.round\(bounds\.height\)/);
+  assert.match(source, /entry\.option\(theme, Math\.max\(240, width\), hidden, height\)/);
+  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, hidden\)/);
+  assert.match(source, /useSlideClock\(step, seconds, paused, next\)/);
+  assert.doesNotMatch(source, /demo-growth-chart|permitGrowthOption|demo-progress|progressbar/);
+  const css = readFileSync(new URL('./demo.css', import.meta.url), 'utf8');
+  assert.match(css, /\.demo-viewer-controls\[hidden\]\s*\{\s*display: none/);
+  assert.match(css, /\.demo-full-chart \.chart-data, \.demo-full-chart \.chart-data-panel\s*\{\s*display: none/);
+  assert.doesNotMatch(css, /font-size:[^;}]*\bvw\b/);
+});
 for (const source of demoSources) test(`real ${source.id} adapter shares one normalized report, preserves data, and builds responsive live options`, async t => {
   const calls = [], signal = new AbortController().signal;
   t.mock.method(globalThis, 'fetch', async (url, options) => { calls.push(url); assert.equal(options.signal, signal); return Response.json(fixtures.response(url)); });
@@ -76,7 +100,13 @@ for (const source of demoSources) test(`real ${source.id} adapter shares one nor
   assert.equal(new Set(calls).size, calls.length, `${source.id} must not refetch per thumbnail`);
   if (source.id === 'preferential') assert.equal(charts.length, 16);
   if (source.id === 'annual') { assert.equal(charts.length, 7); assert.equal(charts[0].option('light', 1000, []).series.at(-1).label.show, true); }
-  if (source.id === 'permits') { assert.ok(charts[0].growth.length); assert.ok(charts[0].growth.some(point => point.value !== null)); }
+  if (source.id === 'permits') {
+    const option = charts[0].option('light', 1000, [], 700);
+    assert.equal(option.grid.length, 2, 'bars and growth share one canvas');
+    assert.ok(option.series.some(series => series.type === 'line' && series.yAxisIndex === 0));
+    assert.ok(option.series.some(series => series.type === 'bar' && series.yAxisIndex === 1));
+    assert.equal('growth' in charts[0], false);
+  }
 });
 test('source errors and cancellations propagate instead of silently returning empty charts', async t => {
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }));

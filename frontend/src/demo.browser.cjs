@@ -21,11 +21,18 @@ async function painted(page) {
   });
   return canvas.evaluate(node => ({ width: node.width, cssWidth: node.getBoundingClientRect().width, height: node.height, cssHeight: node.getBoundingClientRect().height }));
 }
-async function noOverflow(page) { assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && (!document.querySelector('.demo-viewer') || document.querySelector('.demo-viewer').scrollWidth <= innerWidth + 1))); }
+async function noOverflow(page) {
+  const overflow = await page.evaluate(() => ({ width: innerWidth, document: document.documentElement.scrollWidth, viewer: document.querySelector('.demo-viewer')?.scrollWidth, nodes: [...document.querySelectorAll('.demo-page *, .demo-viewer *')].filter(node => { const rect = node.getBoundingClientRect(); return rect.width && (rect.x < -1 || rect.right > innerWidth + 1); }).slice(0, 10).map(node => ({ class: node.className, width: node.getBoundingClientRect().width, right: node.getBoundingClientRect().right })) }));
+  if (overflow.document > overflow.width + 1 || overflow.viewer > overflow.width + 1) await page.screenshot({ path: path.join(output, 'overflow.png') });
+  assert.ok(overflow.document <= overflow.width + 1 && !(overflow.viewer > overflow.width + 1), JSON.stringify(overflow));
+}
+async function revealControls(page) {
+  if (await page.locator('.demo-viewer-controls').isHidden()) await page.getByRole('button', { name: 'Показать управление', exact: true }).click();
+}
 async function main() {
   const browser = await chromium.launch({ channel: 'chrome', headless: true }), checks = [], errors = [];
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', acceptDownloads: true, deviceScaleFactor: 2 });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', hasTouch: true, deviceScaleFactor: 2 });
     const page = await context.newPage();
     let failIpc = false, emptyLinear = false, emptySalary = false, apiCalls = [], releasePermits;
     const permitsGate = new Promise(resolve => { releasePermits = resolve; });
@@ -51,6 +58,8 @@ async function main() {
     await page.goto(`${base}/demo`);
     await page.locator('[data-demo-source="permits"] [role="status"]').waitFor();
     assert.equal(await page.locator('[data-demo-source="permits"]').getAttribute('aria-busy'), 'true');
+    assert.equal(await page.locator('[data-demo-source="permits"] .demo-source-selection input').isDisabled(), true);
+    assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0, 'sources arriving asynchronously must not be selected');
     releasePermits();
     await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, { timeout: 30000 });
     assert.equal(await page.locator('.demo-error').count(), 0);
@@ -59,7 +68,7 @@ async function main() {
     assert.ok(await page.locator('.demo-page canvas').count() < await page.locator('.demo-chart-choice').count());
     await noOverflow(page);
     await page.screenshot({ path: path.join(output, 'configuration-desktop.png') });
-    checks.push('13 API sources, real lazy live previews, default interval, no iframes');
+    checks.push('13 API sources, real lazy live previews, default interval, no iframes, asynchronously loaded charts unselected');
 
     // Home is outside the only scrollable navigation region, including compact/mobile.
     const pinned = page.locator('.navigation-home'), market = page.getByRole('button', { name: 'Рынок недвижимости', exact: true });
@@ -76,8 +85,25 @@ async function main() {
     checks.push('pinned accessible Home, compact mode and modified brand click');
 
     const all = page.getByRole('checkbox', { name: 'Все графики', exact: true });
-    await all.uncheck(); assert.equal(await page.getByRole('button', { name: 'Начать показ', exact: true }).isEnabled(), false);
+    assert.equal(await all.isChecked(), false);
+    assert.equal(await page.getByRole('button', { name: 'Начать показ', exact: true }).isEnabled(), false);
+    assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
     const choices = page.locator('.demo-chart-choice input:not(:disabled)');
+    const sections = page.locator('.demo-source').filter({ has: page.locator('.demo-chart-choice input:not(:disabled)') });
+    const firstSection = sections.nth(0), secondSection = sections.nth(1), firstGroup = firstSection.locator('.demo-source-selection input'), secondGroup = secondSection.locator('.demo-source-selection input');
+    const firstSectionCount = await firstSection.locator('.demo-chart-choice input:not(:disabled)').count();
+    await firstSection.locator('.demo-chart-choice input:not(:disabled)').first().check();
+    assert.equal(await firstGroup.evaluate(node => node.indeterminate), firstSectionCount > 1);
+    assert.equal(await all.evaluate(node => node.indeterminate), true);
+    await firstGroup.check(); assert.equal(await firstSection.locator('.demo-chart-choice input:checked').count(), firstSectionCount);
+    await secondGroup.check(); const secondSectionCount = await secondSection.locator('.demo-chart-choice input:checked').count();
+    await firstGroup.uncheck(); assert.equal(await firstSection.locator('.demo-chart-choice input:checked').count(), 0);
+    assert.equal(await secondSection.locator('.demo-chart-choice input:checked').count(), secondSectionCount, 'section changes preserve other sections');
+    await all.check(); assert.equal(await page.locator('.demo-source-selection input:enabled:not(:checked)').count(), 0);
+    await firstGroup.uncheck(); assert.equal(await all.evaluate(node => node.indeterminate), true);
+    assert.equal(await secondGroup.isChecked(), true, 'deselecting a section from global all preserves the rest');
+    await all.check(); await all.uncheck();
+    assert.equal(await page.locator('.demo-source-selection input:checked').count(), 0);
     await choices.nth(0).check(); await choices.nth(1).check();
     assert.match(await page.locator('.demo-selection-count').innerText(), /2 \/ /);
     const slider = page.getByRole('slider', { name: 'Интервал показа' });
@@ -85,16 +111,55 @@ async function main() {
     await slider.press('Home'); assert.equal(await slider.inputValue(), '15');
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
-    await page.getByRole('dialog').waitFor(); await painted(page);
+    await page.getByRole('dialog').waitFor(); const initialCanvas = await painted(page);
     assert.equal(await page.locator('.demo-page').count(), 0); assert.equal(await page.locator('.demo-stage canvas').count(), 1);
     assert.equal(await page.evaluate(() => document.getElementById('root').inert), true);
+    assert.equal(await page.getByRole('progressbar').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Данные и скачивание', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Завершить демонстрацию', exact: true }).evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Shift+Tab'); assert.equal(await page.getByRole('button', { name: 'Скрыть управление', exact: true }).evaluate(node => node === document.activeElement), true);
     await page.keyboard.press('Shift+Tab'); assert.equal(await page.getByRole('button', { name: 'Полный экран браузера', exact: true }).evaluate(node => node === document.activeElement), true);
-    await page.keyboard.press('Tab'); assert.equal(await page.getByRole('button', { name: 'Завершить демонстрацию', exact: true }).evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Tab'); assert.equal(await page.getByRole('button', { name: 'Скрыть управление', exact: true }).evaluate(node => node === document.activeElement), true);
+    const exit = page.getByRole('button', { name: 'Завершить демонстрацию', exact: true });
+    await exit.focus(); await page.mouse.move(100, 100);
+    const beforeRevealRequests = apiCalls.length;
+    await page.clock.runFor(3200);
+    assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true);
+    assert.equal(await page.getByRole('button', { name: 'Следующий график', exact: true }).count(), 0, 'hidden controls leave the accessibility tree');
+    assert.equal(await page.getByRole('button', { name: 'Полный экран браузера', exact: true }).count(), 0);
+    assert.equal(await exit.isVisible(), true);
+    assert.equal((await painted(page)).cssHeight, initialCanvas.cssHeight, 'hiding the footer must not resize the chart');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.getByRole('button', { name: 'Показать управление', exact: true }).evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
+    await page.getByRole('button', { name: 'Приостановить показ', exact: true }).focus();
+    await page.clock.runFor(3200); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true, 'keyboard focus prevents hiding');
+    await page.getByRole('button', { name: 'Закрепить управление', exact: true }).click();
+    await exit.focus(); await page.clock.runFor(3200);
+    assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true, 'pinned controls remain visible');
+    await page.getByRole('button', { name: 'Открепить управление', exact: true }).click();
+    await exit.focus(); await page.clock.runFor(3200);
+    assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true);
+    await page.mouse.move(400, 880); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
+    await page.mouse.move(100, 100); await page.clock.runFor(3200);
+    assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true);
+    await page.touchscreen.tap(300, 300); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
+    await page.getByRole('button', { name: 'Скрыть управление', exact: true }).tap();
+    assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true, 'explicit touch hide does not reveal itself');
+    await page.getByRole('button', { name: 'Показать управление', exact: true }).tap();
+    assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
+    assert.equal(apiCalls.length, beforeRevealRequests, 'control visibility must not fetch data or rebuild the queue');
+    // Reset to a known slide boundary after exercising the idle timer.
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowLeft');
     const firstTitle = await page.locator('#demo-slide-title').innerText();
-    await page.clock.runFor(16000); const secondTitle = await page.locator('#demo-slide-title').innerText(); assert.notEqual(secondTitle, firstTitle);
-    await page.clock.runFor(15000); assert.equal(await page.locator('#demo-slide-title').innerText(), firstTitle);
+    await page.clock.runFor(16000);
+    await page.waitForFunction(title => document.getElementById('demo-slide-title').textContent !== title, firstTitle);
+    const secondTitle = await page.locator('#demo-slide-title').innerText(); assert.notEqual(secondTitle, firstTitle);
+    await page.clock.runFor(15000);
+    await page.waitForFunction(title => document.getElementById('demo-slide-title').textContent === title, firstTitle);
     await page.clock.runFor(7000);
+    await revealControls(page);
     await page.getByRole('button', { name: 'Приостановить показ', exact: true }).click();
     await page.clock.runFor(30000); assert.equal(await page.locator('#demo-slide-title').innerText(), firstTitle);
     await page.getByRole('button', { name: 'Продолжить показ', exact: true }).click();
@@ -106,7 +171,8 @@ async function main() {
     assert.equal(await page.evaluate(() => document.getElementById('root').inert), false);
     assert.equal(await page.getByRole('button', { name: 'Начать показ', exact: true }).evaluate(node => node === document.activeElement), true);
     assert.equal(await slider.inputValue(), '15'); assert.match(await page.locator('.demo-selection-count').innerText(), /2 \/ /);
-    checks.push('subset, empty selection, range endpoints, timed cycle, pause/resume, arrows, focus trap, Escape restoration');
+    checks.push('section/global mixed selection, idle hiding, bottom-pointer/keyboard/touch reveal, focus hold, pin, no progress/exports, stable layout and queue');
+    checks.push('subset, range endpoints, timed cycle without progress UI, pause/resume, arrows, focus trap, Escape restoration');
 
     await page.evaluate(() => { window.demoFullscreenMode = 'reject'; });
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).check();
@@ -121,14 +187,14 @@ async function main() {
     await page.evaluate(() => document.exitFullscreen()); await page.locator('.demo-page').waitFor();
     checks.push('fullscreen denial fallback and native fullscreen enter/exit');
 
-    // A single chart loops correctly, and exports are the original data, not raster slides.
+    // A single chart loops correctly even while all playback controls are hidden.
     await all.check(); await all.uncheck(); await choices.first().check();
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
     await page.clock.runFor(31000); assert.equal(await page.locator('.demo-slide-count').innerText(), '1 / 1');
-    await page.getByRole('button', { name: 'Данные и скачивание', exact: true }).click();
-    const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'CSV', exact: true }).click(); assert.ok((await download).suggestedFilename().endsWith('.csv'));
-    await page.keyboard.press('Escape'); checks.push('one-chart loop and original CSV download');
+    assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true);
+    assert.equal(await page.getByRole('button', { name: 'Данные и скачивание', exact: true }).count(), 0);
+    await page.keyboard.press('Escape'); checks.push('one-chart loop with hidden controls and no presentation export actions');
 
     await all.check();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
@@ -140,7 +206,8 @@ async function main() {
       assert.ok(await chart.locator(':scope > .chart-block canvas').evaluate(node => node.width > 0 && node.height > 0));
       assert.equal(await page.locator('.demo-page').count(), 0);
       if (id === 'permits/main') {
-        assert.equal(await page.locator('.demo-growth-chart canvas').count(), 1);
+        assert.equal(await page.locator('.demo-growth-chart canvas').count(), 0);
+        assert.equal(await page.locator('.demo-stage canvas').count(), 1, 'permits and YoY share one live canvas');
         await painted(page); await page.screenshot({ path: path.join(output, 'viewer-permits-live-yoy.png') });
       }
       if (id === 'preferential/volumeMln/annual') {
@@ -149,20 +216,26 @@ async function main() {
         await legend.click(); assert.equal(await legend.getAttribute('aria-pressed'), 'true');
         await page.screenshot({ path: path.join(output, 'viewer-preferential.png') });
       }
-      await page.getByRole('button', { name: 'Следующий график', exact: true }).click();
+      await page.keyboard.press('ArrowRight');
     }
     assert.equal(seen.size, count); assert.equal(new Set([...seen].map(id => id.split('/')[0])).size, 13);
     await page.keyboard.press('Escape');
     await all.uncheck(); await choices.first().check();
-    checks.push(`all ${count} available charts render sequentially, permits reuse live YoY, preferential legend restores`);
+    checks.push(`all ${count} available charts render sequentially, permits use one live canvas, preferential legend restores`);
 
-    for (const width of [320, 390, 768, 1440]) {
-      await page.setViewportSize({ width, height: 800 });
+    for (const [width, height] of [[320, 800], [390, 800], [768, 800], [1440, 800], [1920, 1080], [3840, 2160], [844, 390]]) {
+      await page.setViewportSize({ width, height });
       await noOverflow(page);
       await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
       const pixels = await painted(page); assert.ok(pixels.width >= pixels.cssWidth * 1.9);
       const bounds = await page.locator('.demo-viewer').boundingBox(); assert.ok(bounds.x >= 0 && bounds.width <= width + 1);
       assert.equal(await page.locator('.demo-viewer .institutional-brand').isVisible(), true);
+      const headingFont = await page.locator('#demo-slide-title').evaluate(node => parseFloat(getComputedStyle(node).fontSize));
+      if (width === 1920) assert.equal(headingFont, 44);
+      if (width === 3840) assert.equal(headingFont, 76);
+      const heading = await page.locator('.demo-slide-heading').boundingBox(), stage = await page.locator('.demo-stage').boundingBox();
+      assert.ok(heading.y + heading.height <= stage.y + 1, 'title and chart must not overlap');
+      assert.ok(pixels.cssHeight >= 140);
       await noOverflow(page); await page.screenshot({ path: path.join(output, `viewer-${width}.png`) });
       await page.keyboard.press('Escape');
       if (width === 390) {
@@ -177,12 +250,15 @@ async function main() {
         await all.check(); await all.uncheck(); await choices.first().check(); await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
       }
     }
-    checks.push('320/390/768/1440 responsive live canvases at DPR2, persistent institutional brand, mobile Home');
+    checks.push('320/390/768/1440, 1920x1080, 3840x2160 and mobile landscape DPR2 canvases, discrete title tiers, no overlaps, mobile Home');
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     failIpc = true; emptyLinear = true; emptySalary = true;
     await page.reload(); await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13);
     await page.locator('[data-demo-source="ipc"] [role="alert"]').waitFor();
-    assert.equal(await page.locator('[data-demo-source="linear"] input:disabled').count(), 6);
+    assert.equal(await page.locator('[data-demo-source="linear"] .demo-chart-choice input:disabled').count(), 6);
+    assert.equal(await page.locator('[data-demo-source="linear"] .demo-source-selection input').isDisabled(), true);
+    assert.equal(await page.locator('[data-demo-source="salary"] .demo-source-selection input').isDisabled(), true);
     assert.match(await page.locator('[data-demo-source="salary"]').innerText(), /Нет доступных графиков/);
     failIpc = false;
     await page.getByRole('button', { name: 'Повторить: ИПЦ', exact: true }).click();

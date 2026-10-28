@@ -8,8 +8,8 @@ import { loadCommissioningCatalog, loadCommissioningReport, operationalChartOpti
 import type { OperationalCatalog, OperationalReport } from './commissioningData';
 import { breakdownOption, constructionHistoryChart, constructionHistoryRows, loadDomRfData, permitsMainOption, permitsMainRows, realizationHistoryRows, realizationStatuses } from './constructionPagesData.ts';
 import { loadPermitPageSelection, selectPermitArea } from './permitPageData.ts';
-import { permitBreakdownGrowth, permitBreakdownRows, permitMainGrowth } from './permitPresentation.ts';
-import type { PermitGrowthPoint } from './permitPresentation';
+import { permitBreakdownRows } from './permitPresentation.ts';
+import { demoPresentationScale } from './demoPresentation.ts';
 import { domrfDonutOption, domrfLineOption, domrfRealizationHistoryOption } from './domrfPresentation.ts';
 import { economicsChartOption, economicsChartRows, loadEconomicsPage } from './economicsData.ts';
 import { linearHistoryOption, linearYearRows, loadLinearDashboard } from './linearDashboardData.ts';
@@ -25,7 +25,6 @@ export const DEMO_DEFAULT_SECONDS = 120;
 export type DemoRows = (string | number | null)[][];
 export type DemoChart = {
   id: string; title: string; context: string; href: string; empty: boolean; rows: DemoRows;
-  growth?: PermitGrowthPoint[];
   option: (theme: Theme, width: number, hidden: string[], height?: number) => EChartsCoreOption;
 };
 export type DemoSource = { id: string; title: string; href: string; load: (signal: AbortSignal) => Promise<DemoChart[]> };
@@ -96,8 +95,8 @@ async function apartmentCharts(signal: AbortSignal): Promise<DemoChart[]> {
 }
 async function permitsCharts(signal: AbortSignal): Promise<DemoChart[]> {
   const data = selectPermitArea(await loadPermitPageSelection({ permitKind: 'total' }, signal), true), caption = context(`${data.permits.region} · ${data.permits.periodLabel}`, data);
-  return [{ ...entry('permits/main', 'Выдача разрешений по годам', caption, '/construction/permits', demoHasValues(data.permits.presentation.rows.flatMap(row => [row.selected, row.annualForecast])), permitsMainRows(data), (theme, width, hidden, height) => permitsMainOption(data, theme, { width, hidden, height })), growth: permitMainGrowth(data) },
-    ...data.breakdowns.map(chart => ({ ...entry(`permits/${chart.id}`, chart.title, `${caption} · ${chart.periodLabel}`, '/construction/permits', hasPoints(chart), permitBreakdownRows(chart, data.version), (theme, width, hidden, height) => breakdownOption(chart, theme, { width, hidden, height })), growth: permitBreakdownGrowth(chart) }))];
+  return [entry('permits/main', 'Выдача разрешений по годам', caption, '/construction/permits', demoHasValues(data.permits.presentation.rows.flatMap(row => [row.selected, row.annualForecast])), permitsMainRows(data), (theme, width, hidden, height) => permitsMainOption(data, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })),
+    ...data.breakdowns.map(chart => entry(`permits/${chart.id}`, chart.title, `${caption} · ${chart.periodLabel}`, '/construction/permits', hasPoints(chart), permitBreakdownRows(chart, data.version), (theme, width, hidden, height) => breakdownOption(chart, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })))];
 }
 async function domrfCharts(signal: AbortSignal): Promise<DemoChart[]> {
   const data = await loadDomRfData('msk', signal), caption = context(data.region.label, data), history = constructionHistoryChart(data.construction.history);
@@ -148,7 +147,7 @@ async function mortgageCharts(signal: AbortSignal): Promise<DemoChart[]> {
   const charts: DemoChart[] = [];
   for (const metric of ['volume', 'count'] as const) {
     const title = metric === 'volume' ? 'Объём ипотечных кредитов' : 'Количество ипотечных договоров', history = mortgageHistory(data.monthly, metric), field = metric === 'volume' ? 'volumeRub' : 'count';
-    charts.push(entry(`mortgage/${metric}/annual`, `${title} по годам`, caption, href, demoHasValues(data.annual.flatMap(row => [row[metric].annual, row[metric].selected])), mortgageAnnualRows(data.annual, metric), (theme, width) => mortgageAnnualOption(data.annual, metric, theme, width)));
+    charts.push(entry(`mortgage/${metric}/annual`, `${title} по годам`, caption, href, demoHasValues(data.annual.flatMap(row => [row[metric].annual, row[metric].selected])), mortgageAnnualRows(data.annual, metric), (theme, width, _hidden, height) => mortgageAnnualOption(data.annual, metric, theme, width, height)));
     charts.push(entry(`mortgage/${metric}/monthly`, `${title} по месяцам`, caption, href, demoHasValues(history.flatMap(row => [row.primary[field], row.secondary[field]])), mortgageMonthlyRows(history, metric), theme => mortgageMonthlyOption(history, metric, theme)));
   }
   const history = mortgageHistory(data.monthly, 'rates');

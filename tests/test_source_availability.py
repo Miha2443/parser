@@ -14,20 +14,47 @@ from pipeline import source_availability as sa
 from docker import publication as p
 
 
-def run_status(skipped=()):
+def run_status(skipped=(), failed=()):
     started = datetime.now(timezone.utc).isoformat()
     rows = {alias: sa.outcome(alias, "test-run", "success") for alias in sa.SOURCES}
     for alias in skipped:
         url = sa.URLS[alias][0]
         rows[alias] = sa.check_provider(alias, "test-run", check=lambda url: {
             "url": url, "checked_at": sa.stamp(), "http_status": 503, "text": "Service unavailable"})
-    return {"run_id": "test-run", "status": "degraded" if skipped else "success", "current_stage": "finished",
+    for alias in failed:
+        rows[alias] = sa.outcome(alias, "test-run", "failed", reason_code="collector_exit_2", reason="Collector failed")
+    return {"run_id": "test-run", "status": "failed" if failed else "degraded" if skipped else "success", "current_stage": "finished",
             "started_at": started, "finished_at": sa.stamp(), "sources_requested": sorted(sa.SOURCES),
-            "successes": sorted(sa.SOURCES - set(skipped)), "failures": [], "skipped": list(skipped),
-            "source_outcomes": rows, "processed_ok": True, "marts_ok": True, "error": "", "status_write_errors": []}
+            "successes": sorted(sa.SOURCES - set(skipped) - set(failed)), "failures": list(failed), "skipped": list(skipped),
+            "source_outcomes": rows, "processed_ok": True, "marts_ok": True,
+            "error": "source failures: " + ", ".join(failed) if failed else "", "status_write_errors": []}
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_partial_publication_accepts_completed_source_failures_but_not_system_or_status_errors(self):
+        valid = run_status(failed=["construction", "kvart", "rasprod", "rosstat"])
+        started = sa.timestamp(valid["started_at"])
+        p.require_success(valid, None, started, returncode=2, allow_partial=True)
+        with self.assertRaises(RuntimeError):
+            p.require_success(valid, None, started, returncode=2)
+        for changes in ({"status": "running"}, {"current_stage": "collecting"}, {"finished_at": None},
+                        {"processed_ok": False}, {"marts_ok": False}, {"status_write_errors": ["disk full"]},
+                        {"error": valid["error"] + "; processed dashboard build failed"},
+                        {"successes": valid["successes"] + ["construction"]}, {"source_outcomes": {}},
+                        {"sources_requested": ["monitoring"]}):
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                p.require_success({**valid, **changes}, None, started, returncode=2, allow_partial=True)
+        for code in (0, 1, 130, -9):
+            with self.subTest(returncode=code), self.assertRaises(RuntimeError):
+                p.require_success(valid, None, started, returncode=code, allow_partial=True)
+        for invalid in ("stale", "wrong_alias", "partition"):
+            current = copy.deepcopy(valid)
+            row = current["source_outcomes"]["construction"]
+            row.update({"checked_at": "2020-01-01T00:00:00+00:00"} if invalid == "stale" else
+                       {"alias": "kvart"} if invalid == "wrong_alias" else {"status": "success"})
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                p.require_success(current, None, started, returncode=2, allow_partial=True)
+
     def test_collector_failure_and_watchdog_are_failed_not_provider_outages(self):
         from scripts import update_realty as ur
         with patch.object(sa, "check_provider", return_value=None), patch.object(ur, "_collect_source") as collect:
@@ -178,6 +205,24 @@ class PublicationAvailabilityTests(unittest.TestCase):
                     self.assertEqual(self.inventory(candidate, key), neighbours[key])
                 self.assertEqual({key: self.inventory(previous, key) for key in sa.SOURCES}, old)
 
+    def test_each_failed_collector_retains_its_family_and_never_publishes_partial_files(self):
+        previous = self.base / "previous"
+        shutil.copytree(self.seed, previous)
+        for alias in sorted(sa.SOURCES):
+            with self.subTest(alias=alias):
+                candidate = self.base / ("failed-" + alias)
+                shutil.copytree(self.seed, candidate)
+                failed_files = sa.source_files(candidate, alias)
+                failed_files[0].write_bytes(b"partial failed source")
+                paired = {"erz-top", "erz-cards"} if alias in {"erz-top", "erz-cards"} else {alias}
+                neighbours = {key: self.inventory(candidate, key) for key in sa.SOURCES - paired}
+                metadata = p.select_candidate_sources(candidate, run_status(failed=[alias]), previous)
+                for key in paired:
+                    self.assertEqual(metadata["sources"][key]["state"], "retained")
+                    self.assertEqual(self.inventory(candidate, key), self.inventory(previous, key))
+                for key, expected in neighbours.items():
+                    self.assertEqual(self.inventory(candidate, key), expected)
+
     def test_cold_outage_builds_real_etl_all_marts_and_explicit_api_unavailability(self):
         # This is the real subprocess ETL/full9/check/API path, not a mocked
         # validator. Existing synthetic economic processed contributions are
@@ -225,7 +270,7 @@ class PublicationAvailabilityTests(unittest.TestCase):
             self.assertEqual(client.get("/api/v1/health").status_code, 503)
             self.assertEqual(proof.call_count, 2)
 
-    def test_retained_fedstat_cannot_roll_back_fresh_rosstat_and_current_parser_error_is_fatal(self):
+    def test_retained_fedstat_cannot_roll_back_fresh_rosstat_and_invalid_current_source_is_retained(self):
         from pipeline.data_access import DataAccess, DataContext
         import pandas as pd
         runtime = self.base / "runtime"
@@ -249,8 +294,69 @@ class PublicationAvailabilityTests(unittest.TestCase):
         candidate = self.base / "bad-current"
         shutil.copytree(self.seed, candidate)
         next(file for file in sa.source_files(candidate, "kvart") if file.suffix == ".json").write_text("not JSON")
-        with self.assertRaisesRegex(RuntimeError, "Successful collector produced invalid kvart"):
-            p.select_candidate_sources(candidate, run_status(), previous)
+        metadata = p.select_candidate_sources(candidate, run_status(), previous)
+        self.assertEqual(metadata["sources"]["kvart"]["state"], "retained")
+        self.assertEqual(metadata["sources"]["kvart"]["reason_code"], "invalid_collected_data")
+        self.assertEqual(self.inventory(candidate, "kvart"), self.inventory(previous, "kvart"))
+
+    def test_failed_collectors_retain_exact_previous_families_while_monitoring_and_salary_publish(self):
+        from backend.app import create_app
+        from fastapi.testclient import TestClient
+        import pandas as pd
+        runtime = self.base / "runtime"
+        previous = runtime / "releases/old"
+        shutil.copytree(self.seed, previous)
+        failed = ["construction", "kvart", "rasprod", "rosstat"]
+        old = {alias: self.inventory(previous, alias) for alias in sa.SOURCES}
+        for alias in failed:
+            files = sa.source_files(self.root, alias)
+            next(file for file in files if file.suffix in {".json", ".xlsx"}).write_bytes(b"partial failed download")
+            for key in sa.indicator_ids({alias}):
+                (self.root / "data/processed" / (key + ".pkl")).unlink(missing_ok=True)
+        monitor = next((self.root / "data/raw/realty/nashdom").glob("monitoring_*.xlsx"))
+        monitor.rename(monitor.with_name("monitoring_2_0_20261105.xlsx"))
+        salary = self.root / "data/processed/avg_salary.pkl"
+        frame = pd.read_pickle(salary)
+        frame["value"] = 98765.0
+        frame.to_pickle(salary)
+        current = {alias: self.inventory(self.root, alias) for alias in sa.SOURCES}
+        status = run_status(failed=failed)
+        original_status = copy.deepcopy(status)
+        with patch.object(p, "live_target", return_value="releases/old"), patch.object(p, "swap"):
+            p.publish(self.root, runtime, run_status=status, collector_returncode=2)
+        release = runtime / json.loads((runtime / "pending.json").read_text())["next"]
+        declaration = sa.read_publication(release)
+        self.assertEqual(declaration["status"], "degraded")
+        self.assertEqual(declaration["collector_status"], "failed")
+        self.assertEqual(declaration["collector_returncode"], 2)
+        for alias in failed:
+            self.assertEqual(self.inventory(release, alias), old[alias])
+            self.assertEqual(declaration["sources"][alias]["state"], "retained")
+            self.assertEqual(declaration["sources"][alias]["outcome"]["status"], "failed")
+        self.assertEqual(self.inventory(release, "monitoring"), current["monitoring"])
+        self.assertTrue(pd.read_pickle(release / "data/processed/avg_salary.pkl").value.eq(98765).all())
+        self.assertEqual(status, original_status)
+        self.assertEqual({alias: self.inventory(self.root, alias) for alias in sa.SOURCES}, current)
+        self.assertEqual({alias: self.inventory(previous, alias) for alias in sa.SOURCES}, old)
+        with patch.dict(os.environ, {"PARSER_ROOT": str(release), "PARSER_DOWNLOADS": str(release / "downloads"),
+                                     "PARSER_REQUIRE_REALTY_MARTS": "1"}), TestClient(create_app()) as client:
+            self.assertEqual(client.get("/api/v1/health").status_code, 200)
+            self.assertEqual(client.get("/api/v1/economics/salary/catalog").status_code, 200)
+            response = client.get("/api/v1/construction/permits")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["source"]["date"], "2026-11-05")
+
+    def test_cold_failed_source_has_no_partial_data_and_other_sources_still_publish(self):
+        runtime = self.base / "runtime"
+        status = run_status(failed=["kvart"])
+        with patch.object(p, "swap"):
+            p.publish(self.root, runtime, run_status=status, collector_returncode=2)
+        release = runtime / json.loads((runtime / "pending.json").read_text())["next"]
+        declaration = sa.read_publication(release)
+        self.assertEqual(declaration["sources"]["kvart"]["state"], "unavailable")
+        self.assertEqual(declaration["sources"]["monitoring"]["state"], "fresh")
+        self.assertFalse(sa.source_files(release, "kvart"))
+        self.assertFalse((release / "data/processed/realty_kvartirografia.pkl").exists())
 
     def test_bootstrap_baseline_is_captured_before_collector_and_does_not_restore_working_files(self):
         runtime = self.base / "runtime"
@@ -262,8 +368,8 @@ class PublicationAvailabilityTests(unittest.TestCase):
             if "scripts/update_realty.py" in command:
                 self.assertIn("--collect-only", command)
                 next(iter(sa.source_files(self.root, "construction"))).write_bytes(b"partial bad JSON")
-                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(run_status(["construction"])))
-                return subprocess.CompletedProcess(command, 0)
+                (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(run_status(failed=["construction"])))
+                return subprocess.CompletedProcess(command, 2)
             return original(command, **kwargs)
         with patch.object(p.subprocess, "run", side_effect=run), patch.object(p, "swap"):
             p.run_action("update", self.root, runtime)

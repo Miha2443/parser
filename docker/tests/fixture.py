@@ -62,9 +62,21 @@ def update():
                   marts_ok=True, processed_ok=True)
     from pipeline.source_availability import outcome
     status["source_outcomes"] = {alias: outcome(alias, status["run_id"], "success") for alias in SOURCES}
+    returncode = 0
+    if os.environ.get("FIXTURE_FAIL") == "source-failure":
+        from pipeline.source_availability import source_files
+        failed = ["construction", "kvart", "rasprod", "rosstat"]
+        status.update(status="failed", failures=failed,
+                      successes=sorted(SOURCES - set(failed)), error="source failures: " + ", ".join(failed))
+        for alias in failed:
+            status["source_outcomes"][alias] = outcome(alias, status["run_id"], "failed",
+                                                      reason_code="collector_exit_2", reason="Fixture collector failure")
+            source_files(Path("/app"), alias)[0].write_bytes(b"incomplete download")
+        status["finished_at"] = datetime.now().isoformat()
+        returncode = 2
     if os.environ.get("FIXTURE_FAIL") == "1":
         status["successes"].remove("fedstat")
-    require_success(status, None, started, expected_sources=SOURCES)
+    require_success(status, None, started, expected_sources=SOURCES, returncode=returncode, allow_partial=True)
     if os.environ.get("FIXTURE_FAIL") == "empty-mart":
         from unittest.mock import patch
         original = publication.build_candidate
@@ -80,7 +92,7 @@ def update():
         with patch.object(publication, "build_candidate", side_effect=tamper_after_build):
             publish(Path("/app"), Path("/runtime"), run_status=status, collector_returncode=0)
     else:
-        publish(Path("/app"), Path("/runtime"), run_status=status, collector_returncode=0)
+        publish(Path("/app"), Path("/runtime"), run_status=status, collector_returncode=returncode)
 
 
 def old_releases():

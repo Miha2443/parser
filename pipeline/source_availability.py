@@ -1,8 +1,9 @@
 """Evidence-bound provider outages and publication source declarations.
 
-A collector failure is never evidence of an outage. Negative HTTP probes for
-browser collectors must be confirmed twice through the collector's Chrome
-transport before they can authorize retaining older data.
+A collector failure is never evidence of an outage. Publication retains the
+last verified family after either a collector failure or a confirmed outage,
+while preserving the actual reason. Negative outage probes for browser
+collectors must be confirmed twice through the collector's Chrome transport.
 """
 from __future__ import annotations
 
@@ -288,9 +289,8 @@ def read_publication(root):
             raise RuntimeError("Publication reason contradicts its source outcome")
         if row["state"] == "fresh" and row["outcome"]["status"] != "success":
             raise RuntimeError("Fresh source did not succeed")
-        if row["state"] == "unavailable" or row.get("outcome", {}).get("status") == "skipped":
-            if row["outcome"]["status"] != "skipped":
-                raise RuntimeError("Unavailable source has no confirmed outage")
+        if row["state"] == "unavailable" and row["outcome"]["status"] not in {"skipped", "failed"}:
+            raise RuntimeError("Unavailable source has no collector failure or confirmed outage")
     return value
 
 

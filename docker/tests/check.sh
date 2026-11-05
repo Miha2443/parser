@@ -26,6 +26,7 @@ docker compose run --rm --no-deps updater python -m unittest discover -s tests -
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_recovery.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_cron_install.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_availability.py -v
+docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_rosstat_outcomes.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_collection_entry.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_release_history.py -v
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_source_history.py -v
@@ -64,7 +65,7 @@ curl -fsS http://localhost:8080/api/v1/linear/catalog >/dev/null
 previous="$(readlink runtime/live)"
 export COMPOSE_FILE=docker-compose.yml:docker/tests/compose.fixture.yml
 before_identity="$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")"
-for failure in 1 missing-source empty-mart; do
+for failure in 1 empty-mart; do
   FIXTURE_FAIL="$failure" bash docker/update.sh && { echo "Incomplete updater unexpectedly published: $failure"; exit 1; }
   [[ "$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")" == "$before_identity" ]]
   [[ "$(readlink runtime/live)" == "$previous" && ! -f runtime/pending.json ]]
@@ -78,6 +79,15 @@ curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE OLD'
 wait "$update_pid"
 [[ "$(readlink runtime/live)" != "$previous" ]]
 curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE NEW'
+# A failed collector or a falsely green but missing raw family must retain
+# that family's previous inputs while publishing the healthy sources.
+for failure in source-failure missing-source; do
+  FIXTURE_FAIL="$failure" bash docker/update.sh
+  curl -fsS http://localhost:8080/api/v1/catalog | grep -q 'COMPOSE NEW'
+  docker compose exec -T backend python -c 'import json; from urllib.request import urlopen; d=json.load(urlopen("http://127.0.0.1:8000/api/v1/availability", timeout=20)); assert d["sources"]["construction"]["state"] == "retained"; assert d["sources"]["monitoring"]["state"] == "fresh"'
+  docker compose exec -T backend python docker/readiness.py "/runtime/$(readlink runtime/live)"
+  [[ ! -f runtime/pending.json ]]
+done
 # Crash recovery must acknowledge an already healthy new backend without restart.
 before_identity="$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")"
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture recovery next

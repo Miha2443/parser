@@ -46,6 +46,16 @@ class UpdatesTests(unittest.TestCase):
             for path, content in before.items():
                 self.assertEqual(path.read_bytes(), content)
 
+    def test_validation_failure_overrides_collector_success_without_calling_it_maintenance(self):
+        from backend.updates_service import source_update_rows
+        rows = source_update_rows({"source_outcomes": {"kvart": {"status": "success"}}}, {
+            "sources": {"kvart": {"state": "retained", "reason_code": "invalid_collected_data",
+                                    "reason": "Проверка новых данных не пройдена",
+                                    "outcome": {"phase": "validation", "status": "failed", "checked_at": "2026-11-05T06:10:00"}}}})
+        self.assertEqual(rows[0]["status"], "Ошибка")
+        self.assertEqual(rows[0]["dataState"], "Сохранены прежние")
+        self.assertEqual(rows[0]["reasonCode"], "invalid_collected_data")
+
     def test_outage_and_retained_data_are_reported_separately_and_read_only(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

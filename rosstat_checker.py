@@ -339,12 +339,17 @@ def retire_download(key, current, remote_date, previous=None):
         print(f"  ⚠️  Архив {key}: старые файлы оставлены на месте ({exc})")
 
 
+class RosstatCollectionError(RuntimeError):
+    """At least one configured input was not checked or downloaded successfully."""
+
+
 def run(force: bool = False) -> list[Path]:
     """force=True — игнорируем state, перекачиваем все источники."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     session = _new_session()
     downloaded: list[Path] = []
+    failures: list[str] = []
 
     print(f"\n{'='*60}")
     print(f"rosstat_checker: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -356,6 +361,7 @@ def run(force: bool = False) -> list[Path]:
             items = get_files_on_page(session, url)
         except requests.RequestException as exc:
             print(f"  ❌ Не удалось загрузить страницу: {exc}\n")
+            failures.extend(src["key"] for src in sources)
             continue
 
         matched_any = False
@@ -365,7 +371,8 @@ def run(force: bool = False) -> list[Path]:
             print(f"  🔎 {key}: ищу {needles}")
             match = _match_source(items, needles)
             if not match:
-                print(f"     ⚠️  не нашёл — пропускаю")
+                print(f"     ❌ Не найдена ссылка обязательного показателя")
+                failures.append(key)
                 continue
             matched_any = True
 
@@ -404,6 +411,8 @@ def run(force: bool = False) -> list[Path]:
                 }
                 save_state(state)
                 retire_download(key, save_path, remote_date, saved.get("filename") if isinstance(saved, dict) else None)
+            else:
+                failures.append(key)
             # Маленькая пауза, чтобы не долбить Росстат подряд.
             time.sleep(0.5)
         if not matched_any and items:
@@ -417,10 +426,22 @@ def run(force: bool = False) -> list[Path]:
     for p in downloaded:
         print(f"  • {p}")
     print(f"{'='*60}\n")
+    if failures:
+        raise RosstatCollectionError("Росстат: не проверены или не скачаны показатели: " + ", ".join(dict.fromkeys(failures)))
     return downloaded
+
+
+def main() -> int:
+    import sys
+    force = "--force" in sys.argv
+    try:
+        run(force=force)
+    except RosstatCollectionError as exc:
+        print(f"❌ {exc}", flush=True)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
     import sys
-    force = "--force" in sys.argv
-    run(force=force)
+    sys.exit(main())

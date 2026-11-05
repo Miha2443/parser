@@ -35,6 +35,9 @@ def source_update_rows(status, publication):
         source = selected.get(alias, legacy.get(alias, {}))
         outcome = outcome if isinstance(outcome, dict) else {}
         source = source if isinstance(source, dict) else {}
+        verified = source.get("outcome", {})
+        if isinstance(verified, dict) and verified.get("phase") == "validation" and verified.get("status") == "failed":
+            outcome = verified
         if not outcome and not source:
             continue
         result = outcome.get("status", "")

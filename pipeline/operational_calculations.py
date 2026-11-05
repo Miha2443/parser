@@ -69,7 +69,7 @@ def report(data, options, month=None, exclude_mkd=False, year=None, quarter=1, c
         forecast_field = "housing_living" if key == "housing" else "nonres_standalone" if exclude_mkd else "nonres_total"
         forecast_rows = [{"year": row["year"], "value": row[forecast_field] / 1000}
                          for row in forecasts.get("rows", []) if row.get(forecast_field) is not None and row[forecast_field] >= 0 and row["year"] >= options["currentYear"]]
-        available_months = [MONTHS_RU.get(str(value).strip().casefold()) for value in
+        available_months = [] if rv.empty else [MONTHS_RU.get(str(value).strip().casefold()) for value in
                             rv.loc[pd.to_numeric(rv["Год ввода по Мосстату"], errors="coerce").eq(options["currentYear"]),
                                    "Месяц ввода по Мосстату"]]
         latest_month = max((value for value in available_months if value), default=month)

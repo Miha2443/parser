@@ -290,9 +290,20 @@ def browser():
             assert driver.execute_script("return document.documentElement.dataset.theme") == "light"
             if route == "/apartments":
                 driver.find_element("css selector", ".chart-data .data-toggle").click()
-                cells = driver.find_elements("css selector", ".chart-data-panel td")
-                import re
-                assert any(re.fullmatch(r"[\d\s\u00a0]+,\d{2}", cell.text) for cell in cells)
+                WebDriverWait(driver, 10).until(lambda d: d.find_elements("css selector", ".chart-data-panel tbody tr"))
+                # Current presentation rounds values below 1000 to at most one
+                # decimal; integral values have no forced decimal suffix. Check
+                # every displayed measurement against the API, not the presence
+                # of an obsolete two-decimal string in a synthetic fixture.
+                displayed = driver.execute_async_script('''const done=arguments[arguments.length-1];
+                  const region=document.querySelector('select[aria-label="Регион"]').value;
+                  fetch('/api/v1/apartments?region='+encodeURIComponent(region)).then(r=>r.json()).then(data=>done({
+                    expected:data.distribution.map(row=>[row.range, row.sharePercent == null ? '—' :
+                      new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(row.sharePercent)]),
+                    actual:Array.from(document.querySelectorAll('.chart-data-panel tbody tr'),
+                      row=>Array.from(row.querySelectorAll('td'),cell=>cell.innerText))
+                  })).catch(error=>done({error:String(error)}));''')
+                assert displayed.get("expected") and displayed["actual"] == displayed["expected"], displayed
             if route == "/commissioning/operational":
                 result = driver.execute_async_script('''const done=arguments[arguments.length-1];
                   fetch('/api/v1/commissioning/operational').then(r=>r.json()).then(done);''')

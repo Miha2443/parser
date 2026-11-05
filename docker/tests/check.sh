@@ -88,6 +88,10 @@ for failure in source-failure missing-source; do
   docker compose exec -T backend python docker/readiness.py "/runtime/$(readlink runtime/live)"
   [[ ! -f runtime/pending.json ]]
 done
+# Failure fixtures intentionally leave the mutable working inputs incomplete.
+# The following legacy-backend recovery tests need a complete working dataset;
+# restoring it must not alter the immutable release that is currently served.
+docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -c "from docker.tests.fixture import guard,seed; guard(); seed('COMPOSE NEW')"
 # Crash recovery must acknowledge an already healthy new backend without restart.
 before_identity="$(docker inspect -f '{{.Id}}|{{.State.StartedAt}}' "$(docker compose ps -q backend)")"
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture recovery next

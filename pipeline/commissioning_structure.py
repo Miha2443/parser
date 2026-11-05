@@ -109,6 +109,14 @@ def _values(selected, *, known=False):
 
 
 def monthly_structure(rv, year, requested_month, source_date=None):
+    if rv.empty:
+        return {"year": year, "requestedMonth": requested_month, "actualMonth": None,
+                "sourceDate": str(source_date) if source_date else None,
+                "rows": [{"id": key, "label": label, **{field: None for field in (
+                    "value", "knownSum", "monthChange", "yearChangePct", "renovation",
+                    "renovationKnownSum", "renovationMonthChange", "renovationYearChangePct")}}
+                         for key, label in STRUCTURE_LABELS],
+                "issues": ["В реестре РВ нет данных для расчёта месячной структуры."], "areaEstimates": []}
     prepared = _prepare_areas(rv)
     # These rows describe linear road commissioning, not unknown building area.
     industries = prepared["Отрасли"].fillna("").astype(str).str.strip().str.casefold()

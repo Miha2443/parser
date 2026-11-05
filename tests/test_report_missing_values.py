@@ -21,6 +21,8 @@ class MissingPeriodTests(unittest.TestCase):
                 patch.object(operational, "nonres_ytd_table", return_value=frame), \
                 patch.object(operational, "quarter_tree", return_value={key: 0 for key, _ in operational.TREE_LABELS}):
             report = operational.report(data, options)
+        self.assertIsNone(report["structure"]["actualMonth"])
+        self.assertTrue(all(row["value"] is None and row["knownSum"] is None for row in report["structure"]["rows"]))
         for table in report["tables"]:
             chart = table["chart"]
             self.assertIsNone(chart["period"][0]["value"])

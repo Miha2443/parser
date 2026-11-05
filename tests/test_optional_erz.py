@@ -198,33 +198,40 @@ class OptionalErzTests(unittest.TestCase):
         validate_sources(self.access())
         self.assertEqual(before, {file.name: (file.read_bytes(), file.stat().st_mtime_ns) for file in files})
 
-    def test_runner_admits_erz_failure_but_rejects_mandatory_failure_before_publication(self):
+    def test_runner_publishes_healthy_sources_and_retains_failed_erz_or_fedstat_inputs(self):
+        from pipeline.source_availability import source_files
         for name in ("nashdom_checker.py", "erzrf_checker.py", "fedstat_checker.py"):
             (self.root / name).write_text("test stub")
         original = subprocess.run
         for failures in (("erz-top", "erz-cards"), ("fedstat",)):
             (self.root / "data/processed/realty_update_status.json").unlink(missing_ok=True)
             runtime = self.directory / ("runtime-" + failures[0])
+            expected = {alias: {str(file.relative_to(self.root)): (file.read_bytes(), file.stat().st_mtime_ns)
+                                for file in source_files(self.root, alias)} for alias in failures}
             def run(command, **kwargs):
                 if "scripts/update_realty.py" in command:
                     self.assertIn("erz-top", command)
                     self.assertIn("--collect-only", command)
                     status = self.status(SOURCES, failures) if failures == ("fedstat",) else self.status(SOURCES, skipped=failures)
+                    if failures == ("fedstat",):
+                        source_files(self.root, "fedstat")[0].write_bytes(b"incomplete failed collection")
                     (self.root / "data/processed/realty_update_status.json").write_text(json.dumps(status))
                     return subprocess.CompletedProcess(command, 2 if failures == ("fedstat",) else 0)
                 return original(command, **kwargs)
             with patch.dict(os.environ, {"UPDATE_ERZ": "1"}), patch.object(p.subprocess, "run", side_effect=run), patch.object(p, "swap"):
-                if failures == ("fedstat",):
-                    with self.assertRaises(RuntimeError):
-                        p.run_action("update", self.root, runtime)
-                    self.assertFalse((runtime / "pending.json").exists())
-                else:
-                    p.run_action("update", self.root, runtime)
-                    next_release = runtime / json.loads((runtime / "pending.json").read_text())["next"]
-                    info = json.loads((next_release / "data/processed/publication_status.json").read_text())
-                    self.assertEqual(info["collector_returncode"], 0)
-                    self.assertEqual(info["collector_status"], "degraded")
-                    self.assertTrue(info["full_marts_built"])
+                p.run_action("update", self.root, runtime)
+            next_release = runtime / json.loads((runtime / "pending.json").read_text())["next"]
+            info = json.loads((next_release / "data/processed/publication_status.json").read_text())
+            self.assertEqual(info["collector_returncode"], 2 if failures == ("fedstat",) else 0)
+            self.assertEqual(info["collector_status"], "failed" if failures == ("fedstat",) else "degraded")
+            self.assertEqual(info["status"], "degraded")
+            self.assertTrue(info["full_marts_built"])
+            self.assertEqual(info["sources"]["monitoring"]["state"], "fresh")
+            for alias in failures:
+                self.assertEqual(info["sources"][alias]["state"], "retained")
+                actual = {str(file.relative_to(next_release)): (file.read_bytes(), file.stat().st_mtime_ns)
+                          for file in source_files(next_release, alias)}
+                self.assertEqual(actual, expected[alias])
 
     def test_new_top_old_cards_uses_previous_cohort_with_identical_bytes_dates_and_top_evidence(self):
         runtime = self.directory / "runtime"

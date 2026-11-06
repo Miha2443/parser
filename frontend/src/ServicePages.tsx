@@ -32,7 +32,7 @@ const realtySections = [
   ['Профиль застройщика', [['/', 'Профиль'], ['/apartments/developer', 'Квартирография по застройщику']]],
 ] as const;
 const statisticsLinks = [['/economics/salary', 'Заработная плата'], ['/economics/ipc', 'Индекс потребительских цен'], ['/economics/accounts', 'ВРП, ВВП и ВДС']] as const;
-const serviceLinks = [['/demo', 'Демонстрация'], ['/updates', 'Обновления источников'], ['/tdm', 'Отправка в TDM']] as const;
+const serviceLinks = [['/service/constant-prices', 'Калькулятор сопоставимых цен'], ['/demo', 'Демонстрация'], ['/updates', 'Обновления источников'], ['/tdm', 'Отправка в TDM']] as const;
 export function Home({ navigate }: { navigate: (path: string) => void }) {
   function homeLink(path: string, label: string) { return <a key={path} href={path} onClick={event => { if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate(path); } }}><span>{label}</span><ArrowRight size={16} /></a>; }
   return <main className="service-page home-page"><div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА И НЕДВИЖИМОСТЬ</div><h1>Аналитика строительной отрасли Москвы</h1></div></div>

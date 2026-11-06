@@ -11,6 +11,41 @@ consumer prices, national accounts, map, home, updates and TDM. Streamlit remain
 available separately for comparison and rollback. Analytics never change input
 files; TDM sends only after an explicit user action.
 
+## Constant-Price Calculator
+
+`/service/constant-prices` is linked from Service and Home. It uses the existing
+IPC catalog/report API, requesting every month and region with `month_to_month`.
+Canonical `year`, `month`, `region` and `ипц_%` cells are used, not localized chart
+labels or the annual/quarter chart's sampled indices. Catalog/report generations
+must match. No new collector, source file or backend calculation is introduced.
+
+Monthly price levels are chained. Each amount is multiplied by the target/source
+level ratio. Quarter/year inputs can use the arithmetic mean of their chained
+monthly levels (default) or their last month's level. Source and target frequency
+are independent. Only complete quarters/years are offered; an incomplete current
+year never becomes an annual price basis. A missing monthly edge splits the
+chain; calculations across it fail visibly, rather than substituting 100%.
+The local June source lacks May 2016 for both regions; this patch does not fill it.
+This is a consumer-price adjustment, not a construction-sector or GDP deflator.
+
+Decimal arithmetic uses 50 significant digits; rounding is only for output,
+with 0–6 selectable decimal places. Excel TSV ranges can be pasted into cells,
+or imported with optional headings, explicit periods and transposition. Up to
+1000 rows and 12 indicators are supported. Copy produces Russian-decimal TSV,
+optionally including periods/headings, trimming empty trailing rows but retaining
+interior gaps. Clipboard denial opens a selected plain-text result instead.
+CSV retains unrounded input values and protects textual headings from formulas.
+Inputs/drafts stay in tab-local session storage and never go to the API; frequency
+sheets are independent, so changing frequency does not reinterpret entered values.
+
+`node --test src/constantPrices.test.mjs` checks chain direction, average/end
+bases, complete periods, gaps, exact decimals, imports, exports and version/abort
+failures. `node src/constant-prices.browser.cjs` starts/stops private test services
+and checks paste/copy, quarters/years, drafts, source recovery and 320–1920 px.
+Set `CONSTANT_PRICES_REAL=1` to include a private API against local IPC data,
+verify the computed amount independently and check source bytes unchanged.
+Artifacts: `%TEMP%/dashboard-constant-prices`. No source download is performed.
+
 ## Preferential Mortgage
 
 `/economics/preferential-mortgage` reads `/api/v1/preferential-mortgage`.

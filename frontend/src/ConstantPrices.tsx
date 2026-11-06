@@ -1,0 +1,109 @@
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react';
+import { AlertCircle, Check, ClipboardPaste, Copy, Download, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { date, download } from './format';
+import { calculationCsv, conversion, copyResults, displayResult, importSheet, loadPriceData, makeSheet, MAX_COLUMNS, MAX_ROWS, nextPeriod, parseAmount, parseExcel, pasteValues, periodKey, periodLabel, periodStart, pricePeriods } from './constantPricesData';
+import type { Frequency, PriceData, PriceMethod, Sheet } from './constantPricesData';
+import './constant-prices.css';
+
+const frequencies: { id: Frequency; label: string }[] = [{ id: 'month', label: 'Месяцы' }, { id: 'quarter', label: 'Кварталы' }, { id: 'year', label: 'Годы' }];
+const draftKey = 'dashboard.constant-prices.v1';
+type Draft = { frequency: Frequency; baseFrequency: Frequency; base: string; region: string; method: PriceMethod; digits: number; sheets: Partial<Record<Frequency, Sheet>> };
+function readDraft(): Draft {
+  const initial: Draft = { frequency: 'year', baseFrequency: 'month', base: '', region: '', method: 'average', digits: 2, sheets: {} };
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(draftKey) ?? 'null');
+    if (!draft || !frequencies.some(item => item.id === draft.frequency) || !frequencies.some(item => item.id === draft.baseFrequency) || !['average', 'end'].includes(draft.method) || typeof draft.base !== 'string' || typeof draft.region !== 'string' || !Number.isInteger(draft.digits) || draft.digits < 0 || draft.digits > 6) return initial;
+    const sheets: Draft['sheets'] = {};
+    for (const { id } of frequencies) {
+      const sheet = draft.sheets?.[id];
+      if (sheet && Array.isArray(sheet.columns) && sheet.columns.length > 0 && sheet.columns.length <= MAX_COLUMNS && sheet.columns.every((value: unknown) => typeof value === 'string' && value.length <= 80) && Array.isArray(sheet.rows) && sheet.rows.length > 0 && sheet.rows.length <= MAX_ROWS && sheet.rows.every((row: Sheet['rows'][number]) => typeof row.period === 'string' && periodStart(row.period, id) !== null && Array.isArray(row.values) && row.values.length === sheet.columns.length && row.values.every(value => typeof value === 'string' && value.length <= 128))) sheets[id] = sheet;
+    }
+    return { ...initial, ...draft, sheets };
+  } catch { return initial; }
+}
+
+function ImportDialog({ frequency, sheet, periods, onImport, onClose }: { frequency: Frequency; sheet: Sheet; periods: string[]; onImport: (sheet: Sheet) => void; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null), [text, setText] = useState(''), [transpose, setTranspose] = useState(false), [headings, setHeadings] = useState(false), [dated, setDated] = useState(false), [start, setStart] = useState(sheet.rows[0].period), [error, setError] = useState('');
+  useEffect(() => { ref.current?.showModal(); }, []);
+  const preview = useMemo(() => { try { const result = importSheet(text, frequency, start, transpose, headings, dated); return `${result.rows.length} строк · ${result.columns.length} показателей`; } catch { return ''; } }, [text, frequency, start, transpose, headings, dated]);
+  return <dialog ref={ref} className="constant-dialog" onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="constant-import-title"><form onSubmit={event => { event.preventDefault(); try { onImport(importSheet(text, frequency, start, transpose, headings, dated)); onClose(); } catch (error) { setError(error instanceof Error ? error.message : 'Не удалось импортировать диапазон.'); } }}>
+    <header><h2 id="constant-import-title">Импорт из Excel</h2><button type="button" className="icon-button" aria-label="Закрыть импорт" title="Закрыть" onClick={onClose}><X size={18} /></button></header>
+    <label className="constant-field"><span>Диапазон Excel</span><textarea autoFocus aria-label="Диапазон Excel" value={text} onChange={event => { setText(event.target.value); setError(''); }} spellCheck={false} /></label>
+    <div className="constant-segmented" role="group" aria-label="Расположение периодов">{[false, true].map(value => <button type="button" key={String(value)} aria-pressed={transpose === value} onClick={() => setTranspose(value)}>{value ? 'Периоды в столбцах' : 'Периоды в строках'}</button>)}</div>
+    <div className="constant-import-options"><label><input type="checkbox" checked={headings} onChange={event => setHeadings(event.target.checked)} />{transpose ? 'Первый столбец — названия показателей' : 'Первая строка — заголовки'}</label><label><input type="checkbox" checked={dated} onChange={event => setDated(event.target.checked)} />{transpose ? 'Первая строка — периоды' : 'Первый столбец — период'}</label></div>
+    {!dated && <label className="constant-field"><span>Первый период</span><select aria-label="Первый период импорта" value={start} onChange={event => setStart(event.target.value)}>{!periods.includes(start) && <option value={start}>{periodLabel(start, frequency)}</option>}{periods.map(period => <option value={period} key={period}>{periodLabel(period, frequency)}</option>)}</select></label>}
+    <div className="constant-import-status" role={error ? 'alert' : 'status'}>{error || preview}</div><footer><button type="button" onClick={onClose}>Отмена</button><button type="submit" className="constant-primary" disabled={!text.trim()}><ClipboardPaste size={16} />Заменить таблицу</button></footer>
+  </form></dialog>;
+}
+function CopyDialog({ text, onClose }: { text: string; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null), area = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { ref.current?.showModal(); area.current?.focus(); area.current?.select(); }, []);
+  return <dialog ref={ref} className="constant-dialog" onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="constant-copy-title"><header><h2 id="constant-copy-title">Результат</h2><button type="button" className="icon-button" title="Закрыть" aria-label="Закрыть результат" onClick={onClose}><X size={18} /></button></header><textarea ref={area} aria-label="Результат для копирования" value={text} readOnly /><footer><button type="button" onClick={onClose}>Закрыть</button></footer></dialog>;
+}
+
+export default function ConstantPrices() {
+  const [draft, setDraft] = useState(readDraft), [data, setData] = useState<PriceData>(), [error, setError] = useState(''), [attempt, setAttempt] = useState(0), [notice, setNotice] = useState(''), [importing, setImporting] = useState(false), [copyText, setCopyText] = useState<string | null>(null), [copied, setCopied] = useState(false), [includeHeaders, setIncludeHeaders] = useState(true);
+  const { frequency, baseFrequency, base, method, region, sheets, digits } = draft;
+  const series = data?.series.find(series => series.region === region) ?? data?.series.find(series => series.region === 'Москва') ?? data?.series[0];
+  const sheet = sheets[frequency];
+  useEffect(() => {
+    const controller = new AbortController(); setData(undefined); setError('');
+    const timeout = window.setTimeout(() => { setError('Сервер ИПЦ не ответил вовремя.'); controller.abort(); }, 60000);
+    loadPriceData(controller.signal).then(value => { if (!controller.signal.aborted) setData(value); }).catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Не удалось загрузить ИПЦ.'); }).finally(() => window.clearTimeout(timeout));
+    return () => { window.clearTimeout(timeout); controller.abort(); };
+  }, [attempt]);
+  useEffect(() => {
+    if (!series) return;
+    setDraft(previous => {
+      const nextSheets = { ...previous.sheets };
+      for (const { id } of frequencies) if (!nextSheets[id]) {
+        const initial = makeSheet(series, id);
+        nextSheets[id] = initial.rows.length ? initial : { columns: ['Показатель 1'], rows: [{ period: periodKey(series.last, id), values: [''] }] };
+      }
+      return { ...previous, sheets: nextSheets, region: series.region, base: previous.base || pricePeriods(series, previous.baseFrequency, previous.method).at(-1) || '' };
+    });
+  }, [data]);
+  useEffect(() => { try { sessionStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* Private browsing can disable session storage. */ } setCopied(false); }, [draft]);
+  const periods = useMemo(() => series ? pricePeriods(series, frequency) : [], [series, frequency]);
+  const bases = useMemo(() => series ? pricePeriods(series, baseFrequency, method) : [], [series, baseFrequency, method]);
+  const calculated = useMemo(() => sheet && series ? sheet.rows.map(row => {
+    const factor = conversion(series, row.period, frequency, base, baseFrequency, method), parsed = row.values.map(parseAmount);
+    return { ...factor, parsed, values: parsed.map(value => value.value !== null && factor.coefficient ? value.value.mul(factor.coefficient) : null) };
+  }) : [], [sheet, series, frequency, base, baseFrequency, method]);
+  const entered = calculated.reduce((sum, row) => sum + row.parsed.filter(value => value.value !== null || value.error).length, 0);
+  const finished = calculated.reduce((sum, row) => sum + row.values.filter(value => value !== null).length, 0), invalid = calculated.some(row => row.parsed.some(value => value.error));
+  const canExport = entered > 0 && entered === finished && !invalid;
+  const calculationErrors = [...new Set(calculated.filter(row => row.error && row.parsed.some(value => value.value !== null)).map(row => row.error))];
+  function change(values: Partial<Draft>) { setDraft(previous => ({ ...previous, ...values })); setNotice(''); }
+  function changeSheet(update: Sheet | ((sheet: Sheet) => Sheet)) { setDraft(previous => ({ ...previous, sheets: { ...previous.sheets, [previous.frequency]: typeof update === 'function' ? update(previous.sheets[previous.frequency]!) : update } })); setNotice(''); }
+  function paste(event: ClipboardEvent<HTMLInputElement>, row: number, column: number) {
+    const text = event.clipboardData.getData('text/plain');
+    if (!/[\t\r\n;]/.test(text)) return;
+    event.preventDefault();
+    try { changeSheet(pasteValues(sheet!, frequency, row, column, parseExcel(text))); } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось вставить диапазон.'); }
+  }
+  async function copy() {
+    if (!sheet || !canExport) return;
+    const text = copyResults(sheet, frequency, calculated.map(row => row.values), digits, includeHeaders);
+    try { if (!navigator.clipboard?.writeText) throw new Error('clipboard'); await navigator.clipboard.writeText(text); setCopied(true); setNotice('Результат скопирован.'); }
+    catch { setCopyText(text); }
+  }
+  function csv() {
+    if (!sheet || !canExport) return;
+    const url = URL.createObjectURL(new Blob([calculationCsv(sheet, frequency, calculated.map(row => row.values), calculated.map(row => row.coefficient), digits, periodLabel(base, baseFrequency))], { type: 'text/csv;charset=utf-8;' }));
+    download(url, `constant-prices-${base}.csv`); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return <main className="constant-page"><div className="page-heading"><div><div className="eyebrow">СЕРВИС</div><h1>Калькулятор сопоставимых цен</h1></div><button type="button" className="icon-button" title="Обновить ИПЦ" aria-label="Обновить ИПЦ" onClick={() => setAttempt(value => value + 1)}><RefreshCw size={18} /></button></div>
+    {error || !data || !series || !sheet ? <div className="load-state" role={error ? 'alert' : 'status'}>{error ? <><AlertCircle size={25} /><p>{error}</p><button onClick={() => setAttempt(value => value + 1)}><RefreshCw size={16} />Повторить</button></> : <><RefreshCw className="loading-icon" size={25} /><p>Загрузка ИПЦ…</p></>}</div> : series.nodes.size === 0 ? <div className="empty-state">Месячные данные ИПЦ отсутствуют.</div> : <>
+      <div className="constant-controls"><label className="constant-field"><span>Регион ИПЦ</span><select aria-label="Регион ИПЦ" value={series.region} onChange={event => change({ region: event.target.value })}>{data.series.map(series => <option key={series.region}>{series.region}</option>)}</select></label><div className="constant-field"><span>Исходные данные</span><div className="constant-segmented" role="group" aria-label="Периодичность исходных данных">{frequencies.map(item => <button type="button" key={item.id} aria-pressed={frequency === item.id} onClick={() => change({ frequency: item.id })}>{item.label}</button>)}</div></div><label className="constant-field"><span>Уровень цен</span><select aria-label="Уровень цен" value={method} onChange={event => change({ method: event.target.value as PriceMethod })}><option value="average">Средний за период</option><option value="end">На конец периода</option></select></label></div>
+      <div className="constant-base"><div><span className="constant-base-label">Пересчёт в цены</span><div className="constant-base-period"><select aria-label="Периодичность цен" value={baseFrequency} onChange={event => { const selected = event.target.value as Frequency; change({ baseFrequency: selected, base: pricePeriods(series, selected, method).at(-1) ?? '' }); }}>{frequencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select><select aria-label="Период цен" value={base} onChange={event => change({ base: event.target.value })}>{!bases.includes(base) && <option value={base}>{base ? `${periodLabel(base, baseFrequency)} · нет ИПЦ` : 'Нет полного периода'}</option>}{[...bases].reverse().map(period => <option value={period} key={period}>{periodLabel(period, baseFrequency)}</option>)}</select></div></div><p>ИПЦ · {periodLabel(periodKey(series.first, 'month'), 'month')} — {periodLabel(periodKey(series.last, 'month'), 'month')}</p></div>
+      <section className="constant-workspace" aria-label="Таблица пересчёта"><div className="constant-toolbar"><div className="constant-toolbar-actions"><button type="button" onClick={() => setImporting(true)}><ClipboardPaste size={16} />Импорт из Excel</button><button type="button" className="icon-button" title="Добавить строку" aria-label="Добавить строку" disabled={sheet.rows.length >= MAX_ROWS} onClick={() => changeSheet(current => ({ ...current, rows: [...current.rows, { period: nextPeriod(current.rows.at(-1)!.period, frequency), values: current.columns.map(() => '') }] }))}><Plus size={17} /></button><button type="button" onClick={() => changeSheet(current => ({ columns: [...current.columns, `Показатель ${current.columns.length + 1}`], rows: current.rows.map(row => ({ ...row, values: [...row.values, ''] })) }))} disabled={sheet.columns.length >= MAX_COLUMNS}><Plus size={16} />Показатель</button></div><label className="constant-digits"><span>Знаков после запятой</span><input type="number" min={0} max={6} aria-label="Знаков после запятой" value={digits} onChange={event => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 6) change({ digits: value }); }} /></label></div>
+        <div className="constant-table-wrap" tabIndex={0} aria-label="Таблица исходных и сопоставимых значений"><table className="constant-table"><thead><tr><th rowSpan={2} className="constant-period-heading"><label><span>Первый период</span><select aria-label="Первый период таблицы" value={sheet.rows[0].period} onChange={event => changeSheet(current => ({ ...current, rows: current.rows.map((row, i) => ({ ...row, period: nextPeriod(event.target.value, frequency, i) })) }))}>{!periods.includes(sheet.rows[0].period) && <option value={sheet.rows[0].period}>{periodLabel(sheet.rows[0].period, frequency)}</option>}{periods.map(period => <option value={period} key={period}>{periodLabel(period, frequency)}</option>)}</select></label></th><th colSpan={sheet.columns.length}>В текущих ценах</th><th rowSpan={2} className="constant-coefficient-heading">Коэффициент</th><th colSpan={sheet.columns.length} className="constant-result-heading">В ценах · {periodLabel(base, baseFrequency)}</th><th rowSpan={2} /></tr><tr>{sheet.columns.map((name, j) => <th key={j}><div className="constant-column-name"><input aria-label={`Название показателя ${j + 1}`} maxLength={80} value={name} onChange={event => changeSheet(current => ({ ...current, columns: current.columns.map((name, index) => index === j ? event.target.value : name) }))} />{sheet.columns.length > 1 && <button type="button" className="icon-button" title={`Удалить показатель ${j + 1}`} aria-label={`Удалить показатель ${j + 1}`} onClick={() => changeSheet(current => ({ columns: current.columns.filter((_, index) => index !== j), rows: current.rows.map(row => ({ ...row, values: row.values.filter((_, index) => index !== j) })) }))}><X size={12} /></button>}</div></th>)}{sheet.columns.map((name, j) => <th key={j} className="constant-result-heading">{name || `Показатель ${j + 1}`}</th>)}</tr></thead><tbody>{sheet.rows.map((row, i) => <tr key={i}><th scope="row"><select aria-label={`Период строки ${i + 1}`} value={row.period} onChange={event => changeSheet(current => ({ ...current, rows: current.rows.map((row, index) => index === i ? { ...row, period: event.target.value } : row) }))}>{!periods.includes(row.period) && <option value={row.period}>{periodLabel(row.period, frequency)} · нет ИПЦ</option>}{periods.map(period => <option value={period} key={period}>{periodLabel(period, frequency)}</option>)}</select></th>{row.values.map((value, j) => <td key={j}><input className="constant-value-input" inputMode="decimal" maxLength={128} aria-label={`Исходное значение, строка ${i + 1}, показатель ${j + 1}`} aria-invalid={!!calculated[i].parsed[j].error} title={calculated[i].parsed[j].error || undefined} value={value} onPaste={event => paste(event, i, j)} onChange={event => changeSheet(current => ({ ...current, rows: current.rows.map((row, index) => index === i ? { ...row, values: row.values.map((value, column) => column === j ? event.target.value : value) } : row) }))} /></td>)}<td className="constant-factor">{calculated[i].coefficient ? displayResult(calculated[i].coefficient, 6) : <span className="constant-warning" title={calculated[i].error}><AlertCircle size={14} />Нет ИПЦ</span>}</td>{calculated[i].values.map((value, j) => <td key={j} className="constant-result" data-result-row={i} data-result-column={j} title={value?.toString()}>{displayResult(value, digits)}</td>)}<td><button type="button" className="icon-button" title={`Удалить строку ${i + 1}`} aria-label={`Удалить строку ${i + 1}`} disabled={sheet.rows.length <= 1} onClick={() => changeSheet(current => ({ ...current, rows: current.rows.filter((_, index) => index !== i) }))}><Trash2 size={14} /></button></td></tr>)}</tbody></table></div>
+        {calculationErrors.length > 0 && <p className="constant-calculation-warning" role="status">{calculationErrors.join(' ')}</p>}
+        <div className="constant-results-toolbar"><span role="status">{notice || (invalid ? 'Есть ошибки в исходных значениях.' : `Рассчитано: ${finished} / ${entered}`)}</span><label><input type="checkbox" checked={includeHeaders} onChange={event => { setIncludeHeaders(event.target.checked); setCopied(false); }} />С периодами и заголовками</label><button type="button" className="constant-primary" disabled={!canExport} onClick={() => void copy()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Скопировано' : 'Копировать результат'}</button><button type="button" className="icon-button" title="Скачать расчёт CSV" aria-label="Скачать расчёт CSV" disabled={!canExport} onClick={csv}><Download size={17} /></button></div>
+      </section>
+      <details className="constant-source"><summary>Данные и расчёт</summary><p>Результат = исходное значение × уровень цен выбранного периода / уровень цен исходного периода.</p><p>{method === 'average' ? 'Для квартала и года используется средний арифметический уровень цен входящих месяцев.' : 'Для квартала и года используется уровень цен последнего месяца.'} Месячные уровни построены цепным произведением ИПЦ к предыдущему месяцу. Это пересчёт по потребительским ценам, не отраслевой дефлятор.</p><p>Округление выполняется только для результата. ИПЦ источника: {date(data.report.source.date)} · версия {data.report.version}.</p>{series.gaps.length > 0 && <p className="constant-warning">Пропуски ИПЦ: {series.gaps.map(period => periodLabel(period, 'month')).join(', ')}.</p>}{data.report.source.issues.map(([kind, message], i) => <p key={i}>{kind}: {message}</p>)}<a href="/economics/ipc">Индекс потребительских цен</a><div className="constant-source-files">{data.report.source.files.map(file => <code key={file}>{file}</code>)}</div><a href="https://38.rosstat.gov.ru/storage/mediabank/index_cen.html" target="_blank" rel="noreferrer">Росстат · цепной расчёт ИПЦ</a></details>
+      {importing && <ImportDialog frequency={frequency} sheet={sheet} periods={periods} onImport={changeSheet} onClose={() => setImporting(false)} />}{copyText !== null && <CopyDialog text={copyText} onClose={() => setCopyText(null)} />}
+    </>}
+  </main>;
+}

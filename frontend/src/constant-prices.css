@@ -1,0 +1,79 @@
+.constant-page { padding-bottom: 36px; }
+.constant-page h1 { overflow-wrap: anywhere; }
+.constant-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding-block: 0 22px; border-bottom: 1px solid var(--line); }
+.constant-field { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.constant-field > span, .constant-base-label { font-size: 12px; color: var(--muted); }
+.constant-segmented { display: flex; min-width: 0; border-bottom: 1px solid var(--line); }
+.constant-segmented button { flex: 1; min-height: 38px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 13px; padding: 8px; }
+.constant-segmented button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.constant-base { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 22px 0; }
+.constant-base > div { min-width: 0; }
+.constant-base-period { display: grid; grid-template-columns: 120px minmax(180px, 260px); gap: 10px; margin-top: 8px; }
+.constant-base-period select:last-child { font-weight: 600; }
+.constant-base p { font-size: 11px; color: var(--muted); line-height: 1.5; text-align: right; }
+.constant-workspace { border-block: 1px solid var(--line); background: var(--panel); }
+.constant-toolbar, .constant-results-toolbar { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 14px 12px; }
+.constant-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.constant-page button:not(.icon-button):not(.constant-segmented button), .constant-dialog button:not(.icon-button) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; font-size: 12px; }
+.constant-page input, .constant-dialog input, .constant-dialog textarea { font: inherit; color: inherit; }
+.constant-page input:focus-visible, .constant-page textarea:focus-visible, .constant-dialog input:focus-visible, .constant-dialog textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.constant-page input[type="checkbox"], .constant-dialog input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; }
+.constant-digits { display: inline-flex; align-items: center; gap: 9px; font-size: 11px; color: var(--muted); }
+.constant-digits input { width: 54px; height: 34px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); padding: 5px; font-size: 13px; }
+.constant-table-wrap { width: 100%; max-height: 600px; overflow: auto; border-block: 1px solid var(--line); }
+.constant-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.constant-table th, .constant-table td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 0; min-width: 140px; vertical-align: middle; font-weight: 400; }
+.constant-table thead th { padding: 10px; background: var(--soft); text-align: left; font-weight: 600; }
+.constant-table thead tr:first-child > th { border-top: 0; }
+.constant-table tbody > tr:last-child > * { border-bottom: 0; }
+.constant-table tbody th, .constant-table .constant-period-heading { min-width: 190px; width: 200px; position: sticky; left: 0; z-index: 1; background: var(--panel); }
+.constant-table .constant-period-heading { background: var(--soft); }
+.constant-period-heading label { display: grid; gap: 7px; font-size: 11px; }
+.constant-table th select { border: 0; background: transparent; font-size: 12px; height: 42px; }
+.constant-period-heading select { border: 1px solid var(--line) !important; background: var(--panel) !important; }
+.constant-table td:last-child, .constant-table thead th:last-child:empty { min-width: 40px; width: 40px; text-align: center; border-right: 0; }
+.constant-table .constant-value-input { display: block; width: 100%; min-width: 140px; height: 44px; padding: 10px 12px; border: 0; background: transparent; font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.constant-value-input[aria-invalid="true"] { background: #fff0f0; box-shadow: inset 0 -2px #b44350; }
+.constant-column-name { display: flex; align-items: center; gap: 5px; }
+.constant-column-name input { background: transparent; border: 0; width: 100%; min-width: 70px; font-size: 12px; }
+.constant-column-name .icon-button { width: 24px; height: 24px; border: 0; background: transparent; }
+.constant-table .constant-coefficient-heading, .constant-table .constant-factor { min-width: 116px; width: 124px; }
+.constant-table .constant-factor { padding: 12px; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.constant-table .constant-result, .constant-table .constant-result-heading { background: #f0f7f4; }
+.constant-table .constant-result { padding: 12px; text-align: right; font-weight: 650; color: #27684f; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.constant-warning { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #a63e48; }
+.constant-results-toolbar > span { margin-right: auto; font-size: 12px; color: var(--muted); }
+.constant-results-toolbar label { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; }
+.constant-calculation-warning { padding: 12px; font-size: 12px; line-height: 1.6; color: var(--accent); }
+.constant-page .constant-primary, .constant-dialog .constant-primary { color: #fff; border-color: var(--accent); background: var(--accent); }
+.constant-source { padding-top: 22px; font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+.constant-source summary { cursor: pointer; color: var(--text); }
+.constant-source p { margin-top: 12px; }
+.constant-source a { display: inline-block; color: var(--accent); margin-top: 10px; text-decoration: underline; }
+.constant-source-files { display: grid; gap: 4px; margin-top: 10px; font-size: 10px; }
+.constant-dialog { width: min(660px, calc(100% - 28px)); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 24px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); }
+.constant-dialog::backdrop { background: #161b2466; }
+.constant-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 20px; }
+.constant-dialog h2 { font-size: 19px; }
+.constant-dialog textarea { width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--line); border-radius: 4px; background: var(--soft); padding: 12px; font-size: 13px; line-height: 1.6; white-space: pre; }
+.constant-dialog .constant-segmented { margin-top: 14px; }
+.constant-import-options { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-block: 18px; }
+.constant-import-options label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.constant-import-status { min-height: 38px; font-size: 12px; padding-top: 14px; color: var(--muted); }
+.constant-import-status[role="alert"] { color: var(--accent); }
+.constant-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 900px) { .constant-controls { grid-template-columns: 1fr 1fr; } .constant-controls > :last-child { grid-column: 1 / -1; max-width: 300px; } }
+@media (max-width: 600px) {
+  .constant-page .page-heading { gap: 10px; align-items: flex-start; }
+  .constant-page h1 { font-size: 24px; }
+  .constant-controls { grid-template-columns: 1fr; gap: 16px; }
+  .constant-controls > :last-child { max-width: none; }
+  .constant-base { align-items: stretch; flex-direction: column; gap: 10px; }
+  .constant-base-period { grid-template-columns: 100px minmax(0, 1fr); }
+  .constant-base p { text-align: left; }
+  .constant-toolbar, .constant-results-toolbar { padding-inline: 8px; }
+  .constant-results-toolbar > span { flex-basis: 100%; }
+  .constant-table tbody th, .constant-table .constant-period-heading { min-width: 165px; width: 170px; }
+  .constant-table-wrap { max-height: 480px; }
+  .constant-dialog { padding: 18px; }
+}

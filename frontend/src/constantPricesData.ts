@@ -104,6 +104,21 @@ export function conversion(series: PriceSeries, key: string, frequency: Frequenc
   return { coefficient: target.level.div(source.level), error: '' };
 }
 
+export function monthlyCpi(series: PriceSeries, through: string): { index: Decimal | null; growth: Decimal | null; missing: string[]; rows: { period: string; index: number | null; cumulative: Decimal | null }[] } {
+  const end = periodStart(through, 'month');
+  if (end === null) return { index: null, growth: null, missing: [], rows: [] };
+  const first = ordinal(parts(end).year, 1), indices = new Map(series.points.map(point => [ordinal(point.year, point.month), point.value]));
+  const rows: ReturnType<typeof monthlyCpi>['rows'] = [], missing: string[] = [];
+  let coefficient: Decimal | null = new Money(1);
+  for (let serial = first; serial <= end; serial++) {
+    const period = periodKey(serial, 'month'), index = indices.get(serial) ?? null;
+    if (index === null) { missing.push(period); coefficient = null; }
+    else if (coefficient !== null) coefficient = coefficient.mul(new Money(index).div(100));
+    rows.push({ period, index, cumulative: coefficient === null ? null : coefficient.mul(100) });
+  }
+  return { index: coefficient === null ? null : coefficient.mul(100), growth: coefficient === null ? null : coefficient.sub(1).mul(100), missing, rows };
+}
+
 export function parseAmount(raw: string): { value: Decimal | null; error: string } {
   let text = raw.trim().replace(/\u2212/g, '-').replace(/[\u00a0\u202f]/g, ' ');
   if (!text || /^[-—–]$/.test(text)) return { value: null, error: '' };

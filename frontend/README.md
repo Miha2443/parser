@@ -28,6 +28,14 @@ chain; calculations across it fail visibly, rather than substituting 100%.
 The local June source lacks May 2016 for both regions; this patch does not fill it.
 This is a consumer-price adjustment, not a construction-sector or GDP deflator.
 
+The target basis has an explicit Month/Quarter/Year switch, independent of input
+frequency. Annual values can therefore be converted to September 2026 without
+requiring a full 2026 year. Monthly bases also show January-through-selected-month
+CPI and price growth, with the monthly chain in the calculation details. January
+is included and monthly percentage changes are compounded, not added. A month is
+offered only when the source covers it; missing September CPI is never inferred
+from earlier months. Existing average/end annual conversion is unchanged.
+
 Decimal arithmetic uses 50 significant digits; rounding is only for output,
 with 0–6 selectable decimal places. Excel TSV ranges can be pasted into cells,
 or imported with optional headings, explicit periods and transposition. Up to

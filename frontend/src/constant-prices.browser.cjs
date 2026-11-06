@@ -23,7 +23,7 @@ async function ready(url, child) {
   }
   throw new Error(`Not ready: ${url}\n${child.messages}`);
 }
-const numeric = text => Number(text.replace(/[\s\u202f]/g, '').replace(',', '.'));
+const numeric = text => Number(text.replace(/[\s\u202f%]/g, '').replace(',', '.'));
 const cell = (page, row, column = 0) => page.locator(`[data-result-row="${row}"][data-result-column="${column}"]`);
 async function paste(page, locator, text) { await locator.evaluate((element, text) => { const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', text); element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })); }, text); }
 async function layout(page, name) {
@@ -61,7 +61,26 @@ async function main() {
     const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
     await page.goto(web + '/service/constant-prices');
     await page.locator('.constant-table').waitFor();
-    assert.equal(await page.getByLabel('Период цен', { exact: true }).inputValue(), '2026-08');
+    assert.equal(await page.getByLabel('Период цен', { exact: true }).inputValue(), '2026-09');
+    assert.equal(await page.getByRole('group', { name: 'Периодичность исходных данных' }).getByRole('button', { name: 'Годы', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Месяц', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(numeric(await page.locator('[data-cpi-index]').innerText()), Number((1.01 ** 9 * 100).toFixed(2)));
+    assert.equal(await page.getByLabel('Период цен', { exact: true }).locator('option[value="2026-10"]').count(), 0);
+    await page.getByLabel('Уровень цен', { exact: true }).selectOption('end');
+    await page.getByLabel('Исходное значение, строка 3, показатель 1', { exact: true }).fill('1000');
+    assert.equal(numeric(await cell(page, 2).innerText()), Number((1000 * 1.01 ** 9).toFixed(2)));
+    await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Год', exact: true }).click();
+    assert.equal(numeric(await cell(page, 2).innerText()), 1000);
+    await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Месяц', exact: true }).click();
+    assert.equal(numeric(await cell(page, 2).innerText()), Number((1000 * 1.01 ** 9).toFixed(2)));
+    await page.locator('.constant-source summary').click();
+    assert.equal(await page.getByRole('table', { name: 'Месячная цепочка ИПЦ', exact: true }).locator('tbody tr').count(), 9);
+    await page.locator('.constant-source summary').click();
+    await layout(page, 'september-2026-1440');
+    await page.setViewportSize({ width: 390, height: 844 }); await layout(page, 'september-2026-390'); await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByLabel('Исходное значение, строка 3, показатель 1', { exact: true }).fill('');
+    await page.getByLabel('Уровень цен', { exact: true }).selectOption('average');
+    checks.push('annual inputs independently convert to September 2026, nine compounded months, annual round-trip unchanged, future CPI not fabricated');
     assert.equal(await page.getByLabel('Регион ИПЦ', { exact: true }).inputValue(), 'Москва');
     assert.equal(await page.getByRole('button', { name: 'Копировать результат', exact: true }).isDisabled(), true);
     const initialCalls = calls.length;
@@ -105,7 +124,7 @@ async function main() {
     assert.equal(numeric(await cell(page, 0).innerText()), Number((1000.5 * 1.01 ** -10 / mean).toFixed(2)));
     await page.getByLabel('Уровень цен', { exact: true }).selectOption('end');
     assert.equal(numeric(await cell(page, 0).innerText()), Number((1000.5 * 1.01 ** -21).toFixed(2)));
-    await page.getByLabel('Периодичность цен', { exact: true }).selectOption('year');
+    await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Год', exact: true }).click();
     assert.equal(await page.getByLabel('Период цен', { exact: true }).locator('option[value="2026"]').count(), 0);
     await page.getByLabel('Период цен', { exact: true }).selectOption('2024');
     assert.equal(numeric(await cell(page, 0).innerText()), 1000.5);
@@ -121,12 +140,12 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole('group', { name: 'Периодичность исходных данных' }).getByRole('button', { name: 'Кварталы', exact: true }).click();
     await page.getByLabel('Первый период таблицы').selectOption('2023-Q1');
-    await page.getByLabel('Периодичность цен', { exact: true }).selectOption('quarter');
+    await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Квартал', exact: true }).click();
     await page.getByLabel('Период цен', { exact: true }).selectOption('2023-Q1');
     await page.getByLabel('Исходное значение, строка 1, показатель 1', { exact: true }).fill('450');
     assert.equal(numeric(await cell(page, 0).innerText()), 450);
     await page.getByRole('group', { name: 'Периодичность исходных данных' }).getByRole('button', { name: 'Годы', exact: true }).click();
-    await page.getByLabel('Периодичность цен', { exact: true }).selectOption('year');
+    await page.getByRole('group', { name: 'Периодичность цен' }).getByRole('button', { name: 'Год', exact: true }).click();
     await page.getByLabel('Период цен', { exact: true }).selectOption('2024');
     const beforeRegion = numeric(await cell(page, 1).innerText());
     await page.getByLabel('Регион ИПЦ', { exact: true }).selectOption('Российская Федерация');

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import Decimal from 'decimal.js';
 import fixtures from './constantPricesFixtures.cjs';
-import { buildPriceSeries, calculationCsv, conversion, copyResults, displayResult, importedPeriod, importSheet, loadPriceData, makeSheet, nextPeriod, parseAmount, parseExcel, pasteValues, periodKey, periodLabel, priceLevel, pricePeriods, readPriceData, resultText } from './constantPricesData.ts';
+import { buildPriceSeries, calculationCsv, conversion, copyResults, displayResult, importedPeriod, importSheet, loadPriceData, makeSheet, monthlyCpi, nextPeriod, parseAmount, parseExcel, pasteValues, periodKey, periodLabel, priceLevel, pricePeriods, readPriceData, resultText } from './constantPricesData.ts';
 
 const near = (value, expected) => assert.ok(Math.abs(value.toNumber() - expected) < 1e-10, `${value} != ${expected}`);
 const months = values => values.map((value, i) => ({ year: 2024 + Math.floor(i / 12), month: i % 12 + 1, value }));
@@ -45,8 +45,8 @@ test('duplicate, zero, negative, nonfinite or invalid source periods fail closed
 test('periods, complete source defaults and quarter arithmetic do not depend on the current date', () => {
   const series = readPriceData(fixtures.report()).series[0];
   assert.deepEqual(makeSheet(series, 'year').rows.map(row => row.period), ['2023', '2024', '2025']);
-  assert.equal(pricePeriods(series, 'month').at(-1), '2026-08');
-  assert.equal(pricePeriods(series, 'quarter').at(-1), '2026-Q2');
+  assert.equal(pricePeriods(series, 'month').at(-1), '2026-09');
+  assert.equal(pricePeriods(series, 'quarter').at(-1), '2026-Q3');
   assert.equal(nextPeriod('2024-Q4', 'quarter'), '2025-Q1');
   assert.equal(nextPeriod('2024-12', 'month'), '2025-01');
   assert.equal(periodKey(2024 * 12 + 4, 'year'), '2024');
@@ -55,9 +55,39 @@ test('periods, complete source defaults and quarter arithmetic do not depend on 
 test('source reader insists on exact monthly dates and the previous-month CPI series', () => {
   const report = fixtures.report(), before = JSON.stringify(report), data = readPriceData(report);
   assert.deepEqual(data.series.map(series => series.region), ['Москва', 'Российская Федерация']);
-  assert.equal(data.series[0].points.length, 44); assert.equal(JSON.stringify(report), before);
+  assert.equal(data.series[0].points.length, 45); assert.equal(JSON.stringify(report), before);
   for (const patch of [{ period: 'year' }, { index_base: 'ytd_to_yago' }, { months: [1, 2] }]) assert.throws(() => readPriceData({ ...report, selection: { ...report.selection, ...patch } }));
   const broken = structuredClone(report); delete broken.charts[0].rows[0].year; assert.throws(() => readPriceData(broken));
+});
+test('September 2026 bases annual values on all nine monthly changes, without requiring a full 2026 year', () => {
+  const series = readPriceData(fixtures.report()).series[0], annualEnd = conversion(series, '2025', 'year', '2026-09', 'month', 'end');
+  near(annualEnd.coefficient, 1.01 ** 9);
+  const annualAverage = conversion(series, '2025', 'year', '2026-09', 'month', 'average');
+  near(annualAverage.coefficient, 1.01 ** 20 / (Array.from({ length: 12 }, (_, i) => 1.01 ** i).reduce((a, b) => a + b) / 12));
+  assert.equal(priceLevel(series, '2026', 'year', 'average'), null);
+  assert.equal(priceLevel(series, '2026', 'year', 'end'), null);
+  near(conversion(series, '2026-09', 'month', '2025', 'year', 'end').coefficient, 1 / 1.01 ** 9);
+});
+test('year-to-date CPI multiplies monthly indices including January, rather than adding rates', () => {
+  const series = buildPriceSeries('Москва', months([110, 120, 90]));
+  const result = monthlyCpi(series, '2024-03');
+  assert.equal(result.index.toString(), '118.8');
+  assert.equal(result.growth.toString(), '18.8');
+  assert.deepEqual(result.rows.map(row => row.cumulative.toString()), ['110', '132', '118.8']);
+  assert.deepEqual(result.missing, []);
+});
+test('September accumulated CPI is region-specific, unrounded and never substitutes missing future/monthly values', () => {
+  const [msk, rf] = readPriceData(fixtures.report()).series;
+  near(monthlyCpi(msk, '2026-09').index, 1.01 ** 9 * 100);
+  near(monthlyCpi(rf, '2026-09').growth, (1.02 ** 9 - 1) * 100);
+  assert.equal(monthlyCpi(msk, '2026-10').index, null);
+  assert.deepEqual(monthlyCpi(msk, '2026-10').missing, ['2026-10']);
+  const incomplete = buildPriceSeries('Москва', months([110, null, 120]));
+  const result = monthlyCpi(incomplete, '2024-03');
+  assert.equal(result.growth, null); assert.equal(result.index, null);
+  assert.deepEqual(result.rows.map(row => row.cumulative?.toString() ?? null), ['110', null, null]);
+  assert.deepEqual(result.missing, ['2024-02']);
+  assert.equal(monthlyCpi(msk, 'oops').rows.length, 0);
 });
 test('loader fetches the existing catalog/report with all months/regions and propagates failure/abort', async t => {
   const urls = [], signal = new AbortController().signal;

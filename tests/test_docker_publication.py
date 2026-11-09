@@ -54,6 +54,32 @@ class PublicationTests(unittest.TestCase):
             p.seed(target, source)
             self.assertEqual((target / "data/derived/a.csv").read_text(), "operator")
 
+    def test_new_linear_seed_is_copied_and_published_without_losing_existing_sources(self):
+        from app.linear_objects import latest_source, read_linear_objects
+        relative = Path("data/raw/realty/linear_objects")
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            source, working, candidate = base / "seed", base / "work", base / "candidate"
+            (source / relative).mkdir(parents=True)
+            for name in ("linear_objects_2026-09-28.json", "linear_objects_2026-11-05.json"):
+                shutil.copy2(REPO / relative / name, source / relative / name)
+            (working / relative).mkdir(parents=True)
+            old = working / relative / "linear_objects_2026-09-28.json"
+            old.write_text("operator-owned historical snapshot")
+            p.seed(working, source)
+            self.assertEqual(old.read_text(), "operator-owned historical snapshot")
+            self.assertEqual(latest_source(working / relative).name, "linear_objects_2026-11-05.json")
+            self.assertEqual(len(read_linear_objects(latest_source(working / relative))), 16)
+            p.copy_tree(working / "data/raw/realty", candidate / "data/raw/realty")
+            self.assertEqual((candidate / relative / "linear_objects_2026-11-05.json").read_bytes(),
+                             (source / relative / "linear_objects_2026-11-05.json").read_bytes())
+            self.assertEqual((candidate / relative / old.name).read_bytes(), old.read_bytes())
+            newer = working / relative / "Финансовая дисциплина ДСТИ 06.11.2026.xlsx"
+            newer.write_bytes(b"operator-owned newer workbook")
+            p.seed(working, source)
+            self.assertEqual(latest_source(working / relative), newer)
+            self.assertEqual(newer.read_bytes(), b"operator-owned newer workbook")
+
     def test_only_current_complete_success_can_publish(self):
         started = time.time()
         valid = dict(run_id="new", status="success", current_stage="finished",
@@ -98,6 +124,7 @@ class PublicationTests(unittest.TestCase):
                 smoke.seed("PUBLICATION CONTRACT")
             # Approved static files used by the route smoke; no mutable local data.
             for relative in ("data/raw/realty/linear_objects/linear_objects_2026-09-28.json",
+                             "data/raw/realty/linear_objects/linear_objects_2026-11-05.json",
                              "data/raw/realty/vvod/static_vvod_rs_2011_2025.xlsx",
                              "data/raw/realty/vvod/emiss_34118_base.xls",
                              "data/derived/salary_2011_2012.csv",

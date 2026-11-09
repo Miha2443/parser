@@ -49,6 +49,7 @@ data/raw/realty/escrow_manual/*
 !data/raw/realty/linear_objects
 data/raw/realty/linear_objects/*
 !data/raw/realty/linear_objects/linear_objects_2026-09-28.json
+!data/raw/realty/linear_objects/linear_objects_2026-11-05.json
 state
 logs
 config/telegram.json

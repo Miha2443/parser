@@ -2,6 +2,7 @@ from datetime import date
 from io import BytesIO
 import json
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -138,6 +139,48 @@ class LinearDashboardTests(unittest.TestCase):
         self.assertEqual(roads["target"], 50)
         self.assertAlmostEqual(roads["percent"], 14)
         self.assertEqual(roads["remaining"], 43)
+
+    def test_november_snapshot_refreshes_dashboard_without_replacing_forecasts_or_history(self):
+        self.year = 2026
+        self.monitoring = self.root / "data/raw/realty/nashdom/monitoring_2_0_20261016.xlsx"
+        self.dsti = self.root / "data/raw/realty/linear_objects/linear_objects_2026-09-28.json"
+        self.write_monitoring()
+        self.write_dsti()
+        source = Path(__file__).resolve().parents[2] / "data/raw/realty/linear_objects/linear_objects_2026-11-05.json"
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 9)
+            before = self.service.dashboard()
+            shutil.copy2(source, self.dsti.parent / source.name)
+            response = self.client().get("/api/v1/linear/dashboard")
+            self.assertEqual(response.status_code, 200)
+            after = response.json()
+            self.assertNotEqual(after["version"], before["version"])
+            self.assertEqual(after["sources"][0]["date"], "2026-11-05")
+            self.assertTrue(after["sources"][0]["file"].endswith(source.name))
+            for index, (fact, period) in enumerate([(47.1, "1–4"), (16, "1–3"), (12, "1–4")]):
+                metric = after["metrics"][index]
+                self.assertAlmostEqual(metric["fact"], fact)
+                self.assertEqual(metric["factSource"], "dsti")
+                self.assertIn(period, metric["factPeriod"])
+                self.assertIn("неполный год", metric["factPeriod"])
+                self.assertEqual(metric["forecast"], before["metrics"][index]["forecast"])
+                self.assertEqual(metric["target"], metric["forecast"])
+                self.assertAlmostEqual(metric["percent"], fact / metric["forecast"] * 100)
+                self.assertAlmostEqual(metric["remaining"], metric["forecast"] - fact)
+                def history_values(item):
+                    return [(row["year"], row["fact"], row["factKind"], row["factSource"])
+                            for row in item["years"] if row["year"] < 2026]
+                self.assertEqual(history_values(metric), history_values(before["metrics"][index]))
+                self.assertEqual([(row["year"], row["forecast"]) for row in metric["years"]],
+                                 [(row["year"], row["forecast"]) for row in before["metrics"][index]["years"]])
+                current = next(row for row in metric["years"] if row["year"] == 2026)
+                self.assertEqual(current["factKind"], "partial")
+            self.assertEqual(after["metrics"][3:], before["metrics"][3:])
+            # A subsequently updated Monitoring source must still take priority.
+            self.monitoring.rename(self.monitoring.with_name("monitoring_2_0_20261106.xlsx"))
+            later = self.service.dashboard()["metrics"][0]
+            self.assertEqual(later["factSource"], "monitoring")
+            self.assertEqual(later["fact"], 7)
 
     def test_only_forecast_defines_target_with_missing_zero_or_exceeded_values(self):
         self.write_dsti(fact=2, plan=100)

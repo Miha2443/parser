@@ -40,7 +40,7 @@ docker compose run --rm --no-deps updater python -m unittest discover -s tests -
 for check in check_archive_old_collision.py check_deduplicate_cache.py check_erzrf_collector_contract.py check_fedstat_status.py check_fedstat_scope.py check_fedstat_transport.py check_kvart_resume.py check_nashdom_construction_operational.py check_nashdom_kvartirografia_parser.py check_nashdom_rasprod_api.py; do
   docker compose run --rm --no-deps updater python "scripts/$check"
 done
-docker compose run --rm --no-deps updater python -c "from pathlib import Path; assert Path('/app/data/derived/salary_2011_2012.csv').is_file(); assert Path('/app/data/raw/realty/linear_objects/linear_objects_2026-09-28.json').is_file()"
+docker compose run --rm --no-deps updater python -c "from pathlib import Path; from app.linear_objects import read_linear_objects; assert Path('/app/data/derived/salary_2011_2012.csv').is_file(); snapshot = Path('/opt/parser-seed/data/raw/realty/linear_objects/linear_objects_2026-11-05.json'); assert len(read_linear_objects(snapshot)) == 16; assert Path('/app/data/raw/realty/linear_objects/linear_objects_2026-09-28.json').is_file()"
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; import fedstat_checker,rosstat_checker; fedstat_checker.save_state({'compose':True}); rosstat_checker.save_state({'compose':True}); assert Path('state/fedstat_state.json').is_file(); assert Path('state/rosstat_state.json').is_file()"
 docker compose run --rm --no-deps updater python -c "import fedstat_checker,rosstat_checker; assert fedstat_checker.load_state()['compose']; assert rosstat_checker.load_state()['compose']"
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture seed-no-erz

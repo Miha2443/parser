@@ -217,6 +217,116 @@ class MonthlyCommissioningStructureTests(unittest.TestCase):
             self.assertEqual(report["areaEstimates"], [])
             self.assertIsNone(rows["total"]["yearChangePct"])
 
+    def test_reverse_rule_restores_all_four_comparisons_for_confirmed_previous_mkd(self):
+        frame = self.rows()
+        for column in ("Общая площадь", "category_моп"):
+            frame[column] = frame[column].astype(float)
+        frame.loc[0, "Общая площадь"] = 574.5
+        frame.loc[0, ["Жилая площадь", "category_жилое"]] = 0
+        frame.loc[0, "category_моп"] = 574.5
+        frame.loc[0, "Жилая площадь_measured"] = False
+        frame.loc[0, "№ РВ"] = "77-04-012421-2025"
+        frame.loc[0, "Наименование объекта"] = "Многоквартирный жилой дом"
+        frame.loc[0, "Инвестор для Реновации"] = None
+        frame.loc[0, "source_row"] = 3287
+        before = frame.copy(deep=True)
+        report, rows = self.report(frame)
+        for key, current, previous in (
+            ("mkd_total", 220000, 120574.5),
+            ("mkd_residential", 120000, 60333.21),
+            ("mop", 80000, 40241.29),
+            ("residential_area", 120000, 60333.21),
+        ):
+            self.assertAlmostEqual(rows[key]["value"], current / 1e6)
+            self.assertAlmostEqual(rows[key]["yearChangePct"], (current / previous - 1) * 100)
+        self.assertAlmostEqual(rows["housing_objects"]["yearChangePct"], (220000 / 120574.5 - 1) * 100)
+        self.assertEqual(rows["mkd_residential"]["renovationYearChangePct"], 100)
+        estimate, = report["areaEstimates"]
+        self.assertEqual((estimate["period"], estimate["sourceRow"]), ("previous", 3287))
+        self.assertEqual(estimate["sourceGeneralArea"], 574.5)
+        self.assertIsNone(estimate["sourceLivingArea"])
+        self.assertEqual(estimate["calculatedArea"], "living")
+        self.assertEqual(estimate["reconstructionBasis"], "confirmed_living_area_permit")
+        self.assertAlmostEqual(estimate["livingArea"], 333.21)
+        self.assertAlmostEqual(estimate["mopArea"], 241.29)
+        self.assertEqual(estimate["generalArea"], 574.5)
+        pd.testing.assert_frame_equal(frame, before)
+
+    def test_both_formula_directions_coexist_and_restore_current_month_and_renovation(self):
+        frame = self.rows()
+        for index in (0, 12):
+            frame.loc[index, ["Жилая площадь", "category_жилое"]] = 0
+            frame.loc[index, "category_моп"] = 100000
+            frame.loc[index, "Жилая площадь_measured"] = False
+            frame.loc[index, "Наименование объекта"] = "Реконструкция жилого дома"
+        frame.loc[8, ["Общая площадь", "category_моп"]] = 0
+        frame.loc[8, "Общая площадь_measured"] = False
+        frame.loc[8, "Наименование объекта"] = "Реконструкция жилого дома"
+        report, rows = self.report(frame)
+        self.assertAlmostEqual(rows["mkd_residential"]["value"], .118)
+        self.assertAlmostEqual(rows["mkd_residential"]["monthChange"], .058)
+        self.assertEqual(rows["mkd_residential"]["yearChangePct"], 0)
+        self.assertAlmostEqual(rows["mkd_residential"]["renovationMonthChange"], .058)
+        self.assertEqual(rows["mkd_residential"]["renovationYearChangePct"], 0)
+        self.assertEqual([item["calculatedArea"] for item in report["areaEstimates"]], ["living", "general", "living"])
+        self.assertTrue(all(item["reconstructionBasis"] == "object_name" for item in report["areaEstimates"]))
+        january, _ = self.report(frame, month=1)
+        self.assertEqual(len(january["areaEstimates"]), 2)
+
+    def test_reverse_rule_preserves_measured_zero_and_does_not_infer_unapproved_or_invalid_areas(self):
+        for changed in (
+            {"Жилая площадь": 60000, "Жилая площадь_measured": True},
+            {"Жилая площадь": 0, "Жилая площадь_measured": True},
+            {"Жилая площадь": -1},
+            {"Жилая площадь": float("inf")},
+            {"Общая площадь": 0},
+            {"Общая площадь": -1},
+            {"Общая площадь": float("inf")},
+            {"Общая площадь_measured": False},
+            {"Подтип объекта": "ИЖС"},
+            {"Группировка": "Нежилье"},
+            {"Отрасли": "Административно-деловые объекты"},
+            {"№ РВ": "77-04-012421-2026"},
+            {"№ РВ": None},
+        ):
+            with self.subTest(changed=changed):
+                frame = self.rows()
+                frame["Общая площадь"] = frame["Общая площадь"].astype(float)
+                frame["Жилая площадь"] = frame["Жилая площадь"].astype(float)
+                frame.loc[8, ["Жилая площадь", "category_жилое"]] = 0
+                frame.loc[8, "Жилая площадь_measured"] = False
+                frame.loc[8, "№ РВ"] = "77-04-012421-2025"
+                frame.loc[8, "Наименование объекта"] = "Многоквартирный жилой дом"
+                for key, value in changed.items():
+                    frame.loc[8, key] = value
+                report, _ = self.report(frame)
+                self.assertEqual(report["areaEstimates"], [])
+
+    def test_mkd_general_area_does_not_depend_on_missing_or_conflicting_living_split(self):
+        for living, measured in ((0, False), (120000, True)):
+            with self.subTest(living=living, measured=measured):
+                frame = self.rows()
+                frame.loc[0, ["Жилая площадь", "category_жилое"]] = living
+                frame.loc[0, "Жилая площадь_measured"] = measured
+                frame.loc[0, "category_моп"] = max(0, 100000 - living)
+                report, rows = self.report(frame)
+                self.assertEqual(report["areaEstimates"], [])
+                self.assertEqual(rows["mkd_total"]["yearChangePct"], 0)
+                self.assertEqual(rows["housing_objects"]["yearChangePct"], 0)
+                self.assertIsNone(rows["mop"]["yearChangePct"])
+                self.assertEqual(any("жилая площадь больше общей" in issue for issue in report["issues"]), measured)
+
+    def test_mkd_general_area_preserves_existing_non_mkd_common_area_contribution(self):
+        frame = self.rows()
+        house = frame.iloc[0].copy()
+        house["Подтип объекта"] = "ИЖС"
+        house["Общая площадь"] = 20000
+        house["Жилая площадь"] = house["category_жилое"] = 15000
+        house["category_моп"] = 5000
+        frame = pd.concat([frame, pd.DataFrame([house])], ignore_index=True)
+        _, rows = self.report(frame)
+        self.assertAlmostEqual(rows["mkd_total"]["yearChangePct"], (.22 / .225 - 1) * 100)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@ from app.vvod_operational import MONTHS_RU, housing_ytd_table, nonres_ytd_table,
 from backend.operational_routes import build_report, create_service, create_router, export_workbook
 from backend.profile_service import FilterUnavailable
 from pipeline.data_access import DataAccess, DataContext
-from pipeline.operational_calculations import catalog
+from pipeline.operational_calculations import OPERATIONAL_CALCULATION_REVISION, catalog
 from pipeline.report_values import records
 from scripts.check_apartments_parity import Capture
 
@@ -178,6 +178,16 @@ class HistoricalMonthTests(unittest.TestCase):
         self.assertEqual(self.options["currentYear"], 2026)
         self.assertEqual(self.options["years"], [2026, 2025])
 
+    def test_changed_area_calculation_invalidates_export_version_without_changing_sources(self):
+        service = create_service(DataContext(ROOT))
+        access = DataAccess(service.context)
+        current = service._versions(access)
+        self.assertEqual(current[0], OPERATIONAL_CALCULATION_REVISION)
+        service.calculation_revision = None
+        legacy = service._versions(access)
+        self.assertEqual(current[1], legacy)
+        self.assertNotEqual(current, legacy)
+
     def test_default_uses_latest_rv_month_including_current_source_month_without_august_fallback(self):
         rv = self.data["load_monitoring_2_0"]["rv"]
         for source_date, month, expected in (("28.09.2026", "сентябрь", 9),
@@ -237,6 +247,43 @@ class HistoricalMonthTests(unittest.TestCase):
         # series or source records that the user has already accepted.
         self.assertEqual(payload["tables"][0]["rows"][-1]["За выбранный период, млн м²"], .5)
         self.assertEqual(payload["tree"], quarter_tree(rv, 2026, 1))
+        pd.testing.assert_frame_equal(rv, before)
+
+    def test_reverse_area_estimate_export_keeps_known_general_and_missing_source_living(self):
+        rv = self.data["load_monitoring_2_0"]["rv"]
+        rv["Группировка"] = "Жилье"
+        rv["Жилая площадь"] = rv["category_жилое"]
+        rv["Общая площадь_measured"] = True
+        rv["Жилая площадь_measured"] = True
+        rv["source_sheet"] = "Реестр РВ"
+        rv["source_row"] = [3287, 11, 12]
+        rv["source_file"] = "monitoring.xlsx"
+        rv["Наименование объекта"] = "Многоквартирный жилой дом"
+        rv.loc[0, "№ РВ"] = "77-04-012421-2025"
+        rv.loc[0, ["Жилая площадь", "category_жилое"]] = 0
+        rv.loc[0, "category_моп"] = rv.loc[0, "Общая площадь"]
+        rv.loc[0, "Жилая площадь_measured"] = False
+        before = rv.copy(deep=True)
+        payload = build_report(self.data, self.options, month=8)
+        estimate, = payload["structure"]["areaEstimates"]
+        for key in ("mkd_total", "mkd_residential", "mop", "residential_area"):
+            self.assertIsNotNone(next(row for row in payload["structure"]["rows"] if row["id"] == key)["yearChangePct"])
+        payload.update({"version": "test", "generatedAt": "2026-09-28T00:00:00Z", "source": {}})
+        book = load_workbook(BytesIO(export_workbook(payload)))
+        tab = book["Area estimates"]
+        self.assertEqual(tab.max_row, 2)
+        self.assertEqual(tab["H2"].value, 3287)
+        self.assertEqual(tab["I2"].value, 1300000)
+        self.assertAlmostEqual(tab["J2"].value, 754000)
+        self.assertEqual(tab["K2"].value, .58)
+        self.assertEqual(tab["L2"].value, 1300000)
+        self.assertAlmostEqual(tab["M2"].value, 546000)
+        self.assertEqual(tab["O2"].value, "confirmed_living_area_permit")
+        self.assertIsNone(tab["P2"].value)
+        self.assertEqual(tab["Q2"].value, "living")
+        self.assertEqual(estimate["sourceGeneralArea"], tab["I2"].value)
+        self.assertEqual(payload["tree"], quarter_tree(rv, 2026, 1))
+        book.close()
         pd.testing.assert_frame_equal(rv, before)
 
     def test_december_history_and_partial_current_year_preserve_helpers_and_all_rows(self):

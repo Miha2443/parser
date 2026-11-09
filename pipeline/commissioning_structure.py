@@ -9,6 +9,8 @@ from app.vvod_operational import MONTHS_RU
 RECONSTRUCTION_LIVING_SHARE = 0.58
 # The user confirmed this reconstruction; K only says "Жилой комплекс".
 CONFIRMED_RECONSTRUCTION_PERMITS = frozenset({"77-01-012565-2025"})
+# Approved reverse 58% rule for the missing living area at Сосинская, 43.
+CONFIRMED_LIVING_AREA_ESTIMATE_PERMITS = frozenset({"77-04-012421-2025"})
 
 
 STRUCTURE_LABELS = (
@@ -26,8 +28,9 @@ STRUCTURE_LABELS = (
 def _prepare_areas(rv):
     prepared = rv.copy(deep=True)
     prepared["Общая площадь_calculated"] = False
+    prepared["Жилая площадь_calculated"] = False
     required = {"Общая площадь", "Жилая площадь", "Общая площадь_measured", "Жилая площадь_measured",
-                "Отрасли", "Группировка", "Подтип объекта", "category_моп"}
+                "Отрасли", "Группировка", "Подтип объекта", "category_моп", "category_жилое"}
     if not required <= set(prepared):
         return prepared
     normalized = lambda column: prepared.get(column, pd.Series("", index=prepared.index)).fillna("").astype(str).str.strip().str.casefold().str.replace("ё", "е")
@@ -46,6 +49,20 @@ def _prepare_areas(rv):
         prepared.loc[mask, "Общая площадь"] = calculated[mask]
         prepared.loc[mask, "category_моп"] = calculated[mask] - living[mask]
         prepared.loc[mask, "Общая площадь_calculated"] = True
+    calculated_living = general * RECONSTRUCTION_LIVING_SHARE
+    missing_living = ((reconstruction | normalized("№ РВ").isin(CONFIRMED_LIVING_AREA_ESTIMATE_PERMITS)) &
+                      normalized("Отрасли").eq("жилые объекты") & normalized("Группировка").eq("жилье") &
+                      normalized("Подтип объекта").eq("мкд") & prepared["Общая площадь_measured"] &
+                      general.gt(0) & general.lt(float("inf")) & ~prepared["Жилая площадь_measured"] &
+                      (living.isna() | living.eq(0)))
+    if missing_living.any():
+        prepared["Жилая площадь"] = living.astype(float)
+        for column in ("category_жилое", "category_моп"):
+            prepared[column] = pd.to_numeric(prepared[column], errors="coerce").astype(float)
+        prepared.loc[missing_living, "Жилая площадь"] = calculated_living[missing_living]
+        prepared.loc[missing_living, "category_жилое"] = calculated_living[missing_living]
+        prepared.loc[missing_living, "category_моп"] = general[missing_living] - calculated_living[missing_living]
+        prepared.loc[missing_living, "Жилая площадь_calculated"] = True
     return prepared
 
 
@@ -82,16 +99,27 @@ def _values(selected, *, known=False):
     standalone = selected[~residential]
     area = lambda frame, column, measured=(): _sum(frame, column, measured, known=known)
     living = area(living_rows, "category_жилое", ("Жилая площадь",))
-    mop = area(living_rows, "category_моп", ("Общая площадь", "Жилая площадь"))
-    if not living_rows.empty and {"Общая площадь", "Жилая площадь"} <= set(living_rows):
-        if (living_rows["Общая площадь"] < living_rows["Жилая площадь"]).any():
-            mop = area(living_rows[living_rows["Общая площадь"].ge(living_rows["Жилая площадь"])], "category_моп", ("Общая площадь", "Жилая площадь")) if known else None
+    def mop_area(frame):
+        if not frame.empty and {"Общая площадь", "Жилая площадь"} <= set(frame):
+            valid = frame["Общая площадь"].ge(frame["Жилая площадь"])
+            if not valid.all():
+                if not known:
+                    return None
+                frame = frame[valid]
+        return area(frame, "category_моп", ("Общая площадь", "Жилая площадь"))
+    mop = mop_area(living_rows)
     embedded = area(embedded_rows, "category_нежилое_в_жилом", ("Общая площадь",))
-    apartments = area(living_rows[subtype.reindex(living_rows.index).eq("МКД")], "category_жилое", ("Жилая площадь",))
+    is_mkd = subtype.reindex(living_rows.index).eq("МКД")
+    mkd_rows = living_rows[is_mkd]
+    apartments = area(mkd_rows, "category_жилое", ("Жилая площадь",))
+    # The measured MKD total does not depend on its living/MOP split. Retain
+    # the existing contribution of MOP outside the MKD subtype separately.
+    mkd_total = _add(area(mkd_rows, "Общая площадь", ("Общая площадь",)),
+                     mop_area(living_rows[~is_mkd]), embedded, known=known)
     result = {"total": area(selected, "Общая площадь", ("Общая площадь",)),
               "housing_objects": area(selected[residential], "Общая площадь", ("Общая площадь",)),
               "mkd_residential": apartments, "mop": mop, "nonres_in_housing": embedded,
-              "mkd_total": _add(apartments, mop, embedded, known=known), "residential_area": living,
+              "mkd_total": mkd_total, "residential_area": living,
               "izhs": area(living_rows[subtype.reindex(living_rows.index).eq("ИЖС")], "category_жилое", ("Жилая площадь",)),
               "nonres_objects": area(standalone, "category_нежилое_отдельное", ("Общая площадь",))}
     result["nonres_total"] = _add(result["nonres_objects"], embedded, known=known)
@@ -181,8 +209,16 @@ def monthly_structure(rv, year, requested_month, source_date=None):
                 row[key] = None
     if months[years.isin([year, year - 1])].isna().any():
         issues.append("Есть строки без месяца ввода; затронутые периодные суммы и сравнения не подтверждены.")
+    if measured_schema:
+        conflicting = (chosen_mask | previous_mask) & industries.eq("жилые объекты")
+        conflicting &= prepared["Группировка"].fillna("").astype(str).str.strip().str.casefold().str.replace("ё", "е").eq("жилье")
+        conflicting &= prepared["Общая площадь_measured"] | prepared["Общая площадь_calculated"]
+        conflicting &= prepared["Жилая площадь_measured"] | prepared["Жилая площадь_calculated"]
+        if (conflicting & prepared["Общая площадь"].lt(prepared["Жилая площадь"])).any():
+            issues.append("Есть жилые объекты, у которых жилая площадь больше общей; МОП и его сравнения не подтверждены до уточнения исходных значений.")
     estimates = []
-    for index, item in prepared[prepared["Общая площадь_calculated"] & (chosen_mask | previous_mask)].iterrows():
+    estimated = prepared["Общая площадь_calculated"] | prepared["Жилая площадь_calculated"]
+    for index, item in prepared[estimated & (chosen_mask | previous_mask)].iterrows():
         text = lambda key: str(item[key]) if pd.notna(item.get(key)) else None
         source_row = pd.to_numeric(item.get("source_row"), errors="coerce")
         estimates.append({"year": int(years.loc[index]), "month": int(months.loc[index]) if pd.notna(months.loc[index]) else None,
@@ -190,8 +226,12 @@ def monthly_structure(rv, year, requested_month, source_date=None):
                           "sourceFile": text("source_file"), "sourceSheet": text("source_sheet"),
                           "sourceRow": int(source_row) if pd.notna(source_row) else None,
                           "address": text("Адрес"), "permit": text("№ РВ"), "objectName": text("Наименование объекта"),
-                          "reconstructionBasis": "object_name" if "реконструк" in (text("Наименование объекта") or "").casefold() else "confirmed_permit",
-                          "sourceGeneralArea": None, "livingArea": float(item["Жилая площадь"]),
+                          "reconstructionBasis": "object_name" if "реконструк" in (text("Наименование объекта") or "").casefold() else
+                                                 "confirmed_living_area_permit" if (text("№ РВ") or "").strip() in CONFIRMED_LIVING_AREA_ESTIMATE_PERMITS else "confirmed_permit",
+                          "sourceGeneralArea": None if item["Общая площадь_calculated"] else float(item["Общая площадь"]),
+                          "sourceLivingArea": None if item["Жилая площадь_calculated"] else float(item["Жилая площадь"]),
+                          "calculatedArea": "general" if item["Общая площадь_calculated"] else "living",
+                          "livingArea": float(item["Жилая площадь"]),
                           "livingShare": RECONSTRUCTION_LIVING_SHARE,
                           "generalArea": float(item["Общая площадь"]), "mopArea": float(item["category_моп"])})
     return {"year": year, "requestedMonth": requested_month, "actualMonth": actual_month,

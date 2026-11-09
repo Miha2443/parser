@@ -8,7 +8,7 @@ from openpyxl import Workbook
 
 from backend.generation_service import GenerationService
 from backend.profile_service import FilterUnavailable
-from pipeline.operational_calculations import catalog, report
+from pipeline.operational_calculations import OPERATIONAL_CALCULATION_REVISION, catalog, report
 
 
 def build_report(*args, **kwargs):
@@ -21,7 +21,7 @@ def build_report(*args, **kwargs):
 def create_service(context, check_interval=5):
     return GenerationService(context, ("load_vvod_static", "load_monitoring_2_0", "load_monitoring_operational_history", "load_commissioning_forecasts"),
                              ("vvod_static", "monitoring_2_0", "monitoring_operational_history", "commissioning_forecasts"),
-                             catalog, build_report, check_interval)
+                             catalog, build_report, check_interval, calculation_revision=OPERATIONAL_CALCULATION_REVISION)
 
 
 def export_workbook(payload):
@@ -56,10 +56,12 @@ def export_workbook(payload):
         if payload["structure"].get("areaEstimates"):
             tab = book.create_sheet("Area estimates")
             fields = ["period", "year", "month", "address", "permit", "sourceFile", "sourceSheet", "sourceRow",
-                      "sourceGeneralArea", "livingArea", "livingShare", "generalArea", "mopArea", "objectName", "reconstructionBasis"]
+                      "sourceGeneralArea", "livingArea", "livingShare", "generalArea", "mopArea", "objectName", "reconstructionBasis",
+                      "sourceLivingArea", "calculatedArea"]
             tab.append(["Period", "Year", "Month", "Address", "RV permit", "Source file", "Source sheet", "Source row",
-                        "Original general area, m2", "Living area, m2", "Living / general share",
-                        "Calculated general area, m2", "Calculated MOP area, m2", "Source object name (K)", "Reconstruction basis"])
+                        "Original general area, m2", "Living area (measured or calculated), m2", "Living / general share",
+                        "General area (measured or calculated), m2", "Calculated MOP area, m2", "Source object name (K)", "Estimation basis",
+                        "Original living area, m2", "Calculated area field"])
             for row in payload["structure"]["areaEstimates"]:
                 tab.append([safe(row[field]) for field in fields])
     tab = book.create_sheet("Forecasts")

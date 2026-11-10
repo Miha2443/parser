@@ -24,7 +24,7 @@ const hooks = registerHooks({
 after(() => hooks.deregister());
 const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues, demoIndex, demoInterval, demoIntervalLabel, demoSelection, demoSources, demoVersioned } = await import('./demoData.ts');
 const { ApiError } = await import('./data.ts');
-const { demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
+const { demoPanelContext, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -67,6 +67,104 @@ test('grouped screens keep section identity, selected-only panels, paired units 
   const scoped = demoSlides([chart('profile/a/annual', 'profile/a'), chart('profile/a/structure/0', 'profile/a'), chart('profile/b/annual', 'profile/b')]);
   assert.deepEqual(scoped.map(slide => slide.charts.length), [2, 1], 'different companies must never share a composite screen');
 });
+const groupedDemoSections = [
+  { source: 'sales', title: 'Распроданность', ids: ['forecast', 'monthly_percent'] },
+  { source: 'apartments', title: 'Квартирография', ids: ['distribution', 'rooms'] },
+  { source: 'linear', title: 'Годовой ввод линейных объектов', ids: ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'] },
+];
+const groupedDemoChart = (id, overrides = {}) => ({ id, title: id, context: 'Москва · 2026-11-10', href: '/', empty: false, rows: [['n'], [0]], option: () => ({ series: [] }), ...overrides });
+
+for (const { source, title, ids } of groupedDemoSections) test(`${source} groups every multi-chart selection on one grid and leaves a lone chart single`, () => {
+  const charts = ids.map(id => groupedDemoChart(`${source}/${id}`));
+  const before = JSON.stringify(charts);
+  for (let mask = 1; mask < 2 ** charts.length; mask++) {
+    const selection = new Set(charts.filter((_chart, index) => mask & (1 << index)).map(chart => chart.id));
+    const selected = demoSelection(charts, selection), slides = demoSlides(selected);
+    assert.equal(slides.length, 1, `${source}: selection ${mask}`);
+    const [slide] = slides;
+    assert.equal(slide.id, `${source}/overview`);
+    assert.equal(slide.layout, selected.length > 1 ? 'grid' : 'single');
+    assert.equal(slide.title, selected.length > 1 ? title : selected[0].title);
+    assert.equal(slide.sourceTitle, demoSourceTitle(selected[0].id));
+    assert.equal(slide.context, charts[0].context);
+    assert.deepEqual(slide.charts, selected);
+    slide.charts.forEach((chart, index) => assert.equal(chart, selected[index]));
+  }
+  assert.equal(JSON.stringify(charts), before, 'grouping must not mutate charts or source data');
+});
+
+test('new section grids preserve explicit scopes and never combine sources or developers', () => {
+  const charts = groupedDemoSections.flatMap(({ source, ids }) => [
+    groupedDemoChart(`${source}/${ids[0]}`, { scope: 'developer/a' }),
+    groupedDemoChart(`${source}/${ids[0]}`, { scope: 'developer/b' }),
+    groupedDemoChart(`${source}/${ids[1]}`, { scope: 'developer/a' }),
+    groupedDemoChart(`${source}/${ids[0]}`),
+    groupedDemoChart(`${source}/${ids[1]}`, { scope: 'developer/b', empty: true }),
+  ]);
+  const slides = demoSlides(charts);
+  assert.equal(slides.length, 9);
+  assert.equal(new Set(slides.map(slide => slide.id)).size, slides.length);
+  for (const { source } of groupedDemoSections) {
+    const section = slides.filter(slide => slide.id.startsWith(`${source}/`));
+    assert.deepEqual(section.map(slide => slide.layout), ['grid', 'single', 'single']);
+    assert.deepEqual(section.map(slide => slide.charts.map(chart => chart.scope)), [['developer/a', 'developer/a'], ['developer/b'], [undefined]]);
+    assert.ok(section.every(slide => slide.sourceTitle === demoSourceTitle(`${source}/`)));
+  }
+});
+
+test('new section grids retain first-seen order, empty filtering, panel contexts and unrelated groups', () => {
+  const charts = [
+    groupedDemoChart('sales/empty', { empty: true }),
+    groupedDemoChart('permits/main'),
+    groupedDemoChart('linear/roads', { context: 'Москва · км · 2026' }),
+    groupedDemoChart('sales/monthly_percent'),
+    groupedDemoChart('apartments/distribution'),
+    groupedDemoChart('mortgage/count/annual'),
+    groupedDemoChart('linear/bridges', { context: 'Москва · ед. · 2026' }),
+    groupedDemoChart('apartments/rooms', { context: 'Застройщик А · Москва · 2026-11-10' }),
+    groupedDemoChart('sales/forecast'),
+    groupedDemoChart('mortgage/volume/annual'),
+    groupedDemoChart('linear/empty', { empty: true }),
+    groupedDemoChart('apartments/empty', { empty: true }),
+    groupedDemoChart('profile/a/annual', { scope: 'profile/a' }),
+    groupedDemoChart('profile/b/annual', { scope: 'profile/b' }),
+    groupedDemoChart('profile/a/structure/0', { scope: 'profile/a' }),
+  ];
+  const slides = demoSlides(charts);
+  assert.deepEqual(slides.map(slide => [slide.id, slide.layout]), [
+    ['permits/main', 'single'], ['linear/overview', 'grid'], ['sales/overview', 'grid'],
+    ['apartments/overview', 'grid'], ['mortgage/annual', 'pair'],
+    ['profile/a/commissioning', 'overview'], ['profile/b/commissioning', 'single'],
+  ]);
+  assert.deepEqual(slides.flatMap(slide => slide.charts).map(chart => chart.id).sort(), charts.filter(chart => !chart.empty).map(chart => chart.id).sort());
+  const linear = slides[1], apartments = slides[3];
+  assert.equal(linear.context, 'Москва');
+  assert.deepEqual(linear.charts.map(chart => demoPanelContext(chart, linear)), ['км · 2026', 'ед. · 2026']);
+  assert.deepEqual(apartments.charts.map(chart => demoPanelContext(chart, apartments)), ['', 'Застройщик А · Москва · 2026-11-10']);
+  for (const { source, ids } of groupedDemoSections) {
+    const empty = groupedDemoChart(`${source}/empty`, { empty: true }), chart = groupedDemoChart(`${source}/${ids[0]}`);
+    assert.deepEqual(demoSlides([empty]), []);
+    const [single] = demoSlides([empty, chart]);
+    assert.equal(single.layout, 'single');
+    assert.equal(single.title, chart.title);
+    assert.deepEqual(single.charts, [chart]);
+    assert.deepEqual(demoSlides(demoSelection([empty, chart], new Set(['obsolete', empty.id]))), []);
+  }
+});
+
+test('real sales, apartment and six linear adapters produce one logical screen per selected source', async t => {
+  t.mock.method(globalThis, 'fetch', async url => Response.json(fixtures.response(url)));
+  for (const { source, ids } of groupedDemoSections) {
+    const charts = await demoSources.find(item => item.id === source).load(new AbortController().signal);
+    const selected = demoSelection(charts, null), slides = demoSlides(selected);
+    assert.equal(selected.length, ids.length, source);
+    assert.equal(slides.length, 1, source);
+    assert.equal(slides[0].layout, 'grid');
+    assert.equal(slides[0].sourceTitle, demoSourceTitle(`${source}/`));
+    assert.deepEqual(slides[0].charts, selected);
+  }
+});
+
 test('catalog reconciliation retries once for changed versions and 404, but never hides permanent errors', async () => {
   let calls = 0;
   const changed = await demoVersioned(async () => ({ version: `v${++calls}` }), async () => ({ version: 'v2' }));

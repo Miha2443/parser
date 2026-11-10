@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { demoPresentationOption, demoPresentationScale } from './demoPresentation.ts';
+import { demoPresentationOption, demoPresentationScale, layoutDemoLineLabels } from './demoPresentation.ts';
 
 test('presentation tiers depend on both dimensions, not just a wide short window', () => {
   assert.equal(demoPresentationScale(390, 650), 1);
@@ -277,7 +277,7 @@ test('responsive ring overrides remain intact, and deeply frozen options work wi
   assert.equal(option.media[0].option.series[1].label.show, false);
 });
 
-test('line labels use sparse, significant observed peaks and troughs, not interpolation or every small wiggle', () => {
+test('real significant peaks retain their identity among the adaptive line captions', () => {
   const values = [100, 100.02, 100, 100.01, 100, 103, 106, 106, 106, 103, 100, 97, 94, 97, 100];
   const option = cartesian([{ type: 'line', name: 'CPI', data: values, showSymbol: false, connectNulls: false, label: { show: false } }]);
   option.xAxis.boundaryGap = false;
@@ -297,6 +297,87 @@ test('gaps, flat runs and isolated observations cannot create fictitious line ex
   const result = demoPresentationOption(option, 1200, 650);
   assert.deepEqual(extremaPoints(result.series[0]), []);
   assert.deepEqual(result.series[0].data, option.series[0].data);
+});
+
+const lineCaptions = option => option.series.flatMap(series => (series.markPoint?.data ?? []).filter(p => /^demo-(extremum|value)-/.test(p.name)));
+function resolveCaptionPixels(option, project, width = 1200, height = 650) {
+  let updates = 0;
+  layoutDemoLineLabels({ getOption: () => option, getWidth: () => width, getHeight: () => height,
+    convertToPixel: (finder, value) => Array.isArray(value) ? project(finder, value) : NaN,
+    setOption: () => { updates++; } });
+  return { captions: lineCaptions(option), updates };
+}
+
+test('roomy annual growth shows every observed percent rather than only extrema', () => {
+  const values = [null, 25, -20, 1, 4, 77, -7, 204, -79, 62, 15, 18, 4, -2, 3, -10];
+  const option = demoPresentationOption(cartesian([{ type: 'line', name: 'Growth, %', data: values,
+    label: { formatter: p => `${p.value > 0 ? '+' : ''}${p.value}%` } }]), 1920, 650);
+  const { captions } = resolveCaptionPixels(option, (_, [index, value]) => [100 + index * 110, 150 - value / 5], 1920);
+  assert.equal(captions.length, 15);
+  assert.ok(captions.every(p => p.label.show), 'No density quota may suppress a caption that fits');
+  assert.deepEqual(captions.map(p => p.value), values.filter(v => v !== null));
+  assert.ok(captions.every(p => p.label.formatter().endsWith('%')));
+});
+
+test('flat runs and isolated finite observations have values without fabricated extrema or missing-value zeros', () => {
+  const option = demoPresentationOption(cartesian([{ type: 'line', name: 'flat',
+    data: [null, 100, 100, null, 200, null, 0, null] }]), 1200, 650);
+  const { captions } = resolveCaptionPixels(option, (_, [index]) => [120 + index * 110, 200]);
+  assert.equal(captions.length, 4);
+  assert.ok(captions.every(p => p.label.show && p.name.startsWith('demo-value-')));
+  assert.deepEqual(captions.map(p => p.value), [100, 100, 200, 0]);
+});
+
+test('actual pixel collisions try below the point before dropping either caption', () => {
+  const option = demoPresentationOption(cartesian([
+    { type: 'line', name: 'one', data: [10] }, { type: 'line', name: 'two', data: [10] },
+  ]), 600, 400);
+  const { captions } = resolveCaptionPixels(option, () => [250, 180], 600, 400);
+  assert.equal(captions.filter(p => p.label.show).length, 2);
+  assert.deepEqual(captions.map(p => p.label.position).sort(), ['bottom', 'top']);
+});
+
+test('captions at the same x position remain visible when their actual y positions leave room', () => {
+  const option = demoPresentationOption(cartesian([
+    { type: 'line', name: 'one', data: [10] }, { type: 'line', name: 'two', data: [20] },
+    { type: 'line', name: 'three', data: [30] },
+  ]), 600, 500);
+  const { captions } = resolveCaptionPixels(option, (_, [, value]) => [250, value * 10], 600, 500);
+  assert.ok(captions.every(p => p.label.show));
+});
+
+test('resolved plot edges keep endpoint captions out of the Y-axis tick gutter', () => {
+  const option = demoPresentationOption(cartesian([{ type: 'line', data: [98.1, 100] }]), 600, 400);
+  option.xAxis.boundaryGap = false;
+  layoutDemoLineLabels({ getOption: () => option, getWidth: () => 600, getHeight: () => 400,
+    convertToPixel: (_, value) => Array.isArray(value) ? [value[0] ? 540 : 90, 220] : value ? 540 : 90,
+    setOption: () => {} });
+  const points = lineCaptions(option);
+  assert.ok(points.every(p => p.label.show));
+  assert.ok(points[0].label.offset[0] > 0, 'The first label must move right of the actual plot edge');
+  assert.ok(points[1].label.offset[0] < 0, 'The final label must stay inside the right plot edge');
+});
+
+test('a trough near the plot bottom moves its label above instead of crossing the axis', () => {
+  const option = demoPresentationOption(cartesian([{ type: 'line', name: '%', data: [2, 1, 2] }]), 600, 400);
+  const { captions } = resolveCaptionPixels(option, (_, [index]) => [100 + index * 150, index === 1 ? 345 : 180], 600, 400);
+  const trough = captions.find(p => p.coord[0] === 1);
+  assert.ok(trough.label.show);
+  assert.equal(trough.label.position, 'top');
+});
+
+test('only genuine lack of two-dimensional room suppresses line captions', () => {
+  const option = demoPresentationOption(cartesian(Array.from({ length: 12 }, (_, i) => ({
+    type: 'line', name: String(i), data: [10],
+  }))), 600, 400);
+  const { captions } = resolveCaptionPixels(option, () => [250, 180], 600, 400);
+  assert.equal(captions.length, 12);
+  assert.equal(captions.filter(p => p.label.show).length, 2);
+});
+
+test('charts without generated line captions require no second layout update', () => {
+  const option = demoPresentationOption(cartesian([{ type: 'bar', data: [10] }]), 600, 400);
+  assert.equal(resolveCaptionPixels(option, () => { throw new Error('No line projection expected'); }).updates, 0);
 });
 
 test('sparse provider growth labels retain percent/sign semantics at real plateau extrema', () => {

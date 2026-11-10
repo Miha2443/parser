@@ -2,7 +2,7 @@ import type { DemoChart } from './demoData';
 
 export type DemoSlide = {
   id: string; title: string; sourceTitle: string; context: string;
-  layout: 'single' | 'pair' | 'rings' | 'overview'; charts: DemoChart[];
+  layout: 'single' | 'pair' | 'rings' | 'overview' | 'grid'; charts: DemoChart[];
 };
 const sourceLabels: Record<string, string> = {
   profile: 'Профиль застройщика', permits: 'Разрешения на строительство · РС',
@@ -23,6 +23,11 @@ function group(chart: DemoChart): { id: string; title: string; layout: DemoSlide
   if (id.startsWith('profile/')) {
     if (id.endsWith('/annual') || id.includes('/structure/')) return { id: `${scope}/commissioning`, title: 'Ввод недвижимости', layout: 'overview' };
     if (id.includes('/geography/')) return { id: `${scope}/geography`, title: 'География деятельности', layout: 'rings' };
+  }
+  if (id.startsWith('sales/') || id.startsWith('apartments/') || id.startsWith('linear/')) {
+    const source = id.split('/')[0];
+    const title = source === 'sales' ? 'Распроданность' : source === 'apartments' ? 'Квартирография' : 'Годовой ввод линейных объектов';
+    return { id: `${source}/overview${chart.scope ? `/${chart.scope}` : ''}`, title, layout: 'grid' };
   }
   if (id.startsWith('domrf/') && id !== 'domrf/construction' && id !== 'domrf/realization') return { id: 'domrf/realization-structure', title: 'Структура реализации квартир', layout: 'rings' };
   if (id === 'operational/housing' || id === 'operational/nonres') return { id: 'operational/commissioning', title: 'Ввод жилья и нежилой недвижимости', layout: 'pair' };

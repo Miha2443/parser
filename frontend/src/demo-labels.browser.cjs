@@ -36,7 +36,7 @@ async function main() {
     await page.goto(base + '/demo-labels-harness');
     await page.evaluate(async () => {
       const echarts = await import('/node_modules/echarts/dist/echarts.esm.js');
-      const { demoPresentationOption } = await import('/src/demoPresentation.ts');
+      const { demoPresentationOption, layoutDemoLineLabels } = await import('/src/demoPresentation.ts');
       const mortgage = await import('/src/mortgageData.ts');
       const { flowChartOption } = await import('/src/preferentialMortgageData.ts');
       const { economicsChartOption } = await import('/src/economicsData.ts');
@@ -82,6 +82,7 @@ async function main() {
         if (reuse) window.labelChart.resize();
         else window.labelChart = echarts.init(element, null, { renderer: 'canvas', devicePixelRatio: 1 });
         window.labelChart.setOption(presentation, true);
+        layoutDemoLineLabels(window.labelChart);
         const display = window.labelChart.getZr().storage.getDisplayList();
         const rect = node => { const r = node.getBoundingRect().clone(); r.applyTransform(node.getComputedTransform()); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
         const labels = display.filter(node => node.type === 'tspan' && !node.ignore && /600/.test(node.style.font) && /^[\d\s.,+\u2212-]+%?$/.test(String(node.style.text))).map(node => ({ text: node.style.text, font: node.style.font, ...rect(node) }));

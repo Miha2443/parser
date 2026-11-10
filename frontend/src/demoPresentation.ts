@@ -1,4 +1,4 @@
-import type { EChartsCoreOption } from 'echarts/core';
+import { format as echartsFormat, type ECharts, type EChartsCoreOption } from 'echarts/core';
 import { chartNumberFormatter } from './format.ts';
 
 type Settings = Record<string, unknown>;
@@ -263,41 +263,113 @@ function extrema(values: (number | null)[]) {
   }
   return candidates;
 }
+type LineCaption = { entry: CartesianSeries; mark: Settings; index: number; value: number; text: string; size: number; score: number; low: boolean };
+type CaptionRect = { x: number; y: number; width: number; height: number; grid: number };
+const generatedCaption = (point: Settings) => /^demo-(?:extremum|value)-/.test(String(point.name));
+function placeLineCaptions(captions: LineCaption[], areas: Plot[], width: number, height: number,
+  project: (caption: LineCaption) => [number, number] | undefined) {
+  const placed: CaptionRect[] = [];
+  const anchors = captions.map(caption => ({ caption, point: project(caption) }));
+  anchors.sort((a, b) => b.caption.score - a.caption.score || a.caption.index - b.caption.index || a.caption.entry.index - b.caption.entry.index);
+  for (const { caption, point } of anchors) {
+    const { entry, mark, size, text } = caption, label = record(mark.label), area = areas[entry.grid];
+    label.show = false;
+    if (!area || !point?.every(Number.isFinite)) continue;
+    const [x, y] = point, padding = Math.max(2, size * .18);
+    const measured = echartsFormat.getTextRect(text, `600 ${size}px Segoe UI, Arial, sans-serif`);
+    const w = measured.width + 2, h = Math.max(measured.height, size * 1.2);
+    const left = Math.max(4, area.left), right = Math.min(width - 4, area.left + area.width);
+    if (w > right - left) continue;
+    const center = Math.max(left + w / 2, Math.min(right - w / 2, x));
+    const gap = numeric(label.distance, 6), top = Math.max(4, area.top - size * 1.6), bottom = Math.min(height - 4, area.top + area.height - 2);
+    for (const below of caption.low ? [true, false] : [false, true]) {
+      const rect = { x: center - w / 2, y: below ? y + gap : y - gap - h, width: w, height: h, grid: entry.grid };
+      if (rect.x < 2 || rect.x + w > width - 2 || rect.y < top || rect.y + h > bottom) continue;
+      if (placed.some(other => other.grid === rect.grid && rect.x < other.x + other.width + padding && rect.x + w + padding > other.x && rect.y < other.y + other.height + padding && rect.y + h + padding > other.y)) continue;
+      // A nearby point is also an obstacle: do not place a caption across another series.
+      if (anchors.some(other => other.caption.entry.grid === entry.grid && other.point &&
+        other.point[0] > rect.x - 2 && other.point[0] < rect.x + w + 2 && other.point[1] > rect.y - 2 && other.point[1] < rect.y + h + 2)) continue;
+      label.show = true;
+      label.position = below ? 'bottom' : 'top';
+      label.align = 'center';
+      label.offset = [center - x, 0];
+      placed.push(rect);
+      break;
+    }
+  }
+}
+function provisionalLineProjection(series: CartesianSeries[], areas: Plot[]) {
+  return (caption: LineCaption): [number, number] | undefined => {
+    const { entry, index, value } = caption, area = areas[entry.grid];
+    if (!area) return;
+    const values = series.filter(other => other.y === entry.y).flatMap(other => other.values).filter((v): v is number => v !== null);
+    const minimum = Math.min(...values), maximum = Math.max(...values), axis = entry.valueAxis;
+    const bound = (setting: unknown, fallback: number) => typeof setting === 'function' ? numeric(setting({ min: minimum, max: maximum }), fallback) :
+      setting === 'dataMin' ? minimum : setting === 'dataMax' ? maximum : numeric(setting, fallback);
+    let low = bound(axis.min, axis.scale ? minimum : Math.min(0, minimum)), high = bound(axis.max, axis.scale ? maximum : Math.max(0, maximum));
+    if (low === high) { low -= Math.abs(low) * .1 || 1; high += Math.abs(high) * .1 || 1; }
+    const band = entry.axis.boundaryGap !== false, count = entry.values.length;
+    const fraction = band ? (index + .5) / count : index / Math.max(1, count - 1);
+    const y = (value - low) / (high - low);
+    return [area.left + (entry.axis.inverse ? 1 - fraction : fraction) * area.width, area.top + (axis.inverse ? y : 1 - y) * area.height];
+  };
+}
 function lineLabels(series: CartesianSeries[], areas: Plot[], width: number, height: number, scale: number, format: ReturnType<typeof chartNumberFormatter>) {
-  const candidates = series.flatMap(entry => {
+  const candidates: LineCaption[] = series.flatMap(entry => {
     entry.item.label = { ...record(entry.item.label), show: false };
     // A stacked/step line's displayed turning geometry is not its raw measurement.
     if (entry.item.stack || entry.item.step || entry.horizontal || !areas[entry.grid]) return [];
     const area = areas[entry.grid], size = Math.round(11 * labelScale(area, width, height, scale));
-    return extrema(entry.values).map(point => {
-      const gap = entry.axis.boundaryGap !== false, count = entry.values.length;
-      const fraction = gap ? (point.index + .5) / count : point.index / Math.max(1, count - 1);
-      const x = area.left + (entry.axis.inverse ? 1 - fraction : fraction) * area.width;
+    const turns = new Map(extrema(entry.values).map(point => [point.index, point]));
+    const mark = record(entry.item.markPoint), data = list(mark.data).filter(point => !generatedCaption(point));
+    const points = entry.values.flatMap((value, index) => {
+      if (value === null) return [];
+      const turn = turns.get(index), low = turn?.low ?? false;
       const provider = record(entry.item.label).formatter;
-      const sourceIndex = entry.categories.indexOf(point.index);
-      const caption = typeof provider === 'function' ? String(provider({ value: point.value, dataIndex: sourceIndex, seriesIndex: entry.index,
-        seriesName: entry.item.name, name: (entry.axis.data as unknown[])[point.index] }) ?? '') : typeof provider === 'string' ? provider : '';
+      const sourceIndex = entry.categories.indexOf(index);
+      const caption = typeof provider === 'function' ? String(provider({ value, dataIndex: sourceIndex, seriesIndex: entry.index,
+        seriesName: entry.item.name, name: (entry.axis.data as unknown[])[index] }) ?? '') : typeof provider === 'string' ? provider : '';
       const percent = /%/.test(`${caption} ${entry.valueAxis.name ?? ''} ${entry.item.name ?? ''}`);
-      const text = `${point.value > 0 && caption.includes('+') ? '+' : ''}${format(point.value)}${percent ? '%' : ''}`;
-      const span = Math.max(text.length * size * .7 + 16, size * 4);
-      return { ...point, entry, size, x, span, text };
+      const text = `${value > 0 && caption.includes('+') ? '+' : ''}${format(value)}${percent ? '%' : ''}`;
+      const score = turn ? 2 + turn.score : index === entry.values.length - 1 ? 1 : index === 0 ? .5 : 0;
+      const point = { name: `demo-${turn ? 'extremum' : 'value'}-${entry.index}-${index}`, coord: [index, value], value, symbolSize: 0,
+        demoPriority: score, demoBelow: low,
+        label: { show: true, formatter: () => text, position: low ? 'bottom' : 'top', distance: Math.round(6 * Math.sqrt(scale)),
+          fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: size, fontWeight: 600, lineHeight: Math.ceil(size * 1.2), padding: 0,
+          color: record(entry.item.lineStyle).color ?? record(entry.item.itemStyle).color ?? record(entry.valueAxis.axisLabel).color } };
+      data.push(point);
+      return [{ index, value, low, score, entry, mark: point, size, text }];
     });
-  }).sort((a, b) => b.score - a.score || a.index - b.index || a.entry.index - b.entry.index);
-  const placed: typeof candidates = [], counts = new Map<CartesianSeries, number>();
-  for (const point of candidates) {
-    const { entry } = point, area = areas[entry.grid], count = counts.get(entry) ?? 0;
-    if (count >= Math.max(2, Math.min(8, Math.floor(area.width / (point.size * 8))))) continue;
-    // Reserve a horizontal interval across every line/axis in this grid, not just this series.
-    if (placed.some(other => other.entry.grid === entry.grid && Math.abs(other.x - point.x) < (other.span + point.span) / 2)) continue;
-    const mark = record(entry.item.markPoint), data = Array.isArray(mark.data) ? [...mark.data] : [];
-    const bottom = point.low !== (entry.valueAxis.inverse === true) && height - area.top - area.height >= point.size * 1.5;
-    data.push({ name: `demo-extremum-${entry.index}-${point.index}`, coord: [point.index, point.value], value: point.value, symbolSize: 0,
-      label: { show: true, formatter: () => point.text, position: bottom ? 'bottom' : 'top', distance: Math.round(6 * Math.sqrt(scale)),
-        align: point.x - point.span / 2 < 4 ? 'left' : point.x + point.span / 2 > width - 4 ? 'right' : 'center',
-        fontSize: point.size, fontWeight: 600, color: record(entry.item.lineStyle).color ?? record(entry.item.itemStyle).color ?? record(entry.valueAxis.axisLabel).color } });
     entry.item.markPoint = { ...mark, silent: true, data };
-    counts.set(entry, count + 1); placed.push(point);
+    return points;
+  });
+  placeLineCaptions(candidates, areas, width, height, provisionalLineProjection(series, areas));
+}
+
+// Reflow after ECharts resolves nice scales and containLabel, rather than guessing point pixels.
+export function layoutDemoLineLabels(chart: ECharts) {
+  const option = chart.getOption() as Settings, all = cartesianSeries(option), shown = visibleSeries(option, []);
+  const width = chart.getWidth(), height = chart.getHeight(), areas = list(option.grid).map(grid => plot(grid, width, height));
+  for (const entry of all) {
+    if (entry.horizontal || entry.values.length < 2 || !areas[entry.grid]) continue;
+    const first = chart.convertToPixel({ xAxisIndex: entry.x }, 0), last = chart.convertToPixel({ xAxisIndex: entry.x }, entry.values.length - 1);
+    if (typeof first !== 'number' || typeof last !== 'number' || !Number.isFinite(first) || !Number.isFinite(last)) continue;
+    const band = entry.axis.boundaryGap !== false ? Math.abs(last - first) / (entry.values.length - 1) / 2 : 0;
+    areas[entry.grid] = { ...areas[entry.grid], left: Math.min(first, last) - band, width: Math.abs(last - first) + band * 2 };
   }
+  const candidates = all.filter(entry => shown(entry.item)).flatMap(entry => list(record(entry.item.markPoint).data).flatMap(mark => {
+    if (!generatedCaption(mark) || !Array.isArray(mark.coord)) return [];
+    const label = record(mark.label), formatter = label.formatter;
+    const text = typeof formatter === 'function' ? String(formatter()) : String(formatter ?? mark.value);
+    return [{ entry, mark, index: Number(mark.coord[0]), value: Number(mark.coord[1]), size: numeric(label.fontSize, 11), text,
+      score: numeric(mark.demoPriority, 0), low: Boolean(mark.demoBelow) }];
+  }));
+  if (!candidates.length) return;
+  placeLineCaptions(candidates, areas, width, height, caption => {
+    const point = chart.convertToPixel({ xAxisIndex: caption.entry.x, yAxisIndex: caption.entry.y }, [caption.index, caption.value]);
+    return Array.isArray(point) ? point as [number, number] : undefined;
+  });
+  chart.setOption({ series: list(option.series).map(item => item.type === 'line' ? { markPoint: item.markPoint } : {}) }, { silent: true });
 }
 
 export function demoPresentationOption(option: EChartsCoreOption, width: number, height: number, hidden: readonly string[] = []): EChartsCoreOption {
@@ -355,7 +427,7 @@ export function demoPresentationOption(option: EChartsCoreOption, width: number,
     item.barGap ??= '15%';
   }
   demoLabels(result, after, width, height, scale, hidden);
-  // Keep the unit available while building sparse labels, then avoid the duplicate upper-grid caption.
+  // Keep the unit available while building captions, then avoid the duplicate upper-grid caption.
   for (const axis of [...xAxes, ...yAxes]) if (grids.length > 1 && numeric(axis.gridIndex, 0) === 0 && axis.name === '%') axis.name = '';
   const tooltip = record(result.tooltip);
   if (Object.keys(tooltip).length) {

@@ -7,7 +7,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Maximize, Minimiz
 import { Chart } from './Chart';
 import DeveloperSelect from './DeveloperSelect';
 import { loadCatalog, selectFilters } from './data';
-import { demoPresentationOption } from './demoPresentation';
+import { demoPresentationOption, layoutDemoLineLabels } from './demoPresentation';
 import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames, demoSelection, demoSources } from './demoData';
 import type { DemoChart as DemoChartEntry, DemoOptions, DemoSource } from './demoData';
 import { demoPanelContext, demoSlides } from './demoSlides';
@@ -112,7 +112,7 @@ function LiveChart({ entry, theme, preview = false }: { entry: DemoChartEntry; t
     return { ...presented, tooltip: { ...tooltip, appendTo: undefined, appendToBody: false, confine: true } };
   }, [entry, theme, width, height, hidden, preview]);
   return <div ref={container} className={preview ? `demo-live demo-preview${previewHeight > 190 ? ' demo-preview-tall' : ''}` : 'demo-live demo-full-chart'} data-demo-chart={entry.id}>
-    {entry.empty ? <div className="demo-state">Нет данных</div> : visible ? <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={preview ? previewHeight : 500} onLegendChange={setHidden} /> : <div className="demo-preview-placeholder" aria-hidden="true" />}
+    {entry.empty ? <div className="demo-state">Нет данных</div> : visible ? <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={preview ? previewHeight : 500} onLegendChange={setHidden} afterLayout={preview ? undefined : layoutDemoLineLabels} /> : <div className="demo-preview-placeholder" aria-hidden="true" />}
   </div>;
 }
 function Preview({ entry, checked, toggle, theme }: { entry: DemoChartEntry; checked: boolean; toggle: () => void; theme: Theme }) {
@@ -194,7 +194,7 @@ function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { sli
   return createPortal(<div ref={viewerRef} className="demo-viewer" role="dialog" aria-modal="true" aria-labelledby="demo-slide-title" aria-describedby="demo-slide-context" onPointerMove={event => { if (event.pointerType === 'mouse' && event.clientY >= event.currentTarget.getBoundingClientRect().bottom - 120) revealControls(); }} onPointerDown={event => { if (event.pointerType === 'touch' && !(event.target instanceof Element && event.target.closest('button, a, input'))) revealControls(); }}>
     <header className="demo-viewer-header"><div className="demo-wordmark"><img src="/brand-moscow.svg" alt="" /><strong>Аналитика Москвы</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div><div className="demo-header-actions"><button type="button" className="icon-button" title={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-label={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-controls="demo-playback-controls" aria-expanded={controlsVisible} onClick={toggleControls}><SlidersHorizontal size={19} /></button><button ref={exitButton} type="button" className="icon-button" title="Завершить демонстрацию (Esc)" aria-label="Завершить демонстрацию" onClick={onExit}><X size={19} /></button></div></header>
     <div className="demo-slide-heading" aria-live="polite" aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
-    <div className={`demo-stage demo-layout-${entry.layout}`} data-demo-slide={entry.id} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}`} key={chart.id} aria-label={chart.title}>
+    <div className={`demo-stage demo-layout-${entry.layout}`} data-demo-slide={entry.id} data-demo-panels={entry.charts.length} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}`} key={chart.id} aria-label={chart.title}>
       {entry.charts.length > 1 && <h2>{chart.title}</h2>}
       {entry.charts.length > 1 && demoPanelContext(chart, entry) && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
       <ChartBoundary resetKey={`${chart.id}-${step}`}><LiveChart entry={chart} theme={theme} /></ChartBoundary>

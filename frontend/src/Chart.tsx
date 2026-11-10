@@ -12,23 +12,26 @@ import { AnalystOnly, useAccess } from './auth';
 echarts.use([BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, GraphicComponent, AriaComponent, CanvasRenderer]);
 type ChartOption = echarts.EChartsCoreOption;
 type LegendStyle = { color?: string; borderType?: 'solid' | 'dashed' | 'dotted' };
-export function Chart({ option, theme, label, rows, filename, height = 310, legendHints = {}, dataContent, onLegendChange }: { option: ChartOption; theme: Theme; label: string; rows: (string | number | null)[][]; filename: string; height?: number; legendHints?: Record<string, string>; dataContent?: ReactNode; onLegendChange?: (hidden: string[]) => void }) {
+export function Chart({ option, theme, label, rows, filename, height = 310, legendHints = {}, dataContent, onLegendChange, afterLayout }: { option: ChartOption; theme: Theme; label: string; rows: (string | number | null)[][]; filename: string; height?: number; legendHints?: Record<string, string>; dataContent?: ReactNode; onLegendChange?: (hidden: string[]) => void; afterLayout?: (chart: echarts.ECharts) => void }) {
   const { canAnalyze } = useAccess();
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<echarts.ECharts>();
+  const layout = useRef(afterLayout);
+  layout.current = afterLayout;
   const [showData, setShowData] = useState(false);
   const [hidden, setHidden] = useState<string[]>([]);
   const series = option.series as { type: string; name?: string; itemStyle?: LegendStyle; data?: { name: string; itemStyle?: LegendStyle }[] }[];
   const legendItems = series?.[0]?.type === 'pie' ? series[0].data?.map(d => ({ name: d.name, color: d.itemStyle?.color, borderType: d.itemStyle?.borderType })) ?? [] : series?.map(s => ({ name: s.name ?? '', color: s.itemStyle?.color, borderType: s.itemStyle?.borderType })) ?? [];
   useEffect(() => {
     if (!container.current) return;
-    const responsive = createResponsiveChart(container.current, undefined, chart => { instance.current = chart; });
+    const responsive = createResponsiveChart(container.current, () => { if (instance.current) layout.current?.(instance.current); }, chart => { instance.current = chart; layout.current?.(chart); });
     instance.current = responsive.chart;
     return () => { responsive.dispose(); instance.current = undefined; };
   }, []);
   useEffect(() => {
     instance.current?.setOption({ ...option, legend: { show: false, selected: Object.fromEntries(legendItems.map(item => [item.name, !hidden.includes(item.name)])) }, backgroundColor: theme === 'light' ? '#ffffff' : '#202225', textStyle: { fontFamily: 'Segoe UI, Arial, sans-serif', color: theme === 'light' ? '#454b54' : '#c3c9d1', ...option.textStyle }, aria: { enabled: true }, animationDuration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350 }, true);
-  }, [option, theme, hidden]);
+    if (instance.current) layout.current?.(instance.current);
+  }, [option, theme, hidden, afterLayout]);
   return <div className="chart-block">
     <div className="legend chart-legend">{legendItems.map((item, index) => <button key={item.name} className={hidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(item.name)} title={legendHints[item.name] ?? `${hidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onMouseEnter={() => { if (series[0]?.type === 'pie') instance.current?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: index }); }} onMouseLeave={() => instance.current?.dispatchAction({ type: 'hideTip' })} onFocus={() => { if (series[0]?.type === 'pie') instance.current?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: index }); }} onBlur={() => instance.current?.dispatchAction({ type: 'hideTip' })} onClick={() => { instance.current?.dispatchAction({ type: 'legendToggleSelect', name: item.name }); const next = hidden.includes(item.name) ? hidden.filter(name => name !== item.name) : [...hidden, item.name]; setHidden(next); onLegendChange?.(next); }}><i style={{ background: item.color, ...(item.borderType === 'dashed' ? { border: `1px dashed ${item.color ?? 'currentColor'}`, backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, currentColor 2px, currentColor 3px)' } : {}) }} />{item.name}</button>)}</div>
     <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={label} />

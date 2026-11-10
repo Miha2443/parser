@@ -67,6 +67,23 @@ test('grouped screens keep section identity, selected-only panels, paired units 
   const scoped = demoSlides([chart('profile/a/annual', 'profile/a'), chart('profile/a/structure/0', 'profile/a'), chart('profile/b/annual', 'profile/b')]);
   assert.deepEqual(scoped.map(slide => slide.charts.length), [2, 1], 'different companies must never share a composite screen');
 });
+
+test('renovation fund has no geography slides while other developer charts remain available', async () => {
+  const { normalizeSnapshot } = await import('./snapshot.ts');
+  const { demoProfileCharts } = await import('./DemoProfileCharts.tsx');
+  const source = JSON.parse(readFileSync(new URL('../public/profile-snapshot.json', import.meta.url), 'utf8'));
+  const base = source.profiles[0], ids = [];
+  for (const key of ['фонд реновации', 'другой инвестор']) {
+    const payload = { ...source, profiles: [{ ...base, developerKey: key, developer: key,
+      housingComparison: [{ title: 'Geography', segments: [{ key: 'msk', valueM2: 100 }, { key: 'otherRf', valueM2: 200 }] }] }] };
+    const snapshot = normalizeSnapshot(payload), developer = snapshot.developers[0], profile = developer.regions[0];
+    const charts = demoProfileCharts(profile, { id: developer.id, name: developer.name, regions: [profile.id] }, snapshot);
+    ids.push(charts.map(chart => chart.id));
+    assert.ok(charts.some(chart => chart.id === 'profile/annual'));
+    assert.equal(charts.filter(chart => chart.id.includes('/geography/')).length, key === 'фонд реновации' ? 0 : 1);
+  }
+  assert.deepEqual(ids[0], ids[1].filter(id => !id.includes('/geography/')));
+});
 const groupedDemoSections = [
   { source: 'sales', title: 'Распроданность', ids: ['forecast', 'monthly_percent'] },
   { source: 'apartments', title: 'Квартирография', ids: ['distribution', 'rooms'] },

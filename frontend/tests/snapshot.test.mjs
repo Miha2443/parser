@@ -40,6 +40,24 @@ test('only snapshot developers and apartment regions appear', () => {
   }
 });
 
+test('only the Moscow renovation fund omits geography even in an older cached profile', () => {
+  const input = structuredClone(raw), before = JSON.stringify(input);
+  const fund = structuredClone(input.profiles[0]);
+  fund.developerKey = 'фонд реновации';
+  fund.developer = 'ФОНД РЕНОВАЦИИ';
+  fund.housingComparison = [{ title: 'Old comparison', segments: [{ key: 'msk', valueM2: 100 }, { key: 'otherRf', valueM2: 900 }] }];
+  const other = { ...structuredClone(fund), developerKey: 'другой инвестор', developer: 'Другой инвестор' };
+  const payload = { ...input, profiles: [fund, other] }, copy = JSON.stringify(payload);
+  const read = normalizeSnapshot(payload);
+  assert.deepEqual(read.developers.find(developer => developer.id === fund.developerKey).regions[0].geography, []);
+  assert.equal(read.developers.find(developer => developer.id === other.developerKey).regions[0].geography.length, 1);
+  const rendered = read.developers.find(developer => developer.id === fund.developerKey).regions[0];
+  const original = normalizeSnapshot({ ...payload, profiles: [other] }).developers[0].regions[0];
+  assert.deepEqual({ ...rendered, geography: [] }, { ...original, geography: [] });
+  assert.equal(JSON.stringify(payload), copy);
+  assert.equal(JSON.stringify(input), before);
+});
+
 test('apartment region does not change Moscow metrics or RF/Moscow sales', () => {
   for (const d of snapshot.developers) {
     for (const r of d.regions.slice(1)) {

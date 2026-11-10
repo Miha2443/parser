@@ -68,7 +68,7 @@ class ProfileSelectionTests(unittest.TestCase):
         self.assertEqual(historical["status"], "partial")
         pd.testing.assert_frame_equal(rv, before)
 
-    def test_program_scope_does_not_change_company_specific_erz_denominators(self):
+    def test_program_scope_keeps_delay_denominators_but_skips_fund_geography(self):
         rv = pd.DataFrame([{"Группа компаний": company, "Инвестор для Реновации": "да", "Год ввода по Мосстату": 2026,
                             "Жилая площадь": value, "category_жилое": value, "category_моп": 0,
                             "category_нежилое_в_жилом": 0, "category_нежилое_отдельное": 0}
@@ -84,9 +84,38 @@ class ProfileSelectionTests(unittest.TestCase):
              patch('pipeline.profile_calculations.escrow_data', return_value={}):
             result = make_profile("ФОНД РЕНОВАЦИИ", "msk", data)
         self.assertEqual(delay.call_args.args[2]["Жилая площадь"].sum(), 100)
-        self.assertEqual(housing.call_args.args[0]["Жилая площадь"].sum(), 100)
+        housing.assert_not_called()
+        self.assertEqual(result["housingComparison"], [])
         self.assertEqual(result["annual"]["allYears"][-1]["valuesM2"]["residential"], 1000)
         self.assertEqual(result["controls"]["commissioningScope"], "renovation_program")
+
+    def test_only_the_renovation_fund_skips_housing_geography_for_both_apartment_regions(self):
+        rv = pd.DataFrame([{"Группа компаний": name, "Инвестор для Реновации": "да", "Год ввода по Мосстату": 2026,
+                            "Жилая площадь": value, "category_жилое": value, "category_моп": 0,
+                            "category_нежилое_в_жилом": 0, "category_нежилое_отдельное": 0}
+                           for name, value in [("ФОНД РЕНОВАЦИИ", 100), ("Другой инвестор", 900)]])
+        data = {"monitoring_2_0": {"rv": rv, "oks": pd.DataFrame(), "max_year": 2026},
+                "erzrf_cards": pd.DataFrame(), "erzrf_top": {}, "rasprodannost": {}, "kvartirografia": {}, "escrow_manual": pd.DataFrame()}
+        before = rv.copy(deep=True)
+        for name in ("ФОНД РЕНОВАЦИИ", ' ООО «Фонд Реновации», г.Москва ', "Другой инвестор"):
+            for region in ("msk", "rf"):
+                with self.subTest(developer=name, region=region), \
+                     patch('pipeline.profile_calculations.housing_data', return_value=[{"geography": "unchanged"}]) as housing, \
+                     patch('pipeline.profile_calculations.delay_data', return_value={}), \
+                     patch('pipeline.profile_calculations.object_tables', return_value={}), \
+                     patch('pipeline.profile_calculations.ratings_data', return_value={}), \
+                     patch('pipeline.profile_calculations.rasprod_data', return_value={}), \
+                     patch('pipeline.profile_calculations.apartment_data', return_value={}), \
+                     patch('pipeline.profile_calculations.escrow_data', return_value={}):
+                    profile = make_profile(name, region, data)
+                    if profile["developerKey"] == "фонд реновации":
+                        housing.assert_not_called()
+                        self.assertEqual(profile["housingComparison"], [])
+                    else:
+                        housing.assert_called_once()
+                        self.assertEqual(housing.call_args.args[0]["Жилая площадь"].sum(), 900)
+                        self.assertEqual(profile["housingComparison"], [{"geography": "unchanged"}])
+        pd.testing.assert_frame_equal(rv, before)
 
 
 if __name__ == "__main__":

@@ -553,7 +553,7 @@ def make_profile(developer, region, data):
             "controls": {"developer": developer, "apartmentRegion": region, "latestMonitoringYear": latest,
                          "previousMonitoringYear": previous, "constructionFilter": filter_note,
                          **({"commissioningScope": "renovation_program"} if is_renovation else {})},
-            "ratings": ratings_data(data["erzrf_top"], key), "housingComparison": housing_data(company_rv, card, latest),
+            "ratings": ratings_data(data["erzrf_top"], key), "housingComparison": [] if is_renovation else housing_data(company_rv, card, latest),
             "categoryDonuts": [*donuts, category_donut("construction", "В строительстве (Москва)", oks, [], construction=True)],
             "annual": annual, "rasprod": rasprod_data(data["rasprodannost"], key),
             "apartments": apartment_data(data["kvartirografia"], key, region),

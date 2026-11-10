@@ -98,7 +98,7 @@ class ProfileService:
                 evidence[name]["availabilityNote"] = ("Данные ЕРЗ отсутствуют; остальные источники доступны." if state == "unavailable" else
                                                        "ЕРЗ не обновлялся: используются сохранённые данные с указанной датой." if state == "retained" else "ЕРЗ обновлён в этом прогоне.")
         self._metadata = {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(),
-                          "version": hashlib.sha256(repr(("active-construction-renovation-v2", versions)).encode()).hexdigest(), "sourceDates": dates,
+                          "version": hashlib.sha256(repr(("active-construction-renovation-moscow-only-v3", versions)).encode()).hexdigest(), "sourceDates": dates,
                           "controls": {"developers": developers, "frozen": False, "regionControl": "apartmentsOnly"},
                           "provenance": {"sources": evidence, "issues": clean(access.issues)}}
         self._data = data

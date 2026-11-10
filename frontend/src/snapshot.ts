@@ -48,6 +48,7 @@ function adaptProfile(raw: RecordValue): RegionProfile {
   for (const row of [...chartRows, ...allYears]) { const year = numeric(row.year); if (year != null) rowsByYear.set(year, row); }
   const score = numeric(ratings.score);
   const quality = object(object(ratings.quality).regions);
+  const geography = raw.developerKey === 'фонд реновации' ? [] : list(raw.housingComparison);
   return {
     id: text(raw.region), label: raw.region === 'msk' ? 'Москва' : 'Российская Федерация',
     sourceContributions: [...new Set(qualitySources(raw))],
@@ -62,7 +63,7 @@ function adaptProfile(raw: RecordValue): RegionProfile {
     delays: [],
     delayMetrics: list(delays.cards).map(d => ({ label: text(d.title), value: numeric(d.valueM2), base: numeric(d.baseM2), displayValue: text(d.displayValue), displayBase: text(d.displayBase), displayPercent: text(d.displayPercent), region: text(d.region), note: delayNote(d, object(delays.inputs)) })),
     escrow: escrow.status === 'available' ? { credit: numeric(escrow.loanRub), debt: numeric(escrow.debtRub), revenue: numeric(escrow.revenueRub), coverage: numeric(escrow.coveragePercent), debtShare: numeric(escrow.debtSharePercent), note: 'Покрытие = выручка от реализации всех площадей / остаток задолженности.' } : null,
-    geography: list(raw.housingComparison).map(g => ({ title: text(g.title), moscow: numeric(list(g.segments).find(s => s.key === 'msk')?.valueM2), others: numeric(list(g.segments).find(s => s.key === 'otherRf')?.valueM2), note: 'Москва — Мониторинг 2.0; другие регионы — РФ по ЕРЗ минус Москва за одинаковые годы.' })),
+    geography: geography.map(g => ({ title: text(g.title), moscow: numeric(list(g.segments).find(s => s.key === 'msk')?.valueM2), others: numeric(list(g.segments).find(s => s.key === 'otherRf')?.valueM2), note: 'Москва — Мониторинг 2.0; другие регионы — РФ по ЕРЗ минус Москва за одинаковые годы.' })),
     objects: ['commissioned', 'permitted'].map(key => { const table = object(object(raw.objects)[key]); return { title: key === 'commissioned' ? 'Введённые объекты · Реестр РВ' : 'Объекты с разрешением на строительство · Реестр ОКС', columns: Array.isArray(table.columns) ? table.columns.map(text) : [], rows: list(table.rows) as Record<string, JsonValue>[], note: key === 'permitted' ? 'Все объекты реестра ОКС, включая введённые и планируемые. Без ограничений карты и координат.' : object(raw.controls).commissioningScope === 'renovation_program' ? 'Введённые объекты программы реновации по признаку «Инвестор для Реновации», независимо от группы компаний.' : 'Все введённые объекты выбранной группы компаний.' }; }),
     notes: ['Регион квартирографии не изменяет московские показатели, рейтинги, сроки и эскроу.', 'Нулевые значения, рассчитанные прежней страницей при отсутствии данных, не подтверждают наблюдаемый ноль.', 'Показатели разных источников имеют разные составы площади; общий ввод мониторинга и жилой ввод ЕРЗ не взаимозаменяемы.'],
   };

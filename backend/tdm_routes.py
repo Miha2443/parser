@@ -1,4 +1,4 @@
-"""Explicit, local-only TDM actions. Never send on page load or automatic retry."""
+"""Explicit analyst TDM actions; legacy local mode never trusts a proxy."""
 import secrets
 import threading
 import re
@@ -36,13 +36,22 @@ def create_router(context):
                 "groupReady": bool(tdm_notify._get_group_id()), "disabled": tdm_notify._is_disabled(),
                 "ready": configured and not tdm_notify._is_disabled()}
 
+    def access(request):
+        if getattr(request.state, "auth_enabled", False):
+            principal = getattr(request.state, "principal", None)
+            if not principal or principal.role != "analyst":
+                raise HTTPException(403, "Analyst access required")
+            return
+        if (request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip")
+                or request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}):
+            raise HTTPException(403, "TDM requires authentication behind a proxy")
+
     def guard(request, supplied):
-        # This dashboard is deliberately localhost-only until proper authentication is added.
-        if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
-            raise HTTPException(403, "TDM actions require a local connection")
-        origin = request.headers.get("origin")
-        if origin and urlparse(origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise HTTPException(403, "Untrusted origin")
+        access(request)
+        if not getattr(request.state, "auth_enabled", False):
+            origin = request.headers.get("origin")
+            if origin and urlparse(origin).hostname not in {"localhost", "127.0.0.1", "::1"}:
+                raise HTTPException(403, "Untrusted origin")
         if not supplied or not secrets.compare_digest(supplied, token):
             raise HTTPException(403, "Reload the TDM page before sending")
 
@@ -71,8 +80,7 @@ def create_router(context):
 
     @router.get("/catalog")
     def catalog(request: Request):
-        if request.client and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
-            raise HTTPException(403, "TDM requires a local connection")
+        access(request)
         datasets = list_tdm_datasets(context.root)
         files = list_tdm_realty_files(raw_root)
         return {"status": status(), "actionToken": token, "maxUploadBytes": MAX_UPLOAD,

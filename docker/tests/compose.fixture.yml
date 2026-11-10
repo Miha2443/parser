@@ -1,4 +1,8 @@
 services:
+  backend:
+    environment:
+      # Disposable publication fixtures exercise data, not browser sessions.
+      PARSER_AUTH_ENABLED: "0"
   updater:
     environment:
       PARSER_COMPOSE_SMOKE: "1"

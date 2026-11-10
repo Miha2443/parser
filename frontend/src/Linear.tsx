@@ -1,3 +1,4 @@
+import { AnalystOnly, useAccess } from './auth';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownToLine, Building2, Database, FileSpreadsheet, Footprints, RefreshCw, Route, TrainFront, TramFront, Waypoints } from 'lucide-react';
 import { Chart } from './Chart';
@@ -25,21 +26,24 @@ function MetricTile({ metric, year }: { metric: LinearMetric; year: number }) {
   </article>;
 }
 function DashboardExport({ version }: { version: string }) {
+  const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const active = useRef<AbortController>();
-  useEffect(() => { setError(''); setBusy(false); return () => active.current?.abort(); }, [version]);
+  useEffect(() => { setError(''); setBusy(false); return () => active.current?.abort(); }, [version, canAnalyze]);
   async function download() {
+    if (!allowed.current) return;
     active.current?.abort(); const controller = new AbortController(); active.current = controller;
     setBusy(true); setError('');
     try {
       const blob = await (await request(linearDashboardUrl(version), controller.signal)).blob();
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !allowed.current) return;
       const url = URL.createObjectURL(blob), link = document.createElement('a');
       link.href = url; link.download = 'linear-dashboard.xlsx'; document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       if (!controller.signal.aborted) setError(error instanceof ApiError && error.status === 409 ? 'Источники изменились. Обновите данные перед скачиванием.' : 'Не удалось скачать Excel. Повторите скачивание.');
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
+  if (!canAnalyze) return null;
   return <div className="linear-export"><button className="icon-button" disabled={busy} title="Скачать факты, прогнозы и источники Excel" aria-label="Скачать факты, прогнозы и источники Excel" onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span role="alert">{error}</span>}</div>;
 }
 export default function Linear({ theme }: { theme: Theme; query: string; change: CommissioningChange }) {
@@ -48,10 +52,10 @@ export default function Linear({ theme }: { theme: Theme; query: string; change:
   return <main className="commissioning-page linear-page" id="linear-page">
     <div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Ввод линейных объектов</h1></div><div className="snapshot-label"><Database size={14} />Москва<span>Обновлено: {sourceDate ? date(sourceDate) : '—'}</span></div></div>
     {error || !data ? <CommissioningState error={error} retry={retry} catalog={false} caption="Ввод линейных объектов" /> : <>
-      <div className="linear-dashboard-heading"><h2>{data.currentYear} год</h2><div><a href="#linear-sources" className="linear-sources-link"><Database size={15} />Источники</a><button className="icon-button" aria-label="Обновить линейные объекты" title="Обновить линейные объекты" onClick={retry}><RefreshCw size={16} /></button><DashboardExport version={data.version} /></div></div>
+      <div className="linear-dashboard-heading"><h2>{data.currentYear} год</h2><div><AnalystOnly><a href="#linear-sources" className="linear-sources-link"><Database size={15} />Источники</a></AnalystOnly><button className="icon-button" aria-label="Обновить линейные объекты" title="Обновить линейные объекты" onClick={retry}><RefreshCw size={16} /></button><DashboardExport version={data.version} /></div></div>
       <section className="linear-kpi-grid" aria-label="Шесть показателей текущего года">{data.metrics.map(metric => <MetricTile key={metric.id} metric={metric} year={data.currentYear} />)}</section>
       <div className="linear-history-list">{data.metrics.map(metric => <History key={metric.id} metric={metric} theme={theme} year={data.currentYear} version={data.version} />)}</div>
-      <section className="section sources-section" id="linear-sources"><details><summary><Database size={17} /><span>Исходные файлы и даты</span></summary><div className="source-list">{data.sources.map(source => <div key={source.id}><strong>{({ dsti: 'ДСТИ · квартальный факт', monitoring: 'Мониторинг · годовая история', forecast: 'Мониторинг · прогноз', static_depots: 'Электродепо · статичная годовая история' } as Record<string, string>)[source.id]}</strong><span>{source.date ? date(source.date) : '—'}</span><div><code>{source.file ?? 'Источник отсутствует'}</code>{source.sheet && <p>{source.sheet}</p>}</div></div>)}</div>{data.notes.map((note, i) => <p className="method-note" key={i}>{note}</p>)}<p className="muted">Сформировано: {date(data.generatedAt)} · версия {data.version}</p></details></section>
+      <AnalystOnly><section className="section sources-section" id="linear-sources"><details><summary><Database size={17} /><span>Исходные файлы и даты</span></summary><div className="source-list">{data.sources.map(source => <div key={source.id}><strong>{({ dsti: 'ДСТИ · квартальный факт', monitoring: 'Мониторинг · годовая история', forecast: 'Мониторинг · прогноз', static_depots: 'Электродепо · статичная годовая история' } as Record<string, string>)[source.id]}</strong><span>{source.date ? date(source.date) : '—'}</span><div><code>{source.file ?? 'Источник отсутствует'}</code>{source.sheet && <p>{source.sheet}</p>}</div></div>)}</div>{data.notes.map((note, i) => <p className="method-note" key={i}>{note}</p>)}<p className="muted">Сформировано: {date(data.generatedAt)} · версия {data.version}</p></details></section></AnalystOnly>
     </>}
     <footer className="page-footer"><span>Аналитика Москвы</span><span>Ввод линейных объектов · API</span></footer>
   </main>;

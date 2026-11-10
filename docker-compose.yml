@@ -12,8 +12,13 @@ services:
       PARSER_DOWNLOADS: /runtime/live/downloads
       PARSER_USE_REALTY_MARTS: "1"
       PARSER_REQUIRE_REALTY_MARTS: "1"
+      PARSER_AUTH_ENABLED: ${PARSER_AUTH_ENABLED:-1}
+      PARSER_AUTH_DB: /auth/accounts.sqlite3
+      PARSER_AUTH_ALLOW_HTTP: ${PARSER_AUTH_ALLOW_HTTP:-0}
+      PARSER_AUTH_TRUSTED_PROXIES: web
     volumes:
       - ./runtime:/runtime:ro
+      - auth_state:/auth
     expose:
       - "8000"
     restart: unless-stopped
@@ -61,3 +66,6 @@ services:
       - ./runtime:/runtime
     shm_size: "10gb"
     profiles: ["updater"]
+
+volumes:
+  auth_state:

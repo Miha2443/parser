@@ -1,3 +1,4 @@
+import { AnalystOnly, useAccess } from './auth';
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Building2, Database, Download, Info, RefreshCw } from 'lucide-react';
 import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeLabels, loadConstructionTreeHistory, watchConstructionTree } from './constructionTreeData';
@@ -9,7 +10,10 @@ function Area({ value }: { value: number | null }) {
 }
 
 function SourceData({ data }: { data: ConstructionTreeData }) {
+  const { canAnalyze } = useAccess();
+  if (!canAnalyze) return null;
   const download = () => {
+    if (!canAnalyze) return;
     const url = URL.createObjectURL(new Blob([constructionTreeCsv(data)], { type: 'text/csv;charset=utf-8;' }));
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -19,7 +23,7 @@ function SourceData({ data }: { data: ConstructionTreeData }) {
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return <details className="ct-source">
+  return <AnalystOnly><details className="ct-source">
     <summary><Database size={16} aria-hidden="true" /><span>Данные и источник</span></summary>
     <div className="ct-source-toolbar"><h2>Исходные значения · млн м²</h2><button type="button" onClick={download}><Download size={15} aria-hidden="true" />Скачать CSV</button></div>
     <dl className="ct-metadata">
@@ -43,7 +47,7 @@ function SourceData({ data }: { data: ConstructionTreeData }) {
       </tr>)}</tbody>
     </table>
     {data.nonresidentialSectors?.status === 'available' && <table className="ct-source-table ct-sector-source"><caption>Отрасли · исходные строки реестра</caption><thead><tr><th scope="col">Отрасль</th><th scope="col">млн м²</th><th scope="col">Строки</th></tr></thead><tbody>{data.nonresidentialSectors.items.map(item => <tr key={item.id}><th scope="row">{item.label}</th><td data-column="млн м²">{constructionTreeExact(item.value)}</td><td data-column="Строки">{item.rows.join(', ')}</td></tr>)}</tbody></table>}
-  </details>;
+  </details></AnalystOnly>;
 }
 
 function ReadyTree({ data }: { data: ConstructionTreeData }) {
@@ -110,7 +114,7 @@ export default function ConstructionTree() {
       <div className="ct-refresh-wrap"><button className="ct-refresh" type="button" aria-label="Обновить дерево строительства" title="Обновить данные" disabled={state.loading} onClick={refresh}><RefreshCw size={18} className={state.loading ? 'ct-spinning' : ''} aria-hidden="true" /></button><span className="ct-tooltip" role="tooltip">Обновить данные</span></div>
     </header>
     <div className="ct-history-toolbar"><label htmlFor="ct-history">Данные</label><select id="ct-history" value={asOf} onChange={event => { setState({ data: null, loading: true, error: '' }); setAsOf(event.target.value); }}><option value="">Актуальные данные</option>{history.map(row => <option key={row.date} value={row.date}>Данные на {constructionTreeDate(row.date)}</option>)}</select>{historyError && <span role="status">{historyError}</span>}</div>
-    <div className="ct-context"><span><Database size={14} aria-hidden="true" />Мониторинг · колонка «Итог»</span><span>Выгрузка мониторинга: {state.data ? <time dateTime={state.data.source.downloadedAt}>{constructionTreeDate(state.data.source.downloadedAt)}</time> : '—'}</span>{state.data?.snapshot && <span>Опубликовано: {constructionTreeDate(state.data.snapshot.publishedAt)}{state.data.snapshot.delayedCapture ? ' · сохранено после пропущенного понедельника' : ''}</span>}</div>
+    <div className="ct-context"><AnalystOnly><span><Database size={14} aria-hidden="true" />Мониторинг · колонка «Итог»</span></AnalystOnly><span>Выгрузка мониторинга: {state.data ? <time dateTime={state.data.source.downloadedAt}>{constructionTreeDate(state.data.source.downloadedAt)}</time> : '—'}</span>{state.data?.snapshot && <span>Опубликовано: {constructionTreeDate(state.data.snapshot.publishedAt)}{state.data.snapshot.delayedCapture ? ' · сохранено после пропущенного понедельника' : ''}</span>}</div>
     <div className="ct-update-status" role="status" aria-live="polite">{state.loading && state.data ? 'Обновление данных…' : ''}</div>
     {state.error ? <div className="ct-state" role="alert"><AlertCircle size={26} aria-hidden="true" /><h2>Дерево строительства недоступно</h2><p>{state.error}</p><button type="button" onClick={refresh}><RefreshCw size={15} aria-hidden="true" />Повторить</button></div>
       : state.data ? <ReadyTree data={state.data} /> : <div className="ct-state" role="status"><RefreshCw size={26} className="ct-spinning" aria-hidden="true" /><p>Загрузка дерева строительства…</p></div>}

@@ -2,16 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { ApiError, profileUrl, request } from './data';
 import type { ApartmentRegion } from './types';
+import { useAccess } from './auth';
 
 export default function ProfileExport({ developer, region, version, frozen }: { developer: string; region: ApartmentRegion; version: string | null; frozen: boolean }) {
+  const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const active = useRef<AbortController>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     setBusy(false); setError('');
     return () => active.current?.abort();
-  }, [developer, region, version]);
+  }, [developer, region, version, canAnalyze]);
   async function download() {
+    if (!allowed.current) return;
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setBusy(true); setError('');
@@ -19,7 +22,7 @@ export default function ProfileExport({ developer, region, version, frozen }: { 
       if (!version) throw new Error('Версия профиля отсутствует. Перезагрузите страницу.');
       const response = await request(profileUrl(developer, region, true, version), controller.signal);
       const blob = await response.blob();
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !allowed.current) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url;
       link.download = `${developer.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')}-${region}-profile.xlsx`;
@@ -31,5 +34,6 @@ export default function ProfileExport({ developer, region, version, frozen }: { 
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
   const label = frozen ? 'Excel доступен только в режиме API' : busy ? 'Загрузка полного профиля Excel' : 'Скачать полный профиль Excel';
+  if (!canAnalyze) return null;
   return <div className="profile-export"><button className="icon-button" title={label} aria-label={label} disabled={frozen || busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span role="alert" className="warning-text">{error}</span>}</div>;
 }

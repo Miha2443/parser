@@ -2,7 +2,7 @@
 import json
 import sys
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 # Also supports `python docker/readiness.py` from the deployed checkout.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -10,7 +10,14 @@ from docker.coverage import ROUTES, validate_pages
 
 
 def probe(base="http://127.0.0.1:8000", expected=None, *, identity_only=False):
-    with urlopen(base + "/api/v1/health", timeout=20) as response:
+    from backend.auth import AuthSettings, AuthStore
+    settings = AuthSettings.from_environment()
+    # A short-lived local read-only probe does not need a human password/session.
+    token = AuthStore(settings).probe_token() if settings.enabled else None
+    def url(route):
+        target = base + route
+        return Request(target, headers={"X-Dashboard-Probe": token}) if token else target
+    with urlopen(url("/api/v1/health"), timeout=20) as response:
         health = json.load(response)
     if expected and health.get("release") != expected:
         raise RuntimeError("Backend still serves another release")
@@ -20,7 +27,7 @@ def probe(base="http://127.0.0.1:8000", expected=None, *, identity_only=False):
         return
     def get(route):
         try:
-            with urlopen(base + route, timeout=20) as response:
+            with urlopen(url(route), timeout=20) as response:
                 return json.load(response)
         except HTTPError as exc:
             if exc.code != 503:

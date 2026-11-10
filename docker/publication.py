@@ -168,11 +168,13 @@ def validate_api():
     from docker.coverage import validate_sources, validate_pages
     from fastapi.testclient import TestClient
     from backend.app import create_app
+    from backend.auth import AuthSettings
     access = DataAccess(DataContext.from_environment())
     validate_sources(access)
     from pipeline.source_availability import read_publication, unavailable, route_sources
     source_states = read_publication(access.PROJECT_ROOT).get("sources", {})
-    with TestClient(create_app()) as client:
+    # Candidate checks run in-process, not through the public authenticated API.
+    with TestClient(create_app(auth_settings=AuthSettings(enabled=False))) as client:
         def get(route):
             response = client.get(route)
             if response.status_code == 503:

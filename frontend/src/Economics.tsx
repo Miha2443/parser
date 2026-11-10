@@ -1,3 +1,4 @@
+import { AnalystOnly, useAccess } from './auth';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronLeft, ChevronRight, Database, Download, FileSpreadsheet, ListChecks, RefreshCw, Search, X } from 'lucide-react';
 import * as echarts from 'echarts/core';
@@ -49,6 +50,7 @@ function Control({ catalog, selected, name, change, label = labels[name] ?? name
   return <label className="economics-field"><span>{label}</span><select aria-label={label} value={String(selected[name])} onChange={e => update(e.target.value)}>{options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>;
 }
 function TableView({ table, unit, scope, params, change }: { table: EconomicsTable; unit: string; scope: string; params: URLSearchParams; change: EconomicsChange }) {
+  const { canAnalyze } = useAccess();
   const prefix = `econ_${scope}`, searchKey = `${prefix}_search`, pageKey = `${prefix}_page`, sizeKey = `${prefix}_size`;
   const query = params.get(searchKey) ?? '', view = economicsTablePage(table, query, params.get(pageKey), params.get(sizeKey));
   useEffect(() => {
@@ -57,7 +59,7 @@ function TableView({ table, unit, scope, params, change }: { table: EconomicsTab
     if (params.has(sizeKey) && params.get(sizeKey) !== String(view.pageSize)) updates[sizeKey] = String(view.pageSize);
     if (Object.keys(updates).length) change(updates, true);
   }, [params, pageKey, sizeKey, view.current, view.pageSize]);
-  return <div className="economics-table-view"><div className="economics-table-toolbar"><label className="object-search"><Search size={14} /><input type="search" placeholder="Поиск" aria-label={`Поиск: ${scope}`} value={query} onChange={e => change({ [searchKey]: e.target.value || null, [pageKey]: null })} /></label><label className="economics-size"><span>Строк</span><select aria-label={`Строк на странице: ${scope}`} value={view.pageSize} onChange={e => change({ [sizeKey]: e.target.value, [pageKey]: null })}>{[20, 50, 100].map(size => <option key={size}>{size}</option>)}</select></label><span className="economics-table-unit">{unit}</span><button className="icon-button" title={`Скачать все строки CSV: ${scope}`} aria-label={`Скачать все строки CSV: ${scope}`} onClick={() => exportCsv(economicsTableRows(table), `economics-${scope}.csv`)}><Download size={16} /></button></div>
+  return <div className="economics-table-view"><div className="economics-table-toolbar"><label className="object-search"><Search size={14} /><input type="search" placeholder="Поиск" aria-label={`Поиск: ${scope}`} value={query} onChange={e => change({ [searchKey]: e.target.value || null, [pageKey]: null })} /></label><label className="economics-size"><span>Строк</span><select aria-label={`Строк на странице: ${scope}`} value={view.pageSize} onChange={e => change({ [sizeKey]: e.target.value, [pageKey]: null })}>{[20, 50, 100].map(size => <option key={size}>{size}</option>)}</select></label><span className="economics-table-unit">{unit}</span><AnalystOnly><button className="icon-button" title={`Скачать все строки CSV: ${scope}`} aria-label={`Скачать все строки CSV: ${scope}`} onClick={() => canAnalyze && exportCsv(economicsTableRows(table), `economics-${scope}.csv`)}><Download size={16} /></button></AnalystOnly></div>
     <div className="table-wrap" role="region" tabIndex={0} aria-label={`Таблица: ${scope}`}><table className="economics-table"><thead><tr>{table.columns.map(c => <th scope="col" key={c.id}>{c.label}</th>)}</tr></thead><tbody>{view.shown.map((row, i) => <tr key={i}>{table.columns.map((c, j) => { const value = row[c.id], text = typeof value === 'number' ? value.toLocaleString('ru-RU', { maximumFractionDigits: 20 }) : value ?? '—'; return j === 0 ? <th scope="row" key={c.id}>{text}</th> : <td key={c.id}>{text}</td>; })}</tr>)}</tbody></table></div>
     {!view.shown.length && <Empty text={table.rows.length ? 'Ничего не найдено.' : 'Нет строк.'} />}
     <div className="pagination"><span aria-live="polite">{number(view.total)} строк · страница {view.current} из {view.pages}</span><button className="icon-button" title={`Предыдущая страница: ${scope}`} aria-label={`Предыдущая страница: ${scope}`} disabled={view.current === 1} onClick={() => change({ [pageKey]: String(view.current - 1) })}><ChevronLeft size={15} /></button><button className="icon-button" title={`Следующая страница: ${scope}`} aria-label={`Следующая страница: ${scope}`} disabled={view.current === view.pages} onClick={() => change({ [pageKey]: String(view.current + 1) })}><ChevronRight size={15} /></button></div>
@@ -75,28 +77,31 @@ function ChartTables({ chart, pivot, params, change }: { chart: EconomicsChart; 
   </div><div id={`econ-panel-${chart.id}`} role="tabpanel" aria-labelledby={`econ-tab-${chart.id}-${mode}`}><TableView key={scope} table={table} unit={chart.unit} scope={scope} params={params} change={change} /></div></div>;
 }
 function ExcelExport({ family, data, retry }: { family: EconomicsFamily; data: EconomicsReport | null; retry: () => void }) {
+  const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const active = useRef<AbortController>(), [busy, setBusy] = useState(false), [error, setError] = useState(''), [conflict, setConflict] = useState(false);
   const key = JSON.stringify([data?.version, data?.selection]);
-  useEffect(() => { setBusy(false); setError(''); setConflict(false); return () => active.current?.abort(); }, [family, key]);
+  useEffect(() => { setBusy(false); setError(''); setConflict(false); return () => active.current?.abort(); }, [family, key, canAnalyze]);
   async function download() {
-    if (!data) return;
+    if (!allowed.current || !data) return;
     active.current?.abort(); const controller = new AbortController(); active.current = controller; setBusy(true); setError(''); setConflict(false);
     try {
       const response = await request(economicsUrl(family, data.selection, data.version), controller.signal);
       if (response.headers.has('X-Data-Version') && response.headers.get('X-Data-Version') !== data.version) throw new ApiError(409);
-      const blob = await response.blob(); if (controller.signal.aborted) return;
+      const blob = await response.blob(); if (controller.signal.aborted || !allowed.current) return;
       const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `economics-${family}.xlsx`; document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
       if (!controller.signal.aborted) { const changed = e instanceof ApiError && e.status === 409; setConflict(changed); setError(changed ? 'Источники изменились. Обновите показатели перед выгрузкой Excel.' : `${e instanceof Error ? e.message : 'Не удалось скачать Excel.'} Повторите скачивание.`); }
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
+  if (!canAnalyze) return null;
   return <div className="economics-export"><button className="icon-button" title="Скачать полный отчёт Excel" aria-label="Скачать полный отчёт Excel" disabled={!data || busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <div role="alert" className="warning-text"><span>{error}</span>{conflict && <button onClick={retry}><RefreshCw size={14} />Обновить данные</button>}</div>}</div>;
 }
 function Evidence({ metadata, params, change }: { metadata: EconomicsMetadata; params: URLSearchParams; change: EconomicsChange }) {
+  if (!useAccess().canAnalyze) return null;
   const source = metadata.source, provenance = { ...source.provenance, id: 'provenance', title: 'Исходные файлы и даты' };
-  return <section id="economics-sources" className="section sources-section">
+  return <AnalystOnly><section id="economics-sources" className="section sources-section">
     <details className="economics-evidence"><summary><Database size={17} /><span>Исходные файлы и даты</span></summary><p className="muted">{source.downloadSummary}</p>{source.issues.map(([level, message], i) => <p className="method-note warning-text" key={i}><AlertCircle size={14} /><span>{level}: {message}</span></p>)}<p className="muted">Дата формирования: <time dateTime={metadata.generatedAt}>{metadata.generatedAt}</time> · версия: <code>{metadata.version}</code> · схема: {metadata.schemaVersion}</p><p className="muted">Дата исходных файлов (МСК): {date(source.date)}</p><p className="muted">Дата файла — время изменения, не дата скачивания. Файлы-кандидаты не подтверждают участие каждой строки.</p><div className="source-list"><div><strong>Файлы-кандидаты</strong><span>{source.files.length}</span><div>{source.files.map(file => <code key={file}>{file}</code>)}</div></div><div><strong>Источники в загруженных строках</strong><span>{source.recordedSources.length}</span><div>{source.recordedSources.map(file => <code key={file}>{file}</code>)}</div></div></div><p className="muted">{source.dateEvidence}</p><p className="muted">{source.recordedSourceEvidence}</p><TableView table={provenance} unit="" scope="provenance" params={params} change={change} /></details>
-  </section>;
+  </section></AnalystOnly>;
 }
 function EconomicsPlot({ chart, family, theme, pivot, params, change }: { chart: EconomicsChart; family: EconomicsFamily; theme: Theme; pivot?: EconomicsTable; params: URLSearchParams; change: EconomicsChange }) {
   const ref = useRef<HTMLDivElement>(null), [width, setWidth] = useState(900), [hidden, setHidden] = useState<string[]>([]);
@@ -117,7 +122,7 @@ export default function Economics({ family, theme, query, change }: { family: Ec
     </> : !data && !error ? <div className="economics-chart-loading" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка показателей…</span></div> : <Empty />;
   return <main className="economics-page" id="economics-page" data-family={family}>
     <div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА</div><h1>{titles[family]}</h1>{family !== 'accounts' && catalog && selection && <ReleaseDates catalog={catalog} selected={selection} />}</div></div>
-    <div className="economics-actions"><a className="source-anchor" href="#economics-sources"><Database size={15} />Источники<ChevronRight size={14} /></a><button className="icon-button" title="Обновить показатели" aria-label="Обновить показатели" onClick={retry}><RefreshCw size={16} /></button><ExcelExport family={family} data={data} retry={retry} /></div>
+    <div className="economics-actions"><AnalystOnly><a className="source-anchor" href="#economics-sources"><Database size={15} />Источники<ChevronRight size={14} /></a></AnalystOnly><button className="icon-button" title="Обновить показатели" aria-label="Обновить показатели" onClick={retry}><RefreshCw size={16} /></button><ExcelExport family={family} data={data} retry={retry} /></div>
 
     {error && <div className="load-state" role="alert"><AlertCircle size={26} /><h2>Экономические показатели API недоступны</h2><p>{error}</p><button onClick={retry}><RefreshCw size={15} />Повторить</button></div>}
     {!catalog && !error && <div className="load-state" role="status"><RefreshCw size={26} className="loading-icon" /><p>Загрузка каталога экономики…</p></div>}

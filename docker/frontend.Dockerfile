@@ -6,7 +6,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml 
 RUN pnpm install --frozen-lockfile
 COPY frontend/ .
 ENV VITE_DATA_MODE=api
-RUN pnpm build
+RUN pnpm build && rm -f dist/profile-snapshot.json
 
 # --- runtime stage: отдаём dist/ через nginx без root ---
 FROM nginxinc/nginx-unprivileged:1.27-alpine

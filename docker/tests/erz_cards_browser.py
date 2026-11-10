@@ -191,7 +191,8 @@ def check_cards_replay(raw: Path, workroot: Path):
     from backend.profile_service import ProfileService
     from pipeline.dev_name_utils import normalize_developer_name
     service = ProfileService(DataContext(root, use_marts=True), check_interval=0)
-    with TestClient(create_app(service=service)) as client:
+    from backend.auth import AuthSettings
+    with TestClient(create_app(service=service, auth_settings=AuthSettings(enabled=False))) as client:
         for target in [targets[0], targets[1], *[target for target in targets
                     if urlparse(target["card_url"]).path.rsplit("-", 1)[-1] in NO_HISTORY_IDS]]:
             response = client.get("/api/v1/profile", params={"developer": normalize_developer_name(target["name"]), "region": "msk"})

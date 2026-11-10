@@ -39,6 +39,7 @@ function preferential() {
 }
 function response(input) {
   const url = new URL(input, 'http://localhost'), p = url.pathname, query = url.searchParams;
+  if (p === '/api/v1/auth/session') return { enabled: false, user: null, csrfToken: null };
   if (p === '/api/v1/catalog' || p === '/api/v1/profile') return profile(url);
   if (p === '/api/v1/construction/permits') return permitPageFixture('total');
   if (p === '/api/v1/construction/domrf') return domrf();

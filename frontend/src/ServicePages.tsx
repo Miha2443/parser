@@ -4,6 +4,7 @@ import { request } from './data';
 import { date, exportCsv, number } from './format';
 import './services.css';
 import './home-navigation.css';
+import { AnalystOnly, analystRoute, useAccess } from './auth';
 
 type Change = (values: Record<string, string | null>, replace?: boolean) => void;
 type Row = Record<string, string | number | boolean | null>;
@@ -34,14 +35,18 @@ const realtySections = [
 const statisticsLinks = [['/economics/salary', 'Заработная плата'], ['/economics/ipc', 'Индекс потребительских цен'], ['/economics/accounts', 'ВРП, ВВП и ВДС']] as const;
 const serviceLinks = [['/service/constant-prices', 'Калькулятор сопоставимых цен'], ['/demo', 'Демонстрация'], ['/updates', 'Обновления источников'], ['/tdm', 'Отправка в TDM']] as const;
 export function Home({ navigate }: { navigate: (path: string) => void }) {
+  const { canAnalyze } = useAccess();
   function homeLink(path: string, label: string) { return <a key={path} href={path} onClick={event => { if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate(path); } }}><span>{label}</span><ArrowRight size={16} /></a>; }
   return <main className="service-page home-page"><div className="page-heading"><div><div className="eyebrow">ЭКОНОМИКА И НЕДВИЖИМОСТЬ</div><h1>Аналитика строительной отрасли Москвы</h1></div></div>
     <section className="home-market" aria-labelledby="home-market-title"><h2 id="home-market-title">Рынок недвижимости</h2><nav className="home-market-panels" aria-label="Рынок недвижимости">{realtySections.map(([title, links]) => <section className="home-market-panel" key={title} aria-label={title}><h3>{title}</h3>{links.map(([path, label]) => homeLink(path, label))}</section>)}</nav></section>
     <section className="home-market home-industry" aria-labelledby="home-industry-title"><h2 id="home-industry-title">Отраслевые показатели</h2><div className="home-industry-panels"><section className="home-market-panel" aria-label="Росстат"><h3>Росстат</h3><nav aria-label="Показатели Росстата">{statisticsLinks.map(([path, label]) => homeLink(path, label))}</nav></section><section className="home-market-panel" aria-label="ЦБ РФ"><h3>ЦБ РФ</h3>{homeLink('/economics/mortgage', 'Ипотечное кредитование')}{homeLink('/economics/preferential-mortgage', 'Льготное ипотечное кредитование')}<div className="home-pending-link" aria-disabled="true"><span>Кредитование</span><small>Не подключено</small></div></section></div></section>
-    <section className="home-market home-service" aria-labelledby="home-service-title"><h2 id="home-service-title">Сервис</h2><nav className="home-market-panel" aria-label="Сервис">{serviceLinks.map(([path, label]) => homeLink(path, label))}</nav></section>
+    <section className="home-market home-service" aria-labelledby="home-service-title"><h2 id="home-service-title">Сервис</h2><nav className="home-market-panel" aria-label="Сервис">{serviceLinks.filter(([path]) => canAnalyze || !analystRoute(path)).map(([path, label]) => homeLink(path, label))}</nav></section>
     <footer className="page-footer">Аналитика Москвы · API</footer></main>;
 }
 export function Updates({ query, change }: { query: string; change: Change }) {
+  return <AnalystOnly><UpdatesContent query={query} change={change} /></AnalystOnly>;
+}
+function UpdatesContent({ query, change }: { query: string; change: Change }) {
   const params = useMemo(() => new URLSearchParams(query), [query]);
   const api = new URLSearchParams(); for (const key of ['days', 'monitoring_days', 'only_errors']) if (params.has(key)) api.set(key, params.get(key)!);
   const { data, error, retry } = useUpdates(api.toString());
@@ -60,6 +65,9 @@ export function Updates({ query, change }: { query: string; change: Change }) {
 
 type TdmCatalog = { actionToken: string; maxUploadBytes: number; status: { tokenReady: boolean; workspaceReady: boolean; groupReady: boolean; disabled: boolean; ready: boolean }; datasets: { key: string; title: string; section: string; files: string[]; size: number }[]; files: { key: string; label: string; size: number }[] };
 export function Tdm() {
+  return <AnalystOnly><TdmContent /></AnalystOnly>;
+}
+function TdmContent() {
   const [catalog, setCatalog] = useState<TdmCatalog>(), [error, setError] = useState(''), [retry, setRetry] = useState(0);
   const [kind, setKind] = useState('dataset'), [section, setSection] = useState(''), [key, setKey] = useState(''), [file, setFile] = useState<File>();
   const [caption, setCaption] = useState(''), [text, setText] = useState(''), [group, setGroup] = useState('');
@@ -69,8 +77,7 @@ export function Tdm() {
   const datasets = catalog?.datasets.filter(item => item.section === activeSection) ?? [];
   const selected = kind === 'dataset' ? datasets.find(item => item.key === key) ?? datasets[0] : catalog?.files.find(item => item.key === key) ?? catalog?.files[0];
   async function post(path: string, body?: BodyInit, headers: Record<string, string> = {}) {
-    const response = await fetch(`/api/v1/tdm/${path}`, { method: 'POST', headers: { 'X-TDM-Token': catalog!.actionToken, ...headers }, body });
-    if (!response.ok) throw new Error(`Ошибка HTTP ${response.status}. Обновите статус и проверьте настройки.`);
+    const response = await request(`/api/v1/tdm/${path}`, new AbortController().signal, { method: 'POST', headers: { 'X-TDM-Token': catalog!.actionToken, ...headers }, body });
     return response.json();
   }
   async function send(asText = false) {

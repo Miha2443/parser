@@ -9,7 +9,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
 ARG UID=1000
 ARG GID=1000
 RUN groupadd -g "$GID" op && useradd -m -u "$UID" -g "$GID" op \
-    && mkdir -p /app && chown op:op /app
+    && mkdir -p /app /auth && chown op:op /app /auth && chmod 700 /auth
 
 WORKDIR /app
 

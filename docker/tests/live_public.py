@@ -314,7 +314,8 @@ def main():
         os.environ["PARSER_REQUIRE_REALTY_MARTS"] = "1"
         api_stats = []
         summary["api"] = api_stats
-        with TestClient(create_app()) as client:
+        from backend.auth import AuthSettings
+        with TestClient(create_app(auth_settings=AuthSettings(enabled=False))) as client:
             def get(route):
                 response = client.get(route)
                 parsed = urlsplit(route)

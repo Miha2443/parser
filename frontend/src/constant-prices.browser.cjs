@@ -50,7 +50,9 @@ async function main() {
     await context.addInitScript(() => { localStorage.setItem('dashboard.navigation', JSON.stringify({ service: true })); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.testClipboard = text; } } }); });
     let unavailable = false, broken = false, gap = false, calls = [];
     await context.route('**/api/**', async route => {
-      const url = new URL(route.request().url()); calls.push({ url: url.href, method: route.request().method() });
+      const url = new URL(route.request().url());
+      if (route.request().method() === 'GET' && url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { enabled: false, user: null, csrfToken: null } });
+      calls.push({ url: url.href, method: route.request().method() });
       assert.ok(url.pathname.startsWith('/api/v1/economics/ipc/'), `Unexpected API: ${url}`);
       if (unavailable) return route.fulfill({ status: 503, json: { detail: { code: 'source_unavailable', reason: 'ИПЦ недоступен для проверки' } } });
       const value = url.pathname.endsWith('/catalog') ? fixtures.catalog() : fixtures.report();

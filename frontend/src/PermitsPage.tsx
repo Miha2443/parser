@@ -1,3 +1,4 @@
+import { AnalystOnly, useAccess } from './auth';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, ChevronDown, Database, Download, FileSpreadsheet, ImageDown, RefreshCw, RotateCcw } from 'lucide-react';
 import * as echarts from 'echarts/core';
@@ -22,6 +23,7 @@ import './permits.css';
 echarts.use([BarChart, LineChart, AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 510 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number }) {
+  const { canAnalyze } = useAccess();
   const container = useRef<HTMLDivElement>(null), instance = useRef<echarts.ECharts>();
   const [width, setWidth] = useState(600), [hidden, setHidden] = useState<string[]>([]), [showData, setShowData] = useState(false);
   const option = useMemo(() => buildOption({ width, height, hidden, includeGrowth: true }), [buildOption, width, height, hidden]);
@@ -47,7 +49,7 @@ function PermitChart({ buildOption, theme, label, rows, filename, growth, growth
   }
   function clearHighlight() { instance.current?.dispatchAction({ type: 'downplay' }); instance.current?.dispatchAction({ type: 'hideTip' }); }
   function exportPng() {
-    if (!instance.current) return;
+    if (!canAnalyze || !instance.current) return;
     const backgroundColor = theme === 'light' ? '#ffffff' : '#202225', pixelRatio = Math.max(2, window.devicePixelRatio || 1);
     download(instance.current.getDataURL({ type: 'png', pixelRatio, backgroundColor }), `${filename}.png`);
   }
@@ -55,8 +57,8 @@ function PermitChart({ buildOption, theme, label, rows, filename, growth, growth
     <div className="legend chart-legend">{series.map((s, index) => <button key={s.name} type="button" className={hidden.includes(s.name) ? 'legend-off' : ''} aria-pressed={!hidden.includes(s.name)} title={`${hidden.includes(s.name) ? 'Показать' : 'Скрыть'}: ${s.name}`} onMouseEnter={() => highlight(index)} onMouseLeave={clearHighlight} onFocus={() => highlight(index)} onBlur={clearHighlight} onClick={() => { clearHighlight(); setHidden(previous => previous.includes(s.name) ? previous.filter(name => name !== s.name) : [...previous, s.name]); }}><i className={s.type === 'line' ? 'permit-growth-swatch' : s.itemStyle.borderType === 'dashed' ? 'forecast-swatch' : undefined} style={{ background: s.itemStyle.color }} />{s.name}</button>)}</div>
     <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={`${label}; изменение к прошлому году, ${growthLabel}`} />
     <div className="permit-growth-accessible"><table><caption>К прошлому году, % · {growthLabel}</caption><thead><tr>{growth.map(point => <th key={point.year} scope="col">{point.year}</th>)}</tr></thead><tbody><tr>{growth.map(point => <td key={point.year}>{point.value === null ? `н/д: ${point.reason}` : `${point.value > 0 ? '+' : ''}${number(point.value, 1)} %`}</td>)}</tr></tbody></table></div>
-    <div className="chart-data"><button type="button" className="data-toggle" onClick={() => setShowData(value => !value)} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
-    {showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => exportCsv(rows, `${filename}.csv`)}><Download size={15} />CSV</button><button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}
+    <AnalystOnly><div className="chart-data"><button type="button" className="data-toggle" onClick={() => { if (canAnalyze) setShowData(value => !value); }} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
+    {canAnalyze && showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => { if (canAnalyze) exportCsv(rows, `${filename}.csv`); }}><Download size={15} />CSV</button><button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}</AnalystOnly>
   </div>;
 }
 
@@ -98,15 +100,17 @@ export function ConstructionLoadState({ error, retry, label }: { error: string; 
 export function ConstructionEmpty({ children = 'Нет наблюдений в источнике.' }: { children?: ReactNode }) { return <p className="cp-empty"><Database size={17} />{children}</p>; }
 
 export function ConstructionExport({ url, filename, label, refresh }: { url: string; filename: string; label: string; refresh: () => void }) {
+  const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const active = useRef<AbortController>();
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [mismatch, setMismatch] = useState(false);
-  useEffect(() => { setBusy(false); setError(''); setMismatch(false); return () => active.current?.abort(); }, [url]);
+  useEffect(() => { setBusy(false); setError(''); setMismatch(false); return () => active.current?.abort(); }, [url, canAnalyze]);
   async function download() {
+    if (!allowed.current) return;
     active.current?.abort(); const controller = new AbortController(); active.current = controller;
     setBusy(true); setError(''); setMismatch(false);
     try {
       const blob = await (await request(url, controller.signal)).blob();
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !allowed.current) return;
       const objectUrl = URL.createObjectURL(blob), link = document.createElement('a');
       link.href = objectUrl; link.download = filename;
       document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
@@ -117,15 +121,17 @@ export function ConstructionExport({ url, filename, label, refresh }: { url: str
       }
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
+  if (!canAnalyze) return null;
   return <div className="cp-export"><button type="button" className="icon-button" title={label} aria-label={label} disabled={busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span className="warning-text" role="alert">{error}</span>}{mismatch && <button type="button" className="icon-button" title="Обновить данные источника" aria-label="Обновить данные источника" onClick={refresh}><RefreshCw size={17} /></button>}</div>;
 }
 export function ConstructionSource({ metadata, label, notes = [], children }: { metadata: ConstructionPagesMetadata; label: string; notes?: string[]; children?: ReactNode }) {
-  return <details className="cp-source"><summary><Database size={15} /><span>{label}</span></summary><div className="cp-source-content">
+  if (!useAccess().canAnalyze) return null;
+  return <AnalystOnly><details className="cp-source"><summary><Database size={15} /><span>{label}</span></summary><div className="cp-source-content">
     <dl className="cp-metadata"><div><dt>Версия</dt><dd>{metadata.version}</dd></div><div><dt>Сформировано API</dt><dd>{metadata.generatedAt}</dd></div><div><dt>Дата источника / файлов</dt><dd>{date(metadata.source.date)}</dd></div><div><dt>{metadata.source.fileEvidence === 'selected' ? 'Выбранные файлы источника' : metadata.source.fileEvidence === 'candidates' ? 'Файлы-кандидаты' : 'Файлы'}</dt><dd>{metadata.source.files.length ? metadata.source.files.map((f, i) => <code key={i}>{f}</code>) : 'Не указаны'}</dd></div></dl>
     {metadata.source.dateEvidence && <p className="cp-note">{metadata.source.dateEvidence}</p>}
     {metadata.source.issues.map(([level, message], i) => <p className="cp-note warning-text" key={i}><AlertCircle size={14} /><span>{level}: {message}</span></p>)}
     {notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}{children}
-  </div></details>;
+  </div></details></AnalystOnly>;
 }
 export function ConstructionMetric({ label, value, unit, foot, digits = unit === '%' ? 1 : 2 }: { label: string; value: number | null | undefined; unit: string; foot?: string; digits?: number }) {
   return <div className="cp-metric"><span>{label}</span><strong title={`${exactNumber(value)} ${unit}`}>{number(value, digits)}<small>{unit}</small></strong>{foot && <p>{foot}</p>}</div>;
@@ -170,7 +176,7 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
         {data.breakdowns.length ? data.breakdowns.map(b => {
           return <div className="cp-subsection" key={b.id}><div className="cp-section-heading"><div><h3>{b.title}</h3><p>Москва · {b.unit} · {date(data.source.date)}</p></div></div>
             {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={470} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
-            <details className="cp-source cp-breakdown-source"><summary>Источник и основание: {b.title}</summary><div className="cp-source-content">{b.notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}</div></details></div>;
+            <AnalystOnly><details className="cp-source cp-breakdown-source"><summary>Источник и основание: {b.title}</summary><div className="cp-source-content">{b.notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}</div></details></AnalystOnly></div>;
         }) : <ConstructionEmpty>Детализация отсутствует в источнике.</ConstructionEmpty>}
       </section>
       <ConstructionSource metadata={data} label="Источники разрешений, прогноз и даты" notes={[...data.notes, forecastBasisNote, ...data.forecast.notes]}><p className="cp-note">Прогноз: {data.forecast.source.file ?? 'Файл не указан'} · лист «{data.forecast.source.sheet}»</p><div className="cp-raw-record">{data.forecast.rows.map(r => <div key={r.year}><strong>{r.year} · ячейки прогноза</strong>{Object.entries(r.cells).map(([key, cell]) => <p key={key}>{key}: {cell}{key === 'year' ? ` · ${r.year}` : forecastFields.includes(key as typeof forecastFields[number]) ? ` · ${exactNumber(r[key as typeof forecastFields[number]])}` : ''}</p>)}</div>)}</div></ConstructionSource>

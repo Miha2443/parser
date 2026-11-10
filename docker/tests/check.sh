@@ -6,7 +6,7 @@ test "$(. /etc/os-release; echo "$VERSION_ID")" = 12
 cd /opt/parser-dashboard
 export COMPOSE_PROJECT_NAME=parser-compose-smoke
 for script in docker/*.sh docker/tests/*.sh; do bash -n "$script"; done
-printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\n' > .env
+printf 'OP_UID=1000\nOP_GID=1000\nTDM_DISABLED=1\nPARSER_AUTH_ENABLED=0\n' > .env
 bash docker/bootstrap.sh
 docker compose run --rm --no-deps updater python -m unittest discover -s tests -p test_docker_publication.py -v
 
@@ -44,6 +44,8 @@ docker compose run --rm --no-deps updater python -c "from pathlib import Path; f
 
 # The Monitoring DSTI fixture contains only commissioning cells A4:Q8.
 docker compose run --rm --no-deps updater python -m unittest tests.test_linear_objects tests.test_linear_monitoring_update tests.test_commissioning_forecasts backend.tests.test_linear backend.tests.test_linear_dashboard -v
+
+docker compose run --rm --no-deps updater python -m unittest backend.tests.test_auth backend.tests.test_auth_deployment backend.tests.test_viewer_payload backend.tests.test_tdm -v
 docker compose run --rm --no-deps updater python -c "from pathlib import Path; import fedstat_checker,rosstat_checker; fedstat_checker.save_state({'compose':True}); rosstat_checker.save_state({'compose':True}); assert Path('state/fedstat_state.json').is_file(); assert Path('state/rosstat_state.json').is_file()"
 docker compose run --rm --no-deps updater python -c "import fedstat_checker,rosstat_checker; assert fedstat_checker.load_state()['compose']; assert rosstat_checker.load_state()['compose']"
 docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m docker.tests.fixture seed-no-erz
@@ -59,8 +61,9 @@ docker compose run --rm --no-deps -e PARSER_COMPOSE_SMOKE=1 updater python -m do
 bash docker/update.sh --publish-existing
 docker compose exec -T backend python docker/readiness.py
 backend_id="$(docker compose ps -q backend)"
-[[ "$(docker inspect -f '{{len .Mounts}}' "$backend_id")" == 1 ]]
-[[ "$(docker inspect -f '{{range .Mounts}}{{.Destination}}:{{.RW}}{{end}}' "$backend_id")" == '/runtime:false' ]]
+[[ "$(docker inspect -f '{{len .Mounts}}' "$backend_id")" == 2 ]]
+[[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/runtime"}}{{.RW}}{{end}}{{end}}' "$backend_id")" == false ]]
+[[ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/auth"}}{{.RW}}{{end}}{{end}}' "$backend_id")" == true ]]
 [[ "$(docker compose ps --services --status running | sort | tr '\n' ' ')" == 'backend web ' ]]
 test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/tdm/catalog)" = 403
 test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/unknown)" = 404

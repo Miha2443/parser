@@ -14,7 +14,7 @@ from pipeline.data_access import DataContext
 logger = logging.getLogger(__name__)
 
 
-def create_app(service=None, apartments_service=None, sales_service=None):
+def create_app(service=None, apartments_service=None, sales_service=None, *, auth_settings=None):
     app = FastAPI(title="Moscow dashboard", version="1.0.0")
     service = service or ProfileService(DataContext.from_environment())
     app.state.profile_service = service
@@ -177,6 +177,8 @@ def create_app(service=None, apartments_service=None, sales_service=None):
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    from backend.auth import install_auth
+    install_auth(app, auth_settings)
     return app
 
 

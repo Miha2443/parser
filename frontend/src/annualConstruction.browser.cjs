@@ -79,7 +79,9 @@ async function main() {
     const fresh = kind => ({ catalog: structuredClone(kind === 'annual' ? annualCatalog : constructionCatalog), meta: structuredClone(metadata), catalogFailure: 503, failure: 0, exportFailure: 0, wrong: false, empty: false, slow: '', gate: null });
     const states = { annual: fresh('annual'), construction: fresh('construction') };
     await page.route('**/api/v1/**', async route => {
-      const u = new URL(route.request().url()), kind = u.pathname.startsWith(roots.annual) ? 'annual' : u.pathname.startsWith(roots.construction) ? 'construction' : null; if (!kind) return route.continue(); const s = states[kind]; requests.push({ kind, path: u.pathname + u.search });
+      const u = new URL(route.request().url());
+      if (route.request().method() === 'GET' && u.pathname === '/api/v1/auth/session') return route.fulfill({ json: { enabled: false, user: null, csrfToken: null } });
+      const kind = u.pathname.startsWith(roots.annual) ? 'annual' : u.pathname.startsWith(roots.construction) ? 'construction' : null; if (!kind) return route.continue(); const s = states[kind]; requests.push({ kind, path: u.pathname + u.search });
       if (u.pathname.endsWith('/catalog')) return route.fulfill(s.catalogFailure ? { status: s.catalogFailure, json: { detail: 'Catalog unavailable fixture' } } : { json: s.catalog });
       if (u.pathname.endsWith('/export')) return route.fulfill(s.exportFailure ? { status: s.exportFailure, json: { detail: 'generation changed' } } : { body: Buffer.from('PKfixture-workbook'), contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const region = u.searchParams.get('region'), selection = kind === 'annual' ? { region } : { region, permitKind: u.searchParams.get('permit_kind'), month: Number(u.searchParams.get('month')) };

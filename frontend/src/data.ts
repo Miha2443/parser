@@ -42,14 +42,26 @@ export class ApiError extends Error {
   }
 }
 
-export async function request(url: string, signal: AbortSignal): Promise<Response> {
+export const AUTH_EXPIRED_EVENT = 'auth-expired';
+type RequestAccess = { enabled: boolean; csrfToken?: string | null };
+let requestAccess = (): RequestAccess => ({ enabled: false, csrfToken: null });
+export function setRequestAccess(getAccess: () => RequestAccess) {
+  const previous = requestAccess; requestAccess = getAccess;
+  return () => { if (requestAccess === getAccess) requestAccess = previous; };
+}
+
+export async function request(url: string, signal: AbortSignal, init: RequestInit = {}): Promise<Response> {
   let response: Response;
-  try { response = await fetch(url, { signal, cache: 'no-store' }); }
+  const privateApi = url.startsWith('/api/v1/') && !/^\/api\/v1\/auth(?:[/?#]|$)/.test(url);
+  const headers = new Headers(init.headers), access = requestAccess();
+  if (privateApi && !['GET', 'HEAD', 'OPTIONS'].includes((init.method ?? 'GET').toUpperCase()) && access.csrfToken) headers.set('X-CSRF-Token', access.csrfToken);
+  try { response = await fetch(url, { ...init, headers, signal, cache: 'no-store', credentials: 'same-origin' }); }
   catch (error) {
     if (signal.aborted) throw error;
     throw new Error('Не удалось подключиться к серверу данных. Проверьте доступность API.');
   }
   if (!response.ok) {
+    if (privateApi && (response.status === 401 || response.status === 403) && typeof window !== 'undefined' && !signal.aborted) window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { url, status: response.status } }));
     let reason: string | undefined;
     if (response.status === 503) {
       try {
@@ -63,6 +75,7 @@ export async function request(url: string, signal: AbortSignal): Promise<Respons
 }
 
 export async function loadCatalog(mode: DataMode, signal: AbortSignal): Promise<Catalog> {
+  if (requestAccess().enabled) mode = 'api';
   const response = await request(mode === 'snapshot' ? '/profile-snapshot.json' : '/api/v1/catalog', signal);
   const raw: unknown = await response.json();
   if (mode === 'api') return normalizeCatalog(raw);

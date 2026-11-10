@@ -11,6 +11,33 @@ consumer prices, national accounts, map, home, updates and TDM. Streamlit remain
 available separately for comparison and rollback. Analytics never change input
 files; TDM sends only after an explicit user action.
 
+## Accounts And Roles
+
+`AuthProvider` checks the server session before mounting protected reports.
+Login/logout use same-origin HttpOnly cookies; credentials and role authority
+never live in localStorage. A failed session check stays closed and offers retry.
+Role/identity changes unmount report state, and 401/403, focus and minute checks
+revalidate the session. HTTPS-required configuration never offers password input
+on an insecure HTTP page; explicit local HTTP configuration remains available.
+
+`analyst` keeps sources, raw registries, downloads, updates, TDM and calculator.
+`viewer` keeps charts, KPI, periods, legends, meaningful dates and demonstration.
+`AnalystOnly`/`useAccess` omit restricted controls from the DOM, including direct
+service routes. This is complemented by server authorization and reduced viewer
+JSON, not a security boundary made from CSS. Unwrapped components keep legacy
+analyst context for development/tests; the production App always mounts the gate.
+Vite preserves the original Host through the API proxy for Origin/CSRF checks.
+Production Docker removes the frozen profile snapshot; Nginx denies its URL.
+
+`auth.browser.cjs` checks the login/session lifecycle with isolated responses.
+With Playwright available on `NODE_PATH`, `node src/auth-integration.browser.cjs`
+starts private Vite and a loopback-only Python fixture using real AuthStore,
+cookies, CSRF and backend JSON projection. It checks shared-account sessions,
+viewer reports/controls, server 403, analyst export and demonstration. No provider
+or real TDM calls occur; temporary account databases and servers are cleaned up.
+Map/tree have separate SSR and strict payload contracts; the integration fixture
+explicitly reports their absent browser fixtures rather than claiming coverage.
+
 ## Constant-Price Calculator
 
 `/service/constant-prices` is linked from Service and Home. It uses the existing
@@ -644,9 +671,9 @@ Production must use your own service or a provider with appropriate permission
 and capacity; the default OSM endpoint is not the production plan.
 
 `/home`, `/updates` and `/tdm` are local React routes backed by the local API;
-`/` still opens the developer profile. TDM is intended for a trusted localhost
-deployment only. This migration does not provide public authentication or
-authorization. Do not expose the TDM page/API as a public sending service.
+`/` still opens the developer profile. TDM is analyst-only when authentication
+is enabled, with session CSRF plus its own action token/idempotency protection.
+Without authentication its legacy local mode rejects proxied connections.
 
 ## Economics Pages
 

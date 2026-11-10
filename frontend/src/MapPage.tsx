@@ -1,3 +1,4 @@
+import { AnalystOnly, useAccess } from './auth';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import { GeoJSONSource, Map as LibreMap } from 'maplibre-gl';
@@ -8,7 +9,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, Crosshair, Database, Download, 
 import { request } from './data';
 import { date, exportCsv, number } from './format';
 import { mapBounds, mapCsvRows, mapQuery, mapRepairs, normalizeMapCatalog, normalizeMapReport } from './mapData';
-import type { MapCatalog, MapReport } from './mapData';
+import type { MapCatalog, MapObject, MapReport } from './mapData';
 import type { Theme } from './types';
 
 type Change = (values: Record<string, string | null>, replace?: boolean) => void;
@@ -30,7 +31,7 @@ function MapCanvas({ report, theme, selected, select }: { report: MapReport; the
           tiles: [(import.meta.env.VITE_MAP_TILE_URL as string | undefined) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
           attribution: (import.meta.env.VITE_MAP_ATTRIBUTION as string | undefined) || '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' } },
           layers: [{ id: 'base', type: 'raster', source: 'base', paint: { 'raster-saturation': -.7 } }] } });
-    } catch { setError('Карта не запустилась: требуется WebGL. Данные доступны в таблице ниже.'); return; }
+    } catch { setError('Карта не запустилась: требуется WebGL.'); return; }
     map.current = instance;
     instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     instance.addControl(new maplibregl.FullscreenControl(), 'top-right');
@@ -96,14 +97,25 @@ function MapCanvas({ report, theme, selected, select }: { report: MapReport; the
     <div className="map-legend"><span><i className="map-dot introduced" />Введено</span><span><i className="map-dot building" />Строится</span><span><i className="map-dot approximate" />Приблизительно</span></div></div>;
 }
 
+export function MapObjectDetails({ object, close }: { object: MapObject; close: () => void }) {
+  const { canAnalyze } = useAccess();
+  const facts = [['Адрес', object.address], ['Застройщик', object.developer], ['Организация', object.builder],
+    ...(canAnalyze ? [['Реестр', object.source_sheet], ['Разрешение', object.permit]] : []),
+    ['Статус', object.status], ['Год', object.year], ['Округ / район', `${object.okrug} / ${object.district}`],
+    ['Общая площадь, м²', number(object.area_total)], ['Жилая площадь, м²', number(object.area_living)], ['Квартир', number(object.apartments)],
+    ['Координаты', `${qualityText[object.quality]}${canAnalyze ? ` · ${object.coord_source}` : ''}`], ['Широта / долгота', `${object.lat ?? '—'} / ${object.lon ?? '—'}`]];
+  return <section className="map-object"><div className="section-heading"><h2>{object.object_name || object.address || object.id}</h2><button className="icon-button" aria-label="Закрыть объект" title="Закрыть объект" onClick={close}><X size={18} /></button></div><dl>{facts.map(([label, value]) => <div key={String(label)}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}</dl></section>;
+}
+
 export default function MapPage({ theme, query, change }: { theme: Theme; query: string; change: Change }) {
+  const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const params = useMemo(() => new URLSearchParams(query), [query]);
   const apiQuery = mapQuery(params).toString();
   const [catalogState, setCatalog] = useState<{ data: MapCatalog; attempt: number }>(), [report, setReport] = useState<MapReport>(), [error, setError] = useState(''), [retry, setRetry] = useState(0);
   const catalog = catalogState?.attempt === retry ? catalogState.data : undefined;
   const [exportError, setExportError] = useState(''), [busy, setBusy] = useState(false);
   const exportController = useRef<AbortController>();
-  useEffect(() => { setBusy(false); setExportError(''); return () => exportController.current?.abort(); }, [apiQuery, report?.version]);
+  useEffect(() => { setBusy(false); setExportError(''); return () => exportController.current?.abort(); }, [apiQuery, report?.version, canAnalyze]);
   useEffect(() => { const abort = new AbortController(); setError('');
     request('/api/v1/map/catalog', abort.signal).then(response => response.json()).then(normalizeMapCatalog).then(data => { if (!abort.signal.aborted) setCatalog({ data, attempt: retry }); }).catch(e => { if (!abort.signal.aborted) setError(String(e)); });
     return () => abort.abort(); }, [retry]);
@@ -117,12 +129,12 @@ export default function MapPage({ theme, query, change }: { theme: Theme; query:
   const search = params.get('search') ?? '', rows = report?.rows.filter(row => `${row.address} ${row.developer} ${row.object_name}`.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))) ?? [];
   const pages = Math.max(1, Math.ceil(rows.length / 20)), page = Math.min(pages, Math.max(1, Number(params.get('page')) || 1)), shown = rows.slice((page - 1) * 20, page * 20);
   function filter(values: Record<string, string | null>) { change({ ...values, page: null, object: null }); }
-  async function excel() { if (!report) return; const abort = new AbortController(); exportController.current?.abort(); exportController.current = abort; setBusy(true); setExportError('');
+  async function excel() { if (!allowed.current || !report) return; const abort = new AbortController(); exportController.current?.abort(); exportController.current = abort; setBusy(true); setExportError('');
     try { const q = new URLSearchParams(apiQuery); q.set('required_version', report.version); const response = await request(`/api/v1/map/export?${q}`, abort.signal);
-      const blob = await response.blob(); if (abort.signal.aborted) return;
+      const blob = await response.blob(); if (abort.signal.aborted || !allowed.current) return;
       const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = 'map-objects.xlsx'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { if (!abort.signal.aborted) setExportError('Не удалось скачать Excel. Обновите данные и повторите.'); } finally { if (!abort.signal.aborted) setBusy(false); } }
-  return <main className="map-page"><div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Карта объектов</h1></div><div className="snapshot-label"><Database size={14} />Мониторинг 2.0<span>{catalog ? date(catalog.source.date) : '—'}</span></div></div>
+  return <main className="map-page"><div className="page-heading"><div><div className="eyebrow">АНАЛИТИКА НЕДВИЖИМОСТИ</div><h1>Карта объектов</h1></div><div className="snapshot-label"><AnalystOnly><Database size={14} />Мониторинг 2.0</AnalystOnly><span>{catalog ? date(catalog.source.date) : '—'}</span></div></div>
     {catalog && <div className="filters map-filters"><label><span>Застройщик</span><select aria-label="Застройщик карты" value={params.get('developer') ?? ''} onChange={e => filter({ developer: e.target.value || null })}><option value="">Все</option>{catalog.developers.map(value => <option key={value}>{value}</option>)}</select></label>
       {(['status', 'okrug'] as const).map(key => <label key={key}><span>{key === 'status' ? 'Статусы' : 'Округа'}</span><select multiple aria-label={key === 'status' ? 'Статусы карты' : 'Округа карты'} value={params.getAll(key).flatMap(value => value.split('|'))} onChange={e => filter({ [key]: Array.from(e.target.selectedOptions).map(option => option.value).join('|') || null })}>{(key === 'status' ? catalog.statuses : catalog.okrugs).map(value => <option key={value}>{value}</option>)}</select></label>)}
       <label><span>Год от</span><input aria-label="Год от" type="number" value={params.get('year_from') ?? ''} min={catalog.years.min ?? undefined} max={catalog.years.max ?? undefined} onChange={e => filter({ year_from: e.target.value || null })} /></label><label><span>Год до</span><input aria-label="Год до" type="number" value={params.get('year_to') ?? ''} min={catalog.years.min ?? undefined} max={catalog.years.max ?? undefined} onChange={e => filter({ year_to: e.target.value || null })} /></label>
@@ -130,9 +142,9 @@ export default function MapPage({ theme, query, change }: { theme: Theme; query:
     {error ? <div className="load-state" role="alert"><AlertCircle /><p>{error}</p><button onClick={() => setRetry(value => value + 1)}><RefreshCw size={16} />Повторить</button></div> : !report ? <div className="load-state" role="status">Загрузка объектов…</div> : <>
       <div className="map-counts">{([['total', 'Объектов'], ['onMap', 'На карте'], ['located', 'По геометрии / кэшу'], ['approximate', 'Приблизительные'], ['missing', 'Без координат']] as const).map(([key, label]) => <div key={key}><span>{label}</span><strong>{number(report.filteredTotals[key])}</strong><small>из {number(report.totals[key])}</small></div>)}</div>
       <MapCanvas report={report} theme={theme} selected={selected} select={id => change({ object: id })} />
-      {chosen && <section className="map-object"><div className="section-heading"><h2>{chosen.object_name || chosen.address || chosen.id}</h2><button className="icon-button" aria-label="Закрыть объект" title="Закрыть объект" onClick={() => change({ object: null })}><X size={18} /></button></div><dl>{[['Адрес', chosen.address], ['Застройщик', chosen.developer], ['Организация', chosen.builder], ['Реестр', chosen.source_sheet], ['Разрешение', chosen.permit], ['Статус', chosen.status], ['Год', chosen.year], ['Округ / район', `${chosen.okrug} / ${chosen.district}`], ['Общая площадь, м²', number(chosen.area_total)], ['Жилая площадь, м²', number(chosen.area_living)], ['Квартир', number(chosen.apartments)], ['Координаты', `${qualityText[chosen.quality]} · ${chosen.coord_source}`], ['Широта / долгота', `${chosen.lat ?? '—'} / ${chosen.lon ?? '—'}`]].map(([label, value]) => <div key={String(label)}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}</dl></section>}
-      <section className="section"><div className="section-heading"><h2>Реестр объектов · {number(rows.length)}</h2><div className="chart-actions"><button className="icon-button" title="Скачать полный реестр CSV" aria-label="Скачать полный реестр CSV" onClick={() => exportCsv(mapCsvRows(report.rows), 'map-objects.csv')}><Download size={18} /></button><button className="icon-button" title="Скачать реестр Excel" aria-label="Скачать реестр Excel" onClick={excel} disabled={busy}><FileSpreadsheet size={18} /></button></div></div>{exportError && <p role="alert">{exportError}</p>}<input className="map-search" aria-label="Поиск объектов" placeholder="Адрес, объект, застройщик" value={search} onChange={e => change({ search: e.target.value || null, page: null })} />
-      <div className="table-wrap"><table><thead><tr>{['Адрес', 'Застройщик', 'Статус', 'Год', 'Координаты', ''].map((label, i) => <th key={i}>{label}</th>)}</tr></thead><tbody>{shown.map(row => <tr key={row.id}><th scope="row">{row.address || '—'}</th><td>{row.developer || '—'}</td><td>{row.status}</td><td>{row.year ?? '—'}</td><td>{qualityText[row.quality]}</td><td><button className="icon-button" aria-label={`Показать объект ${row.id}`} title="Показать объект" onClick={() => change({ object: row.id })}><LocateFixed size={16} /></button></td></tr>)}</tbody></table></div>{!rows.length && <p className="empty-state">Нет объектов по выбранным фильтрам.</p>}<div className="pagination"><span>Страница {page} из {pages}</span><button className="icon-button" title="Предыдущая страница" aria-label="Предыдущая страница карты" disabled={page <= 1} onClick={() => change({ page: String(page - 1) })}><ChevronLeft size={16} /></button><button className="icon-button" title="Следующая страница" aria-label="Следующая страница карты" disabled={page >= pages} onClick={() => change({ page: String(page + 1) })}><ChevronRight size={16} /></button></div></section>
-      <section className="section"><h2>Источники и координаты</h2>{report.notes.map(note => <p className="method-note" key={note}>{note}</p>)}<p className="muted">РВ: {number(report.scope.rvRows)} строк · ОКС с 2011: {number(report.scope.oksRows)} · ОКС без даты выдачи: {number(report.scope.missingIssueDateRows)}</p><details><summary>Файлы и версия</summary>{report.source.files.map(file => <p key={file}><code>{file}</code></p>)}<code>{report.version}</code></details></section>
+      {chosen && <MapObjectDetails object={chosen} close={() => change({ object: null })} />}
+      <AnalystOnly><section className="section"><div className="section-heading"><h2>Реестр объектов · {number(rows.length)}</h2><div className="chart-actions"><AnalystOnly><button className="icon-button" title="Скачать полный реестр CSV" aria-label="Скачать полный реестр CSV" onClick={() => canAnalyze && exportCsv(mapCsvRows(report.rows), 'map-objects.csv')}><Download size={18} /></button></AnalystOnly><AnalystOnly><button className="icon-button" title="Скачать реестр Excel" aria-label="Скачать реестр Excel" onClick={excel} disabled={busy}><FileSpreadsheet size={18} /></button></AnalystOnly></div></div>{exportError && <p role="alert">{exportError}</p>}<input className="map-search" aria-label="Поиск объектов" placeholder="Адрес, объект, застройщик" value={search} onChange={e => change({ search: e.target.value || null, page: null })} />
+      <div className="table-wrap"><table><thead><tr>{['Адрес', 'Застройщик', 'Статус', 'Год', 'Координаты', ''].map((label, i) => <th key={i}>{label}</th>)}</tr></thead><tbody>{shown.map(row => <tr key={row.id}><th scope="row">{row.address || '—'}</th><td>{row.developer || '—'}</td><td>{row.status}</td><td>{row.year ?? '—'}</td><td>{qualityText[row.quality]}</td><td><button className="icon-button" aria-label={`Показать объект ${row.id}`} title="Показать объект" onClick={() => change({ object: row.id })}><LocateFixed size={16} /></button></td></tr>)}</tbody></table></div>{!rows.length && <p className="empty-state">Нет объектов по выбранным фильтрам.</p>}<div className="pagination"><span>Страница {page} из {pages}</span><button className="icon-button" title="Предыдущая страница" aria-label="Предыдущая страница карты" disabled={page <= 1} onClick={() => change({ page: String(page - 1) })}><ChevronLeft size={16} /></button><button className="icon-button" title="Следующая страница" aria-label="Следующая страница карты" disabled={page >= pages} onClick={() => change({ page: String(page + 1) })}><ChevronRight size={16} /></button></div></section></AnalystOnly>
+      <AnalystOnly><section className="section"><h2>Источники и координаты</h2>{report.notes.map(note => <p className="method-note" key={note}>{note}</p>)}<p className="muted">РВ: {number(report.scope.rvRows)} строк · ОКС с 2011: {number(report.scope.oksRows)} · ОКС без даты выдачи: {number(report.scope.missingIssueDateRows)}</p><details><summary>Файлы и версия</summary>{report.source.files.map(file => <p key={file}><code>{file}</code></p>)}<code>{report.version}</code></details></section></AnalystOnly>
     </>}<footer className="page-footer">Аналитика Москвы · карта объектов</footer></main>;
 }

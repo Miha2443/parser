@@ -4,6 +4,44 @@ API читает существующие витрины и исходные ф�
 Расчёты профиля общие с контрольным снимком (`pipeline/profile_calculations.py`).
 Не запускает загрузчики из интернета и ничего не записывает в raw/marts.
 
+## Авторизация
+
+`backend/auth.py`: SQLite-аккаунты с ролями `analyst`/`viewer`, Argon2id,
+отдельная случайная сессия на браузер, в БД только хеш session ID. Cookies
+HttpOnly/Secure/SameSite=Lax, Origin+CSRF для POST, ограничение неудачных входов.
+Сессии истекают через 12 часов либо 4 часа без запросов. Пароли/роли/блокировки
+меняются локальной CLI `python -m backend.auth_cli`; публичной регистрации нет.
+
+`PARSER_AUTH_ENABLED=1` включает вход (Docker задаёт по умолчанию),
+`PARSER_AUTH_DB` — постоянная БД вне release, `PARSER_AUTH_ALLOW_HTTP=1` — только
+явный локальный тест через SSH-туннель. Cookie Secure включена по умолчанию.
+Хеши и сессии Docker находятся в volume `auth_state:/auth`. Нативный локальный
+запуск без `PARSER_AUTH_ENABLED` сохраняет прежний режим для разработки.
+
+- GET `/api/v1/auth/session`: `{enabled,user,csrfToken,secureCookie}`; user null
+  либо `{username,role}`. Нет endpoint выдачи административных паролей.
+- POST `/api/v1/auth/login`: JSON `{username,password}`, одинаковая ошибка для
+  неизвестного/отключённого аккаунта и неверного пароля. 429 — лимит неудачных
+  попыток, 426 — требуется HTTPS; успешные входы не исчерпывают лимит общего аккаунта.
+- POST `/api/v1/auth/logout`: `X-CSRF-Token` и тот же Origin; отзывает только
+  текущую сессию. Смена пароля/роли, disable/revoke отзывают все сессии аккаунта.
+
+Все API закрыты до входа, кроме session/login и безопасной проверки здоровья.
+Viewer получает только явный список графических GET; `/export`, updates, TDM
+и документация API закрыты. `viewer_payload.py` проецирует JSON по известным
+схемам: сохраняет графические числа/null/нули/периоды, исключает raw-реестры,
+пути, source evidence и неизвестные новые поля. Источники/реестры аналитика
+проекция не меняет. Технические ошибки viewer также не раскрывают пути.
+
+`PARSER_AUTH_TRUSTED_PROXIES` — явно доверенные peer-адреса/имена прокси для
+X-Real-IP лимитера; в Compose только имя `web`, Nginx перезаписывает заголовок.
+Произвольные X-Role/X-User/X-Real-IP не предоставляют прав. К IP сессия не привязана.
+За внешним TLS-прокси отдельно настройте доверенную передачу адреса клиента.
+Nginx сохраняет Host с портом для проверки Origin; health и frozen snapshot
+не публикуются. Подписанный X-Dashboard-Probe выдаётся только локальной CLI
+readiness, принимается на loopback для известных GET, но не для экспортов/TDM.
+Кандидаты публикации проверяются отдельным in-process приложением без login.
+
 ## Льготная Ипотека
 
 `GET /api/v1/preferential-mortgage/catalog` возвращает регионы Москва/РФ,
@@ -636,8 +674,9 @@ tests.test_mortgage_dom -v`. Проверки DOM/сетевого наблюд�
   и query `filename/caption/group`, максимум 50 MiB, временный файл удаляется.
   File/dataset выбираются из серверного разрешённого списка, не произвольного пути.
   Конфигурация прежняя: `TDM_BOT_TOKEN`, `TDM_WORKSPACE_ID`, `TDM_GROUP_ID`,
-  `TDM_DISABLED`. Сам API TDM намеренно принимает только localhost-клиента;
-  публикация в сеть требует отдельной авторизации, не просто `--host 0.0.0.0`.
+  `TDM_DISABLED`. При включённой авторизации TDM требует роль analyst и CSRF,
+  а не localhost. Без авторизации сохранён только прямой локальный режим;
+  запросы через прокси отклоняются. GET/повторная загрузка ничего не отправляет.
 
 Проверки: `python -m unittest backend.tests.test_map backend.tests.test_updates
 backend.tests.test_tdm -v`. Все отправки в тестах подменены mock, реальные сообщения

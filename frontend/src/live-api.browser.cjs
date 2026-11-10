@@ -56,7 +56,9 @@ async function downloadBytes(download) {
     let releaseSlow;
     let slowGate;
     await page.route('**/api/v1/**', async route => {
-      const u = new URL(route.request().url()); requests.push(u.pathname + u.search);
+      const u = new URL(route.request().url());
+      if (route.request().method() === 'GET' && u.pathname === '/api/v1/auth/session') return route.fulfill({ json: { enabled: false, user: null, csrfToken: null } });
+      requests.push(u.pathname + u.search);
       if (u.pathname === '/api/v1/catalog') return route.fulfill({ status: catalogFailure ? 503 : 200, json: catalogFailure ? { detail: 'offline' } : activeCatalog });
       if (u.pathname.endsWith('/export')) return route.fulfill({ status: exportFailure || 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', body: exportFailure ? 'offline' : Buffer.from('PK\x03\x04fixture-download') });
       const developer = u.searchParams.get('developer'), region = u.searchParams.get('region');

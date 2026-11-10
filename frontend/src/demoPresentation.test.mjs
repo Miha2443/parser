@@ -8,6 +8,7 @@ test('presentation tiers depend on both dimensions, not just a wide short window
   assert.equal(demoPresentationScale(1824, 280), 1.5);
   assert.equal(demoPresentationScale(1200, 300), 1.25);
   assert.equal(demoPresentationScale(600, 500), 1);
+  assert.equal(demoPresentationScale(592, 197), 1.25);
   assert.equal(demoPresentationScale(1200, 650), 1.5);
   assert.equal(demoPresentationScale(1850, 780), 2);
   assert.equal(demoPresentationScale(3750, 1740), 3.2);
@@ -378,6 +379,46 @@ test('only genuine lack of two-dimensional room suppresses line captions', () =>
 test('charts without generated line captions require no second layout update', () => {
   const option = demoPresentationOption(cartesian([{ type: 'bar', data: [10] }]), 600, 400);
   assert.equal(resolveCaptionPixels(option, () => { throw new Error('No line projection expected'); }).updates, 0);
+});
+
+test('the five quiet monthly charts retain hover, axes and measurements without any persistent line values', () => {
+  const tooltip = point => `value: ${point.value}`;
+  const source = cartesian([{ type: 'line', name: 'monthly', data: [10, null, 30], label: { show: true },
+    markPoint: { data: [{ type: 'max', name: 'maximum', label: { show: true } }] } }]);
+  source.tooltip = { trigger: 'axis', formatter: tooltip };
+  const before = JSON.stringify(source);
+  for (const id of ['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates']) {
+    for (const [width, height] of [[390, 350], [1920, 900], [3840, 1740]]) {
+      const option = demoPresentationOption(source, width, height, [], id);
+      assert.equal(option.series[0].label.show, false, id);
+      assert.equal(option.series[0].emphasis.label.show, false, id);
+      assert.equal(option.series[0].markPoint.label.show, false, id);
+      assert.ok(option.series[0].markPoint.data.every(p => p.label.show === false), id);
+      assert.equal(lineCaptions(option).length, 0, id);
+      assert.equal(resolveCaptionPixels(option, () => [100, 100]).updates, 0, id);
+      assert.deepEqual(option.series[0].data, source.series[0].data);
+      assert.deepEqual(option.xAxis.data, source.xAxis.data);
+      assert.equal(option.tooltip.formatter, tooltip);
+    }
+  }
+  assert.equal(JSON.stringify(source), before);
+});
+
+test('quiet monthly charts do not remove annual bars or the adaptive permit growth captions', () => {
+  for (const id of ['ipc/ipc_year', 'salary/salary_year', 'linear/roads', 'preferential/ratePct/annual']) {
+    const option = demoPresentationOption(cartesian([{ type: 'bar', data: [10, 20, 30] }]), 1200, 650, [], id);
+    assert.deepEqual(labels(option.series[0]), ['10', '20', '30'], id);
+  }
+  const option = demoPresentationOption(cartesian([{ type: 'line', name: 'growth, %', data: [1, 2, 3] }]), 1200, 650, [], 'permits/main');
+  assert.equal(lineCaptions(option).filter(p => p.label.show).length, 3);
+});
+
+test('switching to a quiet chart removes previously generated demo annotations', () => {
+  const first = demoPresentationOption(cartesian([{ type: 'line', data: [10, 20, 30] }]), 1200, 650);
+  assert.equal(lineCaptions(first).length, 3);
+  const quiet = demoPresentationOption(first, 1200, 650, [], 'mortgage/rates');
+  assert.equal(lineCaptions(quiet).length, 0);
+  assert.equal(quiet.series[0].label.show, false);
 });
 
 test('sparse provider growth labels retain percent/sign semantics at real plateau extrema', () => {

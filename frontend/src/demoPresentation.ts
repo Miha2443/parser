@@ -2,6 +2,7 @@ import { format as echartsFormat, type ECharts, type EChartsCoreOption } from 'e
 import { chartNumberFormatter } from './format.ts';
 
 type Settings = Record<string, unknown>;
+const unlabelledLineCharts = new Set(['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates']);
 const record = (value: unknown): Settings => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Settings : {};
 const list = (value: unknown): Settings[] => (Array.isArray(value) ? value : value ? [value] : []).map(record);
 const numeric = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -15,6 +16,7 @@ export function demoPresentationScale(width: number, height: number): number {
   if (width >= 1400 && height >= 270) return 1.5;
   if (width >= 1000 && height >= 270) return 1.25;
   if (width >= 700 && height >= 300) return 1.25;
+  if (width >= 480 && width < 1000 && height >= 160 && height < 300) return 1.25;
   return 1;
 }
 
@@ -152,7 +154,7 @@ function nativeTotals(option: Settings, scale: number, groups: CartesianSeries[]
 }
 
 function labelScale(area: Plot, width: number, height: number, scale: number) {
-  const floor = width >= 1000 && height >= 270 ? 1.25 : 1;
+  const floor = width >= 1000 && height >= 270 ? 1.25 : width >= 480 && width < 1000 && height >= 160 && height < 300 ? 1.1 : 1;
   return Math.min(scale, Math.max(floor, demoPresentationScale(width, Math.min(height, area.height * 2))));
 }
 function sparseIndices(values: Map<number, number>, count: number, space: number, required: number) {
@@ -161,7 +163,7 @@ function sparseIndices(values: Map<number, number>, count: number, space: number
   for (const index of [...values.keys()].sort((a, b) => b - a)) if (last - index >= step) { selected.add(index); last = index; }
   return selected;
 }
-function demoLabels(option: Settings, areas: Plot[], width: number, height: number, scale: number, hidden: readonly string[]) {
+function demoLabels(option: Settings, areas: Plot[], width: number, height: number, scale: number, hidden: readonly string[], showLineValues: boolean) {
   const all = cartesianSeries(option), visible = visibleSeries(option, hidden), shown = all.filter(s => visible(s.item));
   const groups = barGroups(shown), ends = groups.flatMap(barLabels);
   const format = chartNumberFormatter([...shown.flatMap(s => s.values), ...ends.map(end => end.value)]);
@@ -219,9 +221,16 @@ function demoLabels(option: Settings, areas: Plot[], width: number, height: numb
         y: Math.max(4, Math.min(top, height - rect.height - 4)) + (point.verticalAlign === 'middle' ? rect.height / 2 : point.verticalAlign === 'bottom' ? rect.height : 0) };
     };
   }
-  lineLabels(shown.filter(s => s.item.type === 'line'), areas, width, height, scale, format);
+  if (showLineValues) lineLabels(shown.filter(s => s.item.type === 'line'), areas, width, height, scale, format);
   for (const entry of all) {
-    if (!visible(entry.item) && entry.item.type === 'line') entry.item.label = { ...record(entry.item.label), show: false };
+    if (entry.item.type === 'line' && (!showLineValues || !visible(entry.item))) {
+      entry.item.label = { ...record(entry.item.label), show: false };
+      if (!showLineValues && entry.item.markPoint) {
+        const mark = record(entry.item.markPoint);
+        mark.label = { ...record(mark.label), show: false };
+        mark.data = list(mark.data).filter(point => !generatedCaption(point)).map(point => ({ ...point, label: { ...record(point.label), show: false } }));
+      }
+    }
     entry.item.emphasis = { ...record(entry.item.emphasis), label: { ...record(record(entry.item.emphasis).label), show: false } };
   }
   // Responsive provider overrides must not bring back component labels in small demo panels.
@@ -372,7 +381,7 @@ export function layoutDemoLineLabels(chart: ECharts) {
   chart.setOption({ series: list(option.series).map(item => item.type === 'line' ? { markPoint: item.markPoint } : {}) }, { silent: true });
 }
 
-export function demoPresentationOption(option: EChartsCoreOption, width: number, height: number, hidden: readonly string[] = []): EChartsCoreOption {
+export function demoPresentationOption(option: EChartsCoreOption, width: number, height: number, hidden: readonly string[] = [], chartId = ''): EChartsCoreOption {
   const result = copy(option) as Settings, scale = demoPresentationScale(width, height);
   // Native labels must settle immediately when the viewer changes canvas size or screen.
   result.animation = false;
@@ -426,7 +435,7 @@ export function demoPresentationOption(option: EChartsCoreOption, width: number,
     item.barCategoryGap = '30%';
     item.barGap ??= '15%';
   }
-  demoLabels(result, after, width, height, scale, hidden);
+  demoLabels(result, after, width, height, scale, hidden, !unlabelledLineCharts.has(chartId));
   // Keep the unit available while building captions, then avoid the duplicate upper-grid caption.
   for (const axis of [...xAxes, ...yAxes]) if (grids.length > 1 && numeric(axis.gridIndex, 0) === 0 && axis.name === '%') axis.name = '';
   const tooltip = record(result.tooltip);

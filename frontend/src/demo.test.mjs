@@ -24,7 +24,7 @@ const hooks = registerHooks({
 after(() => hooks.deregister());
 const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues, demoIndex, demoInterval, demoIntervalLabel, demoSelection, demoSources, demoVersioned } = await import('./demoData.ts');
 const { ApiError } = await import('./data.ts');
-const { demoPanelContext, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
+const { demoPanelContext, demoPanelTitle, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -58,7 +58,7 @@ test('grouped screens keep section identity, selected-only panels, paired units 
   assert.deepEqual(profile.charts.map(chart => chart.id), ['profile/structure/0', 'profile/structure/1', 'profile/annual']);
   assert.equal(slides.find(slide => slide.id === 'domrf/realization-structure').charts.length, 3);
   assert.equal(slides.find(slide => slide.id === 'domrf/realization').layout, 'single');
-  for (const id of ['mortgage/annual', 'mortgage/monthly', 'preferential/flows/annual', 'preferential/flows/cumulative', 'preferential/characteristics/0/annual']) assert.equal(slides.find(slide => slide.id === id).charts.length, 2);
+  for (const id of ['mortgage/annual', 'mortgage/monthly', 'preferential/flows/annual', 'preferential/flows/cumulative', 'preferential/characteristics/annual']) assert.equal(slides.find(slide => slide.id === id).charts.length, 2);
   assert.match(demoSourceTitle('permits/housing'), /РС/);
   assert.match(demoSourceTitle('annual/total'), /РВ/);
   assert.match(demoSourceTitle('operational/housing'), /РВ/);
@@ -73,6 +73,48 @@ const groupedDemoSections = [
   { source: 'linear', title: 'Годовой ввод линейных объектов', ids: ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'] },
 ];
 const groupedDemoChart = (id, overrides = {}) => ({ id, title: id, context: 'Москва · 2026-11-10', href: '/', empty: false, rows: [['n'], [0]], option: () => ({ series: [] }), ...overrides });
+
+test('all six preferential characteristics share one annual screen and a separate cumulative screen', () => {
+  const metrics = ['averageAmountMln', 'ratePct', 'termMonths', 'ownFundsPct', 'areaM2', 'priceThousandM2'];
+  const charts = ['annual', 'cumulative'].flatMap(period => metrics.map(metric => groupedDemoChart(`preferential/${metric}/${period}`)));
+  const slides = demoSlides(charts);
+  assert.deepEqual(slides.map(slide => slide.id), ['preferential/characteristics/annual', 'preferential/characteristics/cumulative']);
+  assert.ok(slides.every(slide => slide.layout === 'grid' && slide.charts.length === 6));
+  assert.deepEqual(slides.flatMap(slide => slide.charts), charts);
+  for (const period of ['annual', 'cumulative']) for (let mask = 1; mask < 64; mask++) {
+    const selected = charts.filter(chart => chart.id.endsWith(`/${period}`)).filter((_, index) => mask & 1 << index);
+    const [slide] = demoSlides(selected);
+    assert.equal(slide.id, `preferential/characteristics/${period}`);
+    assert.equal(slide.layout, selected.length === 1 ? 'single' : 'grid');
+    assert.deepEqual(slide.charts, selected);
+  }
+});
+
+test('preferential characteristics preserve scopes, periods, empty filtering and independent flow screens', () => {
+  const charts = [groupedDemoChart('preferential/averageAmountMln/annual', { scope: 'msk' }),
+    groupedDemoChart('preferential/ratePct/annual', { scope: 'rf' }),
+    groupedDemoChart('preferential/ratePct/annual', { scope: 'msk' }),
+    groupedDemoChart('preferential/termMonths/cumulative', { scope: 'msk' }),
+    groupedDemoChart('preferential/ownFundsPct/annual', { scope: 'msk', empty: true }),
+    groupedDemoChart('preferential/volumeMln/annual'), groupedDemoChart('preferential/count/annual')];
+  const slides = demoSlides(charts);
+  assert.deepEqual(slides.map(slide => [slide.id, slide.charts.length]), [
+    ['preferential/characteristics/annual/msk', 2], ['preferential/characteristics/annual/rf', 1],
+    ['preferential/characteristics/cumulative/msk', 1], ['preferential/flows/annual', 2],
+  ]);
+  assert.ok(slides.every(slide => slide.sourceTitle === demoSourceTitle('preferential/')));
+});
+
+test('characteristic panels do not repeat the shared annual or cumulative heading', () => {
+  for (const [period, suffix] of [['annual', 'по годам'], ['cumulative', 'накопленный период']]) {
+    const chart = groupedDemoChart(`preferential/ownFundsPct/${period}`, { title: `Собственные средства заёмщика · ${suffix}` });
+    const [slide] = demoSlides([chart, groupedDemoChart(`preferential/ratePct/${period}`)]);
+    assert.equal(demoPanelTitle(chart, slide), 'Собственные средства заёмщика');
+    assert.equal(chart.title, `Собственные средства заёмщика · ${suffix}`);
+  }
+  const chart = groupedDemoChart('preferential/count/annual', { title: 'Количество кредитов · по годам' });
+  assert.equal(demoPanelTitle(chart, demoSlides([chart])[0]), chart.title);
+});
 
 for (const { source, title, ids } of groupedDemoSections) test(`${source} groups every multi-chart selection on one grid and leaves a lone chart single`, () => {
   const charts = ids.map(id => groupedDemoChart(`${source}/${id}`));
@@ -198,7 +240,7 @@ test('presentation adapts the measured canvas only in the viewer, without extra 
   assert.match(source, /canvas \?\? element/);
   assert.match(source, /width = Math\.round\(bounds\.width\), height = Math\.round\(bounds\.height\)/);
   assert.match(source, /entry\.option\(theme, Math\.max\(240, width\), hidden, height\)/);
-  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, hidden\)/);
+  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, hidden, entry\.id\)/);
   assert.match(source, /useSlideClock\(step, seconds, paused, next\)/);
   assert.doesNotMatch(source, /demo-growth-chart|permitGrowthOption|demo-progress|progressbar/);
   const css = readFileSync(new URL('./demo.css', import.meta.url), 'utf8');

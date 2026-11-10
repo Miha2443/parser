@@ -6,6 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const fixtures = require('./demoFixtures.cjs');
+const quietCharts = ['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates'];
+const characteristicMetrics = ['averageAmountMln', 'ratePct', 'termMonths', 'ownFundsPct', 'areaM2', 'priceThousandM2'];
 
 const output = process.env.DEMO_PRESENTATION_OUTPUT || path.join(os.tmpdir(), 'dashboard-demo-presentation');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,8 +29,13 @@ function response(url) {
     });
     value.cumulative = value.annual.map(row => ({ ...row, throughMonth: 5 }));
     value.characteristicsAnnual = value.annual.map((row, i) => ({ ...structuredClone(value.characteristicsAnnual[0]), year: row.year, throughMonth: row.throughMonth,
+      throughMonths: Object.fromEntries(characteristicMetrics.map(metric => [metric, row.throughMonth])),
+      programThroughMonths: Object.fromEntries(['preferential', 'family', 'it'].map(program => [program, Object.fromEntries(characteristicMetrics.map(metric => [metric, row.throughMonth]))])),
       programs: Object.fromEntries(['preferential', 'family', 'it'].map((id, j) => [id, { averageAmountMln: 4 + i * .7 + j, ratePct: 5 + j, termMonths: 210 + i * 10, ownFundsPct: 30 + i, areaM2: 50 + j * 3, priceThousandM2: 150 + i * 20 }])) }));
-    value.characteristicsCumulative = value.characteristicsAnnual.map(row => ({ ...row, throughMonth: 5 }));
+    value.characteristicsCumulative = value.characteristicsAnnual.map(row => ({ ...row, throughMonth: 5,
+      throughMonths: Object.fromEntries(characteristicMetrics.map(metric => [metric, 5])),
+      programThroughMonths: Object.fromEntries(['preferential', 'family', 'it'].map(program => [program, Object.fromEntries(characteristicMetrics.map(metric => [metric, 5]))])),
+      programs: Object.fromEntries(Object.entries(row.programs).map(([program, values]) => [program, Object.fromEntries(Object.entries(values).map(([metric, value]) => [metric, value * .9]))])) }));
   }
   if (new URL(url).pathname === '/api/v1/mortgage') {
     const annualValue = (i, multiplier) => ({ annual: i === 17 ? null : (150 + i * 25) * multiplier, selected: (70 + i * 10) * multiplier, actualThroughMonth: 5, annualYoYPct: i === 0 || i === 17 ? null : i % 3 === 0 ? -20 : 25, selectedYoYPct: i === 0 ? null : 10 });
@@ -59,9 +66,29 @@ async function inspect(page, chartId) {
       titleSize: parseFloat(getComputedStyle(document.querySelector('#demo-slide-title')).fontSize),
       overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.querySelector('.demo-viewer').scrollWidth > innerWidth + 1,
       values: option.series.map(series => ({ name: series.name, data: series.data })),
-      series: option.series.map(series => ({ name: series.name, type: series.type, barWidth: series.barWidth, labelSize: series.label?.fontSize, totals: (series.markPoint?.data || []).map(point => ({ coord: point.coord, text: typeof point.label?.formatter === 'function' ? point.label.formatter() : null })) })),
+      series: option.series.map(series => ({ name: series.name, type: series.type, barWidth: series.barWidth, labelSize: series.label?.fontSize, labelVisible: series.label?.show,
+        totals: (series.markPoint?.data || []).map(point => ({ coord: point.coord, text: typeof point.label?.formatter === 'function' ? point.label.formatter() : null })) })),
       axes: option.yAxis?.map(axis => ({ name: axis.name, gridIndex: axis.gridIndex })),
     };
+  }, chartId);
+}
+async function checkTooltip(page, chartId) {
+  await page.evaluate(async chartId => {
+    const resource = performance.getEntriesByType('resource').find(entry => /echarts_core\.js/.test(entry.name));
+    const echarts = await import(resource.name), element = document.querySelector(`.demo-stage [data-demo-chart="${chartId}"] .chart-canvas`);
+    const chart = echarts.getInstanceByDom(element), series = chart.getOption().series;
+    const index = series.findIndex(item => item.type === 'line' && item.data.some(Number.isFinite));
+    if (index < 0) throw new Error('Tooltip fixture needs an observed line value');
+    chart.dispatchAction({ type: 'showTip', seriesIndex: index, dataIndex: series[index].data.findIndex(Number.isFinite) });
+  }, chartId);
+  await page.waitForFunction(chartId => {
+    const element = document.querySelector(`.demo-stage [data-demo-chart="${chartId}"] .chart-canvas`);
+    return [...element.querySelectorAll('div')].some(node => getComputedStyle(node).position === 'absolute' && /\d/.test(node.innerText ?? ''));
+  }, chartId);
+  await page.evaluate(async chartId => {
+    const resource = performance.getEntriesByType('resource').find(entry => /echarts_core\.js/.test(entry.name));
+    const echarts = await import(resource.name);
+    echarts.getInstanceByDom(document.querySelector(`.demo-stage [data-demo-chart="${chartId}"] .chart-canvas`)).dispatchAction({ type: 'hideTip' });
   }, chartId);
 }
 async function main() {
@@ -102,9 +129,10 @@ async function main() {
     }
     const ids = ['profile/annual', 'profile/structure/0', 'profile/structure/1', 'profile/structure/2', 'permits/main', 'sales/forecast',
       'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open', 'domrf/realization',
-      'mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/volume/monthly', 'mortgage/count/monthly', 'mortgage/rates',
+      'mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/volume/monthly', 'mortgage/count/monthly',
       'preferential/volumeMln/annual', 'preferential/count/annual', 'preferential/volumeMln/cumulative', 'preferential/count/cumulative',
-      'preferential/averageAmountMln/annual', 'preferential/ratePct/annual'];
+      ...quietCharts,
+      ...['annual', 'cumulative'].flatMap(period => characteristicMetrics.map(metric => `preferential/${metric}/${period}`))];
     const available = [];
     for (const id of ids) {
       const card = page.locator(`.demo-chart-choice:has([data-demo-chart="${id}"])`);
@@ -124,6 +152,11 @@ async function main() {
       for (let i = 0; i < slideCount; i++) {
         const slide = await page.locator('.demo-stage').getAttribute('data-demo-slide'); seen.add(slide);
         const panelIds = await page.locator('.demo-full-chart').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
+        if (slide.startsWith('preferential/characteristics/')) {
+          const period = slide.split('/')[2];
+          assert.deepEqual([...panelIds].sort(), characteristicMetrics.map(metric => `preferential/${metric}/${period}`).sort(), 'Six characteristics must share their own annual or cumulative screen');
+          if (viewport.width >= 1280 && viewport.height >= 800) assert.equal(await page.locator('.demo-stage').evaluate(node => node.scrollHeight > node.clientHeight + 1), false, 'Six characteristic panels must fit the desktop screen');
+        }
         assert.ok((await page.locator('.demo-slide-source').innerText()).length > 4);
         await page.waitForFunction(() => !!document.querySelector('.demo-stage .chart-canvas canvas'));
         await page.waitForTimeout(180);
@@ -136,6 +169,11 @@ async function main() {
         assert.deepEqual(clipped, [], `${id} clipped numeric labels at ${viewport.width}`);
         for (const bar of state.bars.filter(bar => bar.band)) assert.ok(bar.x >= bar.center - bar.band / 2 - 2 && bar.x + bar.width <= bar.center + bar.band / 2 + 2, `${id} bar exceeds category band at ${viewport.width}`);
         if (snapshots.has(id)) assert.deepEqual(state.values, snapshots.get(id), `${id} data changed while resizing`); else snapshots.set(id, state.values);
+        if (quietCharts.includes(id)) {
+          assert.ok(state.series.filter(series => series.type === 'line').every(series => series.labelVisible === false && series.totals.length === 0), `${id}: persistent line values restored`);
+          assert.ok(!state.texts.some(text => /600/.test(text.font) && /^[+−-]?[\d\s.,]+\s*%?$/.test(String(text.text))), `${id}: rendered persistent value labels`);
+          if (viewport.width === 1920 && viewport.height === 1080) await checkTooltip(page, id);
+        }
         if (viewport.width >= 1900 && viewport.height >= 1000) {
           assert.ok(state.titleSize >= (viewport.width > 3000 ? 70 : 40), `${id} small title`);
           const required = panelIds.length > 1 ? 12 : viewport.width > 3000 ? 30 : 20;
@@ -164,6 +202,7 @@ async function main() {
         await page.keyboard.press('ArrowRight');
       }
       assert.equal(seen.size, slideCount);
+      assert.ok(seen.has('preferential/characteristics/annual') && seen.has('preferential/characteristics/cumulative'));
     }
     await page.keyboard.press('Escape');
     assert.deepEqual(errors, []);

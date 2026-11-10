@@ -14,6 +14,9 @@ const sourceLabels: Record<string, string> = {
   preferential: 'Льготное ипотечное кредитование',
 };
 export const demoSourceTitle = (id: string) => sourceLabels[id.split('/')[0]] ?? 'Аналитика Москвы';
+export function demoPanelTitle(chart: DemoChart, slide: DemoSlide) {
+  return slide.id.startsWith('preferential/characteristics/') ? chart.title.replace(/ · (?:по годам|накопленный период)$/, '') : chart.title;
+}
 export function demoPanelContext(chart: DemoChart, slide: DemoSlide) {
   if (chart.context === slide.context) return '';
   return chart.context.startsWith(`${slide.context} · `) ? chart.context.slice(slide.context.length + 3) : chart.context;
@@ -40,9 +43,9 @@ function group(chart: DemoChart): { id: string; title: string; layout: DemoSlide
   if (id.startsWith('preferential/')) {
     const [, metric, period] = id.split('/'), suffix = period === 'cumulative' ? 'накопленный период' : 'по годам';
     if (metric === 'volumeMln' || metric === 'count') return { id: `preferential/flows/${period}`, title: `Выдача льготной ипотеки · ${suffix}`, layout: 'pair' };
-    const groups = [['averageAmountMln', 'ratePct'], ['termMonths', 'ownFundsPct'], ['areaM2', 'priceThousandM2']];
-    const index = groups.findIndex(metrics => metrics.includes(metric));
-    if (index >= 0) return { id: `preferential/characteristics/${index}/${period}`, title: `${['Сумма кредита и ставка', 'Срок кредита и собственные средства', 'Площадь и стоимость жилья'][index]} · ${suffix}`, layout: 'pair' };
+    if (['averageAmountMln', 'ratePct', 'termMonths', 'ownFundsPct', 'areaM2', 'priceThousandM2'].includes(metric)) {
+      return { id: `preferential/characteristics/${period}${chart.scope ? `/${chart.scope}` : ''}`, title: `Характеристики льготных ипотечных кредитов · ${suffix}`, layout: 'grid' };
+    }
   }
   return { id, title: chart.title, layout: 'single' };
 }

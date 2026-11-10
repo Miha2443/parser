@@ -5,28 +5,35 @@ import { LineChart } from 'echarts/charts';
 import { DataZoomComponent, MarkLineComponent, MarkPointComponent } from 'echarts/components';
 import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Maximize, Minimize, Pause, Pin, PinOff, Play, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
 import { Chart } from './Chart';
+import DeveloperSelect from './DeveloperSelect';
+import { loadCatalog, selectFilters } from './data';
 import { demoPresentationOption } from './demoPresentation';
-import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoSelection, demoSources } from './demoData';
-import type { DemoChart as DemoChartEntry, DemoSource } from './demoData';
-import type { Theme } from './types';
+import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames, demoSelection, demoSources } from './demoData';
+import type { DemoChart as DemoChartEntry, DemoOptions, DemoSource } from './demoData';
+import { demoPanelContext, demoSlides } from './demoSlides';
+import type { DemoSlide } from './demoSlides';
+import type { Catalog, Theme } from './types';
 import './demo.css';
 
 echarts.use([LineChart, DataZoomComponent, MarkLineComponent, MarkPointComponent]);
-type SourceState = { loading: boolean; charts: DemoChartEntry[]; error: string };
-const initialSources = () => Object.fromEntries(demoSources.map(source => [source.id, { loading: true, charts: [], error: '' }])) as Record<string, SourceState>;
+type SourceState = { loading: boolean; charts: DemoChartEntry[]; error: string; optionsKey: string };
+const initialSources = () => Object.fromEntries(demoSources.map(source => [source.id, { loading: true, charts: [], error: '', optionsKey: '{}' }])) as Record<string, SourceState>;
 
-function useDemoSources() {
+function useDemoSources(options: Record<string, DemoOptions>) {
   const [states, setStates] = useState(initialSources), jobs = useRef(new Map<string, AbortController>()), alive = useRef(false);
+  const filters = useRef(options), previousFilters = useRef<Record<string, string>>({});
+  filters.current = options;
   const load = useCallback(async (source: DemoSource) => {
     jobs.current.get(source.id)?.abort();
     const controller = new AbortController(); jobs.current.set(source.id, controller);
-    setStates(previous => ({ ...previous, [source.id]: { loading: true, charts: [], error: '' } }));
+    const options = filters.current[source.id], optionsKey = JSON.stringify(options ?? {});
+    setStates(previous => ({ ...previous, [source.id]: { loading: true, charts: [], error: '', optionsKey } }));
     const timeout = window.setTimeout(() => controller.abort(new Error('Сервер данных не ответил вовремя.')), 60000);
     try {
-      const charts = await source.load(controller.signal);
-      if (alive.current && jobs.current.get(source.id) === controller && !controller.signal.aborted) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts, error: '' } }));
+      const charts = await source.load(controller.signal, options);
+      if (alive.current && jobs.current.get(source.id) === controller && !controller.signal.aborted) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts, error: '', optionsKey } }));
     } catch (error) {
-      if (alive.current && jobs.current.get(source.id) === controller) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts: [], error: controller.signal.aborted ? 'Сервер данных не ответил вовремя.' : error instanceof Error ? error.message : 'Не удалось загрузить графики.' } }));
+      if (alive.current && jobs.current.get(source.id) === controller) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts: [], error: controller.signal.aborted ? 'Сервер данных не ответил вовремя.' : error instanceof Error ? error.message : 'Не удалось загрузить графики.', optionsKey } }));
     } finally { window.clearTimeout(timeout); }
   }, []);
   useEffect(() => {
@@ -37,7 +44,39 @@ function useDemoSources() {
     for (let i = 0; i < 3; i++) void worker();
     return () => { cancelled = true; alive.current = false; for (const controller of jobs.current.values()) controller.abort(); };
   }, [load]);
-  return { states, retry: load };
+  useEffect(() => {
+    for (const source of demoSources) {
+      const key = JSON.stringify(options[source.id] ?? {}), previous = previousFilters.current[source.id] ?? '{}';
+      previousFilters.current[source.id] = key;
+      if (key !== previous) void load(source);
+    }
+  }, [options, load]);
+  const current = Object.fromEntries(demoSources.map(source => {
+    const key = JSON.stringify(options[source.id] ?? {}), state = states[source.id];
+    return [source.id, state.optionsKey === key ? state : { loading: true, charts: [], error: '', optionsKey: key }];
+  }));
+  return { states: current, retry: load };
+}
+
+function SourceOptions({ source, value, change }: { source: DemoSource; value: DemoOptions; change: (patch: DemoOptions) => void }) {
+  const [catalog, setCatalog] = useState<Catalog | null>(null), [error, setError] = useState('');
+  useEffect(() => {
+    if (source.id !== 'profile') return;
+    const controller = new AbortController();
+    void loadCatalog(import.meta.env?.VITE_DATA_MODE === 'snapshot' ? 'snapshot' : 'api', controller.signal).then(setCatalog).catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Каталог профилей недоступен.'); });
+    return () => controller.abort();
+  }, [source.id]);
+  const profile = selectFilters(catalog, new URLSearchParams({ ...(value.developer ? { developer: value.developer } : {}), region: value.region ?? 'msk' }));
+  const regions = ['domrf', 'sales', 'annual', 'apartments', 'mortgage', 'preferential'].includes(source.id) ? ['msk', 'rf'] as const : [];
+  const hasMonth = ['permits', 'operational', 'mortgage', 'preferential'].includes(source.id);
+  if (source.id !== 'profile' && !regions.length && !hasMonth) return null;
+  return <div className="demo-source-options">
+    {source.id === 'profile' && <div className="demo-profile-filter"><span>Группа компаний</span>{catalog && profile.developer ? <DeveloperSelect developers={catalog.developers} value={profile.developer.id} onChange={developer => change({ developer, region: undefined })} /> : error ? <span role="alert">{error}</span> : <span role="status">Загрузка профилей…</span>}</div>}
+    {regions.length > 0 && <label><span>Регион</span><select aria-label={`Регион демонстрации: ${source.title}`} value={source.id === 'profile' ? profile.region : value.region ?? 'msk'} onChange={event => change({ region: event.target.value as 'msk' | 'rf' })}>{regions.map(region => <option key={region} value={region}>{region === 'msk' ? 'Москва' : 'Российская Федерация'}</option>)}</select></label>}
+    {source.id === 'permits' && <label><span>Вид недвижимости</span><select aria-label="Вид недвижимости в демонстрации РС" value={value.permitKind ?? 'total'} onChange={event => change({ permitKind: event.target.value as DemoOptions['permitKind'] })}><option value="total">Всего</option><option value="housing">Жильё</option><option value="nonresidential">Нежильё</option></select></label>}
+    {source.id === 'permits' && value.permitKind !== 'nonresidential' && <div className="demo-area-options" role="group" aria-label="Площадь в демонстрации РС"><button type="button" aria-pressed={value.livingOnly !== false} onClick={() => change({ livingOnly: true })}>Жилая площадь</button><button type="button" aria-pressed={value.livingOnly === false} onClick={() => change({ livingOnly: false })}>Общая площадь в жилье</button></div>}
+    {hasMonth && <label><span>Накопленный период</span><select aria-label={`Период демонстрации: ${source.title}`} value={value.month ?? ''} onChange={event => change({ month: event.target.value ? Number(event.target.value) : undefined })}><option value="">Актуальный месяц</option>{demoMonthNames.map((month, index) => <option key={month} value={index + 1}>{index ? `январь–${month}` : month}</option>)}</select></label>}
+  </div>;
 }
 
 class ChartBoundary extends Component<{ children: ReactNode; resetKey: string }, { failed: boolean }> {
@@ -96,7 +135,7 @@ function useSlideClock(step: number, seconds: number, paused: boolean, next: () 
   }, [paused, step, seconds, next]);
 }
 
-function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { slides: DemoChartEntry[]; seconds: number; theme: Theme; onExit: () => void; viewerRef: RefObject<HTMLDivElement>; notice: string }) {
+function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { slides: DemoSlide[]; seconds: number; theme: Theme; onExit: () => void; viewerRef: RefObject<HTMLDivElement>; notice: string }) {
   const [step, setStep] = useState(0), [paused, setPaused] = useState(false), [fullscreen, setFullscreen] = useState(false), [screenError, setScreenError] = useState(notice);
   const [controlsVisible, setControlsVisible] = useState(true), [controlsPinned, setControlsPinned] = useState(false);
   const exitButton = useRef<HTMLButtonElement>(null), controls = useRef<HTMLElement>(null), hideTimer = useRef<number>(), enteredFullscreen = useRef(false), index = demoIndex(step, slides.length), entry = slides[index];
@@ -154,16 +193,21 @@ function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { sli
   }
   return createPortal(<div ref={viewerRef} className="demo-viewer" role="dialog" aria-modal="true" aria-labelledby="demo-slide-title" aria-describedby="demo-slide-context" onPointerMove={event => { if (event.pointerType === 'mouse' && event.clientY >= event.currentTarget.getBoundingClientRect().bottom - 120) revealControls(); }} onPointerDown={event => { if (event.pointerType === 'touch' && !(event.target instanceof Element && event.target.closest('button, a, input'))) revealControls(); }}>
     <header className="demo-viewer-header"><div className="demo-wordmark"><img src="/brand-moscow.svg" alt="" /><strong>Аналитика Москвы</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div><div className="demo-header-actions"><button type="button" className="icon-button" title={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-label={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-controls="demo-playback-controls" aria-expanded={controlsVisible} onClick={toggleControls}><SlidersHorizontal size={19} /></button><button ref={exitButton} type="button" className="icon-button" title="Завершить демонстрацию (Esc)" aria-label="Завершить демонстрацию" onClick={onExit}><X size={19} /></button></div></header>
-    <div className="demo-slide-heading" aria-live="polite" aria-atomic="true"><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
-    <div className="demo-stage"><ChartBoundary resetKey={`${entry.id}-${step}`}><LiveChart key={entry.id} entry={entry} theme={theme} /></ChartBoundary></div>
+    <div className="demo-slide-heading" aria-live="polite" aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
+    <div className={`demo-stage demo-layout-${entry.layout}`} data-demo-slide={entry.id} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}`} key={chart.id} aria-label={chart.title}>
+      {entry.charts.length > 1 && <h2>{chart.title}</h2>}
+      {entry.charts.length > 1 && demoPanelContext(chart, entry) && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
+      <ChartBoundary resetKey={`${chart.id}-${step}`}><LiveChart entry={chart} theme={theme} /></ChartBoundary>
+    </section>)}</div>
     <footer ref={controls} id="demo-playback-controls" className="demo-viewer-controls" hidden={!controlsVisible} onFocusCapture={() => window.clearTimeout(hideTimer.current)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleHide(); }}><span className="demo-slide-count" aria-label={`График ${index + 1} из ${slides.length}`}>{index + 1} / {slides.length}</span><button type="button" className="icon-button" title="Предыдущий график (←)" aria-label="Предыдущий график" onClick={previous}><ChevronLeft size={19} /></button><button type="button" className="icon-button" title={paused ? 'Продолжить показ' : 'Приостановить показ'} aria-label={paused ? 'Продолжить показ' : 'Приостановить показ'} onClick={() => setPaused(value => !value)}>{paused ? <Play size={18} /> : <Pause size={18} />}</button><button type="button" className="icon-button" title="Следующий график (→)" aria-label="Следующий график" onClick={next}><ChevronRight size={19} /></button><span className="demo-time">{demoIntervalLabel(seconds)}</span><button type="button" className="icon-button demo-pin-button" title={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-label={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-pressed={controlsPinned} onClick={() => setControlsPinned(value => !value)}>{controlsPinned ? <PinOff size={17} /> : <Pin size={17} />}</button><button type="button" className="icon-button demo-fullscreen-button" title={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} aria-label={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={17} /> : <Maximize size={17} />}</button></footer>
   </div>, document.body);
 }
 
 export default function DemoPage({ theme }: { theme: Theme }) {
-  const { states, retry } = useDemoSources(), [selected, setSelected] = useState<Set<string> | null>(() => new Set()), [seconds, setSeconds] = useState(DEMO_DEFAULT_SECONDS), [browserFullscreen, setBrowserFullscreen] = useState(true), [slides, setSlides] = useState<DemoChartEntry[]>([]), [notice, setNotice] = useState('');
+  const [options, setOptions] = useState<Record<string, DemoOptions>>({});
+  const { states, retry } = useDemoSources(options), [selected, setSelected] = useState<Set<string> | null>(() => new Set()), [seconds, setSeconds] = useState(DEMO_DEFAULT_SECONDS), [browserFullscreen, setBrowserFullscreen] = useState(true), [slides, setSlides] = useState<DemoSlide[]>([]), [notice, setNotice] = useState('');
   const viewerRef = useRef<HTMLDivElement>(null), startButton = useRef<HTMLButtonElement>(null), wasRunning = useRef(false);
-  const charts = demoSources.flatMap(source => states[source.id].charts), queue = demoSelection(charts, selected), available = charts.filter(chart => !chart.empty), loading = demoSources.filter(source => states[source.id].loading).length;
+  const charts = demoSources.flatMap(source => states[source.id].charts), chosen = demoSelection(charts, selected), queue = demoSlides(chosen), available = charts.filter(chart => !chart.empty), loading = demoSources.filter(source => states[source.id].loading).length;
   const exit = useCallback(() => {
     if (document.fullscreenElement === viewerRef.current) void document.exitFullscreen().catch(() => {});
     setSlides([]);
@@ -190,10 +234,11 @@ export default function DemoPage({ theme }: { theme: Theme }) {
     }
   }
   if (slides.length) return <DemoViewer slides={slides} seconds={seconds} theme={theme} onExit={exit} viewerRef={viewerRef} notice={notice} />;
-  return <main className="demo-page"><div className="page-heading"><div><div className="eyebrow">СЕРВИС</div><h1>Демонстрация</h1></div><span className="demo-selection-count" role="status">Выбрано: {queue.length} / {available.length}</span></div>
+  return <main className="demo-page"><div className="page-heading"><div><div className="eyebrow">СЕРВИС</div><h1>Демонстрация</h1></div><span className="demo-selection-count" role="status">Выбрано: {chosen.length} / {available.length} · Экранов: {queue.length}</span></div>
     <div className="demo-settings"><label className="demo-interval"><span>Интервал</span><input type="range" min={DEMO_MIN_SECONDS} max={DEMO_MAX_SECONDS} step={15} value={seconds} aria-label="Интервал показа" aria-valuetext={demoIntervalLabel(seconds)} onChange={event => setSeconds(demoInterval(Number(event.target.value)))} /><output>{demoIntervalLabel(seconds)}</output></label><label className="demo-fullscreen-choice"><input type="checkbox" checked={browserFullscreen} onChange={event => setBrowserFullscreen(event.target.checked)} /><span>Полный экран браузера</span></label><button ref={startButton} className="demo-start" type="button" disabled={!queue.length} onClick={() => void start()}><Play size={17} />Начать показ</button></div>
-    <div className="demo-selection-tools"><label><input type="checkbox" checked={available.length > 0 && queue.length === available.length} ref={node => { if (node) node.indeterminate = queue.length > 0 && queue.length < available.length; }} disabled={!available.length} onChange={event => setSelected(event.target.checked ? null : new Set())} /><span>Все графики</span></label>{loading > 0 && <span role="status">Загрузка разделов: {loading}</span>}</div>
+    <div className="demo-selection-tools"><label><input type="checkbox" checked={available.length > 0 && chosen.length === available.length} ref={node => { if (node) node.indeterminate = chosen.length > 0 && chosen.length < available.length; }} disabled={!available.length} onChange={event => setSelected(event.target.checked ? null : new Set())} /><span>Все графики</span></label>{loading > 0 && <span role="status">Загрузка разделов: {loading}</span>}</div>
     {demoSources.map(source => { const state = states[source.id], available = state.charts.filter(chart => !chart.empty), count = demoSelection(available, selected).length; return <section className="demo-source" key={source.id} aria-labelledby={`demo-source-${source.id}`} aria-busy={state.loading} data-demo-source={source.id}><div className="demo-source-heading"><h2 id={`demo-source-${source.id}`}>{source.title}</h2><div className="demo-source-actions"><label className="demo-source-selection"><input type="checkbox" aria-label={`Все графики раздела: ${source.title}`} checked={available.length > 0 && count === available.length} ref={node => { if (node) node.indeterminate = count > 0 && count < available.length; }} disabled={state.loading || !available.length} onChange={event => toggleSource(state.charts, event.target.checked)} /><span>Все в разделе</span><span className="demo-source-count">{count} / {available.length}</span></label><button className="icon-button" type="button" title={`Обновить: ${source.title}`} aria-label={`Обновить: ${source.title}`} disabled={state.loading} onClick={() => void retry(source)}><RefreshCw size={16} /></button></div></div>
+      <SourceOptions source={source} value={options[source.id] ?? {}} change={patch => { setOptions(previous => ({ ...previous, [source.id]: { ...previous[source.id], ...patch } })); }} />
       {state.loading ? <div className="demo-state" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка графиков…</span></div> : state.error ? <div className="demo-state demo-error" role="alert"><AlertCircle size={19} /><span>{state.error}</span><button type="button" title={`Повторить: ${source.title}`} aria-label={`Повторить: ${source.title}`} className="icon-button" onClick={() => void retry(source)}><RefreshCw size={16} /></button></div> : !state.charts.length ? <div className="demo-state">Нет доступных графиков</div> : <div className="demo-chart-grid">{state.charts.map(entry => <Preview key={entry.id} entry={entry} checked={!entry.empty && (selected === null || selected.has(entry.id))} toggle={() => toggle(entry.id)} theme={theme} />)}</div>}
     </section>; })}
   </main>;

@@ -24,6 +24,7 @@ const hooks = registerHooks({
 after(() => hooks.deregister());
 const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues, demoIndex, demoInterval, demoIntervalLabel, demoSelection, demoSources, demoVersioned } = await import('./demoData.ts');
 const { ApiError } = await import('./data.ts');
+const { demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -40,6 +41,31 @@ test('subset selection follows registry order and excludes empty or obsolete IDs
 test('cycle wraps in both directions, including a one-chart playlist', () => {
   assert.deepEqual([-4, -1, 0, 1, 2, 3, 4].map(index => demoIndex(index, 3)), [2, 2, 0, 1, 2, 0, 1]);
   assert.equal(demoIndex(100, 1), 0); assert.equal(demoIndex(-1, 1), 0); assert.equal(demoIndex(5, 0), 0);
+});
+
+test('grouped screens keep section identity, selected-only panels, paired units and input data intact', () => {
+  const chart = (id, scope) => ({ id, scope, title: id, context: 'Москва · 2026-11-10', empty: false, rows: [['n'], [0]], option: () => ({ series: [] }) });
+  const charts = ['profile/annual', 'profile/structure/0', 'profile/structure/1', 'profile/construction',
+    'domrf/construction', 'domrf/realization', 'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open',
+    'mortgage/volume/annual', 'mortgage/volume/monthly', 'mortgage/count/annual', 'mortgage/count/monthly',
+    'preferential/volumeMln/annual', 'preferential/count/annual', 'preferential/volumeMln/cumulative', 'preferential/count/cumulative',
+    'preferential/averageAmountMln/annual', 'preferential/ratePct/annual', 'operational/housing', 'permits/housing'].map(id => chart(id));
+  const before = JSON.stringify(charts), slides = demoSlides(charts);
+  assert.equal(JSON.stringify(charts), before);
+  assert.deepEqual(slides.flatMap(slide => slide.charts.map(chart => chart.id)).sort(), charts.map(chart => chart.id).sort());
+  const profile = slides.find(slide => slide.id === 'profile/commissioning');
+  assert.equal(profile.layout, 'overview');
+  assert.deepEqual(profile.charts.map(chart => chart.id), ['profile/structure/0', 'profile/structure/1', 'profile/annual']);
+  assert.equal(slides.find(slide => slide.id === 'domrf/realization-structure').charts.length, 3);
+  assert.equal(slides.find(slide => slide.id === 'domrf/realization').layout, 'single');
+  for (const id of ['mortgage/annual', 'mortgage/monthly', 'preferential/flows/annual', 'preferential/flows/cumulative', 'preferential/characteristics/0/annual']) assert.equal(slides.find(slide => slide.id === id).charts.length, 2);
+  assert.match(demoSourceTitle('permits/housing'), /РС/);
+  assert.match(demoSourceTitle('annual/total'), /РВ/);
+  assert.match(demoSourceTitle('operational/housing'), /РВ/);
+  assert.equal(demoSlides([charts[0]])[0].layout, 'single');
+  assert.equal(demoSlides([{ ...charts[0], empty: true }]).length, 0);
+  const scoped = demoSlides([chart('profile/a/annual', 'profile/a'), chart('profile/a/structure/0', 'profile/a'), chart('profile/b/annual', 'profile/b')]);
+  assert.deepEqual(scoped.map(slide => slide.charts.length), [2, 1], 'different companies must never share a composite screen');
 });
 test('catalog reconciliation retries once for changed versions and 404, but never hides permanent errors', async () => {
   let calls = 0;
@@ -115,6 +141,60 @@ test('source errors and cancellations propagate instead of silently returning em
   globalThis.fetch = async (_url, options) => { options.signal.throwIfAborted(); };
   await assert.rejects(demoSources.find(source => source.id === 'linear').load(controller.signal), { name: 'AbortError' });
 });
+
+test('explicit developer and period options reach only their adapter and preserve truthful profile scope', async t => {
+  const calls = [], signal = new AbortController().signal;
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(String(url));
+    const result = structuredClone(fixtures.response(url)), query = new URL(url, 'http://localhost').searchParams;
+    if (new URL(url, 'http://localhost').pathname === '/api/v1/mortgage') {
+      result.selection.month = Number(query.get('month'));
+      for (const row of result.annual) for (const metric of ['volume', 'count']) row[metric].actualThroughMonth = result.selection.month;
+    }
+    if (new URL(url, 'http://localhost').pathname === '/api/v1/preferential-mortgage') {
+      result.selection.month = Number(query.get('month'));
+      result.selection.characteristicMonth = Number(query.get('characteristicMonth'));
+      for (const row of result.cumulative) row.throughMonth = result.selection.month;
+      for (const row of result.characteristicsCumulative) {
+        row.throughMonth = result.selection.characteristicMonth;
+        for (const metric of Object.keys(row.throughMonths)) row.throughMonths[metric] = row.throughMonth;
+        for (const metrics of Object.values(row.programThroughMonths)) for (const metric of Object.keys(metrics)) metrics[metric] = row.throughMonth;
+      }
+    }
+    return Response.json(result);
+  });
+  const profile = await demoSources.find(source => source.id === 'profile').load(signal, { developer: 'самолет', region: 'rf' });
+  assert.ok(profile.length);
+  assert.ok(profile.every(chart => chart.context.startsWith('САМОЛЕТ · Москва')));
+  assert.ok(profile.every(chart => chart.scope === `profile/${encodeURIComponent('самолет')}`));
+  assert.ok(calls.some(url => new URL(url, 'http://localhost').searchParams.get('developer') === 'самолет'));
+  calls.length = 0;
+  await demoSources.find(source => source.id === 'mortgage').load(signal, { region: 'msk', month: 2 });
+  assert.equal(new URL(calls.at(-1), 'http://localhost').searchParams.get('month'), '2');
+  calls.length = 0;
+  await demoSources.find(source => source.id === 'preferential').load(signal, { region: 'msk', month: 3 });
+  const query = new URL(calls.at(-1), 'http://localhost').searchParams;
+  assert.equal(query.get('month'), '3');
+  assert.equal(query.get('characteristicMonth'), '3');
+  await assert.rejects(demoSources.find(source => source.id === 'mortgage').load(signal, { region: 'rf' }), /регион/);
+});
+test('missing Moscow never silently falls back to RF while the default region control still says Moscow', async t => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(String(url));
+    assert.ok(String(url).includes('/catalog'), 'no report should load for an unavailable region');
+    const result = structuredClone(fixtures.response(url));
+    result.regions = result.regions.some(region => region.id === 'rf') ? result.regions.filter(region => region.id === 'rf') : [{ ...result.regions[0], id: 'rf', label: 'Российская Федерация' }];
+    if ('defaultRegion' in result) result.defaultRegion = 'rf';
+    return Response.json(result);
+  });
+  for (const id of ['apartments', 'sales', 'annual', 'mortgage', 'preferential']) for (const options of [undefined, { region: 'msk' }]) {
+    calls.length = 0;
+    await assert.rejects(demoSources.find(source => source.id === id).load(new AbortController().signal, options), /регион/);
+    assert.equal(calls.length, 1);
+  }
+});
+
 test('home has no update status or update request; brand and pinned Home use real accessible links', async () => {
   const { createElement } = await import('react'), { renderToStaticMarkup } = await import('react-dom/server');
   const { Home } = await import('./ServicePages.tsx'), { default: Sidebar } = await import('./Sidebar.tsx');

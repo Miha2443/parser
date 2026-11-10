@@ -119,9 +119,24 @@ restoration and exit are supported. Playback controls hide after three idle
 seconds and reappear near the bottom pointer position, on touch, or using the
 always-visible header control; they can also be pinned. There is no progress bar.
 
+`demoSlides.ts` groups selected panels without adding unselected measurements.
+Profile commissioning rings and annual history share an overview; DOM.RF sales
+rings share a screen; mortgage volume/count are paired separately for annual
+and monthly data. Preferential flows and related characteristics, operational
+housing/nonresidential, and comparable annual funding charts are grouped.
+Every viewer heading names its source section, including RS/RV. Each panel keeps
+its own legend, units, period and chart instance. Company scopes never mix.
+The configuration supports searchable developer selection, applicable regions,
+cumulative months and RS area/kind. Source options reload only their own adapter;
+an options/version mismatch removes stale panels before playback can start.
+Profile commissioning remains Moscow-scoped regardless of apartment region.
+
 `demoPresentation.ts` adapts measured chart dimensions using discrete display
 tiers, including 1080p and 4K. Axis/measurement fonts, ring totals and bar widths
 scale with the presentation; data, units, gaps and forecast styling are unchanged.
+Visible bars receive outside values or stack totals, including valid zeroes;
+dense monthly histories use deterministic sparse labels. Significant observed
+line peaks/troughs are marked without inventing points or bridging unknowns.
 Permits use one canvas with aligned, independently scaled growth and area grids.
 Only growth curves in permits and annual mortgage are smoothed, without bridging
 unknown observations. Presentation exports are hidden; original downloads remain
@@ -133,6 +148,8 @@ invariance at 390/1440/1920/3840 px. Fixtures include nine preferential-mortgage
 years and 125 mortgage months. `DEMO_PRESENTATION_REAL=1` starts an isolated API
 against the local data instead of intercepting fixture responses. Screenshots
 and checks are written under `%TEMP%/dashboard-demo-presentation` by default.
+`DEMO_ONLY_PLAYBACK=1` runs the playback/selection/control regression suite with
+the same private server. `DEMO_PLAYBACK_CHECK=1` runs it after panel geometry QA.
 
 The full navigation brand links home. The enlarged Home link remains outside
 the sidebar's scrolling section list. Home no longer loads or displays the last

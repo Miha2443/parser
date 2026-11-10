@@ -5,12 +5,28 @@ import { demoPresentationOption, demoPresentationScale } from './demoPresentatio
 test('presentation tiers depend on both dimensions, not just a wide short window', () => {
   assert.equal(demoPresentationScale(390, 650), 1);
   assert.equal(demoPresentationScale(1920, 250), 1);
+  assert.equal(demoPresentationScale(1824, 280), 1.5);
+  assert.equal(demoPresentationScale(1200, 300), 1.25);
+  assert.equal(demoPresentationScale(600, 500), 1);
   assert.equal(demoPresentationScale(1200, 650), 1.5);
   assert.equal(demoPresentationScale(1850, 780), 2);
   assert.equal(demoPresentationScale(3750, 1740), 3.2);
 });
 
-test('presentation preserves measurements, missing points, styles and callback identity without mutating the option', () => {
+test('demo disables initial and update animation without changing the provider option', () => {
+  for (const animation of [undefined, true, false]) {
+    const option = Object.freeze({ animation, animationDuration: 0, animationDurationUpdate: 300 });
+    for (const [width, height] of [[1920, 800], [3840, 1740], [350, 300]]) {
+      const result = demoPresentationOption(option, width, height);
+      assert.equal(result.animation, false);
+      assert.equal(result.animationDuration, 0);
+      assert.equal(result.animationDurationUpdate, 300);
+      assert.equal(option.animation, animation);
+    }
+  }
+});
+
+test('presentation preserves measurements, missing points, styles and non-label callbacks without mutating the option', () => {
   const formatter = point => point.value === null ? '' : `value ${point.value}`;
   const layout = () => ({ hideOverlap: true });
   const option = {
@@ -27,8 +43,11 @@ test('presentation preserves measurements, missing points, styles and callback i
   const original = JSON.stringify(option), result = demoPresentationOption(option, 3750, 1740);
   assert.equal(JSON.stringify(option), original);
   assert.deepEqual(result.series.map(item => item.data), option.series.map(item => item.data));
-  assert.equal(result.series[0].label.formatter, formatter);
-  assert.equal(result.series[0].labelLayout, layout);
+  assert.notEqual(result.series[0].label.formatter, formatter);
+  assert.notEqual(result.series[0].labelLayout, layout);
+  assert.equal(option.series[0].label.formatter, formatter);
+  assert.equal(option.series[0].labelLayout, layout);
+  assert.equal(result.yAxis[0].axisLabel.formatter, formatter);
   assert.equal(result.tooltip.formatter, formatter);
   assert.equal(result.yAxis[0].max, 100); assert.equal(result.yAxis[1].max, 50);
   assert.equal(result.series[2].yAxisIndex, 1); assert.equal(result.series[2].connectNulls, false);
@@ -36,6 +55,298 @@ test('presentation preserves measurements, missing points, styles and callback i
   assert.equal(result.series[0].label.fontSize, 35);
   assert.equal(result.series[0].label.rich.up.fontSize, 29);
   assert.equal(result.xAxis.axisLabel.interval, 0);
+});
+
+const cartesian = (series, count = series[0].data.length) => ({
+  grid: { left: 48, right: 16, top: 40, bottom: 48 },
+  xAxis: { type: 'category', data: Array.from({ length: count }, (_, i) => String(i)), boundaryGap: true },
+  yAxis: { type: 'value', axisLabel: { color: '#374151' } }, series,
+});
+const labels = series => series.data.map((_, dataIndex) => series.label.formatter({ dataIndex }));
+const extremaPoints = series => (series.markPoint?.data ?? []).filter(p => p.name?.startsWith('demo-extremum-'));
+
+test('one outside value labels each sign of a stack, including a zero but never an all-null category', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 'market', data: [10.12, null, -3.12, 0, 8, null] },
+    { type: 'bar', stack: 'market', data: [20.22, null, -2.12, null, -4, 2.54] },
+  ]);
+  const result = demoPresentationOption(option, 1200, 650);
+  assert.deepEqual(labels(result.series[0]), ['', '', '', '0', '8', '']);
+  assert.deepEqual(labels(result.series[1]), ['30,3', '', '-5,2', '', '-4', '2,5']);
+  assert.ok(result.series.every(s => s.label.position === 'outside' && s.label.rotate === 0));
+  assert.deepEqual(result.series.map(s => s.data), option.series.map(s => s.data));
+});
+
+test('trailing zero components never replace a nonzero stack anchor or add baseline labels', () => {
+  const columns = [[0, .9, 0], [41.8, 9.1, 0], [0, 0, 0], [0, 56.8, 0], [0, -.9, 0], [0, 0, null]];
+  const option = cartesian([0, 1, 2].map(i => ({ type: 'bar', stack: 'programs', data: columns.map(parts => parts[i]) })));
+  const result = demoPresentationOption(option, 1200, 650);
+  assert.deepEqual(result.series.map(labels), [
+    ['', '', '0', '', '', '0'],
+    ['0,9', '50,9', '', '56,8', '-0,9', ''],
+    ['', '', '', '', '', ''],
+  ]);
+  assert.deepEqual(result.series.map(s => s.data), option.series.map(s => s.data));
+  const layout = result.series[0].labelLayout({ dataIndex: 2, text: '0', rect: { x: 100, y: 400, width: 20, height: 0 },
+    labelRect: { x: 106, y: 406, width: 8, height: 11 }, align: 'center', verticalAlign: 'top' });
+  assert.ok(layout.y + 11 <= 400, 'The all-zero total belongs above the zero-height stack');
+});
+
+test('positive and negative stack anchors stay on the last nonzero component of their own sign', () => {
+  const option = cartesian([10, -4, 0, -2, 0].map(value => ({ type: 'bar', stack: 'signed', data: [value] })));
+  const result = demoPresentationOption(option, 600, 500);
+  assert.deepEqual(result.series.map(labels), [['10'], [''], [''], ['-6'], ['']]);
+  const hidden = demoPresentationOption(cartesian([
+    { type: 'bar', stack: 's', name: 'a', data: [0, 0] },
+    { type: 'bar', stack: 's', name: 'b', data: [.9, 56.8] },
+    { type: 'bar', stack: 's', name: 'c', data: [0, 0] },
+  ]), 600, 500, ['b']);
+  assert.deepEqual(hidden.series.map(labels), [['0', '0'], ['', ''], ['', '']]);
+});
+
+test('stack strategy all uses a cumulative endpoint, not a double-counted total', () => {
+  const result = demoPresentationOption(cartesian([
+    { type: 'bar', stack: 'net', stackStrategy: 'all', data: [10] },
+    { type: 'bar', stack: 'net', stackStrategy: 'all', data: [-3] },
+    { type: 'bar', stack: 'net', stackStrategy: 'all', data: [2] },
+  ]), 600, 500);
+  assert.deepEqual(result.series.map(labels), [[''], [''], ['9']]);
+});
+
+test('grouped, overlaid and different-axis bars are not summed with one another or with growth lines', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 'same', data: [10.4, 20.4] },
+    { type: 'bar', stack: 'same', yAxisIndex: 1, data: [30.4, 40.4] },
+    { type: 'bar', data: [50.4, 60.4], barGap: '-100%' },
+    { type: 'bar', data: [70.4, 80.4], barGap: '-100%' },
+    { type: 'line', yAxisIndex: 1, data: [3.4, -4.4] },
+  ]);
+  option.yAxis = [option.yAxis, { type: 'value', name: '%' }];
+  const result = demoPresentationOption(option, 1200, 650);
+  assert.deepEqual(result.series.slice(0, 4).map(labels), [['10,4', '20,4'], ['30,4', '40,4'], ['50,4', '60,4'], ['70,4', '80,4']]);
+  assert.equal(result.series[4].yAxisIndex, 1);
+  assert.equal(result.series[4].label.show, false);
+  assert.ok(extremaPoints(result.series[4]).every(p => p.value === option.series[4].data[p.coord[0]]));
+});
+
+test('different grids keep independent stack totals and axes', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 'same', data: [10] },
+    { type: 'bar', stack: 'same', data: [20] },
+    { type: 'bar', stack: 'same', xAxisIndex: 1, yAxisIndex: 1, data: [100] },
+  ]);
+  option.grid = [{ left: 50, right: 20, top: 30, height: 120 }, { left: 50, right: 20, top: 210, bottom: 40 }];
+  option.xAxis = [option.xAxis, { ...option.xAxis, gridIndex: 1 }];
+  option.yAxis = [option.yAxis, { ...option.yAxis, gridIndex: 1 }];
+  const result = demoPresentationOption(option, 600, 500);
+  assert.deepEqual(result.series.map(labels), [[''], ['30'], ['100']]);
+  assert.equal(result.series[2].xAxisIndex, 1); assert.equal(result.series[2].yAxisIndex, 1);
+});
+
+test('horizontal/object/encoded tuple measurements retain categories, nulls and their original values', () => {
+  const result = demoPresentationOption({ grid: { left: 50, right: 50, top: 30, bottom: 30 },
+    yAxis: { type: 'category', data: ['a', 'b', 'c'] }, xAxis: { type: 'value' },
+    series: [
+      { type: 'bar', stack: 's', dimensions: ['category', 'measurement'], encode: { x: 'measurement', y: 'category' }, data: [['c', 3.25], ['a', 1.25], ['b', null]] },
+      { type: 'bar', stack: 's', data: [{ value: 2.25, itemStyle: { color: '#123456' } }, { value: null }, { value: 4.25 }] },
+    ],
+  }, 600, 500);
+  // Formatter indices refer to source data, even when tuples are not in axis order.
+  assert.deepEqual(labels(result.series[0]), ['', '', '']);
+  assert.deepEqual(labels(result.series[1]), ['3,5', '', '7,5']);
+});
+
+test('unsorted tuple labels use their source dataIndex, and invalid measurements never become zero', () => {
+  const option = cartesian([{ type: 'bar', data: [['2', 3.25], ['0', 1.25], ['1', null], ['3', ''], ['4', NaN], ['5', 0]] }]);
+  const result = demoPresentationOption(option, 1200, 300);
+  assert.deepEqual(labels(result.series[0]), ['3,3', '1,3', '', '', '', '0']);
+  assert.deepEqual(result.series[0].data, option.series[0].data);
+});
+
+test('precision is shared by visible measurements and stack totals, and hidden series do not set it', () => {
+  const option = cartesian([
+    { type: 'bar', name: 'large', data: [1000.49, null] },
+    { type: 'bar', name: 'small', data: [12.34, 56.78] },
+    { type: 'line', name: 'hidden-line', data: [9000, 8000] },
+  ]);
+  option.legend = [{ selected: { large: false } }, { selected: { 'hidden-line': false } }];
+  const hidden = demoPresentationOption(option, 600, 500);
+  assert.equal(hidden.series[0].label.show, false);
+  assert.deepEqual(labels(hidden.series[1]), ['12,3', '56,8']);
+  assert.deepEqual(extremaPoints(hidden.series[2]), []);
+  const visible = demoPresentationOption({ ...option, legend: {} }, 600, 500, ['hidden-line']);
+  assert.deepEqual(labels(visible.series[1]), ['12', '57']);
+  const threshold = demoPresentationOption(cartesian([
+    { type: 'bar', stack: 's', data: [600.4, 1.24] }, { type: 'bar', stack: 's', data: [400.4, 2.24] },
+  ]), 600, 500);
+  assert.equal(labels(threshold.series[1])[0].replace(/\s/g, ''), '1001');
+  assert.equal(labels(threshold.series[1])[1], '3');
+});
+
+test('hidden series neither contribute stack sums nor make visible bars narrower', () => {
+  const option = cartesian([
+    { type: 'bar', name: 'actual', stack: 's', data: [10.24] },
+    { type: 'bar', name: 'forecast', stack: 's', data: [30.24] },
+    { type: 'bar', name: 'other', data: [1000] },
+  ]);
+  const result = demoPresentationOption(option, 600, 500, ['forecast', 'other']);
+  assert.deepEqual(labels(result.series[0]), ['10,2']);
+  assert.equal(result.series[0].barWidth, demoPresentationOption(cartesian([option.series[0]]), 600, 500).series[0].barWidth);
+});
+
+test('provider markPoint totals do not duplicate outside sums; unrelated markers survive', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 's', name: 'a', data: [10, 20] },
+    { type: 'bar', stack: 's', name: 'b', data: [30, 40], markPoint: { symbolSize: 0, data: [
+      { coord: [0, 40], value: 40 }, { coord: [1, 60], value: 60 }, { coord: [0, 99], value: 99, symbolSize: 12 },
+    ] } },
+  ]);
+  const original = JSON.stringify(option);
+  const result = demoPresentationOption(option, 600, 500, ['a']);
+  assert.deepEqual(labels(result.series[1]), ['30', '40']);
+  assert.deepEqual(result.series[1].markPoint.data, [{ coord: [0, 99], value: 99, symbolSize: 12 }]);
+  assert.equal(JSON.stringify(option), original);
+});
+
+test('category-named totals are deduplicated but explicitly visible event symbols are retained', () => {
+  const option = cartesian([{ type: 'bar', data: [10], markPoint: { symbolSize: 0, data: [
+    { coord: ['0', 10], value: 10 }, { coord: [0, 10], value: 10, symbolSize: 12, name: 'event' },
+  ] } }]);
+  const result = demoPresentationOption(option, 600, 500);
+  assert.deepEqual(result.series[0].markPoint.data, [{ coord: [0, 10], value: 10, symbolSize: 12, name: 'event' }]);
+  assert.deepEqual(labels(result.series[0]), ['10']);
+});
+
+test('native totals ignore overlays, unrelated axes and growth, and never label an all-null year as zero', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 's', data: [10, null] }, { type: 'bar', stack: 's', data: [20, null] },
+    { type: 'bar', yAxisIndex: 1, data: [500, null] },
+    { type: 'line', data: [100, 200] },
+  ]);
+  option.yAxis = [option.yAxis, { type: 'value' }];
+  option.xAxis.data = ['2025', '2026'];
+  option.graphic = [2025, 2026].map(year => ({ id: `mortgage-total-${year}`, type: 'group', children: [{ style: { text: '500', font: '600 11px Segoe UI' } }] }));
+  const result = demoPresentationOption(option, 600, 500);
+  const points = result.series.flatMap(s => s.markPoint?.data ?? []).filter(p => p.name?.startsWith('demo-native-total-'));
+  assert.equal(points.length, 1);
+  assert.deepEqual(points[0].coord, [0, 500]);
+  assert.deepEqual(labels(result.series[1]), ['30', '']);
+  assert.deepEqual(labels(result.series[2]), ['', '']);
+});
+
+test('dense monthly bars have readable, regularly spaced values in grouped panels and TV canvases', () => {
+  const option = cartesian([
+    { type: 'bar', stack: 'market', data: Array(132).fill(12.25), label: { show: false } },
+    { type: 'bar', stack: 'market', data: Array(132).fill(23.25), label: { show: false } },
+  ]);
+  for (const [width, height] of [[600, 500], [1200, 300], [3750, 1740]]) {
+    const result = demoPresentationOption(option, width, height), series = result.series[1];
+    const indices = labels(series).flatMap((label, i) => label ? [i] : []);
+    assert.ok(indices.length >= 3 && indices.length < 132, `${width}x${height}: ${indices.length}`);
+    assert.equal(indices.at(-1), 131);
+    assert.ok(indices.every((index, i) => !i || index - indices[i - 1] === indices[1] - indices[0]));
+    assert.ok(labels(series).filter(Boolean).every(value => value === '35,5'));
+    assert.ok(labels(result.series[0]).every(value => value === ''));
+    if (width === 600) assert.equal(series.label.fontSize, 11);
+    if (width === 1200) assert.equal(series.label.fontSize, 14);
+  }
+});
+
+test('responsive overrides do not restore dense provider labels; layout clamps and hides actual overlaps', () => {
+  const option = cartesian([{ type: 'bar', data: [10], label: { show: false, rotate: 90 } }]);
+  option.media = [{ query: { maxWidth: 600 }, option: { series: [{ label: { show: false }, labelLayout: { hideOverlap: false } }] } }];
+  const result = demoPresentationOption(option, 600, 500);
+  assert.equal(result.media[0].option.series[0].label, undefined);
+  const layout = result.series[0].labelLayout({ text: '10', labelRect: { x: -10, y: 495, width: 40, height: 20 }, align: 'center', verticalAlign: 'bottom' });
+  assert.deepEqual(layout, { hideOverlap: true, x: 24, y: 496 });
+  assert.deepEqual(result.series[0].labelLayout({ text: '', labelRect: { x: 0, y: 0, width: 0, height: 20 } }), { hideOverlap: false });
+});
+
+test('responsive ring overrides remain intact, and deeply frozen options work without input mutation', () => {
+  const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
+  const formatter = value => String(value);
+  const option = cartesian([{ id: 'bars', type: 'bar', stack: 's', data: [10.12, null] }, { id: 'ring', type: 'pie', data: [{ value: 20.24 }] }]);
+  option.tooltip = { formatter };
+  option.media = [{ query: { maxWidth: 600 }, option: { series: [{ id: 'ring', label: { show: false, fontSize: 9 } }, { id: 'bars', label: { show: false } }] } }];
+  freeze(option);
+  const result = demoPresentationOption(option, 600, 500);
+  assert.deepEqual(result.media[0].option.series[0].label, option.media[0].option.series[0].label);
+  assert.equal(result.media[0].option.series[1].label, undefined);
+  assert.deepEqual(result.series.map(s => s.data), option.series.map(s => s.data));
+  assert.equal(result.tooltip.formatter, formatter);
+  assert.equal(option.media[0].option.series[1].label.show, false);
+});
+
+test('line labels use sparse, significant observed peaks and troughs, not interpolation or every small wiggle', () => {
+  const values = [100, 100.02, 100, 100.01, 100, 103, 106, 106, 106, 103, 100, 97, 94, 97, 100];
+  const option = cartesian([{ type: 'line', name: 'CPI', data: values, showSymbol: false, connectNulls: false, label: { show: false } }]);
+  option.xAxis.boundaryGap = false;
+  const result = demoPresentationOption(option, 1200, 650), points = extremaPoints(result.series[0]);
+  assert.ok(points.some(p => p.coord[0] === 7 && p.value === 106));
+  assert.ok(points.some(p => p.coord[0] === 12 && p.value === 94));
+  assert.ok(points.every(p => p.value === values[p.coord[0]]));
+  assert.ok(points.every(p => p.coord[0] >= 5));
+  assert.ok(points.length <= 4);
+  assert.equal(result.series[0].showSymbol, false);
+  assert.equal(result.series[0].connectNulls, false);
+  assert.ok(points.every(p => p.label.formatter() === String(p.value)));
+});
+
+test('gaps, flat runs and isolated observations cannot create fictitious line extrema', () => {
+  const option = cartesian([{ type: 'line', data: [null, 100, 100, null, 200, null, 300, 300, 300, null], connectNulls: true }]);
+  const result = demoPresentationOption(option, 1200, 650);
+  assert.deepEqual(extremaPoints(result.series[0]), []);
+  assert.deepEqual(result.series[0].data, option.series[0].data);
+});
+
+test('sparse provider growth labels retain percent/sign semantics at real plateau extrema', () => {
+  const values = [25, 25, -20, 25, 25, -20, 25, 25, -20, 25, 25, -20, 25, 25, -20, 25, 25, -20];
+  const option = cartesian([{ type: 'line', name: 'Growth, %', data: values, label: { show: true, formatter: p => `${p.value > 0 ? '+' : ''}${p.value}%` } }]);
+  option.yAxis.name = '%';
+  const result = demoPresentationOption(option, 900, 300), points = extremaPoints(result.series[0]);
+  assert.ok(points.length >= 2 && points.length < values.length);
+  assert.ok(points.some(p => p.label.formatter() === '+25%'));
+  assert.ok(points.some(p => p.label.formatter() === '-20%'));
+  assert.ok(points.every(p => p.value === values[p.coord[0]]));
+  const withLargeHidden = demoPresentationOption({ ...option, series: [...option.series, { type: 'line', name: 'hidden', data: values.map(() => 1000) }] }, 900, 300, ['hidden']);
+  assert.ok(extremaPoints(withLargeHidden.series[0]).every(p => p.label.formatter().endsWith('%')));
+});
+
+test('the upper-grid percent axis remains semantic even when its duplicate caption is suppressed', () => {
+  const option = cartesian([{ type: 'line', name: 'growth', data: [25, -20, 25] }]);
+  option.grid = [{ left: 50, right: 20, top: 30, height: 100 }, { left: 50, right: 20, top: 210, bottom: 40 }];
+  option.yAxis.name = '%';
+  const result = demoPresentationOption(option, 600, 500);
+  assert.equal(result.yAxis.name, '');
+  assert.ok(extremaPoints(result.series[0]).every(p => p.label.formatter().endsWith('%')));
+  assert.ok(extremaPoints(result.series[0]).length >= 2);
+});
+
+test('growth, actual and forecast lines retain their own axes, values and existing event annotations', () => {
+  const option = cartesian([
+    { type: 'line', name: 'actual', data: [10.24, 13.24, 10.24, 7.24, 10.24], lineStyle: { color: '#123456' } },
+    { type: 'line', name: 'forecast', data: [null, null, null, 7.24, 11.24], lineStyle: { type: 'dashed' }, markPoint: { data: [{ type: 'max', name: 'event' }] } },
+    { type: 'line', name: 'growth', xAxisIndex: 1, yAxisIndex: 1, data: [null, 50.24, -30.24, 20.24, -10.24], label: { show: true, formatter: () => 'old dense caption' } },
+  ]);
+  option.grid = [{ left: 50, right: 15, top: 30, height: 100 }, { left: 50, right: 15, top: 190, bottom: 50 }];
+  option.xAxis = [{ ...option.xAxis, gridIndex: 1 }, { ...option.xAxis, gridIndex: 0 }];
+  option.yAxis = [{ type: 'value', gridIndex: 1, max: 20 }, { type: 'value', gridIndex: 0, name: '%', min: -100, max: 100 }];
+  const result = demoPresentationOption(option, 1200, 650, ['forecast']);
+  for (const i of [0, 2]) {
+    const points = extremaPoints(result.series[i]);
+    assert.ok(points.length >= 2);
+    assert.ok(points.every(p => p.value === option.series[i].data[p.coord[0]]));
+  }
+  assert.deepEqual(result.series[1].markPoint.data, [{ type: 'max', name: 'event' }]);
+  assert.equal(result.series[2].xAxisIndex, 1); assert.equal(result.series[2].yAxisIndex, 1);
+  assert.equal(result.yAxis[1].min, -100); assert.equal(result.yAxis[1].max, 100);
+});
+
+test('stacked and step lines are not annotated at misleading raw coordinates', () => {
+  const result = demoPresentationOption(cartesian([
+    { type: 'line', stack: 's', data: [1, 5, 1] }, { type: 'line', step: 'middle', data: [1, 5, 1] },
+  ]), 600, 500);
+  assert.ok(result.series.every(s => extremaPoints(s).length === 0));
 });
 
 test('yearly bars fill the available category width but dense monthly bars never exceed their slots', () => {

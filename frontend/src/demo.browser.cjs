@@ -9,7 +9,7 @@ const output = path.join(os.tmpdir(), 'dashboard-demo-checks');
 fs.mkdirSync(output, { recursive: true });
 
 async function painted(page) {
-  const canvas = page.locator('.demo-stage .demo-full-chart > .chart-block canvas');
+  const canvas = page.locator('.demo-stage .demo-full-chart > .chart-block canvas').first();
   await canvas.waitFor();
   await page.waitForFunction(() => {
     const canvas = document.querySelector('.demo-stage .demo-full-chart > .chart-block canvas');
@@ -70,6 +70,19 @@ async function main() {
     await page.screenshot({ path: path.join(output, 'configuration-desktop.png') });
     checks.push('13 API sources, real lazy live previews, default interval, no iframes, asynchronously loaded charts unselected');
 
+    const profileSection = page.locator('[data-demo-source="profile"]');
+    const another = fixtures.response('/api/v1/catalog').controls.developers.find(row => row.developerKey === 'самолет');
+    assert.ok(another);
+    const otherRequests = apiCalls.filter(url => !/\/api\/v1\/(?:catalog|profile)(?:\?|$)/.test(url)).length;
+    const company = profileSection.getByRole('combobox', { name: 'Группа компаний', exact: true });
+    await company.fill('САМОЛ');
+    await profileSection.getByRole('option', { name: 'САМОЛЕТ', exact: true }).click();
+    await profileSection.locator('.demo-context').first().filter({ hasText: 'САМОЛЕТ' }).waitFor();
+    assert.ok(apiCalls.some(url => new URL(url).pathname === '/api/v1/profile' && new URL(url).searchParams.get('developer') === another.developerKey));
+    assert.equal(apiCalls.filter(url => !/\/api\/v1\/(?:catalog|profile)(?:\?|$)/.test(url)).length, otherRequests, 'changing the developer reloads only the profile section');
+    assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
+    checks.push('searchable alternative developer selection reloads only its source and leaves the playlist unselected');
+
     // Home is outside the only scrollable navigation region, including compact/mobile.
     const pinned = page.locator('.navigation-home'), market = page.getByRole('button', { name: 'Рынок недвижимости', exact: true });
     const pinTop = (await pinned.boundingBox()).y;
@@ -104,7 +117,8 @@ async function main() {
     assert.equal(await secondGroup.isChecked(), true, 'deselecting a section from global all preserves the rest');
     await all.check(); await all.uncheck();
     assert.equal(await page.locator('.demo-source-selection input:checked').count(), 0);
-    await choices.nth(0).check(); await choices.nth(1).check();
+    await firstSection.locator('.demo-chart-choice input:not(:disabled)').first().check();
+    await secondSection.locator('.demo-chart-choice input:not(:disabled)').first().check();
     assert.match(await page.locator('.demo-selection-count').innerText(), /2 \/ /);
     const slider = page.getByRole('slider', { name: 'Интервал показа' });
     await slider.focus(); await slider.press('End'); assert.equal(await slider.inputValue(), '1800');
@@ -200,10 +214,13 @@ async function main() {
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
     const count = Number((await page.locator('.demo-slide-count').innerText()).split('/')[1]), seen = new Set();
     for (let index = 0; index < count; index++) {
-      const chart = page.locator('.demo-full-chart'), id = await chart.getAttribute('data-demo-chart');
-      seen.add(id);
-      await chart.locator(':scope > .chart-block canvas').waitFor();
-      assert.ok(await chart.locator(':scope > .chart-block canvas').evaluate(node => node.width > 0 && node.height > 0));
+      const chart = page.locator('.demo-full-chart').first(), id = await chart.getAttribute('data-demo-chart');
+      seen.add(await page.locator('.demo-stage').getAttribute('data-demo-slide'));
+      for (const panel of await page.locator('.demo-full-chart').all()) {
+        await panel.locator(':scope > .chart-block canvas').waitFor();
+        assert.ok(await panel.locator(':scope > .chart-block canvas').evaluate(node => node.width > 0 && node.height > 0));
+      }
+      assert.ok((await page.locator('.demo-slide-source').innerText()).length > 4);
       assert.equal(await page.locator('.demo-page').count(), 0);
       if (id === 'permits/main') {
         assert.equal(await page.locator('.demo-growth-chart canvas').count(), 0);
@@ -211,7 +228,7 @@ async function main() {
         await painted(page); await page.screenshot({ path: path.join(output, 'viewer-permits-live-yoy.png') });
       }
       if (id === 'preferential/volumeMln/annual') {
-        const legend = page.locator('.demo-full-chart > .chart-block .chart-legend button').first();
+        const legend = chart.locator(':scope > .chart-block .chart-legend button').first();
         await legend.click(); assert.equal(await legend.getAttribute('aria-pressed'), 'false');
         await legend.click(); assert.equal(await legend.getAttribute('aria-pressed'), 'true');
         await page.screenshot({ path: path.join(output, 'viewer-preferential.png') });

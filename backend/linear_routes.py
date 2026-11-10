@@ -15,6 +15,7 @@ def export_dashboard(payload):
     meta.title = "Dashboard"
     meta.append(["Field", "Value"])
     meta.append(["version", payload["version"]])
+    meta.append(["calculationRevision", payload.get("calculationRevision")])
     meta.append(["currentYear", payload["currentYear"]])
     meta.append(["generatedAt", payload["generatedAt"]])
     sources = book.create_sheet("Sources")
@@ -26,16 +27,18 @@ def export_dashboard(payload):
     for note in payload["notes"]:
         notes.append([note])
     yearly = book.create_sheet("Yearly data")
-    yearly.append(["id", "indicator", "unit", "year", "fact", "factKind", "factPeriod", "factSource", "forecast"])
+    yearly.append(["id", "indicator", "unit", "year", "fact", "factKind", "factPeriod", "factSource", "forecast", "factCells"])
     forecasts = book.create_sheet("Forecasts")
     forecasts.append(["id", "indicator", "unit", "year", "forecast"])
     kpis = book.create_sheet("Current year")
-    kpis.append(["id", "indicator", "unit", "fact", "factPeriod", "forecast", "targetKind", "percent", "remaining"])
+    kpis.append(["id", "indicator", "unit", "fact", "factPeriod", "forecast", "targetKind", "percent", "remaining", "factSource", "factCells"])
     for metric in payload["metrics"]:
         base = [metric[key] for key in ("id", "label", "unit")]
-        kpis.append(base + [metric[key] for key in ("fact", "factPeriod", "forecast", "targetKind", "percent", "remaining")])
+        kpis.append(base + [metric[key] for key in ("fact", "factPeriod", "forecast", "targetKind", "percent", "remaining", "factSource")]
+                    + [", ".join(metric.get("factCells", []))])
         for row in metric["years"]:
-            yearly.append(base + [row[key] for key in ("year", "fact", "factKind", "factPeriod", "factSource", "forecast")])
+            yearly.append(base + [row[key] for key in ("year", "fact", "factKind", "factPeriod", "factSource", "forecast")]
+                          + [", ".join(row.get("factCells", []))])
             if row["year"] >= payload["currentYear"]:
                 forecasts.append(base + [row["year"], row["forecast"]])
     for tab in book:
@@ -61,7 +64,9 @@ def export_workbook(payload):
     meta.title = "Report"
     meta.append(["Field", "Value"])
     for key, value in {**payload["selection"], "version": payload["version"],
-                       "sourceDate": payload["source"]["date"], "sourceFile": payload["source"]["files"][0]}.items():
+                       "sourceDate": payload["source"]["date"], "sourceFile": payload["source"]["files"][0],
+                       "sourceSheet": payload["source"].get("sheet"),
+                       "sourceIssues": "; ".join(payload["source"].get("issues", []))}.items():
         meta.append([key, value])
     headers = ["code", "indicator", "unit", "year", "quarter", "plan", "fact", "percent"]
     for name, rows in [("Selected period", payload["summary"]), ("All quarters", payload["allPeriods"])]:

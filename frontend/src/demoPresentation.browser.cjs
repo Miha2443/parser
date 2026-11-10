@@ -15,6 +15,10 @@ async function freePort() {
 }
 function response(url) {
   const value = structuredClone(fixtures.response(url));
+  if (new URL(url).pathname === '/api/v1/construction/domrf') {
+    value.sales.metrics.sales_not_open_pct = 12;
+    value.sales.metrics.sales_not_open_thousand_m2 = 1500;
+  }
   if (new URL(url).pathname === '/api/v1/preferential-mortgage') {
     const segments = [[0, .9, 0], [0, 5.5, 0], [41.8, 9.1, 0], [36.9, 15.6, 0], [34.2, 22.3, 1.3], [41.8, 43.1, 11.2], [11.1, 43.4, 9], [0, 56.8, 0], [0, 25.4, 0]];
     value.annual = segments.map((parts, i) => {
@@ -35,10 +39,10 @@ function response(url) {
   }
   return value;
 }
-async function inspect(page) {
-  return page.evaluate(async () => {
+async function inspect(page, chartId) {
+  return page.evaluate(async chartId => {
     const resource = performance.getEntriesByType('resource').find(entry => /echarts_core\.js/.test(entry.name));
-    const echarts = await import(resource.name), element = document.querySelector('.demo-stage .chart-canvas'), chart = echarts.getInstanceByDom(element);
+    const echarts = await import(resource.name), element = document.querySelector(`.demo-stage [data-demo-chart="${chartId}"] .chart-canvas`), chart = echarts.getInstanceByDom(element);
     const option = chart.getOption(), canvas = element.querySelector('canvas');
     const texts = chart.getZr().storage.getDisplayList().filter(item => item.type === 'tspan' && !item.ignore && item.style.text).map(item => {
       const rect = item.getBoundingRect().clone(); rect.applyTransform(item.getComputedTransform());
@@ -58,7 +62,7 @@ async function inspect(page) {
       series: option.series.map(series => ({ name: series.name, type: series.type, barWidth: series.barWidth, labelSize: series.label?.fontSize, totals: (series.markPoint?.data || []).map(point => ({ coord: point.coord, text: typeof point.label?.formatter === 'function' ? point.label.formatter() : null })) })),
       axes: option.yAxis?.map(axis => ({ name: axis.name, gridIndex: axis.gridIndex })),
     };
-  });
+  }, chartId);
 }
 async function main() {
   let browser, child, backend;
@@ -91,25 +95,40 @@ async function main() {
       await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, undefined, { timeout: 90000 });
     }
     assert.deepEqual(await page.locator('.demo-error').allTextContents(), []);
-    const ids = ['profile/structure/0', 'permits/main', 'sales/forecast', 'mortgage/volume/annual', 'mortgage/volume/monthly', 'mortgage/rates', 'preferential/count/annual', 'preferential/averageAmountMln/annual'];
+    if (process.env.DEMO_ONLY_PLAYBACK === '1') {
+      process.env.DEMO_TEST_URL = base;
+      await require('./demo.browser.cjs').main();
+      return;
+    }
+    const ids = ['profile/annual', 'profile/structure/0', 'profile/structure/1', 'profile/structure/2', 'permits/main', 'sales/forecast',
+      'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open', 'domrf/realization',
+      'mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/volume/monthly', 'mortgage/count/monthly', 'mortgage/rates',
+      'preferential/volumeMln/annual', 'preferential/count/annual', 'preferential/volumeMln/cumulative', 'preferential/count/cumulative',
+      'preferential/averageAmountMln/annual', 'preferential/ratePct/annual'];
     const available = [];
     for (const id of ids) {
       const card = page.locator(`.demo-chart-choice:has([data-demo-chart="${id}"])`);
-      if (await card.count()) { await card.getByRole('checkbox').check(); available.push(id); }
+      if (await card.count() && await card.getByRole('checkbox').isEnabled()) { await card.getByRole('checkbox').check(); available.push(id); }
     }
     assert.ok(available.length >= 7);
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
     await page.getByRole('dialog').waitFor();
+    await page.getByRole('button', { name: 'Приостановить показ', exact: true }).click();
+    const slideCount = Number((await page.locator('.demo-slide-count').innerText()).split('/')[1]);
+    assert.ok(slideCount < available.length, 'Related measurements must share screens');
     const snapshots = new Map();
     for (const viewport of [{ width: 1920, height: 1080 }, { width: 3840, height: 2160 }, { width: 390, height: 844 }, { width: 1440, height: 900 }, { width: 1000, height: 560 }, { width: 1920, height: 800 }]) {
       await page.setViewportSize(viewport);
       const seen = new Set();
-      for (let i = 0; i < available.length; i++) {
-        const id = await page.locator('.demo-full-chart').getAttribute('data-demo-chart'); seen.add(id);
+      for (let i = 0; i < slideCount; i++) {
+        const slide = await page.locator('.demo-stage').getAttribute('data-demo-slide'); seen.add(slide);
+        const panelIds = await page.locator('.demo-full-chart').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
+        assert.ok((await page.locator('.demo-slide-source').innerText()).length > 4);
         await page.waitForFunction(() => !!document.querySelector('.demo-stage .chart-canvas canvas'));
         await page.waitForTimeout(180);
-        const state = await inspect(page);
+        for (const id of panelIds) {
+        const state = await inspect(page, id);
         assert.ok(!state.overflow, `${id} overflow`);
         assert.ok(state.colors > 5, `${id} blank canvas`);
         assert.ok(Math.abs(state.canvasWidth - state.width * state.dpr) < 3, `${id} stale canvas resolution`);
@@ -119,9 +138,10 @@ async function main() {
         if (snapshots.has(id)) assert.deepEqual(state.values, snapshots.get(id), `${id} data changed while resizing`); else snapshots.set(id, state.values);
         if (viewport.width >= 1900 && viewport.height >= 1000) {
           assert.ok(state.titleSize >= (viewport.width > 3000 ? 70 : 40), `${id} small title`);
-          assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= (viewport.width > 3000 ? 30 : 20)), `${id} no readable chart text`);
-          if (id === 'preferential/count/annual') assert.ok(state.bars.some(bar => bar.width >= (viewport.width > 3000 ? 200 : 100)), 'Preferential bars still thin');
-          if (id === 'profile/structure/0') assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= (viewport.width > 3000 ? 100 : 70)), 'Ring total is too small');
+          const required = panelIds.length > 1 ? 12 : viewport.width > 3000 ? 30 : 20;
+          assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= required), `${id} no readable chart text: ${JSON.stringify({ width: state.width, height: state.height, fonts: [...new Set(state.texts.map(text => text.font))] })}`);
+          if (id === 'preferential/count/annual') assert.ok(state.bars.some(bar => bar.width >= bar.band * .4), 'Preferential bars still thin within their panel');
+          if (id === 'profile/structure/0') assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= Math.min(70, Math.min(state.width, state.height) * .1)), 'Ring total is too small');
           if (id === 'mortgage/volume/annual') {
             assert.equal(state.axes.length, 2);
             assert.ok(state.texts.some(text => String(text.text).includes('%')), 'Growth labels missing');
@@ -132,22 +152,27 @@ async function main() {
           if (!backend && !process.env.DEMO_PRESENTATION_API && viewport.width === 1920 && viewport.height === 1080) {
             const forecast = page.locator('.demo-full-chart .chart-legend').getByRole('button', { name: 'Остаток до годового прогноза', exact: true });
             await forecast.click(); await page.waitForTimeout(100);
-            const hidden = await inspect(page);
+            const hidden = await inspect(page, id);
             assert.equal(hidden.series.find(series => series.name === 'Остаток до годового прогноза').totals.length, 0);
             assert.ok(hidden.series.some(series => series.name !== 'Остаток до годового прогноза' && series.totals.some(total => total.text === '200')), 'Hiding forecast lost an unrelated actual-year total');
             await forecast.click();
           }
         }
-        await page.screenshot({ path: path.join(output, `${id.replaceAll('/', '-')}-${viewport.width}-${viewport.height}.png`) });
         checks.push({ id, viewport, titleSize: state.titleSize, width: state.width, height: state.height, maxBarWidth: Math.max(0, ...state.bars.map(bar => bar.width)) });
+        }
+        await page.screenshot({ path: path.join(output, `${slide.replaceAll('/', '-')}-${viewport.width}-${viewport.height}.png`) });
         await page.keyboard.press('ArrowRight');
       }
-      assert.equal(seen.size, available.length);
+      assert.equal(seen.size, slideCount);
     }
     await page.keyboard.press('Escape');
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify({ checks, errors }, null, 2));
     console.log(JSON.stringify({ passed: checks.length, output, errors }));
+    if (process.env.DEMO_PLAYBACK_CHECK === '1') {
+      process.env.DEMO_TEST_URL = base;
+      await require('./demo.browser.cjs').main();
+    }
   } finally {
     await browser?.close();
     if (child && child.exitCode === null) { child.kill(); await new Promise(resolve => child.once('exit', resolve)); }

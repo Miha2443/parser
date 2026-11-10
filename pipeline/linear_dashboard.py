@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import date
 import math
 
+from openpyxl.utils import get_column_letter
+
 
 METRICS = (
     ("roads", "Дороги", "км", "дороги", "1.1"),
@@ -14,6 +16,7 @@ METRICS = (
     ("depots", "Электродепо", "ед.", "электродепо", None),
 )
 HISTORY_SHEET = "Данные с 2011 года"
+LINEAR_CALCULATION_REVISION = "monitoring-dsti-sheet-v3"
 # Agreed annual counts: электродепо11-25.xlsx, Лист1, D1:R2.
 STATIC_DEPOT_HISTORY = (
     (2011, 0), (2012, 0), (2013, 0), (2014, 1), (2015, 0),
@@ -71,7 +74,7 @@ def read_history(book):
         return [], ["В блоке линейных объектов нет годовых заголовков."]
     labels = {label: (key, unit) for key, _, unit, label, _ in METRICS}
     found, result = set(), []
-    for row in rows[start + 2:start + 22]:
+    for row_index, row in enumerate(rows[start + 2:start + 22], start + 3):
         label = norm(row[label_col])
         if not label:
             break
@@ -82,7 +85,8 @@ def read_history(book):
             raise ValueError("Duplicate linear history metric or incompatible unit")
         found.add(key)
         for year, col in sorted(years.items()):
-            result.append({"id": key, "year": year, "value": number(row[col])})
+            result.append({"id": key, "year": year, "value": number(row[col]),
+                           "cell": f"{get_column_letter(col + 1)}{row_index}"})
     return result, []
 
 
@@ -91,6 +95,7 @@ def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_de
     source_by_id = {source["id"]: source for source in sources}
     monitoring_date = source_by_id["monitoring"]["date"]
     dsti_date = source_by_id["dsti"]["date"]
+    dsti_year = int(dsti_date[:4]) if dsti_date else None
     # A past-year snapshot can still be incomplete. Only years before its
     # publication year are treated as annual history.
     history_year = int(monitoring_date[:4]) if monitoring_date else None
@@ -117,7 +122,7 @@ def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_de
                     if quarter not in by_q or number(by_q[quarter].fact) is None:
                         break
                     last = quarter
-                if not last or year < current and last < 4:
+                if not last or year < current and (last < 4 or dsti_year is None or year >= dsti_year):
                     continue
                 annual = last == 4 and year < current
                 measured[year] = {
@@ -125,6 +130,8 @@ def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_de
                     "factKind": "annual" if annual else "partial",
                     "factPeriod": f"За {year} год" if annual else f"1–{last} кв. {year} · неполный год",
                     "factSource": "dsti",
+                    "factCells": [by_q[q].fact_cell for q in range(1, last + 1)
+                                  if getattr(by_q[q], "fact_cell", None)],
                 }
         for row in history:
             year, value = row["year"], row["value"]
@@ -135,21 +142,23 @@ def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_de
             if year < current and not annual:
                 continue
             prior = measured.get(year)
-            if prior and (dsti_date or "") > (monitoring_date or ""):
+            # Quarterly DSTI owns current facts; the annual block owns history.
+            if prior and year == current:
                 continue
             measured[year] = {"fact": value, "factKind": "annual" if annual else "partial",
                               "factPeriod": f"За {year} год" if annual else f"На {monitoring_date} · неполный год",
-                              "factSource": "monitoring"}
+                              "factSource": "monitoring", "factCells": [row["cell"]] if row.get("cell") else []}
         if key == "depots":
             for year, value in static_depots:
                 if year < current:
                     measured[year] = {"fact": value, "factKind": "annual",
-                                      "factPeriod": f"За {year} год", "factSource": "static_depots"}
+                                      "factPeriod": f"За {year} год", "factSource": "static_depots",
+                                      "factCells": [f"{get_column_letter(year - 2007)}2"] if 2011 <= year <= 2025 else []}
         forecast_years = {year for year, row in forecast_rows.items()
                           if year >= current and number(row.get(key)) is not None}
         years = sorted(observed_years | set(measured) | set(plans) | forecast_years)
         yearly = [{"year": year, **measured.get(year, {"fact": None, "factKind": None,
-                    "factPeriod": None, "factSource": None}), "plan": plans.get(year),
+                    "factPeriod": None, "factSource": None, "factCells": []}), "plan": plans.get(year),
                    "forecast": number(forecast_rows.get(year, {}).get(key)) if year >= current else None}
                   for year in years]
         fact = measured.get(current, {})
@@ -159,6 +168,7 @@ def build_dashboard(dsti, history, forecasts, sources, today: date, *, static_de
         percent = value / target * 100 if value is not None and target is not None and target > 0 else None
         result.append({"id": key, "label": label, "unit": unit, "fact": value,
                        "factPeriod": fact.get("factPeriod"), "factSource": fact.get("factSource"),
+                       "factKind": fact.get("factKind"), "factCells": fact.get("factCells", []),
                        "annualPlan": plan, "forecast": forecast, "target": target,
                        "targetKind": "forecast" if forecast is not None else None,
                        "percent": percent,

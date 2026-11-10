@@ -3,18 +3,36 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { permitPageFixture } from './permitPageFixtures.mjs';
 import { loadPermitPageSelection, permitLivingOnly, readPermitPageData, selectPermitArea } from './permitPageData.ts';
+import { permitPageFilters, permitsUrl } from './constructionPagesData.ts';
 import { breakdownOption, permitBreakdownGrowth, permitBreakdownRows, permitGrowthOption, permitGrowthPoints, permitMainGrowth, permitsMainOption, permitsMainRows } from './permitPresentation.ts';
 import { mortgageAnnualOption, mortgageMonthlyOption, mortgageRatesOption } from './mortgageData.ts';
 
-test('living-only defaults checked and URL opt-out does not change the base request', () => {
+test('living area defaults selected and full housing area preserves filters and export identity', () => {
   assert.equal(permitLivingOnly(new URLSearchParams()), true);
   assert.equal(permitLivingOnly(new URLSearchParams('permit_living_only=0')), false);
   assert.equal(permitLivingOnly(new URLSearchParams('permit_living_only=false')), true);
-  const data = readPermitPageData(permitPageFixture()), original = structuredClone(data);
-  assert.equal(selectPermitArea(data).permits.presentation.rows.at(-1).selected, 120);
-  assert.equal(selectPermitArea(data, false).permits.presentation.rows.at(-1).selected, 170);
-  assert.deepEqual(data, original);
+  for (const kind of ['housing', 'total']) {
+    const params = new URLSearchParams(`permit_kind=${kind}&month=5&structure_mode=annual&structure_month_to=12`);
+    const filters = permitPageFilters(params), requestUrl = permitsUrl(filters);
+    params.set('permit_living_only', '0');
+    assert.deepEqual(permitPageFilters(params), filters);
+    assert.equal(permitsUrl(permitPageFilters(params)), requestUrl);
+    const data = readPermitPageData(permitPageFixture(kind)), original = structuredClone(data);
+    const living = selectPermitArea(data), full = selectPermitArea(data, permitLivingOnly(params));
+    assert.equal(living.permits, data.areaVariants.living.permits);
+    assert.equal(living.forecast, data.areaVariants.living.forecast);
+    assert.equal(full.permits, data.areaVariants.full.permits);
+    assert.equal(full.forecast, data.areaVariants.full.forecast);
+    assert.equal(living.permits.presentation.rows.at(-1).selected, 120);
+    assert.equal(full.permits.presentation.rows.at(-1).selected, 170);
+    assert.equal(full.permits.presentation.rows.at(-1).selected - living.permits.presentation.rows.at(-1).selected, data.breakdowns[0].rows.at(-1).mop_embedded);
+    assert.equal(full.selection, data.selection);
+    assert.equal(full.breakdowns, data.breakdowns);
+    assert.equal(permitsUrl(full.selection, full.version), permitsUrl(living.selection, living.version));
+    assert.deepEqual(data, original);
+  }
   const nonres = readPermitPageData(permitPageFixture('nonresidential'));
+  assert.equal(selectPermitArea(nonres), nonres);
   assert.equal(selectPermitArea(nonres, false), nonres);
 });
 
@@ -83,12 +101,23 @@ test('permit loader validates raw variants and preserves abort signal and one di
   } finally { globalThis.fetch = original; }
 });
 
+test('area selector has two ordered pressed buttons with unchanged URL semantics and a nonresidential guard', () => {
+  const page = readFileSync(new URL('./PermitsPage.tsx', import.meta.url), 'utf8');
+  const selector = page.match(/\{data\.selection\.permitKind !== 'nonresidential' && <div className="permit-area-toggle"[\s\S]*?<\/div>\}/)?.[0];
+  assert.ok(selector);
+  assert.match(selector, /role="group" aria-label="Площадь разрешений"/);
+  assert.deepEqual([...selector.matchAll(/<button type="button" aria-pressed=\{([^}]+)\} onClick=\{\(\) => change\(\{ permit_living_only: (null|'0') \}\)\}>([^<]+)<\/button>/g)].map(match => match.slice(1)), [
+    ['livingOnly', 'null', 'Жилая площадь'],
+    ['!livingOnly', "'0'", 'Общая площадь в жилье'],
+  ]);
+  assert.doesNotMatch(page, /type="checkbox"|Только жилая площадь/);
+});
+
 test('all permit charts use one accessible combined canvas and the shared DPR resize helper', () => {
   const page = readFileSync(new URL('./PermitsPage.tsx', import.meta.url), 'utf8');
   assert.ok(page.includes('createResponsiveChart(container.current'));
   assert.ok(!page.includes('echarts.init(') && !page.includes('new ResizeObserver'));
   assert.ok(page.includes('growth={permitMainGrowth(data)}') && page.includes('growth={permitBreakdownGrowth(b)}'));
-  assert.ok(page.includes('type="checkbox" checked={livingOnly}'));
   assert.ok(page.includes('permit-growth-accessible') && page.includes('н/д: ${point.reason}'));
   assert.ok(page.includes('includeGrowth: true'));
   assert.ok(!page.includes('growthContainer') && !page.includes('growthInstance') && !page.includes('permit-growth-canvas'));

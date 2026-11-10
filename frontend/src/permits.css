@@ -1,7 +1,9 @@
-.permit-area-toggle { display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 12px; font-size: 13px; cursor: pointer; }
-.permit-area-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #318dca; }
+.permit-area-toggle { display: inline-grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 420px; max-width: 100%; gap: 3px; padding: 3px; margin: 4px 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); }
+.permit-area-toggle button { min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.permit-area-toggle button:hover { background: var(--panel); }
+.permit-area-toggle button[aria-pressed="true"] { border-color: var(--accent); background: var(--active); color: var(--accent); }
 .permit-chart { position: relative; min-width: 0; }
 .permit-chart .chart-canvas { width: 100%; min-width: 0; }
 .permit-chart .chart-legend i.permit-growth-swatch { width: 14px; height: 2px; border-radius: 0; }
 .permit-growth-accessible { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.permit-area-toggle input:focus-visible { outline: 2px solid #318dca; outline-offset: 3px; }
+.permit-area-toggle button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--accent); outline-offset: 2px; }

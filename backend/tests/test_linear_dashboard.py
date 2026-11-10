@@ -10,8 +10,8 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
-import pandas as pd
 
+from app.linear_objects import DSTI_LABELS, DSTI_SHEET, read_linear_objects
 from backend.linear_routes import create_router, export_dashboard
 from backend.linear_service import LinearService
 from backend.profile_service import SourceUnavailable
@@ -19,6 +19,7 @@ from pipeline.commissioning_forecasts import FORECAST_FIELDS
 from pipeline.data_access import DataContext
 from pipeline.linear_dashboard import (HISTORY_SHEET, METRICS, STATIC_DEPOT_HISTORY,
                                        STATIC_DEPOT_SOURCE, build_dashboard, number, read_history)
+from tests.monitoring_dsti_fixture import add_monitoring_dsti
 
 
 class LinearDashboardTests(unittest.TestCase):
@@ -33,8 +34,10 @@ class LinearDashboardTests(unittest.TestCase):
 
     def write_monitoring(self, horizon=2, history=True, forecast=True):
         self.monitoring.parent.mkdir(parents=True, exist_ok=True)
-        book = Workbook()
-        book.remove(book.active)
+        book = load_workbook(self.monitoring) if self.monitoring.exists() else Workbook()
+        for tab in list(book):
+            if tab.title != DSTI_SHEET:
+                book.remove(tab)
         if history:
             tab = book.create_sheet(HISTORY_SHEET)
             tab.cell(254, 4, "Ввод линейные объекты")
@@ -64,18 +67,208 @@ class LinearDashboardTests(unittest.TestCase):
         book.close()
 
     def write_dsti(self, quarters=4, fact=2, plan=10):
-        self.dsti.parent.mkdir(parents=True, exist_ok=True)
         rows = [{"code": f"1.{code}", "indicator": f"Indicator {code}", "unit": "км" if code == 1 else "ед",
                  "year": year, "quarter": q, "fact": fact if q < 4 else None, "plan": plan}
                 for code in range(1, 5) for year in [self.year - 1, self.year, self.year + 1]
                 for q in range(1, quarters + 1)]
-        self.dsti.write_text(json.dumps(rows), encoding="utf-8")
+        self.write_dsti_rows(rows)
         return rows
+
+    def write_dsti_rows(self, rows):
+        self.monitoring.parent.mkdir(parents=True, exist_ok=True)
+        book = load_workbook(self.monitoring) if self.monitoring.exists() else Workbook()
+        if DSTI_SHEET in book.sheetnames:
+            book.remove(book[DSTI_SHEET])
+        tab = book.create_sheet(DSTI_SHEET)
+        for col, text in enumerate(["№", "Показатель", "Единица измерения", "Период расчета"], 1):
+            tab.cell(4, col, text)
+        periods = sorted({(row["year"], row["quarter"]) for row in rows})
+        for offset, (year, quarter) in enumerate(periods):
+            for index, kind in enumerate(["факт", "план"]):
+                tab.cell(4, 6 + offset * 3 + index, f"{quarter} квартал {year} ({kind})")
+        for label, (code, unit) in DSTI_LABELS.items():
+            row_index = 4 + int(code[-1])
+            tab.cell(row_index, 1, date(self.year, int(code[-1]), 1))
+            tab.cell(row_index, 2, label)
+            tab.cell(row_index, 3, unit)
+            tab.cell(row_index, 4, "за текущий период")
+            for row in rows:
+                if row["code"] == code:
+                    offset = periods.index((row["year"], row["quarter"]))
+                    for index, key in enumerate(["fact", "plan"]):
+                        tab.cell(row_index, 6 + offset * 3 + index, row[key])
+        book.save(self.monitoring)
+        book.close()
 
     def client(self):
         app = FastAPI()
         app.include_router(create_router(DataContext(self.root), lambda fn, *args, **kwargs: fn(*args), self.service))
         return TestClient(app)
+
+    def write_sample_dsti(self):
+        self.year = 2026
+        self.monitoring = self.root / "data/raw/realty/nashdom/monitoring_2_0_20261110.xlsx"
+        self.write_monitoring()
+        book = load_workbook(self.monitoring)
+        add_monitoring_dsti(book)
+        book.save(self.monitoring)
+        book.close()
+
+    def test_monitoring_slice_values_sources_cells_and_partial_periods(self):
+        self.write_sample_dsti()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 10)
+            payload = self.service.dashboard()
+        self.assertEqual(payload["calculationRevision"], "monitoring-dsti-sheet-v3")
+        for metric, fact, plan, cells in zip(payload["metrics"], [47.1, 16, 12], [74.6, 27, 34],
+                                            [["F5", "I5", "L5", "O5"], ["F6", "I6", "L6"], ["F7", "I7", "L7", "O7"]]):
+            self.assertAlmostEqual(metric["fact"], fact)
+            self.assertAlmostEqual(metric["annualPlan"], plan)
+            self.assertEqual(metric["factKind"], "partial")
+            self.assertEqual(metric["factSource"], "dsti")
+            self.assertEqual(metric["factCells"], cells)
+            self.assertEqual(metric["forecast"], 50)
+            prior = next(row for row in metric["years"] if row["year"] == 2025)
+            self.assertEqual(prior["fact"], 30)
+            self.assertEqual(prior["factSource"], "monitoring")
+        self.assertIn("1–3", payload["metrics"][1]["factPeriod"])
+        self.assertEqual(payload["sources"][0], {"id": "dsti", "file": self.monitoring.relative_to(self.root).as_posix(),
+                                                "date": "2026-11-10", "sheet": "ДСТИ"})
+        self.assertEqual(payload["metrics"][3]["factCells"], ["H259"])
+
+    def test_legacy_monitoring_without_dsti_uses_history_not_separate_financial_file(self):
+        self.write_monitoring()
+        self.dsti.parent.mkdir(parents=True)
+        self.dsti.write_bytes(b"this invalid legacy source must not be read by dashboard")
+        before = self.service.dashboard()
+        roads = before["metrics"][0]
+        self.assertEqual(roads["fact"], 7)
+        self.assertEqual(roads["factSource"], "monitoring")
+        self.assertEqual(roads["factCells"], ["H256"])
+        self.assertTrue(any("Лист «ДСТИ» отсутствует" in note for note in before["notes"]))
+        self.assertTrue(any("Дороги:" in note and "годовой блок" in note for note in before["notes"]))
+        self.dsti.unlink()
+        self.assertEqual(self.service.dashboard()["version"], before["version"])
+
+    def test_invalid_dsti_has_explicit_history_fallback(self):
+        self.write_sample_dsti()
+        book = load_workbook(self.monitoring)
+        book[DSTI_SHEET]["C5"] = "млн руб."
+        book.save(self.monitoring)
+        book.close()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 10)
+            payload = self.service.dashboard()
+        self.assertEqual(payload["metrics"][0]["factSource"], "monitoring")
+        self.assertTrue(any("не прошёл проверку" in note for note in payload["notes"]))
+
+    def test_blank_row_falls_back_per_metric_and_never_uses_plan_as_forecast(self):
+        self.write_sample_dsti()
+        book = load_workbook(self.monitoring)
+        for cell in ("F5", "I5", "L5", "O5"):
+            book[DSTI_SHEET][cell] = None
+        book["Прогнозы"]["D40"] = None
+        book.save(self.monitoring)
+        book.close()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 10)
+            payload = self.service.dashboard()
+        roads, bridges = payload["metrics"][:2]
+        self.assertEqual(roads["factSource"], "monitoring")
+        self.assertEqual(bridges["factSource"], "dsti")
+        self.assertAlmostEqual(roads["annualPlan"], 74.6)
+        for key in ("forecast", "target", "targetKind", "remaining", "percent"):
+            self.assertIsNone(roads[key])
+
+    def test_source_sheet_edit_invalidates_dashboard_and_pinned_export(self):
+        self.write_sample_dsti()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 10)
+            before = self.service.dashboard()
+            book = load_workbook(self.monitoring)
+            book[DSTI_SHEET]["F5"] = 11.2
+            book.save(self.monitoring)
+            book.close()
+            after = self.service.dashboard()
+        self.assertNotEqual(after["version"], before["version"])
+        self.assertAlmostEqual(after["metrics"][0]["fact"] - before["metrics"][0]["fact"], 1)
+        self.assertEqual(self.client().get("/api/v1/linear/dashboard/export", params={"required_version": before["version"]}).status_code, 409)
+
+    def test_old_dsti_snapshot_does_not_become_completed_annual_history(self):
+        self.write_sample_dsti()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2027, 2, 1)
+            payload = self.service.dashboard()
+        roads = payload["metrics"][0]
+        self.assertIsNone(roads["fact"])
+        old = next(row for row in roads["years"] if row["year"] == 2026)
+        self.assertIsNone(old["fact"])
+        self.assertIsNone(old["factKind"])
+
+    def test_quarter_gap_and_future_quarters_are_not_summed_as_zero_or_annual(self):
+        self.write_sample_dsti()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 5, 1)
+            roads = self.service.dashboard()["metrics"][0]
+            self.assertAlmostEqual(roads["fact"], 21)
+            self.assertEqual(roads["factCells"], ["F5", "I5"])
+            self.assertEqual(roads["factKind"], "partial")
+        book = load_workbook(self.monitoring)
+        book[DSTI_SHEET]["I5"] = None
+        book.save(self.monitoring)
+        book.close()
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 10)
+            roads = self.service.dashboard()["metrics"][0]
+            self.assertEqual(roads["fact"], 10.2)
+            self.assertEqual(roads["factCells"], ["F5"])
+            self.assertIn("1–1", roads["factPeriod"])
+
+    def test_corrupt_monitoring_is_source_failure_not_silent_financial_fallback(self):
+        self.monitoring.parent.mkdir(parents=True)
+        self.monitoring.write_bytes(b"invalid workbook")
+        with self.assertRaises(SourceUnavailable):
+            self.service.dashboard()
+
+    def test_quarterly_api_prefers_monitoring_and_exports_sheet_provenance(self):
+        self.write_sample_dsti()
+        catalog = self.service.catalog()
+        self.assertEqual(catalog["source"]["sheet"], "ДСТИ")
+        self.assertEqual(catalog["years"][0]["defaultQuarter"], 3)
+        payload = self.service.report(2026, 4, True)
+        roads = next(row for row in payload["summary"] if row["code"] == "1.1")
+        self.assertAlmostEqual(roads["fact"], 47.1)
+        self.assertIsNone(next(row for row in payload["summary"] if row["code"] == "1.2")["fact"])
+        response = self.client().get("/api/v1/linear/export", params={"required_version": payload["version"],
+                                                                    "year": 2026, "quarter": 4, "cumulative": True})
+        self.assertEqual(response.status_code, 200)
+        book = load_workbook(BytesIO(response.content), data_only=True)
+        meta = dict(book["Report"].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(meta["sourceSheet"], "ДСТИ")
+        book.close()
+
+    def test_quarterly_api_ignores_legacy_file_when_monitoring_sheet_is_present(self):
+        self.write_sample_dsti()
+        before = self.service.catalog()
+        self.dsti.parent.mkdir(parents=True)
+        self.dsti.write_text("not valid JSON", encoding="utf-8")
+        self.assertEqual(self.service.catalog()["version"], before["version"])
+
+    def test_legacy_quarterly_fallback_is_explicit_when_monitoring_loses_sheet(self):
+        self.write_sample_dsti()
+        before = self.service.catalog()
+        self.dsti.parent.mkdir(parents=True)
+        source = Path(__file__).resolve().parents[2] / "data/raw/realty/linear_objects/linear_objects_2026-09-28.json"
+        shutil.copy2(source, self.dsti)
+        book = load_workbook(self.monitoring)
+        book.remove(book[DSTI_SHEET])
+        book.save(self.monitoring)
+        book.close()
+        after = self.service.catalog()
+        self.assertNotEqual(before["version"], after["version"])
+        self.assertIsNone(after["source"]["sheet"])
+        self.assertEqual(after["source"]["files"], [self.dsti.relative_to(self.root).as_posix()])
+        self.assertTrue(any("старый отдельный источник" in issue for issue in after["source"]["issues"]))
 
     def test_absent_dynamic_sources_keep_only_agreed_static_depot_history(self):
         payload = self.service.dashboard()
@@ -122,7 +315,7 @@ class LinearDashboardTests(unittest.TestCase):
         self.assertIsNone(roads["years"][0]["fact"])
         self.assertTrue(all(row["year"] <= self.year for row in roads["years"]))
 
-    def test_dsti_complete_plan_zero_fact_and_monitoring_precedence(self):
+    def test_dsti_complete_plan_zero_fact_and_current_dsti_precedence(self):
         self.write_dsti(fact=0, plan=0)
         roads = self.service.dashboard()["metrics"][0]
         self.assertEqual(roads["annualPlan"], 0)
@@ -131,22 +324,23 @@ class LinearDashboardTests(unittest.TestCase):
         self.assertIsNone(roads["percent"])
         self.write_monitoring()
         roads = self.service.dashboard()["metrics"][0]
-        self.assertEqual(roads["fact"], 7)
-        self.assertEqual(roads["factSource"], "monitoring")
+        self.assertEqual(roads["fact"], 0)
+        self.assertEqual(roads["factSource"], "dsti")
         self.assertEqual(roads["annualPlan"], 0)
         self.assertEqual(roads["forecast"], 50)
         self.assertEqual(roads["targetKind"], "forecast")
         self.assertEqual(roads["target"], 50)
-        self.assertAlmostEqual(roads["percent"], 14)
-        self.assertEqual(roads["remaining"], 43)
+        self.assertAlmostEqual(roads["percent"], 0)
+        self.assertEqual(roads["remaining"], 50)
 
-    def test_november_snapshot_refreshes_dashboard_without_replacing_forecasts_or_history(self):
+    def test_separate_financial_snapshot_is_ignored_by_dashboard(self):
         self.year = 2026
         self.monitoring = self.root / "data/raw/realty/nashdom/monitoring_2_0_20261016.xlsx"
         self.dsti = self.root / "data/raw/realty/linear_objects/linear_objects_2026-09-28.json"
         self.write_monitoring()
         self.write_dsti()
         source = Path(__file__).resolve().parents[2] / "data/raw/realty/linear_objects/linear_objects_2026-11-05.json"
+        self.dsti.parent.mkdir(parents=True)
         with patch("backend.linear_service.date") as clock:
             clock.today.return_value = date(2026, 11, 9)
             before = self.service.dashboard()
@@ -154,19 +348,19 @@ class LinearDashboardTests(unittest.TestCase):
             response = self.client().get("/api/v1/linear/dashboard")
             self.assertEqual(response.status_code, 200)
             after = response.json()
-            self.assertNotEqual(after["version"], before["version"])
-            self.assertEqual(after["sources"][0]["date"], "2026-11-05")
-            self.assertTrue(after["sources"][0]["file"].endswith(source.name))
-            for index, (fact, period) in enumerate([(47.1, "1–4"), (16, "1–3"), (12, "1–4")]):
+            self.assertEqual(after["version"], before["version"])
+            self.assertEqual(after["sources"][0]["date"], "2026-10-16")
+            self.assertEqual(after["sources"][0]["sheet"], DSTI_SHEET)
+            for index in range(3):
                 metric = after["metrics"][index]
-                self.assertAlmostEqual(metric["fact"], fact)
+                self.assertAlmostEqual(metric["fact"], 6)
                 self.assertEqual(metric["factSource"], "dsti")
-                self.assertIn(period, metric["factPeriod"])
+                self.assertIn("1–3", metric["factPeriod"])
                 self.assertIn("неполный год", metric["factPeriod"])
                 self.assertEqual(metric["forecast"], before["metrics"][index]["forecast"])
                 self.assertEqual(metric["target"], metric["forecast"])
-                self.assertAlmostEqual(metric["percent"], fact / metric["forecast"] * 100)
-                self.assertAlmostEqual(metric["remaining"], metric["forecast"] - fact)
+                self.assertAlmostEqual(metric["percent"], 6 / metric["forecast"] * 100)
+                self.assertAlmostEqual(metric["remaining"], metric["forecast"] - 6)
                 def history_values(item):
                     return [(row["year"], row["fact"], row["factKind"], row["factSource"])
                             for row in item["years"] if row["year"] < 2026]
@@ -176,23 +370,94 @@ class LinearDashboardTests(unittest.TestCase):
                 current = next(row for row in metric["years"] if row["year"] == 2026)
                 self.assertEqual(current["factKind"], "partial")
             self.assertEqual(after["metrics"][3:], before["metrics"][3:])
-            # A subsequently updated Monitoring source must still take priority.
+            # A newer workbook does not prove a newer observation in its annual block.
             self.monitoring.rename(self.monitoring.with_name("monitoring_2_0_20261106.xlsx"))
             later = self.service.dashboard()["metrics"][0]
-            self.assertEqual(later["factSource"], "monitoring")
-            self.assertEqual(later["fact"], 7)
+            self.assertEqual(later["factSource"], "dsti")
+            self.assertAlmostEqual(later["fact"], 6)
+
+    def test_monitoring_dsti_overrides_annual_block_in_current_year_and_export(self):
+        self.year = 2026
+        self.monitoring = self.root / "data/raw/realty/nashdom/monitoring_2_0_20261109.xlsx"
+        self.dsti = self.root / "data/raw/realty/linear_objects/linear_objects_2026-11-05.json"
+        self.write_monitoring()
+        book = load_workbook(self.monitoring)
+        for row, value in ((256, 45.6), (257, 15), (258, 9)):
+            book[HISTORY_SHEET].cell(row, 8, value)
+        book.save(self.monitoring)
+        book.close()
+        source = Path(__file__).resolve().parents[2] / "data/raw/realty/linear_objects" / self.dsti.name
+        data = read_linear_objects(source)
+        rows = data.astype(object).where(data.notna(), None).to_dict("records")
+        self.write_dsti_rows(rows)
+        with patch("backend.linear_service.date") as clock:
+            clock.today.return_value = date(2026, 11, 9)
+            response = self.client().get("/api/v1/linear/dashboard")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["sources"][0]["date"], "2026-11-09")
+            self.assertEqual(payload["sources"][1]["date"], "2026-11-09")
+            self.assertEqual(payload["sources"][0]["file"], payload["sources"][1]["file"])
+            for index, fact in enumerate((47.1, 16, 12)):
+                metric = payload["metrics"][index]
+                self.assertAlmostEqual(metric["fact"], fact)
+                self.assertEqual(metric["factSource"], "dsti")
+                current = next(row for row in metric["years"] if row["year"] == 2026)
+                self.assertAlmostEqual(current["fact"], fact)
+                self.assertEqual(current["factSource"], "dsti")
+                self.assertEqual(current["factKind"], "partial")
+                historical = next(row for row in metric["years"] if row["year"] == 2025)
+                self.assertEqual(historical["fact"], 30)
+                self.assertEqual(historical["factSource"], "monitoring")
+                self.assertEqual(metric["target"], 50)
+                self.assertAlmostEqual(metric["percent"], fact / 50 * 100)
+                self.assertAlmostEqual(metric["remaining"], 50 - fact)
+            self.assertEqual(payload["metrics"][3]["factSource"], "monitoring")
+            exported = self.client().get("/api/v1/linear/dashboard/export", params={"required_version": payload["version"]})
+            self.assertEqual(exported.status_code, 200)
+            book = load_workbook(BytesIO(exported.content), data_only=True)
+            rows = list(book["Current year"].values)
+            road = dict(zip(rows[0], rows[1]))
+            self.assertAlmostEqual(road["fact"], 47.1)
+            self.assertEqual(road["factSource"], "dsti")
+            self.assertEqual(road["factCells"], "F5, I5, L5, O5")
+            annual = list(book["Yearly data"].values)
+            road = next(dict(zip(annual[0], row)) for row in annual[1:] if row[0] == "roads" and row[3] == 2026)
+            self.assertAlmostEqual(road["fact"], 47.1)
+            self.assertEqual(road["factSource"], "dsti")
+            book.close()
+
+    def test_missing_current_dsti_observation_falls_back_to_monitoring(self):
+        self.write_monitoring()
+        self.write_dsti(fact=None)
+        roads = self.service.dashboard()["metrics"][0]
+        self.assertEqual(roads["fact"], 7)
+        self.assertEqual(roads["factSource"], "monitoring")
+        self.assertEqual(roads["target"], 50)
+        self.assertAlmostEqual(roads["percent"], 14)
+        self.assertEqual(roads["remaining"], 43)
+
+    def test_calculation_revision_changes_dashboard_and_export_version_without_source_mutation(self):
+        self.write_monitoring()
+        self.write_dsti()
+        before = self.service.dashboard()
+        with patch("backend.linear_service.LINEAR_CALCULATION_REVISION", "old-priority"):
+            after = self.service.dashboard()
+        self.assertNotEqual(before["version"], after["version"])
+        self.assertEqual(before["metrics"], after["metrics"])
+        self.assertEqual(self.client().get("/api/v1/linear/dashboard/export", params={"required_version": after["version"]}).status_code, 409)
 
     def test_only_forecast_defines_target_with_missing_zero_or_exceeded_values(self):
-        self.write_dsti(fact=2, plan=100)
+        rows = self.write_dsti(fact=2, plan=100)
         roads = self.service.dashboard()["metrics"][0]
         self.assertEqual(roads["annualPlan"], 400)
         for key in ("target", "targetKind", "percent", "remaining"):
             self.assertIsNone(roads[key])
         self.write_monitoring()
-        book = load_workbook(self.monitoring)
-        book[HISTORY_SHEET].cell(256, 8, 70)
-        book.save(self.monitoring)
-        book.close()
+        for row in rows:
+            if row["code"] == "1.1" and row["year"] == self.year:
+                row["fact"] = 70 if row["quarter"] == 1 else 0
+        self.write_dsti_rows(rows)
         roads = self.service.dashboard()["metrics"][0]
         self.assertEqual(roads["target"], 50)
         self.assertEqual(roads["percent"], 140)
@@ -211,10 +476,25 @@ class LinearDashboardTests(unittest.TestCase):
         for row in rows:
             if row["year"] < self.year:
                 row["fact"] = 1
-        self.dsti.write_text(json.dumps(rows), encoding="utf-8")
+        self.write_dsti_rows(rows)
         historic = self.service.dashboard()["metrics"][0]["years"][0]
         self.assertEqual(historic["fact"], 4)
         self.assertEqual(historic["factKind"], "annual")
+
+    def test_completed_history_still_uses_newer_monitoring_without_changing_current_dsti(self):
+        rows = self.write_dsti()
+        for row in rows:
+            if row["year"] < self.year:
+                row["fact"] = 1
+        self.write_dsti_rows(rows)
+        self.write_monitoring()
+        roads = self.service.dashboard()["metrics"][0]
+        historic = next(row for row in roads["years"] if row["year"] == self.year - 1)
+        self.assertEqual(historic["fact"], 30)
+        self.assertEqual(historic["factSource"], "monitoring")
+        self.assertEqual(historic["factKind"], "annual")
+        self.assertEqual(roads["factSource"], "dsti")
+        self.assertEqual(roads["forecast"], 50)
 
     def test_forecast_horizons_change_version_and_source_removal(self):
         self.write_monitoring(horizon=1)

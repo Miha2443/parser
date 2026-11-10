@@ -30,6 +30,12 @@ class AuthDeploymentTests(unittest.TestCase):
         self.assertIsNone(compose["volumes"]["auth_state"])
         self.assertNotIn("ports", backend, "private backend must not publish a bypass port")
 
+    @unittest.skipUnless(yaml, "Install backend/requirements-dev.txt for Compose YAML checks")
+    def test_optional_ssh_binding_preserves_the_existing_web_port_default(self):
+        compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+        self.assertEqual(compose["services"]["web"]["ports"], ["${WEB_LISTEN:-${WEB_PORT:-8080}}:8080"])
+        self.assertEqual(compose["services"]["backend"]["environment"]["PARSER_AUTH_ALLOW_HTTP"], "${PARSER_AUTH_ALLOW_HTTP:-0}")
+
     def test_nginx_preserves_origin_authority_and_does_not_accept_internal_probe_header(self):
         for name in ("docker/nginx.conf", "deploy/linux/nginx-parser.conf"):
             source = (ROOT / name).read_text(encoding="utf-8")

@@ -51,6 +51,7 @@ data/gdebenz/
 
 # env-файлы с секретами (TDM_BOT_TOKEN, …) — НЕ коммитить
 .env
+.env.backup-*
 .env.local
 .env.*.local
 

@@ -153,13 +153,13 @@ export function permitsMainOption(data: PermitsData, theme: Theme, view: PermitC
   return barOption(rows.map(r => r.year), series, rows.map(r => r.selected === null ? r.annualForecast : r.selected + (permitRemainder(r) ?? 0)), theme, view, data.permits.periodLabel, data.permits.unit, periods, rows.map(r => r.selected !== null && !r.periodComplete ? permitActualPeriod(r, data.selection.month) : null), view.includeGrowth ? permitMainGrowth(data) : undefined);
 }
 
-export function permitsMainRows(data: PermitsData, approved?: PermitsData['permits']): Cell[][] {
+export function permitsMainRows(data: PermitsData): Cell[][] {
   return [['Год', `Факт: ${data.permits.periodLabel}, тыс. м²`, 'Подтверждённый январь–декабрь, тыс. м²', 'Годовой прогноз, тыс. м²', 'Основание годового ориентира', 'Ориентир минус выбранный период, тыс. м²', 'Неотрицательный остаток, тыс. м²', 'Изменение к аналогичному полному периоду прошлого года, %', 'Период полный', 'Январь–декабрь подтверждён', 'Наблюдения по', 'Основание источника', 'Единица прогноза', 'Версия источника'],
     ...data.permits.presentation.rows.map(r => {
       const basis = permitAnnualBasis(r);
       return [r.year, r.selected, r.annualActual, r.annualForecast, basis?.label ?? 'Нет годового основания', basis === null || r.selected === null ? null : basis.value - r.selected, permitRemainder(r), permitGrowth(data.permits.presentation.rows, r), r.periodComplete ? 'Да' : 'Нет', r.annualComplete ? 'Да' : 'Нет', r.observedThrough, r.evidence.join('; '), basis?.kind === 'forecast' ? data.forecast.unitBasis : '', data.version];
     }),
-  ].map((row, index) => approved ? [...row, index === 0 ? 'Утверждённый годовой legacy-контроль (вид площади не подтверждён), тыс. м²' : approved.presentation.rows.find(r => r.year === row[0])?.annualActual ?? null] : row);
+  ];
 }
 
 export function breakdownChart(data: PermitBreakdown): SalesChart {

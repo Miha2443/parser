@@ -80,12 +80,13 @@ test('legend component hiding suppresses source totals and forecast hatch remain
   assert.deepEqual(block.rows, before);
 });
 
-test('downloads retain original approved annual control and growth unit is percent not area', () => {
+test('downloads contain only the selected canonical annual area and growth unit is percent not area', () => {
   const source = readPermitPageData(permitPageFixture());
   source.permits.presentation.rows[0].annualActual = 2972;
-  const selected = selectPermitArea(source), csv = permitsMainRows(selected, source.permits);
-  assert.equal(csv[1].at(-1), 2972);
-  assert.match(csv[0].at(-1), /legacy/);
+  const selected = selectPermitArea(source), csv = permitsMainRows(selected);
+  assert.equal(csv[1][2], selected.permits.presentation.rows[0].annualActual);
+  assert.equal(csv[0].length, 14);
+  assert.equal(csv[0].some(value => /legacy/.test(value)), false);
   const rows = permitBreakdownRows(selected.breakdowns[0], 'version');
   const growthHeader = rows[0].find(value => value.startsWith('growth'));
   assert.equal(growthHeader, 'growth');

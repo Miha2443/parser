@@ -49,12 +49,13 @@ const { parse } = require('papaparse');
       assert.equal(csv.data.at(-1)[1], livingOnly ? '120' : '170');
       assert.equal(csv.data.at(-1)[3], livingOnly ? '250' : '300');
       assert.equal(csv.data.at(-1)[13], 'test');
-      assert.match(csv.data[0].at(-1), /legacy/);
-      assert.equal(csv.data.find(row => row[0] === '2025').at(-1), '200');
+      assert.equal(csv.data[0].length, 14);
+      assert.equal(csv.data[0].some(value => /legacy/.test(value)), false);
+      assert.equal(csv.data.find(row => row[0] === '2025')[2], livingOnly ? '200' : '250');
     }
     async function sourceDownload(livingOnly) {
       const pending = page.waitForEvent('download');
-      await page.getByRole('button', { name: 'Скачать исходные разрешения Excel: утверждённый ряд и оба варианта площади', exact: true }).click();
+      await page.getByRole('button', { name: 'Скачать разрешения Excel: единая база и оба варианта площади', exact: true }).click();
       const download = await pending;
       assert.equal(download.suggestedFilename(), `permits-housing-${livingOnly ? 'living' : 'full'}-m5-structure-period-2011-2026-m1-5.xlsx`);
       const file = path.join(output, download.suggestedFilename());

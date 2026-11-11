@@ -32,7 +32,7 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertEqual(payload["controls"]["structure"]["months"], list(range(1, 13)))
         self.assertEqual(payload["selection"]["month"], 12)
         old = self.main(payload, 2011)
-        self.assertEqual(old["selected"], 9999.123456789)
+        self.assertAlmostEqual(old["selected"], sum(41.4638 + (month - 1) / 1000 for month in range(1, 13)))
         self.assertEqual(old["actualMonth"], 12)
         self.assertTrue(old["periodComplete"])
         current = self.main(payload, 2026)
@@ -121,12 +121,12 @@ class CanonicalPermitTests(unittest.TestCase):
                 self.assertAlmostEqual(self.main(payload, year)["selected"], self.block(payload, block, year)[field])
         payload = self.service.report("total", 12, structure_mode="annual")
         old = self.block(payload, "housing_components", 2011)
-        self.assertEqual(old["living"], 9999.123456789)
+        self.assertAlmostEqual(old["living"], sum(41.4638 + (month - 1) / 1000 for month in range(1, 13)))
         self.assertAlmostEqual(old["mop_embedded"], 12 * (61021.2 - 41463.8) / 1000)
         self.assertAlmostEqual(old["source_living"], sum((41463.8 + month - 1) / 1000 for month in range(1, 13)))
-        self.assertNotEqual(old["housing_total"], old["source_housing_total"])
+        self.assertAlmostEqual(old["housing_total"], old["source_housing_total"])
 
-    def test_approved_static_precedes_workbook_in_both_views(self):
+    def test_static_file_is_ignored_in_both_views(self):
         directory = self.fixture.root / "data/raw/realty/vvod"
         directory.mkdir(parents=True)
         path = directory / "static_vvod_rs_2011_2025.xlsx"
@@ -136,11 +136,11 @@ class CanonicalPermitTests(unittest.TestCase):
         book.save(path)
         book.close()
         self.fixture.touch(path)
-        for kind, block, field, value in (("housing", "housing_components", "living", 1234.5),
-                                           ("nonresidential", "nonresidential_components", "nonresidential", 4567.8)):
+        for kind, block, field, value in (("housing", "housing_components", "living", sum(41.4638 + (month - 1) / 1000 for month in range(1, 13))),
+                                           ("nonresidential", "nonresidential_components", "nonresidential", 327.442 * 12)):
             payload = self.service.report(kind, 12, structure_mode="annual")
-            self.assertEqual(self.main(payload, 2011)["selected"], value)
-            self.assertEqual(self.block(payload, block, 2011)[field], value)
+            self.assertAlmostEqual(self.main(payload, 2011)["selected"], value)
+            self.assertAlmostEqual(self.block(payload, block, 2011)[field], value)
 
     def test_total_contains_mop_in_selected_fact_and_forecast(self):
         payload = self.service.report("total", 5, structure_month_to=5)
@@ -150,9 +150,9 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertIsNone(self.main(self.service.report("total", 5), 2026)["annualForecast"])
 
     def test_missing_historic_mop_never_invented_from_living_annual_control(self):
-        self.fixture.edit_book(HOUSING_SHEET, {"C5": None})
+        self.fixture.edit_book(HISTORY_SHEET, {"G81": None, "G93": None})
         housing = self.service.report("housing", 12, structure_mode="annual")
-        self.assertEqual(self.main(housing, 2011)["selected"], 9999.123456789)
+        self.assertAlmostEqual(self.main(housing, 2011)["selected"], sum(41.4638 + (month - 1) / 1000 for month in range(1, 13)))
         self.assertIsNone(self.block(housing, "housing_components", 2011)["mop_embedded"])
         total = self.service.report("total", 12, structure_mode="annual")
         self.assertIsNone(self.main(total, 2011)["selected"])
@@ -182,7 +182,7 @@ class CanonicalPermitTests(unittest.TestCase):
         self.assertAlmostEqual(old["offices"], 234.535 * 12)
         self.assertAlmostEqual(old["source_offices"], 234.535 * 12)
         self.assertAlmostEqual(old["source_other"], 79.811 * 12)
-        self.assertAlmostEqual(old["other_adjustment"], 7777.123456789 - 327.442 * 12)
+        self.assertAlmostEqual(old["other_adjustment"], 0)
         self.assertAlmostEqual(old["other"], old["source_other"] + old["other_adjustment"])
         self.assertFalse(any(column["label"].startswith("Минстрой:") for column in block["columns"]))
         self.assertEqual(old["trade"], 0)
@@ -196,7 +196,7 @@ class CanonicalPermitTests(unittest.TestCase):
         source_total, source_other = 327.442 * 12, 79.811 * 12
         for difference in (100.25, -100.25, -1000.25, 0):
             with self.subTest(difference=difference):
-                self.fixture.edit_book(HISTORY_SHEET, {"C8": source_total + difference})
+                self.fixture.edit_book(HISTORY_SHEET, {"G110": source_total + difference})
                 for mode in ("annual", "period"):
                     payload = self.service.report("nonresidential", 12, structure_mode=mode, structure_month_to=12)
                     row = self.block(payload, "nonresidential_components", 2011)
@@ -215,7 +215,7 @@ class CanonicalPermitTests(unittest.TestCase):
                 self.assertAlmostEqual(row["other"], 79.811 * 10)
                 self.assertIsNone(row["other_adjustment"])
 
-    def test_modern_osm_other_and_signed_difference_are_retained(self):
+    def test_modern_osm_other_is_retained_and_untyped_annual_controls_ignored(self):
         self.fixture.edit_book(OKS_SHEET, {"AR3": "12 Коммунально-складские", "AR5": "17 Специальные объекты",
                                            "AT3": "Коммерческие", "AT5": "Административные"})
         source_total = sum((40000 + month) / 1000 for month in range(1, 13))
@@ -224,8 +224,9 @@ class CanonicalPermitTests(unittest.TestCase):
         block = payload["breakdowns"][0]
         row = self.block(payload, block["id"], 2025)
         self.assertAlmostEqual(row["source_other"], (40001 + 40002) / 1000)
-        self.assertAlmostEqual(row["other"], row["source_other"] - 5)
-        self.assertAlmostEqual(row["other_adjustment"], -5)
+        self.assertAlmostEqual(row["other"], row["source_other"])
+        self.assertAlmostEqual(row["other_adjustment"], 0)
+        self.assertAlmostEqual(row["nonresidential"], source_total)
         self.assertEqual([column["id"] for column in block["columns"] if column["label"] == "Прочие"], ["other"])
         self.assertFalse(any(column["label"].startswith("Минстрой:") for column in block["columns"]))
 
@@ -277,7 +278,7 @@ class CanonicalPermitTests(unittest.TestCase):
         before = {mode: self.service.report("nonresidential", 5, structure_mode=mode, structure_month_to=5)
                   for mode in ("annual", "period")}
         self.fixture.edit_book(HISTORY_SHEET, {"J115": None})
-        for mode, months, total in (("annual", 12, 7777.123456789), ("period", 5, 327.442 * 5)):
+        for mode, months, total in (("annual", 12, 327.442 * 12), ("period", 5, 327.442 * 5)):
             with self.subTest(mode=mode):
                 payload = self.service.report("nonresidential", 5, structure_mode=mode, structure_month_to=5)
                 self.assertEqual(payload["permits"], before[mode]["permits"])
@@ -300,14 +301,14 @@ class CanonicalPermitTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 payload = self.service.report("nonresidential", 12, structure_mode=mode, structure_month_to=12)
                 row = self.block(payload, "nonresidential_components", 2011)
-                self.assertEqual(row["nonresidential"], 7777.123456789)
+                self.assertAlmostEqual(row["nonresidential"], 327.442 * 12)
                 self.assertEqual(row["other"], row["nonresidential"])
                 self.assertTrue(all(row[field] is None for field, _ in HISTORICAL_FIELDS if field != "other"))
                 self.assertIsNone(row["other_adjustment"])
 
     def test_unknown_area_is_not_zero_but_known_zero_is_other_in_both_modes(self):
         for value in (None, 0):
-            self.fixture.edit_book(HISTORY_SHEET, {"C8": value, "I115": value, "J115": None, "O115": None})
+            self.fixture.edit_book(HISTORY_SHEET, {"G110": value, "G98": value, "I115": value, "J115": None, "O115": None})
             for mode in ("annual", "period"):
                 with self.subTest(value=value, mode=mode):
                     payload = self.service.report("nonresidential", 1, structure_mode=mode, structure_month_to=1)

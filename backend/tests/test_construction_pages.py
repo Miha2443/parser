@@ -95,6 +95,19 @@ class ConstructionPagesTests(unittest.TestCase):
             "выдача рс жилье по годам", 2011, 9999.123456789, 2026, 12000.123456789)
         detailed["B7"], detailed["B8"], detailed["C8"], detailed["B9"], detailed["C9"] = (
             "выдача рс нежилье по годам", 2011, 7777.123456789, 2026, 8000.123456789)
+        for row, title, base in ((62, "ИТОГ: выдача РС жилье (жилая площадь)", 41.4638),
+                                 (79, "ИТОГ: выдача РС жилье (общая площадь)", 61.0212),
+                                 (96, "ИТОГ: выдача РС нежилье", 327.442)):
+            detailed.cell(row, 6, title)
+            detailed.cell(row + 1, 6, "Месяц")
+            detailed.cell(row + 14, 6, "Год")
+            for column, year in enumerate(range(2011, 2022), 7):
+                detailed.cell(row + 1, column, year)
+                values = [base + (month - 1) / 1000 if row != 96 else base for month in range(1, 13)]
+                for month, value in enumerate(values, 1):
+                    detailed.cell(row + 1 + month, 6, MONTH_SHORT_RU[month - 1])
+                    detailed.cell(row + 1 + month, column, value)
+                detailed.cell(row + 14, column, sum(values))
         labels = ("Год", "№ месяца", "Месяц", "Нежильё,\nвсего", "Административно-\nделовые",
                   "Промышленные", "Торговые", "Социальные", "Гостиницы", "Прочие")
         for column, value in enumerate(labels, 6):
@@ -290,7 +303,7 @@ class ConstructionPagesTests(unittest.TestCase):
                         self.assertAlmostEqual(sum(points), row[aggregate], places=8)
 
     def test_strict_historical_coverage_missing_supplements_do_not_block_primary(self):
-        self.edit_book(HOUSING_SHEET, {"B5": None})
+        self.edit_book(HISTORY_SHEET, {"G64": None})
         blocks = self.by_id(self.permits.report("total", 2, structure_month_to=2))
         incomplete = blocks["housing_components"]["rows"][0]
         self.assertEqual(incomplete["year"], 2011)
@@ -350,10 +363,10 @@ class ConstructionPagesTests(unittest.TestCase):
         self.edit_book(OKS_SHEET, {"B50": None})
         payload = self.permits.report("total", 5)
         historic = self.presentation(payload, 2011)
-        self.assertAlmostEqual(historic["annualActual"], 9999.123456789 + 7777.123456789 + 12 * 19.5574)
+        self.assertAlmostEqual(historic["annualActual"], sum(61.0212 + (month - 1) / 1000 for month in range(1, 13)) + 327.442 * 12)
         self.assertEqual(historic["basis"], "annual_observed")
         self.assertTrue(historic["annualComplete"])
-        self.assertTrue(any("годовой контроль" in ref for ref in historic["evidence"]))
+        self.assertTrue(any("годовой итог" in ref for ref in historic["evidence"]))
         previous = self.presentation(payload, 2025)
         self.assertEqual(previous["basis"], "annual_observed")
         self.assertTrue(previous["annualComplete"])
@@ -398,7 +411,7 @@ class ConstructionPagesTests(unittest.TestCase):
         self.assertIsNone(self.presentation(unknown, 2025)["annualActual"])
         modern = next(row for row in self.by_id(unknown)["housing_components"]["rows"] if row["year"] == 2025)
         self.assertFalse(modern["annualComplete"])
-        self.assertIsNone(modern["housing_total"])
+        self.assertAlmostEqual(modern["housing_total"], sum((100000 + month) / 1000 for month in range(1, 13)))
 
     def test_structure_filters_independent_arbitrary_start_month_and_source_basis(self):
         options = {"structure_month_from": 3, "structure_month_to": 5,
@@ -440,7 +453,7 @@ class ConstructionPagesTests(unittest.TestCase):
             self.assertTrue(past["periodComplete"])
         old = blocks["housing_components"]["rows"][0]
         self.assertTrue(old["annualComplete"])
-        self.assertEqual(old["living"], 9999.123456789)
+        self.assertAlmostEqual(old["living"], sum(41.4638 + (month - 1) / 1000 for month in range(1, 13)))
         self.assertAlmostEqual(old["source_living"], sum(41463.8 + month - 1 for month in range(1, 13)) / 1000)
         coverage = next(row for row in payload["controls"]["structure"]["coverage"]
                         if row["blockId"] == "housing_components" and row["year"] == 2026)
@@ -552,7 +565,7 @@ class ConstructionPagesTests(unittest.TestCase):
                             service.report()
                 self.assertTrue(service.report()["version"])
 
-    def test_only_used_static_control_changes_permit_version(self):
+    def test_static_controls_do_not_change_permit_values_or_version(self):
         original = self.permits.report("housing", 1)
         directory = self.root / "data/raw/realty/vvod"
         directory.mkdir(parents=True)
@@ -564,12 +577,13 @@ class ConstructionPagesTests(unittest.TestCase):
         book.close()
         self.touch(path)
         updated = self.permits.report("housing", 1)
-        self.assertNotEqual(original["version"], updated["version"])
-        self.assertEqual(updated["permits"]["rows"][0]["За год, тыс. м²"], 1234.123456789)
-        self.assertEqual(self.presentation(updated, 2011)["annualActual"], 1234.123456789)
+        self.assertEqual(original["version"], updated["version"])
+        expected = sum(41.4638 + (month - 1) / 1000 for month in range(1, 13))
+        self.assertAlmostEqual(updated["permits"]["rows"][0]["За год, тыс. м²"], expected)
+        self.assertAlmostEqual(self.presentation(updated, 2011)["annualActual"], expected)
         self.assertEqual(self.presentation(updated, 2011)["basis"], "annual_observed")
-        self.assertTrue(any("static_vvod_rs_2011_2025.xlsx" in ref for ref in self.presentation(updated, 2011)["evidence"]))
-        self.assertEqual(len(updated["source"]["files"]), 2)
+        self.assertFalse(any("static_vvod_rs_2011_2025.xlsx" in ref for ref in self.presentation(updated, 2011)["evidence"]))
+        self.assertEqual(len(updated["source"]["files"]), 1)
         (directory / "static_vvod_rs_unused.xlsx").write_bytes(b"corrupt unused file")
         self.assertEqual(updated["version"], self.permits.report("housing", 1)["version"])
         old_b = self.domrf.report()["version"]

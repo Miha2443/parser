@@ -1,4 +1,4 @@
-"""Moscow permit views sharing literal components and approved annual controls."""
+"""Moscow permit views sharing the same historical and registry facts."""
 from __future__ import annotations
 
 import copy
@@ -21,10 +21,10 @@ from backend.profile_service import FilterUnavailable, SourceUnavailable
 from pipeline.construction_calculations import catalog, report
 from pipeline.data_access import DataAccess, DataContext, file_signature
 from pipeline.permit_page_calculations import (OKS_SHEET, apply_main_presentation, breakdowns, main_presentation, read_breakdown_sources,
-                                               read_forecast, read_main_sources, read_static_annual,
+                                               read_forecast, read_main_sources,
                                                select_forecast, structure_base, structure_controls)
 
-CALCULATION_REVISION = "permits-confirmed-area-variants-same-period-yoy-v3"
+CALCULATION_REVISION = "permits-history-2011-2021-oks-from-2022-v4"
 
 
 _SOURCE_ERRORS = (OSError, ValueError, TypeError, LookupError, RuntimeError, OverflowError,
@@ -35,31 +35,6 @@ except ImportError:
     pass
 else:
     _SOURCE_ERRORS += (XMLSyntaxError,)
-
-
-class _PermitsAccess(DataAccess):
-    """Use the unchanged loader without its unrelated JSON or mart providers."""
-
-    def __init__(self, context, monitoring):
-        super().__init__(replace(context, use_marts=False, require_marts=False))
-        self.CONSTRUCTION_OPERATIONAL_PATHS = []
-        self.monitoring = monitoring
-
-    def _realty_mart_manifest_entry(self, *args, **kwargs):
-        return None
-
-    def load_monitoring_2_0(self, **kwargs):
-        # Only these five OKS columns feed the unchanged operational loader.
-        # Match its legacy missing -> 0 normalization for the main table only;
-        # supplemental calculations separately read the untouched source cells.
-        frame = pd.read_excel(self.monitoring, sheet_name=OKS_SHEET,
-                              usecols=lambda column: column in {
-                                  "Назначение", "Срок выдачи РС", "Год выдачи", "Общая площадь", "Жилая площадь"})
-        for column in ("Общая площадь", "Жилая площадь"):
-            values = frame[column].map(lambda value: value.replace("\xa0", "").replace(" ", "").replace(",", ".")
-                                       if isinstance(value, str) else value)
-            frame[column] = pd.to_numeric(values, errors="coerce").fillna(0)
-        return {"oks": frame}
 
 
 def _date(path):
@@ -106,11 +81,8 @@ class PermitsPageService:
         selected = [(path, signature) for path, signature in signatures if signature[2] == newest]
         if len(selected) != 1:
             raise SourceUnavailable("Latest monitoring workbook is ambiguous")
-        base = access._vvod_dir()
-        static = base / "static_vvod_rs_2011_2025.xlsx" if base else None
-        used_static = [static] if static is not None and static.is_file() else []
         path, signature = selected[0]
-        return path, tuple([signature] + [file_signature(item) for item in used_static]), [path] + used_static
+        return path, (signature,), [path]
 
     def _relative(self, path):
         try:
@@ -139,15 +111,17 @@ class PermitsPageService:
                 main_sources = read_main_sources(book, detailed, self._relative(path))
             finally:
                 book.close()
-        for static in files[1:]:
-            with static.open("rb") as stream:
-                book = load_workbook(stream, read_only=True, data_only=True)
-                try:
-                    main_sources["annual"].update(read_static_annual(book, self._relative(static)))
-                finally:
-                    book.close()
-        access = _PermitsAccess(self.context, path)
-        operational = access.load_construction_operational()
+        # The table shell also comes from the canonical source, not the legacy
+        # operational loader (which serves other pages and has different controls).
+        operational = {"permits": pd.DataFrame(
+            [{"year": year, "month": month, "kind": kind, "value_thousand_m2": row["value"]}
+             for kind in ("housing", "nonresidential")
+             for (year, month), row in main_sources["monthly"][kind].items()],
+            columns=["year", "month", "kind", "value_thousand_m2"]),
+            "permit_annual": pd.DataFrame(
+                [{"year": year, "kind": kind, "value_thousand_m2": row["value"]}
+                 for (year, kind), row in main_sources["annual"].items() if kind != "housing_total"],
+                columns=["year", "kind", "value_thousand_m2"])}
         if operational["permits"].empty:
             raise SourceUnavailable("Monitoring contains no permit observations")
         data = {"load_construction_operational": operational, "load_rasprodannost": {}}
@@ -155,9 +129,7 @@ class PermitsPageService:
         controls = {"permitKinds": sorted(discovered["permitKinds"], key=lambda row:
                                          ("housing", "nonresidential", "total").index(row["id"])),
                     "monthsByKind": {kind: list(range(1, 13)) for kind in ("housing", "nonresidential", "total")}}
-        issues = [{"level": level, "message": message} for level, message in access.issues]
-        if any(row["level"] == "error" for row in issues):
-            raise SourceUnavailable("Permit loader reported a source error")
+        issues = []
         if not forecast["rows"]:
             issues.append({"level": "warning", "message": "Прогноз недоступен; см. forecast.notes."})
         payload = {"schemaVersion": 1, "contractRevision": 2, "calculationRevision": CALCULATION_REVISION,
@@ -258,16 +230,19 @@ class PermitsPageService:
                 "permits": table, "forecast": selected_forecast,
                 "areaVariants": area_variants,
                 "breakdowns": breakdowns(structures, permit_kind, structure_selection, generation["main_sources"], payload["source"]["date"]),
-                "notes": ["Варианты areaVariants.living/full используют только явно обозначенную жилую/общую площадь жилья. "
-                          "При отсутствии подтверждённого ряда показано null. Утверждённые годовые контроли без указания вида "
-                          "площади сохранены отдельно в исходной таблице permits и не переименованы в жилую площадь. "
-                          "Всего в обоих вариантах также включает отдельно стоящее нежильё; его годовой итог берётся из утверждённого источника.",
+                "notes": ["Все графики, таблицы и выгрузки используют единую базу: 2011–2021 годы — «Данные с 2011 года» "
+                          "(матрицы выдачи РС: жилая площадь, общая площадь жилья, нежильё), с 2022 года — «Реестр ОКС». "
+                          "Вспомогат1 и статический файл годовых контролей на этой странице не используются. "
+                          "Варианты areaVariants.living/full выбирают соответственно жилую/общую площадь жилья; "
+                          "«Всего» добавляет отдельно стоящее нежильё.",
                           "Разрешения относятся только к Москве, без фильтра действующего статуса РС. "
                           "«Жильё» означает жилую площадь; «Всего» включает её, МОП и встроенное нежильё, а также нежилые объекты.",
                           "Презентационный остаток = годовой прогноз либо подтверждённый полный год минус выбранный факт, "
                           "не ниже нуля. Неполный итог текущего года не является годовым ориентиром. "
                           "Прогноз не изменяет фактические значения и рост.",
-                          "Полные прошедшие годы используют одни и те же утверждённые годовые значения в основном графике и структуре. "
-                          "МОП не оценивается по коэффициентам. В неполном текущем году показываются доступные месяцы; actualMonth указывает последний."]}
+                          "Полные прошедшие годы используют строку «Год» соответствующей исторической матрицы "
+                          "либо сумму 12 месяцев, а с 2022 года — суммы реестра. МОП и нежильё в жилье — разность общей "
+                          "и жилой площади выбранного периода, без коэффициентов. В неполном текущем году "
+                          "показываются доступные месяцы; actualMonth указывает последний."]}
             json.dumps(result, allow_nan=False)
             return copy.deepcopy(result)

@@ -38,8 +38,10 @@ function group(chart: DemoChart): { id: string; title: string; layout: DemoSlide
   }
   if (id.startsWith('domrf/') && id !== 'domrf/construction' && id !== 'domrf/realization') return { id: 'domrf/realization-structure', title: 'Структура реализации квартир', layout: 'rings' };
   if (id === 'operational/housing' || id === 'operational/nonres') return { id: 'operational/commissioning', title: 'Ввод жилья и нежилой недвижимости', layout: 'pair' };
-  if (id === 'annual/b2_1' || id === 'annual/b2_3') return { id: 'annual/housing', title: 'Состав ввода жилья и реновация', layout: 'pair' };
+  if (id === 'annual/b1' || id === 'annual/b2_1') return { id: 'annual/overview', title: 'Ввод недвижимости и состав жилья', layout: 'pair' };
+  if (id === 'annual/b2_3') return { id: 'annual/housing', title: 'Реновация', layout: 'single' };
   if (id === 'annual/b2_2' || id === 'annual/b3_2') return { id: 'annual/funding', title: 'Бюджетный и небюджетный ввод', layout: 'pair' };
+  if (id === 'accounts/na_block1' || id === 'accounts/na_block3') return { id: 'accounts/overview', title: 'ВРП и ВВП: объём и динамика', layout: 'pair' };
   if (/^mortgage\/(volume|count)\/(annual|monthly)$/.test(id)) {
     const monthly = id.endsWith('/monthly');
     return { id: `mortgage/${monthly ? 'monthly' : 'annual'}`, title: monthly ? 'Выдача ипотеки по месяцам' : 'Выдача ипотеки по годам', layout: 'pair' };

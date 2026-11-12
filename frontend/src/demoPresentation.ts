@@ -57,7 +57,8 @@ function ringLabels(option: Settings, width: number, height: number, scale: numb
   const main = labels.find(node => /\b600\b/.test(String(record(node.style).font))), unit = labels.find(node => node !== main);
   if (!main || !unit) return;
   const mainStyle = record(main.style), unitStyle = record(unit.style), dimension = Math.min(width, height);
-  const size = Math.round(Math.min(42 * scale, dimension * .13, dimension * .6 / Math.max(1, String(mainStyle.text).length * .62)));
+  const ringTier = dimension >= 600 ? 84 : dimension >= 400 ? 56 : 42;
+  const size = Math.round(Math.min(Math.max(42 * scale, ringTier), dimension * .13, dimension * .6 / Math.max(1, String(mainStyle.text).length * .62)));
   const unitSize = fontSize(unitStyle, 12 * scale), gap = Math.max(8, 6 * scale);
   const top = Math.round((height - size * 1.25 - unitSize * 1.3 - gap) / 2);
   mainStyle.font = String(mainStyle.font).replace(/\d+(?:\.\d+)?px/, `${size}px`);

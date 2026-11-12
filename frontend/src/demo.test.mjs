@@ -26,6 +26,7 @@ const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues,
 const { ApiError } = await import('./data.ts');
 const { demoPanelContext, demoPanelTitle, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
 const { commonDemoLegend, demoPalette, demoSummaryText } = await import('./demoComposition.ts');
+const { demoMainCharts } = await import('./demoCatalog.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -42,6 +43,62 @@ test('subset selection follows registry order and excludes empty or obsolete IDs
 test('cycle wraps in both directions, including a one-chart playlist', () => {
   assert.deepEqual([-4, -1, 0, 1, 2, 3, 4].map(index => demoIndex(index, 3)), [2, 2, 0, 1, 2, 0, 1]);
   assert.equal(demoIndex(100, 1), 0); assert.equal(demoIndex(-1, 1), 0); assert.equal(demoIndex(5, 0), 0);
+});
+
+test('main catalog follows construction, commissioning, permits, finance, economics and profile order', () => {
+  assert.deepEqual(demoSources.map(source => source.id), [
+    'domrf', 'sales', 'apartments', 'annual', 'operational', 'linear', 'permits',
+    'mortgage', 'preferential', 'accounts', 'ipc', 'salary', 'profile',
+  ]);
+});
+
+test('curation keeps important multi-indicator blocks, not one graph per source', async t => {
+  t.mock.method(globalThis, 'fetch', async url => Response.json(fixtures.response(url)));
+  const expected = {
+    annual: ['annual/b1', 'annual/b2_1'], operational: ['operational/housing', 'operational/nonres'],
+    linear: ['linear/roads', 'linear/metro_stations'],
+    mortgage: ['mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/rates'],
+    sales: ['sales/monthly_percent'], apartments: ['apartments/distribution'],
+    accounts: ['accounts/na_block1', 'accounts/na_block3'],
+  };
+  for (const source of demoSources) {
+    const raw = await source.load(new AbortController().signal), before = JSON.stringify(raw);
+    const charts = demoMainCharts(raw);
+    assert.ok(charts.length > 0, source.id);
+    assert.equal(JSON.stringify(raw), before, 'ordinary-page data must remain intact');
+    charts.forEach(chart => assert.ok(raw.includes(chart), 'retain source values and options by reference'));
+    assert.deepEqual(demoSelection(charts, new Set()), [], 'never auto-select a block');
+    if (expected[source.id]) assert.deepEqual(charts.map(chart => chart.id), expected[source.id]);
+    if (['annual', 'operational', 'linear', 'accounts'].includes(source.id)) {
+      const [slide, ...other] = demoSlides(demoSelection(charts, null));
+      assert.equal(other.length, 0, source.id);
+      assert.ok(slide.charts.length > 1, source.id);
+    }
+    if (source.id === 'preferential') {
+      const slides = demoSlides(demoSelection(charts, null));
+      assert.deepEqual(slides.map(slide => slide.id), ['preferential/flows/annual', 'preferential/characteristics/annual', 'preferential/flows/cumulative', 'preferential/characteristics/cumulative']);
+      assert.deepEqual(slides.map(slide => slide.charts.length), [2, 6, 2, 6]);
+    }
+  }
+});
+
+test('curation drops unrecognized details, preserves unavailable main charts, and does not add selected panels', () => {
+  const charts = ['annual/b1', 'annual/b2_1', 'annual/b3_3', 'mortgage/count/monthly', 'future/detail'].map(id => groupedDemoChart(id));
+  charts[0].empty = true;
+  const curated = demoMainCharts(charts);
+  assert.deepEqual(curated.map(chart => chart.id), ['annual/b1', 'annual/b2_1']);
+  assert.deepEqual(demoSelection(curated, null).map(chart => chart.id), ['annual/b2_1']);
+  assert.deepEqual(demoSlides(demoSelection(curated, new Set(['annual/b2_1'])))[0].charts, [charts[1]]);
+  assert.equal(charts.length, 5);
+});
+
+test('profile curation retains history and the two latest available structures within each cohort', () => {
+  const chart = (index, scope = 'a', empty = false) => groupedDemoChart(`profile/structure/${index}`, { scope, empty });
+  const charts = [groupedDemoChart('profile/annual'), chart(10), chart(2), chart(0), chart(11, 'a', true),
+    chart(0, 'b'), chart(1, 'b'), groupedDemoChart('profile/geography/0'), groupedDemoChart('profile/construction')];
+  const before = JSON.stringify(charts), curated = demoMainCharts(charts);
+  assert.deepEqual(curated, [charts[0], charts[1], charts[2], charts[5], charts[6]]);
+  assert.equal(JSON.stringify(charts), before);
 });
 
 test('grouped screens keep section identity, selected-only panels, paired units and input data intact', () => {

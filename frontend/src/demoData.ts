@@ -245,18 +245,18 @@ function stableDemoSeries(all: EChartsCoreOption, visible: EChartsCoreOption): E
   return { ...visible, series: (all.series as Series[]).map(series => shown.find(item => item.name === series.name) ?? { ...series, markPoint: undefined, label: { ...series.label, show: false } }) };
 }
 export const demoSources: DemoSource[] = [
-  { id: 'profile', title: 'Профиль застройщика', href: '/', load: profileCharts },
-  { id: 'permits', title: 'Разрешения на строительство', href: '/construction/permits', load: permitsCharts },
-  { id: 'domrf', title: 'Данные ДОМ.РФ', href: '/construction/domrf', load: domrfCharts },
-  { id: 'sales', title: 'Распроданность и прогноз ввода', href: '/construction/domrf', load: salesCharts },
+  { id: 'domrf', title: 'Текущее строительство · ДОМ.РФ', href: '/construction/domrf', load: domrfCharts },
+  { id: 'sales', title: 'Распроданность и стройготовность', href: '/construction/domrf', load: salesCharts },
   { id: 'apartments', title: 'Квартирография', href: '/apartments', load: apartmentCharts },
-  { id: 'operational', title: 'Оперативный ввод', href: '/commissioning/operational', load: operationalCharts },
   { id: 'annual', title: 'Годовой ввод', href: '/commissioning/annual', load: annualCharts },
+  { id: 'operational', title: 'Оперативный ввод', href: '/commissioning/operational', load: operationalCharts },
   { id: 'linear', title: 'Ввод линейных объектов', href: '/commissioning/linear', load: linearCharts },
+  { id: 'permits', title: 'Разрешения на строительство', href: '/construction/permits', load: permitsCharts },
+  { id: 'mortgage', title: 'Ипотечное кредитование', href: '/economics/mortgage', load: mortgageCharts },
+  { id: 'preferential', title: 'Льготное ипотечное кредитование', href: '/economics/preferential-mortgage', load: preferentialCharts },
   ...(['accounts', 'ipc', 'salary'] as const).map(family => ({ id: family, title: { accounts: 'ВРП и ВВП', ipc: 'ИПЦ', salary: 'Заработная плата' }[family], href: `/economics/${family}`, load: async (signal: AbortSignal) => {
     const { data } = await loadEconomicsPage(family, new URLSearchParams(), signal);
     return data.charts.map(chart => entry(`${family}/${chart.id}`, chart.title, context('Мосстат / Росстат', data), `/economics/${family}`, hasPoints(chart), economicsChartRows(chart), (theme, width, hidden) => economicsChartOption(chart, theme, { width, hidden })));
   } })),
-  { id: 'mortgage', title: 'Ипотечное кредитование', href: '/economics/mortgage', load: mortgageCharts },
-  { id: 'preferential', title: 'Льготное ипотечное кредитование', href: '/economics/preferential-mortgage', load: preferentialCharts },
+  { id: 'profile', title: 'Профиль застройщика', href: '/', load: profileCharts },
 ];

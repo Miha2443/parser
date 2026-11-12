@@ -275,9 +275,9 @@ async function checkViewer(page, base, check) {
   undefined, { timeout: 180000 });
   assert.deepEqual(await page.locator('.demo-error').allTextContents(), []);
   const groups = {
-    sales: ['sales/forecast', 'sales/monthly_percent'],
-    apartments: ['apartments/distribution', 'apartments/rooms'],
-    linear: ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'].map(id => `linear/${id}`),
+    sales: ['sales/monthly_percent'],
+    apartments: ['apartments/distribution'],
+    linear: ['roads', 'metro_stations'].map(id => `linear/${id}`),
   };
   for (const [source, ids] of Object.entries(groups)) {
     const section = page.locator(`.demo-source[data-demo-source="${source}"]`);

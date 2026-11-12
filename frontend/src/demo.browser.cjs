@@ -63,6 +63,15 @@ async function main() {
     releasePermits();
     await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, { timeout: 30000 });
     assert.equal(await page.locator('.demo-error').count(), 0);
+    assert.deepEqual(await page.locator('.demo-source').evaluateAll(nodes => nodes.map(node => node.dataset.demoSource)), [
+      'domrf', 'sales', 'apartments', 'annual', 'operational', 'linear', 'permits',
+      'mortgage', 'preferential', 'accounts', 'ipc', 'salary', 'profile',
+    ]);
+    const offered = await page.locator('.demo-chart-choice [data-demo-chart]').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
+    for (const id of ['annual/b1', 'annual/b2_1', 'operational/housing', 'operational/nonres',
+      'linear/roads', 'linear/metro_stations', 'accounts/na_block1', 'accounts/na_block3']) assert.ok(offered.includes(id), id);
+    for (const id of ['annual/b3_3', 'sales/forecast', 'apartments/rooms', 'linear/bridges', 'linear/metro_tunnels', 'mortgage/count/monthly', 'accounts/na_block2', 'profile/structure/0', 'profile/construction']) assert.ok(!offered.includes(id), id);
+    assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
     assert.equal(await page.getByRole('slider', { name: 'Интервал показа' }).inputValue(), '120');
     assert.equal(await page.locator('.demo-page iframe').count(), 0);
     assert.ok(await page.locator('.demo-page canvas').count() < await page.locator('.demo-chart-choice').count());
@@ -237,9 +246,12 @@ async function main() {
       await page.keyboard.press('ArrowRight');
     }
     assert.equal(seen.size, count); assert.equal(new Set([...seen].map(id => id.split('/')[0])).size, 13);
+    const sourceOrder = [...seen].map(id => id.split('/')[0]).filter((id, index, ids) => index === 0 || id !== ids[index - 1]);
+    assert.deepEqual(sourceOrder, ['domrf', 'sales', 'apartments', 'annual', 'operational', 'linear', 'permits',
+      'mortgage', 'preferential', 'accounts', 'ipc', 'salary', 'profile']);
     await page.keyboard.press('Escape');
     await all.uncheck(); await choices.first().check();
-    checks.push(`all ${count} available charts render sequentially, permits use one live canvas, preferential legend restores`);
+    checks.push(`all ${count} curated screens render in editorial order, permits use one live canvas, preferential legend restores`);
 
     for (const [width, height] of [[320, 800], [390, 800], [768, 800], [1440, 800], [1920, 1080], [3840, 2160], [844, 390]]) {
       await page.setViewportSize({ width, height });
@@ -274,7 +286,7 @@ async function main() {
     failIpc = true; emptyLinear = true; emptySalary = true;
     await page.reload(); await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13);
     await page.locator('[data-demo-source="ipc"] [role="alert"]').waitFor();
-    assert.equal(await page.locator('[data-demo-source="linear"] .demo-chart-choice input:disabled').count(), 6);
+    assert.equal(await page.locator('[data-demo-source="linear"] .demo-chart-choice input:disabled').count(), 2);
     assert.equal(await page.locator('[data-demo-source="linear"] .demo-source-selection input').isDisabled(), true);
     assert.equal(await page.locator('[data-demo-source="salary"] .demo-source-selection input').isDisabled(), true);
     assert.match(await page.locator('[data-demo-source="salary"]').innerText(), /Нет доступных графиков/);

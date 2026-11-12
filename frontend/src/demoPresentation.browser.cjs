@@ -127,9 +127,10 @@ async function main() {
       await require('./demo.browser.cjs').main();
       return;
     }
-    const ids = ['profile/annual', 'profile/structure/0', 'profile/structure/1', 'profile/structure/2', 'permits/main', 'sales/forecast',
+    const ids = ['profile/annual', 'profile/structure/1', 'profile/structure/2', 'permits/main',
+      'annual/b1', 'annual/b2_1', 'operational/housing', 'operational/nonres', 'accounts/na_block1', 'accounts/na_block3',
       'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open', 'domrf/realization',
-      'mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/volume/monthly', 'mortgage/count/monthly',
+      'mortgage/volume/annual', 'mortgage/count/annual',
       'preferential/volumeMln/annual', 'preferential/count/annual', 'preferential/volumeMln/cumulative', 'preferential/count/cumulative',
       ...quietCharts,
       ...['annual', 'cumulative'].flatMap(period => characteristicMetrics.map(metric => `preferential/${metric}/${period}`))];
@@ -179,7 +180,7 @@ async function main() {
           const required = panelIds.length > 1 ? 12 : viewport.width > 3000 ? 30 : 20;
           assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= required), `${id} no readable chart text: ${JSON.stringify({ width: state.width, height: state.height, fonts: [...new Set(state.texts.map(text => text.font))] })}`);
           if (id === 'preferential/count/annual') assert.ok(state.bars.some(bar => bar.width >= bar.band * .4), 'Preferential bars still thin within their panel');
-          if (id === 'profile/structure/0') assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= Math.min(70, Math.min(state.width, state.height) * .1)), 'Ring total is too small');
+          if (id.startsWith('profile/structure/')) assert.ok(state.texts.some(text => Number.parseFloat(text.font.match(/([\d.]+)px/)?.[1]) >= Math.min(70, Math.min(state.width, state.height) * .1)), `Ring total is too small: ${JSON.stringify({ id, viewport, width: state.width, height: state.height, texts: state.texts })}`);
           if (id === 'mortgage/volume/annual') {
             assert.equal(state.axes.length, 2);
             assert.ok(state.texts.some(text => String(text.text).includes('%')), 'Growth labels missing');

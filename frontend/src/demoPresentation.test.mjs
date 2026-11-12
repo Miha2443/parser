@@ -555,6 +555,19 @@ test('ring totals and units form a large centered pair without changing values',
   assert.deepEqual(result.series[0], option.series[0]);
 });
 
+test('profile detail rings use their own readable size tier rather than the neighboring time-series tier', () => {
+  for (const [width, height, expected] of [[1143, 657, 84], [540, 430, 56], [320, 280, 36]]) {
+    const option = { graphic: [
+      { type: 'text', left: 'center', style: { text: '1 641', font: '600 42px Segoe UI' } },
+      { type: 'text', left: 'center', style: { text: 'unit', font: '12px Segoe UI' } },
+    ], series: [{ type: 'pie', data: [{ value: 1641 }] }] };
+    const result = demoPresentationOption(option, width, height);
+    assert.equal(result.graphic[0].style.font, `600 ${expected}px Segoe UI`);
+    assert.equal(result.graphic[0].style.text, '1 641');
+    assert.equal(option.graphic[0].style.font, '600 42px Segoe UI');
+  }
+});
+
 test('bars on different value axes still share the same category slot', () => {
   const result = demoPresentationOption({ grid: { left: 12, right: 12, top: 36, bottom: 12 }, xAxis: { type: 'category', data: ['2026'] }, yAxis: [{ type: 'value' }, { type: 'value' }], series: [
     { type: 'bar', yAxisIndex: 0, data: [12] }, { type: 'bar', yAxisIndex: 1, data: [25] },

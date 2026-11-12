@@ -8,6 +8,7 @@ import { Chart } from './Chart';
 import DeveloperSelect from './DeveloperSelect';
 import { loadCatalog, selectFilters } from './data';
 import { demoPresentationOption, layoutDemoLineLabels } from './demoPresentation';
+import { demoMainCharts } from './demoCatalog';
 import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames, demoSelection, demoSources } from './demoData';
 import type { DemoChart as DemoChartEntry, DemoOptions, DemoSource } from './demoData';
 import { demoPanelContext, demoPanelTitle, demoSlides } from './demoSlides';
@@ -31,7 +32,7 @@ function useDemoSources(options: Record<string, DemoOptions>) {
     setStates(previous => ({ ...previous, [source.id]: { loading: true, charts: [], error: '', optionsKey } }));
     const timeout = window.setTimeout(() => controller.abort(new Error('Сервер данных не ответил вовремя.')), 60000);
     try {
-      const charts = await source.load(controller.signal, options);
+      const charts = demoMainCharts(await source.load(controller.signal, options));
       if (alive.current && jobs.current.get(source.id) === controller && !controller.signal.aborted) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts, error: '', optionsKey } }));
     } catch (error) {
       if (alive.current && jobs.current.get(source.id) === controller) setStates(previous => ({ ...previous, [source.id]: { loading: false, charts: [], error: controller.signal.aborted ? 'Сервер данных не ответил вовремя.' : error instanceof Error ? error.message : 'Не удалось загрузить графики.', optionsKey } }));

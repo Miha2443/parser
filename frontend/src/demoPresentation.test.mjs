@@ -11,7 +11,23 @@ test('presentation tiers depend on both dimensions, not just a wide short window
   assert.equal(demoPresentationScale(592, 197), 1.25);
   assert.equal(demoPresentationScale(1200, 650), 1.5);
   assert.equal(demoPresentationScale(1850, 780), 2);
+  assert.equal(demoPresentationScale(1824, 534), 2);
   assert.equal(demoPresentationScale(3750, 1740), 3.2);
+});
+
+test('compact permit breakdowns keep a readable year under every bar without changing categories', () => {
+  const years = Array.from({ length: 16 }, (_, i) => String(2011 + i));
+  years[15] += '\nянв–окт';
+  const option = { grid: { left: 40, right: 12, top: 35, bottom: 52 },
+    xAxis: { type: 'category', data: years, axisLabel: { interval: 0, fontSize: 11 } },
+    yAxis: { type: 'value' }, series: [{ type: 'bar', data: years.map((_, i) => i + 1) }] };
+  const shown = demoPresentationOption(option, 520, 270, [], 'permits/housing_components');
+  assert.equal(shown.xAxis.axisLabel.rotate, 90);
+  assert.equal(shown.xAxis.axisLabel.interval, 0);
+  assert.equal(shown.xAxis.axisLabel.formatter(years[15]), '2026');
+  assert.deepEqual(shown.xAxis.data, years);
+  assert.equal(option.xAxis.axisLabel.rotate, undefined);
+  assert.equal(demoPresentationOption(option, 1200, 650, [], 'permits/main').xAxis.axisLabel.rotate, undefined);
 });
 
 test('demo disables initial and update animation without changing the provider option', () => {

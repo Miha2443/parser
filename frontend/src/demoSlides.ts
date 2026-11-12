@@ -2,7 +2,8 @@ import type { DemoChart } from './demoData';
 
 export type DemoSlide = {
   id: string; title: string; sourceTitle: string; context: string;
-  layout: 'single' | 'pair' | 'rings' | 'overview' | 'grid'; charts: DemoChart[];
+  layout: 'single' | 'pair' | 'rings' | 'overview' | 'grid' | 'focus'; charts: DemoChart[];
+  primaryId?: string;
 };
 const sourceLabels: Record<string, string> = {
   profile: 'Профиль застройщика', permits: 'Разрешения на строительство · РС',
@@ -15,6 +16,8 @@ const sourceLabels: Record<string, string> = {
 };
 export const demoSourceTitle = (id: string) => sourceLabels[id.split('/')[0]] ?? 'Аналитика Москвы';
 export function demoPanelTitle(chart: DemoChart, slide: DemoSlide) {
+  if (slide.charts.length > 1 && /^mortgage\/(volume|count)\//.test(chart.id)) return chart.id.includes('/volume/') ? 'Объём выданных кредитов' : 'Количество договоров';
+  if (slide.charts.length > 1 && /^preferential\/(volumeMln|count)\//.test(chart.id)) return chart.id.includes('/volumeMln/') ? 'Объём выданных кредитов' : 'Количество договоров';
   return slide.id.startsWith('preferential/characteristics/') ? chart.title.replace(/ · (?:по годам|накопленный период)$/, '') : chart.title;
 }
 export function demoPanelContext(chart: DemoChart, slide: DemoSlide) {
@@ -23,6 +26,7 @@ export function demoPanelContext(chart: DemoChart, slide: DemoSlide) {
 }
 function group(chart: DemoChart): { id: string; title: string; layout: DemoSlide['layout'] } {
   const id = chart.id, scope = chart.scope ?? 'profile';
+  if (chart.focus) return { id: chart.focus.group, title: chart.focus.title, layout: 'focus' };
   if (id.startsWith('profile/')) {
     if (id.endsWith('/annual') || id.includes('/structure/')) return { id: `${scope}/commissioning`, title: 'Ввод недвижимости', layout: 'overview' };
     if (id.includes('/geography/')) return { id: `${scope}/geography`, title: 'География деятельности', layout: 'rings' };
@@ -63,16 +67,24 @@ export function demoSlides(charts: DemoChart[]): DemoSlide[] {
   const groups = new Map<string, DemoSlide>();
   for (const chart of charts) {
     if (chart.empty) continue;
-    const spec = group(chart), previous = groups.get(spec.id);
+    const spec = group(chart), key = JSON.stringify([spec.id, chart.focus?.cohort ?? null, chart.focus ? chart.id.split('/')[0] : null]), previous = groups.get(key);
     if (previous) previous.charts.push(chart);
-    else groups.set(spec.id, { ...spec, sourceTitle: demoSourceTitle(chart.id), context: chart.context, charts: [chart] });
+    else groups.set(key, { ...spec, sourceTitle: demoSourceTitle(chart.id), context: chart.context, charts: [chart] });
   }
+  const identifiers = new Map<string, number>();
   return [...groups.values()].map(slide => {
     const panels = [...slide.charts];
+    const primaries = panels.filter(chart => chart.focus?.role === 'primary');
+    const primaryId = slide.layout === 'focus' && primaries.length === 1 && panels.length > 1 ? primaries[0].id : undefined;
+    if (primaryId) panels.sort((a, b) => Number(b.id === primaryId) - Number(a.id === primaryId));
     if (slide.layout === 'overview') panels.sort((a, b) => Number(a.id.endsWith('/annual') || a.id === 'domrf/realization') - Number(b.id.endsWith('/annual') || b.id === 'domrf/realization'));
     const hasHistory = panels.some(chart => chart.id.endsWith('/annual') || chart.id === 'domrf/realization');
-    return { ...slide, charts: panels, context: sharedContext(panels),
-      title: panels.length === 1 ? panels[0].title : slide.title,
-      layout: panels.length === 1 ? 'single' : slide.layout === 'overview' && !hasHistory ? 'rings' : slide.layout };
+    const index = identifiers.get(slide.id) ?? 0;
+    identifiers.set(slide.id, index + 1);
+    const focusLayout = primaryId ? 'focus' : panels[0].focus?.detailLayout ?? 'grid';
+    return { ...slide, id: index ? `${slide.id}/cohort-${index + 1}` : slide.id, charts: panels, context: sharedContext(panels),
+      ...(primaryId ? { primaryId } : {}),
+      title: panels.length === 1 ? panels[0].title : slide.layout === 'focus' && !primaryId ? panels[0].focus?.detailTitle ?? slide.title : slide.title,
+      layout: panels.length === 1 ? 'single' : slide.layout === 'focus' ? focusLayout : slide.layout === 'overview' && !hasHistory ? 'rings' : slide.layout };
   });
 }

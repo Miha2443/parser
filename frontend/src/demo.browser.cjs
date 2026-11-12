@@ -158,7 +158,8 @@ async function main() {
     await page.mouse.move(400, 880); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
     await page.mouse.move(100, 100); await page.clock.runFor(3200);
     assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true);
-    await page.touchscreen.tap(300, 300); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
+    const heading = await page.locator('#demo-slide-title').boundingBox();
+    await page.touchscreen.tap(heading.x + Math.min(heading.width / 2, 200), heading.y + heading.height / 2); assert.equal(await page.locator('.demo-viewer-controls').isVisible(), true);
     await page.getByRole('button', { name: 'Скрыть управление', exact: true }).tap();
     assert.equal(await page.locator('.demo-viewer-controls').isHidden(), true, 'explicit touch hide does not reveal itself');
     await page.getByRole('button', { name: 'Показать управление', exact: true }).tap();
@@ -228,7 +229,7 @@ async function main() {
         await painted(page); await page.screenshot({ path: path.join(output, 'viewer-permits-live-yoy.png') });
       }
       if (id === 'preferential/volumeMln/annual') {
-        const legend = chart.locator(':scope > .chart-block .chart-legend button').first();
+        const legend = await page.locator('.demo-shared-legend').count() ? page.locator('.demo-shared-legend button').first() : chart.locator(':scope > .chart-block .chart-legend button').first();
         await legend.click(); assert.equal(await legend.getAttribute('aria-pressed'), 'false');
         await legend.click(); assert.equal(await legend.getAttribute('aria-pressed'), 'true');
         await page.screenshot({ path: path.join(output, 'viewer-preferential.png') });

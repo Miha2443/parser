@@ -11,7 +11,7 @@ const numeric = (value: unknown, fallback: number) => typeof value === 'number' 
 export function demoPresentationScale(width: number, height: number): number {
   if (width >= 3000 && height >= 1100) return 3.2;
   if (width >= 2200 && height >= 850) return 2.6;
-  if (width >= 1500 && height >= 560) return 2;
+  if (width >= 1500 && height >= 500) return 2;
   if (width >= 1000 && height >= 400) return 1.5;
   if (width >= 1400 && height >= 270) return 1.5;
   if (width >= 1000 && height >= 270) return 1.25;
@@ -416,6 +416,13 @@ export function demoPresentationOption(option: EChartsCoreOption, width: number,
     if (typeof label.width === 'number') label.width *= scale;
   }
   const series = list(result.series), xAxes = list(result.xAxis), yAxes = list(result.yAxis);
+  if (chartId.startsWith('permits/') && width < 700 && height < 380) for (const axis of xAxes) {
+    const label = record(axis.axisLabel);
+    if (axis.type !== 'category' || !Array.isArray(axis.data) || axis.data.length < 13 || label.show === false) continue;
+    axis.axisLabel = { ...label, interval: 0, hideOverlap: false, rotate: 90, margin: 6,
+      fontSize: Math.max(10, Math.min(12, numeric(label.fontSize, 10))),
+      formatter: (value: unknown) => String(record(value).value ?? value).split('\n')[0] };
+  }
   for (const item of series) {
     if (item.type === 'line') {
       item.lineStyle = { ...record(item.lineStyle), width: numeric(record(item.lineStyle).width, 2) * Math.sqrt(scale) };

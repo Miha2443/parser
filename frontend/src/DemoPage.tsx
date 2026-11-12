@@ -11,6 +11,7 @@ import { demoPresentationOption, layoutDemoLineLabels } from './demoPresentation
 import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames, demoSelection, demoSources } from './demoData';
 import type { DemoChart as DemoChartEntry, DemoOptions, DemoSource } from './demoData';
 import { demoPanelContext, demoPanelTitle, demoSlides } from './demoSlides';
+import { commonDemoLegend, demoPalette, demoSummaryText } from './demoComposition';
 import type { DemoSlide } from './demoSlides';
 import type { Catalog, Theme } from './types';
 import './demo.css';
@@ -85,10 +86,10 @@ class ChartBoundary extends Component<{ children: ReactNode; resetKey: string },
   componentDidUpdate(previous: Readonly<{ children: ReactNode; resetKey: string }>) { if (previous.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
   render() { return this.state.failed ? <div className="demo-state" role="alert"><AlertCircle size={20} /><span>Не удалось построить график.</span><button type="button" className="icon-button" title="Повторить построение графика" aria-label="Повторить построение графика" onClick={() => this.setState({ failed: false })}><RefreshCw size={16} /></button></div> : this.props.children; }
 }
-function LiveChart({ entry, theme, preview = false }: { entry: DemoChartEntry; theme: Theme; preview?: boolean }) {
+function LiveChart({ entry, theme, preview = false, sharedHidden, sharedLegend = false }: { entry: DemoChartEntry; theme: Theme; preview?: boolean; sharedHidden?: readonly string[]; sharedLegend?: boolean }) {
   const previewHeight = entry.id.startsWith('permits/') ? 280 : 190;
   const container = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(!preview), [size, setSize] = useState({ width: 600, height: preview ? previewHeight : 500 }), [hidden, setHidden] = useState<string[]>([]);
-  const { width, height } = size;
+  const { width, height } = size, activeHidden = sharedHidden ?? hidden;
   useLayoutEffect(() => {
     if (!container.current) return;
     const element = container.current, canvas = element.querySelector<HTMLElement>(':scope > .chart-block > .chart-canvas');
@@ -106,13 +107,13 @@ function LiveChart({ entry, theme, preview = false }: { entry: DemoChartEntry; t
     return () => { observer.disconnect(); intersection.disconnect(); };
   }, [preview, visible]);
   const option = useMemo(() => {
-    const built = entry.option(theme, Math.max(240, width), hidden, height);
-    const presented = preview ? built : demoPresentationOption(built, width, height, hidden, entry.id);
+    const built = demoPalette(entry.option(theme, Math.max(240, width), [...activeHidden], height), entry.id, theme);
+    const presented = preview ? built : demoPresentationOption(built, width, height, activeHidden, entry.id);
     const tooltip = presented.tooltip && typeof presented.tooltip === 'object' && !Array.isArray(presented.tooltip) ? presented.tooltip : {};
     return { ...presented, tooltip: { ...tooltip, appendTo: undefined, appendToBody: false, confine: true } };
-  }, [entry, theme, width, height, hidden, preview]);
+  }, [entry, theme, width, height, activeHidden, preview]);
   return <div ref={container} className={preview ? `demo-live demo-preview${previewHeight > 190 ? ' demo-preview-tall' : ''}` : 'demo-live demo-full-chart'} data-demo-chart={entry.id}>
-    {entry.empty ? <div className="demo-state">Нет данных</div> : visible ? <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={preview ? previewHeight : 500} onLegendChange={setHidden} afterLayout={preview ? undefined : layoutDemoLineLabels} /> : <div className="demo-preview-placeholder" aria-hidden="true" />}
+    {entry.empty ? <div className="demo-state">Нет данных</div> : visible ? <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={preview ? previewHeight : 500} onLegendChange={setHidden} hiddenSeries={sharedHidden} showLegend={!sharedLegend} afterLayout={preview ? undefined : layoutDemoLineLabels} /> : <div className="demo-preview-placeholder" aria-hidden="true" />}
   </div>;
 }
 function Preview({ entry, checked, toggle, theme }: { entry: DemoChartEntry; checked: boolean; toggle: () => void; theme: Theme }) {
@@ -138,8 +139,12 @@ function useSlideClock(step: number, seconds: number, paused: boolean, next: () 
 function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { slides: DemoSlide[]; seconds: number; theme: Theme; onExit: () => void; viewerRef: RefObject<HTMLDivElement>; notice: string }) {
   const [step, setStep] = useState(0), [paused, setPaused] = useState(false), [fullscreen, setFullscreen] = useState(false), [screenError, setScreenError] = useState(notice);
   const [controlsVisible, setControlsVisible] = useState(true), [controlsPinned, setControlsPinned] = useState(false);
+  const [hiddenBySlide, setHiddenBySlide] = useState<Record<string, string[]>>({});
   const exitButton = useRef<HTMLButtonElement>(null), controls = useRef<HTMLElement>(null), hideTimer = useRef<number>(), enteredFullscreen = useRef(false), index = demoIndex(step, slides.length), entry = slides[index];
   const next = useCallback(() => setStep(value => value + 1), []), previous = useCallback(() => setStep(value => value - 1), []);
+  const legend = useMemo(() => commonDemoLegend(entry.charts, theme), [entry, theme]);
+  const sharedHidden = useMemo(() => hiddenBySlide[entry.id] ?? [], [hiddenBySlide, entry.id]);
+  const hasSummaries = entry.charts.length > 1 && entry.charts.some(chart => chart.summary !== undefined);
   useSlideClock(step, seconds, paused, next);
   const scheduleHide = useCallback(() => {
     window.clearTimeout(hideTimer.current);
@@ -193,11 +198,15 @@ function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { sli
   }
   return createPortal(<div ref={viewerRef} className="demo-viewer" role="dialog" aria-modal="true" aria-labelledby="demo-slide-title" aria-describedby="demo-slide-context" onPointerMove={event => { if (event.pointerType === 'mouse' && event.clientY >= event.currentTarget.getBoundingClientRect().bottom - 120) revealControls(); }} onPointerDown={event => { if (event.pointerType === 'touch' && !(event.target instanceof Element && event.target.closest('button, a, input'))) revealControls(); }}>
     <header className="demo-viewer-header"><div className="demo-wordmark"><img src="/brand-moscow.svg" alt="" /><strong>Аналитика Москвы</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div><div className="demo-header-actions"><button type="button" className="icon-button" title={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-label={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-controls="demo-playback-controls" aria-expanded={controlsVisible} onClick={toggleControls}><SlidersHorizontal size={19} /></button><button ref={exitButton} type="button" className="icon-button" title="Завершить демонстрацию (Esc)" aria-label="Завершить демонстрацию" onClick={onExit}><X size={19} /></button></div></header>
-    <div className="demo-slide-heading" aria-live="polite" aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
-    <div className={`demo-stage demo-layout-${entry.layout}`} data-demo-slide={entry.id} data-demo-panels={entry.charts.length} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}`} key={chart.id} aria-label={chart.title}>
+    <div className="demo-slide-heading"><div aria-live="polite" aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
+      {legend.length > 0 && <div className="legend demo-shared-legend" role="group" aria-label="Общая легенда экрана">{legend.map(item => <button type="button" key={item.name} className={sharedHidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!sharedHidden.includes(item.name)} title={`${sharedHidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onClick={() => setHiddenBySlide(previous => ({ ...previous, [entry.id]: sharedHidden.includes(item.name) ? sharedHidden.filter(name => name !== item.name) : [...sharedHidden, item.name] }))}><i style={{ background: item.color, ...(item.borderType === 'dashed' ? { border: `1px dashed ${item.color ?? 'currentColor'}`, backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, currentColor 2px, currentColor 3px)' } : {}) }} />{item.name}</button>)}</div>}
+    </div>
+    <div className={`demo-stage demo-layout-${entry.layout}${hasSummaries ? ' demo-has-summaries' : ''}`} data-demo-slide={entry.id} data-demo-panels={entry.charts.length} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length), '--demo-focus-rows': Math.max(1, entry.charts.length - 1) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}${entry.layout === 'focus' ? chart.id === entry.primaryId ? ' demo-panel-primary' : ' demo-panel-detail' : ''}`} key={chart.id} aria-label={chart.title} data-demo-role={entry.layout === 'focus' ? chart.id === entry.primaryId ? 'primary' : 'detail' : 'peer'}>
       {entry.charts.length > 1 && <h2>{demoPanelTitle(chart, entry)}</h2>}
-      {entry.charts.length > 1 && demoPanelContext(chart, entry) && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
-      <ChartBoundary resetKey={`${chart.id}-${step}`}><LiveChart entry={chart} theme={theme} /></ChartBoundary>
+      {entry.charts.length > 1 && !(hasSummaries && entry.layout === 'grid') && demoPanelContext(chart, entry) && demoPanelContext(chart, entry) !== chart.summary?.unit && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
+      {chart.summary && <div className="demo-summary"><div><strong>{demoSummaryText(chart.summary)}</strong><span>{chart.summary.unit}</span></div><p>{chart.summary.context}</p></div>}
+      {!chart.summary && hasSummaries && entry.layout === 'grid' && <div className="demo-summary demo-summary-placeholder"><span>{demoPanelContext(chart, entry)}</span></div>}
+      <ChartBoundary resetKey={`${chart.id}-${step}`}><LiveChart entry={chart} theme={theme} sharedLegend={legend.length > 0} sharedHidden={legend.length ? sharedHidden : undefined} /></ChartBoundary>
     </section>)}</div>
     <footer ref={controls} id="demo-playback-controls" className="demo-viewer-controls" hidden={!controlsVisible} onFocusCapture={() => window.clearTimeout(hideTimer.current)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleHide(); }}><span className="demo-slide-count" aria-label={`График ${index + 1} из ${slides.length}`}>{index + 1} / {slides.length}</span><button type="button" className="icon-button" title="Предыдущий график (←)" aria-label="Предыдущий график" onClick={previous}><ChevronLeft size={19} /></button><button type="button" className="icon-button" title={paused ? 'Продолжить показ' : 'Приостановить показ'} aria-label={paused ? 'Продолжить показ' : 'Приостановить показ'} onClick={() => setPaused(value => !value)}>{paused ? <Play size={18} /> : <Pause size={18} />}</button><button type="button" className="icon-button" title="Следующий график (→)" aria-label="Следующий график" onClick={next}><ChevronRight size={19} /></button><span className="demo-time">{demoIntervalLabel(seconds)}</span><button type="button" className="icon-button demo-pin-button" title={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-label={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-pressed={controlsPinned} onClick={() => setControlsPinned(value => !value)}>{controlsPinned ? <PinOff size={17} /> : <Pin size={17} />}</button><button type="button" className="icon-button demo-fullscreen-button" title={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} aria-label={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={17} /> : <Maximize size={17} />}</button></footer>
   </div>, document.body);

@@ -25,6 +25,7 @@ after(() => hooks.deregister());
 const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues, demoIndex, demoInterval, demoIntervalLabel, demoSelection, demoSources, demoVersioned } = await import('./demoData.ts');
 const { ApiError } = await import('./data.ts');
 const { demoPanelContext, demoPanelTitle, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
+const { commonDemoLegend, demoPalette, demoSummaryText } = await import('./demoComposition.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -235,6 +236,116 @@ test('catalog reconciliation retries once for changed versions and 404, but neve
   calls = 0;
   await assert.rejects(demoVersioned(async () => ({ version: 'v1' }), async () => { calls++; return { version: 'other' }; }), /Источник изменился/); assert.equal(calls, 2);
 });
+
+test('focus screens require exactly one selected primary and never auto-add missing charts', () => {
+  const focus = { group: 'permits/structure', cohort: 'v1/msk/2026-07/general', title: 'Общая площадь и состав', detailTitle: 'Состав', detailLayout: 'grid' };
+  const charts = ['main', 'housing', 'nonres'].map((id, i) => groupedDemoChart(`permits/${id}`, { focus: { ...focus, role: i ? 'detail' : 'primary' } }));
+  const before = JSON.stringify(charts);
+  for (let mask = 1; mask < 8; mask++) {
+    const selected = charts.filter((_, i) => mask & 1 << i), [slide] = demoSlides(selected);
+    const hasPrimary = selected.some(chart => chart.focus.role === 'primary');
+    assert.equal(slide.layout, selected.length === 1 ? 'single' : hasPrimary ? 'focus' : 'grid');
+    assert.equal(slide.primaryId, selected.length > 1 && hasPrimary ? 'permits/main' : undefined);
+    if (!hasPrimary && selected.length > 1) assert.equal(slide.title, 'Состав');
+    assert.deepEqual(slide.charts, selected);
+  }
+  const reordered = demoSlides([charts[2], charts[0], charts[1]])[0];
+  assert.deepEqual(reordered.charts.map(chart => chart.id), ['permits/main', 'permits/nonres', 'permits/housing']);
+  assert.equal(JSON.stringify(charts), before);
+  const ambiguous = demoSlides([charts[0], { ...charts[1], focus: { ...focus, role: 'primary' } }])[0];
+  assert.equal(ambiguous.layout, 'grid'); assert.equal(ambiguous.primaryId, undefined);
+});
+
+test('focus grouping separates region/version/period/area cohorts and unrelated sources', () => {
+  const focus = { group: 'same', cohort: 'v1/msk/m7/living', title: 'Same title', detailLayout: 'rings' };
+  const charts = [groupedDemoChart('domrf/main', { focus: { ...focus, role: 'primary' } }),
+    groupedDemoChart('domrf/a', { focus: { ...focus, role: 'detail' } }),
+    ...['v2/msk/m7/living', 'v1/rf/m7/living', 'v1/msk/m8/living', 'v1/msk/m7/general'].map((cohort, i) => groupedDemoChart(`domrf/other-${i}`, { focus: { ...focus, cohort, role: 'detail' } })),
+    groupedDemoChart('permits/foreign', { focus: { ...focus, role: 'detail' } })];
+  const slides = demoSlides(charts);
+  assert.equal(slides.length, 6); assert.equal(new Set(slides.map(slide => slide.id)).size, 6);
+  assert.deepEqual(slides[0].charts.map(chart => chart.id), ['domrf/main', 'domrf/a']);
+  assert.ok(slides.slice(1).every(slide => slide.layout === 'single'));
+});
+
+test('a shared legend requires identical categories, colors and line styles without mutating options', () => {
+  const option = { series: [{ name: 'A', type: 'bar', data: [0, null, 2], itemStyle: { color: '#123456' } }, { name: 'B', type: 'line', data: [3, 4, 5], itemStyle: { color: '#abcdef', borderType: 'dashed' } }] };
+  const chart = id => groupedDemoChart(id, { option: () => option });
+  const charts = [chart('test/a'), chart('test/b')], before = JSON.stringify(option);
+  assert.equal(commonDemoLegend(charts, 'light').length, 2);
+  assert.deepEqual(commonDemoLegend([charts[0]], 'light'), []);
+  for (const edit of [s => s.name = 'C', s => s.itemStyle.color = '#000000', s => s.itemStyle.borderType = 'solid']) {
+    const changed = structuredClone(option); edit(changed.series[1]);
+    assert.deepEqual(commonDemoLegend([charts[0], { ...charts[1], option: () => changed }], 'light'), []);
+  }
+  assert.equal(JSON.stringify(option), before);
+  assert.deepEqual(commonDemoLegend(charts.map(chart => ({ ...chart, option: () => ({ series: [{ name: 'Unknown color', type: 'bar', data: [1] }] }) })), 'light'), []);
+});
+
+test('demo program palette is isolated from ordinary charts and preserves source data', () => {
+  const source = { series: [{ name: 'Семейная ипотека', type: 'bar', data: [0, null, 10], itemStyle: { color: '#ffffff' } }] };
+  const before = JSON.stringify(source), shown = demoPalette(source, 'preferential/count/annual');
+  assert.equal(shown.series[0].itemStyle.color, '#5a9296');
+  assert.equal(demoPalette(source, 'preferential/count/annual', 'dark').series[0].itemStyle.color, '#73a9ae');
+  assert.deepEqual(shown.series[0].data, source.series[0].data);
+  assert.equal(JSON.stringify(source), before);
+  assert.equal(demoPalette(source, 'mortgage/rates'), source);
+  assert.equal(demoSummaryText({ value: null, unit: '%', context: '' }), '—');
+  assert.equal(demoSummaryText({ value: 0, unit: '%', context: '' }), '0');
+  assert.equal(demoSummaryText({ value: 5.91566, unit: '%', context: '', digits: 2 }), '5,92');
+});
+
+test('DOM.RF focus joins current structure to its matching history only', async t => {
+  let mismatched = false;
+  t.mock.method(globalThis, 'fetch', async url => {
+    const data = structuredClone(fixtures.response(url));
+    if (mismatched) data.sales.history[0].period = '2026-04';
+    return Response.json(data);
+  });
+  const adapter = demoSources.find(source => source.id === 'domrf');
+  const charts = await adapter.load(new AbortController().signal), slide = demoSlides(charts).find(slide => slide.layout === 'focus');
+  assert.equal(slide.primaryId, 'domrf/realization');
+  assert.deepEqual(slide.charts.map(chart => chart.id), ['domrf/realization', 'domrf/sold', 'domrf/unsold']);
+  mismatched = true;
+  assert.ok((await adapter.load(new AbortController().signal)).every(chart => !chart.focus));
+});
+
+test('permit demo sends one explicit period to the main chart and its breakdown', async t => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(input, 'http://localhost'), data = structuredClone(fixtures.response(url)); calls.push(url);
+    data.selection.month = Number(url.searchParams.get('month'));
+    data.selection.structure.monthTo = Number(url.searchParams.get('structure_month_to'));
+    for (const kind of Object.keys(data.controls.monthsByKind)) data.controls.monthsByKind[kind] = Array.from({ length: 12 }, (_, i) => i + 1);
+    return Response.json(data);
+  });
+  const charts = await demoSources.find(source => source.id === 'permits').load(new AbortController().signal, { month: 2, livingOnly: false });
+  assert.equal(calls[0].searchParams.get('month'), '2'); assert.equal(calls[0].searchParams.get('structure_month_to'), '2');
+  assert.equal(calls[0].searchParams.get('structure_month_from'), '1'); assert.equal(calls[0].searchParams.get('structure_mode'), 'period');
+  assert.equal(demoSlides(charts)[0].layout, 'focus');
+  assert.equal(demoSlides(charts)[0].primaryId, 'permits/main');
+});
+
+test('preferential summaries never invent an overall mean across programs', async t => {
+  let soleProgram = false, missingAmount = false;
+  t.mock.method(globalThis, 'fetch', async input => {
+    const data = structuredClone(fixtures.response(input));
+    if ('characteristicsAnnual' in data && soleProgram) for (const rows of [data.characteristicsAnnual, data.characteristicsCumulative]) {
+      for (const row of rows) for (const program of ['preferential', 'it']) for (const key of Object.keys(row.programs[program])) row.programs[program][key] = null;
+      if (missingAmount) rows.at(-1).programs.family.averageAmountMln = null;
+    }
+    return Response.json(data);
+  });
+  const adapter = demoSources.find(source => source.id === 'preferential');
+  const initial = await adapter.load(new AbortController().signal);
+  assert.ok(initial.filter(chart => chart.id.includes('averageAmountMln')).every(chart => !chart.summary));
+  assert.equal(initial.find(chart => chart.id === 'preferential/volumeMln/annual').summary.value, .03);
+  soleProgram = true;
+  const one = await adapter.load(new AbortController().signal);
+  assert.ok(one.filter(chart => chart.id.includes('averageAmountMln')).every(chart => chart.summary.value === 5 && /Семейная/.test(chart.summary.context)));
+  missingAmount = true;
+  assert.ok((await adapter.load(new AbortController().signal)).filter(chart => chart.id.includes('averageAmountMln')).every(chart => !chart.summary));
+});
 test('every chart page has an explicit source, without whole-page mounts, iframes or static image slides', () => {
   assert.equal(demoSources.length, 13); assert.equal(new Set(demoSources.map(source => source.id)).size, 13);
   const source = readFileSync(new URL('./DemoPage.tsx', import.meta.url), 'utf8');
@@ -256,8 +367,8 @@ test('presentation adapts the measured canvas only in the viewer, without extra 
   const source = readFileSync(new URL('./DemoPage.tsx', import.meta.url), 'utf8');
   assert.match(source, /canvas \?\? element/);
   assert.match(source, /width = Math\.round\(bounds\.width\), height = Math\.round\(bounds\.height\)/);
-  assert.match(source, /entry\.option\(theme, Math\.max\(240, width\), hidden, height\)/);
-  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, hidden, entry\.id\)/);
+  assert.match(source, /entry\.option\(theme, Math\.max\(240, width\), \[\.\.\.activeHidden\], height\)/);
+  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, activeHidden, entry\.id\)/);
   assert.match(source, /useSlideClock\(step, seconds, paused, next\)/);
   assert.doesNotMatch(source, /demo-growth-chart|permitGrowthOption|demo-progress|progressbar/);
   const css = readFileSync(new URL('./demo.css', import.meta.url), 'utf8');

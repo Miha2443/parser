@@ -24,10 +24,15 @@ export const DEMO_MAX_SECONDS = 1800;
 export const DEMO_DEFAULT_SECONDS = 120;
 export const demoMonthNames = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 const mortgageMonths = demoMonthNames;
+const summaryPeriod = (month: number | null | undefined) => month === 12 ? 'за год' : month === 1 ? 'январь' : month ? `январь–${demoMonthNames[month - 1]}` : 'период неизвестен';
 export type DemoRows = (string | number | null)[][];
+export type DemoSummary = { value: number | null; unit: string; context: string; digits?: number };
+export type DemoFocus = { group: string; cohort: string; title: string; detailTitle?: string; role: 'primary' | 'detail'; detailLayout: 'rings' | 'grid' };
 export type DemoChart = {
   id: string; title: string; context: string; href: string; empty: boolean; rows: DemoRows;
   scope?: string;
+  focus?: DemoFocus;
+  summary?: DemoSummary;
   option: (theme: Theme, width: number, hidden: string[], height?: number) => EChartsCoreOption;
 };
 export type DemoOptions = { region?: 'msk' | 'rf'; developer?: string; month?: number; permitKind?: 'total' | 'housing' | 'nonresidential'; livingOnly?: boolean };
@@ -106,9 +111,26 @@ async function apartmentCharts(signal: AbortSignal, options: DemoOptions = {}): 
   return charts;
 }
 async function permitsCharts(signal: AbortSignal, options: DemoOptions = {}): Promise<DemoChart[]> {
-  const data = selectPermitArea(await loadPermitPageSelection({ permitKind: options.permitKind ?? 'total', ...(options.month ? { month: options.month } : {}) }, signal), options.livingOnly !== false), caption = context(`${data.permits.region} · ${data.permits.periodLabel}`, data);
-  return [entry('permits/main', 'Выдача разрешений по годам', caption, '/construction/permits', demoHasValues(data.permits.presentation.rows.flatMap(row => [row.selected, row.annualForecast])), permitsMainRows(data), (theme, width, hidden, height) => permitsMainOption(data, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })),
+  const data = selectPermitArea(await loadPermitPageSelection({ permitKind: options.permitKind ?? 'total',
+    ...(options.month ? { month: options.month, structure: { mode: 'period', monthFrom: 1, monthTo: options.month } } : {}) }, signal), options.livingOnly !== false), caption = context(`${data.permits.region} · ${data.permits.periodLabel}`, data);
+  const charts = [entry('permits/main', 'Выдача разрешений по годам', caption, '/construction/permits', demoHasValues(data.permits.presentation.rows.flatMap(row => [row.selected, row.annualForecast])), permitsMainRows(data), (theme, width, hidden, height) => permitsMainOption(data, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })),
     ...data.breakdowns.map(chart => entry(`permits/${chart.id}`, chart.title, `${caption} · ${chart.periodLabel}`, '/construction/permits', hasPoints(chart), permitBreakdownRows(chart, data.version), (theme, width, hidden, height) => breakdownOption(chart, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })))];
+  const latest = data.permits.presentation.rows.filter(row => row.actualMonth != null).at(-1);
+  if (latest) charts[0].summary = { value: latest.selected, unit: data.permits.unit, context: `Всего · ${latest.year} · ${summaryPeriod(latest.actualMonth)}` };
+  const selection = data.selection;
+  const samePeriod = selection.structure.mode === 'period' && selection.structure.monthFrom === 1 && selection.structure.monthTo === selection.month;
+  if (samePeriod) {
+    // Living-only totals exclude common/embedded areas: their primary must be
+    // the full composition, never the differently defined living-only main plot.
+    const full = options.livingOnly === false || selection.permitKind === 'nonresidential';
+    const primary = full ? 'permits/main' : selection.permitKind === 'total' ? 'permits/area_composition' : null;
+    if (primary) for (const chart of charts) {
+      if (chart.id !== primary && !['permits/housing_components', 'permits/nonresidential_components'].includes(chart.id)) continue;
+      chart.focus = { group: 'permits/area-structure', cohort: JSON.stringify([data.version, selection, full]),
+        title: 'Выдача разрешений и структура площади', detailTitle: 'Структура разрешённой площади', role: chart.id === primary ? 'primary' : 'detail', detailLayout: 'grid' };
+    }
+  }
+  return charts;
 }
 async function domrfCharts(signal: AbortSignal, options: DemoOptions = {}): Promise<DemoChart[]> {
   const data = await loadDomRfData(options.region ?? 'msk', signal), caption = context(data.region.label, data), history = constructionHistoryChart(data.construction.history);
@@ -118,6 +140,14 @@ async function domrfCharts(signal: AbortSignal, options: DemoOptions = {}): Prom
   for (const status of realizationStatuses) {
     const pct = metrics?.[`${status.id}_pct`] ?? null, area = metrics?.[`${status.id}_thousand_m2`] ?? null;
     charts.push(entry(`domrf/${status.id}`, status.label, `${data.region.label} · ${data.sales.period?.label ?? 'Нет периода'}`, '/construction/domrf', pct !== null && pct >= 0 && pct <= 100, [['Показатель', 'Доля источника, %', 'Площадь, тыс. м²'], [status.label, pct, area]], theme => domrfDonutOption(status.label, pct, area, status.color, theme)));
+  }
+  const current = data.sales.period;
+  if (current?.id && data.sales.history.at(-1)?.period === current.id) {
+    for (const chart of charts.filter(chart => chart.id !== 'domrf/construction')) {
+      chart.context = `${data.region.label} · ${current.label}`;
+      chart.focus = { group: 'domrf/realization-structure', cohort: JSON.stringify([data.version, data.region.id, current.id]),
+        title: 'Реализация квартир: динамика и структура', detailTitle: 'Структура реализации квартир', role: chart.id === 'domrf/realization' ? 'primary' : 'detail', detailLayout: 'rings' };
+    }
   }
   return charts;
 }
@@ -163,7 +193,11 @@ async function mortgageCharts(signal: AbortSignal, options: DemoOptions = {}): P
   const charts: DemoChart[] = [];
   for (const metric of ['volume', 'count'] as const) {
     const title = metric === 'volume' ? 'Объём ипотечных кредитов' : 'Количество ипотечных договоров', history = mortgageHistory(data.monthly, metric), field = metric === 'volume' ? 'volumeRub' : 'count';
-    charts.push(entry(`mortgage/${metric}/annual`, `${title} по годам`, annualCaption, href, demoHasValues(data.annual.flatMap(row => [row[metric].annual, row[metric].selected])), mortgageAnnualRows(data.annual, metric), (theme, width, _hidden, height) => mortgageAnnualOption(data.annual, metric, theme, width, height)));
+    const annual = entry(`mortgage/${metric}/annual`, `${title} по годам`, annualCaption, href, demoHasValues(data.annual.flatMap(row => [row[metric].annual, row[metric].selected])), mortgageAnnualRows(data.annual, metric), (theme, width, _hidden, height) => mortgageAnnualOption(data.annual, metric, theme, width, height));
+    const latest = data.annual.at(-1), measure = latest?.[metric];
+    if (latest && measure) annual.summary = { value: measure.selected === null ? null : measure.selected / (metric === 'volume' ? 1e9 : 1000),
+      unit: metric === 'volume' ? 'млрд руб.' : 'тыс. шт.', context: `Всего · ${latest.year} · ${summaryPeriod(measure.actualThroughMonth)}`, digits: 2 };
+    charts.push(annual);
     charts.push(entry(`mortgage/${metric}/monthly`, `${title} по месяцам`, caption, href, demoHasValues(history.flatMap(row => [row.primary[field], row.secondary[field]])), mortgageMonthlyRows(history, metric), theme => mortgageMonthlyOption(history, metric, theme)));
   }
   const history = mortgageHistory(data.monthly, 'rates');
@@ -183,8 +217,25 @@ async function preferentialCharts(signal: AbortSignal, options: DemoOptions = {}
     const suffix = cumulative ? 'cumulative' : 'annual', period = cumulative ? 'накопленный период' : 'по годам', flow = cumulative ? data.cumulative : data.annual, chars = cumulative ? data.characteristicsCumulative : data.characteristicsAnnual;
     const flowCaption = cumulative ? `${caption} · ${data.selection.month === 1 ? 'январь' : `январь–${mortgageMonths[data.selection.month - 1]}`}` : caption;
     const characteristicCaption = cumulative ? `${caption} · ${data.selection.characteristicMonth === 1 ? 'январь' : `январь–${mortgageMonths[data.selection.characteristicMonth - 1]}`}` : caption;
-    for (const metric of ['volumeMln', 'count'] as const) charts.push(entry(`preferential/${metric}/${suffix}`, `${metric === 'volumeMln' ? 'Объём льготных кредитов' : 'Количество льготных кредитов'} · ${period}`, flowCaption, href, demoHasValues(flow.flatMap(row => programs.map(program => row.programs[program.id][metric]))), flowRows(flow, metric, data.latestPeriodPartial ? data.source.date : null), (theme, width, hidden) => stableDemoSeries(flowChartOption(flow, metric, theme, width, [], cumulative), flowChartOption(flow, metric, theme, width, hiddenPrograms(hidden), cumulative))));
-    for (const metric of characteristics) charts.push(entry(`preferential/${metric.id}/${suffix}`, `${metric.label} · ${period}`, `${characteristicCaption} · ${metric.unit}`, href, demoHasValues(chars.flatMap(row => programs.map(program => row.programs[program.id][metric.id]))), characteristicRows(chars, metric.id), (theme, width, hidden) => stableDemoSeries(characteristicChartOption(chars, metric.id, theme, width, [], cumulative), characteristicChartOption(chars, metric.id, theme, width, hiddenPrograms(hidden), cumulative))));
+    for (const metric of ['volumeMln', 'count'] as const) {
+      const chart = entry(`preferential/${metric}/${suffix}`, `${metric === 'volumeMln' ? 'Объём льготных кредитов' : 'Количество льготных кредитов'} · ${period}`, flowCaption, href, demoHasValues(flow.flatMap(row => programs.map(program => row.programs[program.id][metric]))), flowRows(flow, metric, data.latestPeriodPartial ? data.source.date : null), (theme, width, hidden) => stableDemoSeries(flowChartOption(flow, metric, theme, width, [], cumulative), flowChartOption(flow, metric, theme, width, hiddenPrograms(hidden), cumulative)));
+      const latest = flow.at(-1), value = latest?.total[metric];
+      if (latest) chart.summary = { value: value == null ? null : value / 1000, unit: metric === 'volumeMln' ? 'млрд руб.' : 'тыс. шт.',
+        context: `Всего · ${latest.year} · ${summaryPeriod(latest.throughMonth)}`, digits: 2 };
+      charts.push(chart);
+    }
+    for (const metric of characteristics) {
+      const chart = entry(`preferential/${metric.id}/${suffix}`, `${metric.label} · ${period}`, `${characteristicCaption} · ${metric.unit}`, href, demoHasValues(chars.flatMap(row => programs.map(program => row.programs[program.id][metric.id]))), characteristicRows(chars, metric.id), (theme, width, hidden) => stableDemoSeries(characteristicChartOption(chars, metric.id, theme, width, [], cumulative), characteristicChartOption(chars, metric.id, theme, width, hiddenPrograms(hidden), cumulative)));
+      const latest = chars.at(-1), available = latest ? programs.filter(program => latest.programs[program.id][metric.id] !== null) : [];
+      // There is no overall weighted mean here. Show a named program only
+      // when it is the sole observed program in the latest source year.
+      if (latest && available.length === 1) {
+        const program = available[0], month = latest.programThroughMonths[program.id][metric.id];
+        chart.summary = { value: latest.programs[program.id][metric.id], unit: metric.unit,
+          context: `${program.label} · ${latest.year}${month && month < 12 ? ` · ${summaryPeriod(month)}` : ''}`, digits: metric.id === 'ratePct' ? 2 : 1 };
+      }
+      charts.push(chart);
+    }
   }
   return charts;
 }

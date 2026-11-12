@@ -6,10 +6,11 @@ import { apartmentFilters, loadApartmentCatalog, loadApartmentData } from './apa
 import { distributionOption, roomsOption } from './apartmentCharts.ts';
 import { loadCommissioningCatalog, loadCommissioningReport, operationalChartOption, operationalChartRows, operationalFilters } from './commissioningData.ts';
 import type { OperationalCatalog, OperationalReport } from './commissioningData';
-import { breakdownOption, constructionHistoryChart, constructionHistoryRows, loadDomRfData, permitsMainOption, permitsMainRows, realizationHistoryRows, realizationStatuses } from './constructionPagesData.ts';
+import { constructionHistoryChart, constructionHistoryRows, loadDomRfData, permitsMainOption, permitsMainRows, realizationHistoryRows, realizationStatuses } from './constructionPagesData.ts';
 import { loadPermitPageSelection, selectPermitArea } from './permitPageData.ts';
 import { permitBreakdownRows } from './permitPresentation.ts';
 import { demoPresentationScale } from './demoPresentation.ts';
+import { demoPermitOption } from './demoPermitOption.ts';
 import { domrfDonutOption, domrfLineOption, domrfRealizationHistoryOption } from './domrfPresentation.ts';
 import { economicsChartOption, economicsChartRows, loadEconomicsPage } from './economicsData.ts';
 import { linearHistoryOption, linearYearRows, loadLinearDashboard } from './linearDashboardData.ts';
@@ -27,12 +28,14 @@ const mortgageMonths = demoMonthNames;
 const summaryPeriod = (month: number | null | undefined) => month === 12 ? 'за год' : month === 1 ? 'январь' : month ? `январь–${demoMonthNames[month - 1]}` : 'период неизвестен';
 export type DemoRows = (string | number | null)[][];
 export type DemoSummary = { value: number | null; unit: string; context: string; digits?: number };
+export type DemoHighlight = DemoSummary & { label: string; color: string };
 export type DemoFocus = { group: string; cohort: string; title: string; detailTitle?: string; role: 'primary' | 'detail'; detailLayout: 'rings' | 'grid' };
 export type DemoChart = {
   id: string; title: string; context: string; href: string; empty: boolean; rows: DemoRows;
   scope?: string;
   focus?: DemoFocus;
   summary?: DemoSummary;
+  highlights?: DemoHighlight[];
   option: (theme: Theme, width: number, hidden: string[], height?: number) => EChartsCoreOption;
 };
 export type DemoOptions = { region?: 'msk' | 'rf'; developer?: string; month?: number; permitKind?: 'total' | 'housing' | 'nonresidential'; livingOnly?: boolean };
@@ -114,7 +117,10 @@ async function permitsCharts(signal: AbortSignal, options: DemoOptions = {}): Pr
   const data = selectPermitArea(await loadPermitPageSelection({ permitKind: options.permitKind ?? 'total',
     ...(options.month ? { month: options.month, structure: { mode: 'period', monthFrom: 1, monthTo: options.month } } : {}) }, signal), options.livingOnly !== false), caption = context(`${data.permits.region} · ${data.permits.periodLabel}`, data);
   const charts = [entry('permits/main', 'Выдача разрешений по годам', caption, '/construction/permits', demoHasValues(data.permits.presentation.rows.flatMap(row => [row.selected, row.annualForecast])), permitsMainRows(data), (theme, width, hidden, height) => permitsMainOption(data, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })),
-    ...data.breakdowns.map(chart => entry(`permits/${chart.id}`, chart.title, `${caption} · ${chart.periodLabel}`, '/construction/permits', hasPoints(chart), permitBreakdownRows(chart, data.version), (theme, width, hidden, height) => breakdownOption(chart, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) })))];
+    ...data.breakdowns.map(chart => {
+      const result = entry(`permits/${chart.id}`, chart.title, `${caption} · ${chart.periodLabel}`, '/construction/permits', hasPoints(chart), permitBreakdownRows(chart, data.version), (theme, width, hidden, height) => demoPermitOption(chart, theme, { width, hidden, height, includeGrowth: true, presentation: true, fontScale: demoPresentationScale(width, height ?? 500) }));
+      return result;
+    })];
   const latest = data.permits.presentation.rows.filter(row => row.actualMonth != null).at(-1);
   if (latest) charts[0].summary = { value: latest.selected, unit: data.permits.unit, context: `Всего · ${latest.year} · ${summaryPeriod(latest.actualMonth)}` };
   const selection = data.selection;
@@ -134,7 +140,12 @@ async function permitsCharts(signal: AbortSignal, options: DemoOptions = {}): Pr
 }
 async function domrfCharts(signal: AbortSignal, options: DemoOptions = {}): Promise<DemoChart[]> {
   const data = await loadDomRfData(options.region ?? 'msk', signal), caption = context(data.region.label, data), history = constructionHistoryChart(data.construction.history);
-  const charts = [entry('domrf/construction', history.title, caption, '/construction/domrf', hasPoints(history), constructionHistoryRows(data.construction.history), theme => domrfLineOption(history, theme)),
+  const charts = [entry('domrf/construction', history.title, caption, '/construction/domrf', hasPoints(history), constructionHistoryRows(data.construction.history), theme => {
+    const option = domrfLineOption(history, theme);
+    return { ...option, yAxis: { ...(option.yAxis as object), scale: true,
+      min: ({ min }: { min: number }) => Math.floor(min * .9 * 10) / 10,
+      max: ({ max }: { max: number }) => Math.ceil(max * 1.08 * 10) / 10 } };
+  }),
     entry('domrf/realization', 'Реализация квартир по месяцам', caption, '/construction/domrf', demoHasValues(data.sales.history.flatMap(row => realizationStatuses.map(status => row.metrics[`${status.id}_thousand_m2`]))), realizationHistoryRows(data.sales.history), theme => domrfRealizationHistoryOption(data.sales.history, theme))];
   const metrics = data.sales.metrics;
   for (const status of realizationStatuses) {
@@ -142,12 +153,14 @@ async function domrfCharts(signal: AbortSignal, options: DemoOptions = {}): Prom
     charts.push(entry(`domrf/${status.id}`, status.label, `${data.region.label} · ${data.sales.period?.label ?? 'Нет периода'}`, '/construction/domrf', pct !== null && pct >= 0 && pct <= 100, [['Показатель', 'Доля источника, %', 'Площадь, тыс. м²'], [status.label, pct, area]], theme => domrfDonutOption(status.label, pct, area, status.color, theme)));
   }
   const current = data.sales.period;
-  if (current?.id && data.sales.history.at(-1)?.period === current.id) {
-    for (const chart of charts.filter(chart => chart.id !== 'domrf/construction')) {
-      chart.context = `${data.region.label} · ${current.label}`;
-      chart.focus = { group: 'domrf/realization-structure', cohort: JSON.stringify([data.version, data.region.id, current.id]),
-        title: 'Реализация квартир: динамика и структура', detailTitle: 'Структура реализации квартир', role: chart.id === 'domrf/realization' ? 'primary' : 'detail', detailLayout: 'rings' };
-    }
+  const latestConstruction = data.construction.history.at(-1);
+  charts[0].highlights = history.series.map((series, index) => ({ label: series.name, value: series.points.at(-1)?.y ?? null,
+    unit: history.unit, context: latestConstruction?.label ?? '', digits: 2, color: index === 0 ? '#367ba4' : '#b75160' }));
+  for (const chart of charts.filter(chart => chart.id !== 'domrf/construction')) {
+    if (current?.id && data.sales.history.at(-1)?.period === current.id) chart.context = `${data.region.label} · ${current.label}`;
+    else if (chart.id === 'domrf/realization') chart.context = `${data.region.label} · История по ${data.sales.history.at(-1)?.label ?? 'нет данных'}`;
+    chart.focus = { group: 'domrf/realization-structure', cohort: JSON.stringify([data.version, data.region.id, current?.id ?? null, data.sales.history.at(-1)?.period ?? null]),
+      title: 'Реализация квартир: динамика и структура', detailTitle: 'Структура реализации квартир', role: chart.id === 'domrf/realization' ? 'primary' : 'detail', detailLayout: 'rings' };
   }
   return charts;
 }

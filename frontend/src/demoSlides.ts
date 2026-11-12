@@ -16,6 +16,7 @@ const sourceLabels: Record<string, string> = {
 };
 export const demoSourceTitle = (id: string) => sourceLabels[id.split('/')[0]] ?? 'Аналитика Москвы';
 export function demoPanelTitle(chart: DemoChart, slide: DemoSlide) {
+  if (chart.id.startsWith('linear/')) return chart.title.replace(/^Годовой ввод: /, '');
   if (slide.charts.length > 1 && /^mortgage\/(volume|count)\//.test(chart.id)) return chart.id.includes('/volume/') ? 'Объём выданных кредитов' : 'Количество договоров';
   if (slide.charts.length > 1 && /^preferential\/(volumeMln|count)\//.test(chart.id)) return chart.id.includes('/volumeMln/') ? 'Объём выданных кредитов' : 'Количество договоров';
   return slide.id.startsWith('preferential/characteristics/') ? chart.title.replace(/ · (?:по годам|накопленный период)$/, '') : chart.title;
@@ -31,6 +32,9 @@ function group(chart: DemoChart): { id: string; title: string; layout: DemoSlide
     if (id.endsWith('/annual') || id.includes('/structure/')) return { id: `${scope}/commissioning`, title: 'Ввод недвижимости', layout: 'overview' };
     if (id.includes('/geography/')) return { id: `${scope}/geography`, title: 'География деятельности', layout: 'rings' };
   }
+  if (chart.scope?.startsWith('market/') && (id === 'sales/monthly_percent' || id === 'apartments/distribution')) return {
+    id: `sales/overview${chart.scope ? `/${chart.scope}` : ''}`, title: 'Распроданность, стройготовность и квартирография', layout: 'pair',
+  };
   if (id.startsWith('sales/') || id.startsWith('apartments/') || id.startsWith('linear/')) {
     const source = id.split('/')[0];
     const title = source === 'sales' ? 'Распроданность' : source === 'apartments' ? 'Квартирография' : 'Годовой ввод линейных объектов';

@@ -275,17 +275,15 @@ async function checkViewer(page, base, check) {
   undefined, { timeout: 180000 });
   assert.deepEqual(await page.locator('.demo-error').allTextContents(), []);
   const groups = {
-    sales: ['sales/monthly_percent'],
-    apartments: ['apartments/distribution'],
-    linear: ['roads', 'metro_stations'].map(id => `linear/${id}`),
+    sales: ['sales/monthly_percent', 'apartments/distribution'],
+    linear: ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'].map(id => `linear/${id}`),
   };
   for (const [source, ids] of Object.entries(groups)) {
     const section = page.locator(`.demo-source[data-demo-source="${source}"]`);
-    assert.deepEqual((await section.locator('[data-demo-chart]').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart))).sort(),
-      [...ids].sort(), `${source}: required fixture charts missing`);
+    assert.equal(await section.locator('.demo-block-choice').count(), 1, `${source}: expected one atomic block`);
     await section.locator('.demo-source-selection input').check();
   }
-  assert.equal(await page.locator('.demo-chart-choice.is-selected').count(), Object.values(groups).flat().length);
+  assert.equal(await page.locator('.demo-chart-choice.is-selected').count(), Object.keys(groups).length);
   await page.getByRole('checkbox', { name: '\u041f\u043e\u043b\u043d\u044b\u0439 \u044d\u043a\u0440\u0430\u043d \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0430', exact: true }).uncheck();
   await checkSticky(page, check);
   await page.setViewportSize({ width: 1920, height: 1080 });

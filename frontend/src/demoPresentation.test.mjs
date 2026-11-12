@@ -397,7 +397,7 @@ test('charts without generated line captions require no second layout update', (
   assert.equal(resolveCaptionPixels(option, () => { throw new Error('No line projection expected'); }).updates, 0);
 });
 
-test('the five quiet monthly charts retain hover, axes and measurements without any persistent line values', () => {
+test('monthly lines label only the final month, retaining hover, axes, gaps and source values', () => {
   const tooltip = point => `value: ${point.value}`;
   const source = cartesian([{ type: 'line', name: 'monthly', data: [10, null, 30], label: { show: true },
     markPoint: { data: [{ type: 'max', name: 'maximum', label: { show: true } }] } }]);
@@ -408,10 +408,10 @@ test('the five quiet monthly charts retain hover, axes and measurements without 
       const option = demoPresentationOption(source, width, height, [], id);
       assert.equal(option.series[0].label.show, false, id);
       assert.equal(option.series[0].emphasis.label.show, false, id);
-      assert.equal(option.series[0].markPoint.label.show, false, id);
-      assert.ok(option.series[0].markPoint.data.every(p => p.label.show === false), id);
-      assert.equal(lineCaptions(option).length, 0, id);
-      assert.equal(resolveCaptionPixels(option, () => [100, 100]).updates, 0, id);
+      assert.equal(option.series[0].markPoint.data.find(p => p.name === 'maximum').label.show, false, id);
+      assert.equal(lineCaptions(option).length, 1, id);
+      assert.deepEqual(lineCaptions(option)[0].coord, [2, 30]);
+      assert.equal(resolveCaptionPixels(option, () => [100, 100]).updates, 1, id);
       assert.deepEqual(option.series[0].data, source.series[0].data);
       assert.deepEqual(option.xAxis.data, source.xAxis.data);
       assert.equal(option.tooltip.formatter, tooltip);
@@ -429,11 +429,12 @@ test('quiet monthly charts do not remove annual bars or the adaptive permit grow
   assert.equal(lineCaptions(option).filter(p => p.label.show).length, 3);
 });
 
-test('switching to a quiet chart removes previously generated demo annotations', () => {
+test('switching to a quiet chart removes historical annotations but retains the last observed month', () => {
   const first = demoPresentationOption(cartesian([{ type: 'line', data: [10, 20, 30] }]), 1200, 650);
   assert.equal(lineCaptions(first).length, 3);
   const quiet = demoPresentationOption(first, 1200, 650, [], 'mortgage/rates');
-  assert.equal(lineCaptions(quiet).length, 0);
+  assert.equal(lineCaptions(quiet).length, 1);
+  assert.deepEqual(lineCaptions(quiet)[0].coord, [2, 30]);
   assert.equal(quiet.series[0].label.show, false);
 });
 
@@ -613,4 +614,56 @@ test('ring totals and units retain a full line of separation in short windows', 
     assert.ok(main.top + size * 1.25 + 7 <= unit.top, `${width}x${height}`);
     assert.equal(main.style.text, '123 456');
   }
+});
+
+test('annual and permit stacks label the components inside and a compact total above every fitting column', () => {
+  const source = cartesian([
+    { type: 'bar', name: 'Living', stack: 'area', itemStyle: { color: '#318dca' }, data: Array(16).fill(3.8) },
+    { type: 'bar', name: 'Other', stack: 'area', itemStyle: { color: '#db9a36' }, data: Array(16).fill(2.5) },
+  ], 16);
+  const before = JSON.stringify(source);
+  for (const id of ['annual/b1', 'permits/housing_components']) {
+    const option = demoPresentationOption(source, 580, 300, [], id);
+    assert.equal(option.series[0].label.position, 'inside');
+    assert.deepEqual(labels(option.series[0]), Array(16).fill('3,8'));
+    assert.deepEqual(labels(option.series[1]), Array(16).fill('2,5'));
+    const totals = option.series.flatMap(series => series.markPoint?.data ?? []).filter(point => point.name.startsWith('demo-stack-total-'));
+    assert.equal(totals.length, 16);
+    assert.ok(totals.every(point => point.label.formatter() === '6,3' && point.label.position === 'top'));
+    assert.deepEqual(option.series.map(series => series.data), source.series.map(series => series.data));
+  }
+  assert.equal(JSON.stringify(source), before);
+});
+
+test('operational stacked columns label the cumulative part and full-year total but never the remainder', () => {
+  const source = cartesian([
+    { type: 'bar', name: 'Period', stack: 'period', data: [3.8, 2.5] },
+    { type: 'bar', name: 'Year', stack: 'period', data: [1.2, 2] },
+  ]);
+  const option = demoPresentationOption(source, 1200, 650, [], 'operational/housing');
+  assert.deepEqual(labels(option.series[0]), ['3,8', '2,5']);
+  assert.equal(option.series[1].label.show, false);
+  assert.deepEqual(labels(option.series[1]), ['', '']);
+  const totals = option.series.flatMap(series => series.markPoint?.data ?? []);
+  assert.deepEqual(totals.map(point => point.label.formatter()), ['5', '4,5']);
+  const hidden = demoPresentationOption(source, 1200, 650, ['Year'], 'operational/housing');
+  assert.deepEqual(hidden.series[0].markPoint.data.map(point => point.label.formatter()), ['3,8', '2,5']);
+});
+
+test('a missing final month is never replaced by a caption on an earlier observation', () => {
+  const source = cartesian([{ type: 'line', name: 'rate', data: [8, 9, null] }]);
+  const option = demoPresentationOption(source, 1200, 650, [], 'mortgage/rates');
+  assert.equal(lineCaptions(option).length, 0);
+  assert.deepEqual(option.series[0].data, [8, 9, null]);
+});
+
+test('last-month captions use a right gutter and separate equal terminal values without historical captions', () => {
+  const source = cartesian(Array.from({ length: 3 }, (_, i) => ({ type: 'line', name: `rate ${i}`, data: [8, 9, 10] })));
+  const option = demoPresentationOption(source, 1200, 650, [], 'mortgage/rates');
+  assert.equal(option.grid.right, Math.round(70 * Math.sqrt(demoPresentationScale(1200, 650))));
+  resolveCaptionPixels(option, () => [1050, 120]);
+  const points = lineCaptions(option);
+  assert.equal(points.length, 3);
+  assert.ok(points.every(point => point.coord[0] === 2 && point.label.show && point.label.position === 'right'));
+  assert.equal(new Set(points.map(point => point.label.offset[1])).size, 3);
 });

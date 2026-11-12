@@ -62,24 +62,15 @@ async function main() {
     await context.route('**/api/**', route => route.fulfill({ json: data(route.request().url()) }));
     const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
     await page.goto(base + '/demo');
-    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13);
+    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11);
     assert.deepEqual(await page.locator('.demo-error').allTextContents(), []);
-    // The full-area primary and its housing breakdown have matching definitions.
-    await page.getByRole('button', { name: 'Общая площадь в жилье', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('[data-demo-source="permits"]').getAttribute('aria-busy') === 'false');
-    const ids = ['profile/annual', 'profile/structure/0', 'profile/structure/1', 'profile/structure/2',
-      'domrf/realization', 'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open', 'permits/main', 'permits/housing_components',
-      ...['annual', 'cumulative'].flatMap(period => ['volumeMln', 'count', 'averageAmountMln', 'ratePct', 'termMonths', 'ownFundsPct', 'areaM2', 'priceThousandM2'].map(metric => `preferential/${metric}/${period}`))];
-    const available = [];
-    for (const id of ids) {
-      const card = page.locator(`.demo-chart-choice:has([data-demo-chart="${id}"])`);
-      if (await card.count() && await card.getByRole('checkbox').isEnabled()) { await card.getByRole('checkbox').check(); available.push(id); }
-    }
+    for (const source of ['domrf', 'permits', 'preferential']) await page.locator(`[data-demo-source="${source}"] .demo-source-selection input`).check();
+    const available = await page.locator('.demo-block-choice input:checked').count();
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
     await page.getByRole('button', { name: 'Приостановить показ', exact: true }).click();
     const count = Number((await page.locator('.demo-slide-count').innerText()).split('/')[1]);
-    assert(count < available.length);
+    assert.equal(count, available);
     const sizes = [[1920, 1080], [3840, 2160], [1440, 900], [1000, 560], [390, 844], [320, 740]];
     for (const [width, height] of sizes) {
       await page.setViewportSize({ width, height });
@@ -129,7 +120,7 @@ async function main() {
         if (width === 1920 || width === 390 || width === 3840) await page.screenshot({ path: path.join(output, `${id.replaceAll('/', '-')}-${width}.png`) });
         await page.keyboard.press('ArrowRight');
       }
-      assert(focused >= 3); assert.equal(pairs, 2);
+      assert.equal(focused, 2); assert.equal(pairs, 2);
     }
     await page.keyboard.press('Escape');
     assert.deepEqual(errors, []);

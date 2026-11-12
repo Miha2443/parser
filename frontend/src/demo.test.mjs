@@ -4,6 +4,7 @@ import { registerHooks } from 'node:module';
 import { after, test } from 'node:test';
 import ts from 'typescript';
 import fixtures from './demoFixtures.cjs';
+import blockFixtures from './demoBlockFixtures.cjs';
 
 const root = new URL('./', import.meta.url).href;
 const hooks = registerHooks({
@@ -26,7 +27,7 @@ const { DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS, demoHasValues,
 const { ApiError } = await import('./data.ts');
 const { demoPanelContext, demoPanelTitle, demoSlides, demoSourceTitle } = await import('./demoSlides.ts');
 const { commonDemoLegend, demoPalette, demoSummaryText } = await import('./demoComposition.ts');
-const { demoMainCharts } = await import('./demoCatalog.ts');
+const { demoMainCharts, demoBlockSources, demoBlocks, demoBlockSelection } = await import('./demoCatalog.ts');
 
 test('interval is bounded to 15 seconds through 30 minutes with a 120-second default', () => {
   assert.deepEqual([DEMO_MIN_SECONDS, DEMO_MAX_SECONDS, DEMO_DEFAULT_SECONDS], [15, 1800, 120]);
@@ -56,7 +57,7 @@ test('curation keeps important multi-indicator blocks, not one graph per source'
   t.mock.method(globalThis, 'fetch', async url => Response.json(fixtures.response(url)));
   const expected = {
     annual: ['annual/b1', 'annual/b2_1'], operational: ['operational/housing', 'operational/nonres'],
-    linear: ['linear/roads', 'linear/metro_stations'],
+    linear: ['roads', 'bridges', 'crossings', 'metro_stations', 'metro_tunnels', 'depots'].map(id => `linear/${id}`),
     mortgage: ['mortgage/volume/annual', 'mortgage/count/annual', 'mortgage/rates'],
     sales: ['sales/monthly_percent'], apartments: ['apartments/distribution'],
     accounts: ['accounts/na_block1', 'accounts/na_block3'],
@@ -64,6 +65,7 @@ test('curation keeps important multi-indicator blocks, not one graph per source'
   for (const source of demoSources) {
     const raw = await source.load(new AbortController().signal), before = JSON.stringify(raw);
     const charts = demoMainCharts(raw);
+    if (source.id === 'profile') { assert.deepEqual(charts, []); continue; }
     assert.ok(charts.length > 0, source.id);
     assert.equal(JSON.stringify(raw), before, 'ordinary-page data must remain intact');
     charts.forEach(chart => assert.ok(raw.includes(chart), 'retain source values and options by reference'));
@@ -92,13 +94,72 @@ test('curation drops unrecognized details, preserves unavailable main charts, an
   assert.equal(charts.length, 5);
 });
 
-test('profile curation retains history and the two latest available structures within each cohort', () => {
+test('profile charts remain on their ordinary page but are excluded from the presentation catalog', () => {
   const chart = (index, scope = 'a', empty = false) => groupedDemoChart(`profile/structure/${index}`, { scope, empty });
   const charts = [groupedDemoChart('profile/annual'), chart(10), chart(2), chart(0), chart(11, 'a', true),
     chart(0, 'b'), chart(1, 'b'), groupedDemoChart('profile/geography/0'), groupedDemoChart('profile/construction')];
   const before = JSON.stringify(charts), curated = demoMainCharts(charts);
-  assert.deepEqual(curated, [charts[0], charts[1], charts[2], charts[5], charts[6]]);
+  assert.deepEqual(curated, []);
+  assert.ok(!demoBlockSources.some(source => source.id === 'profile'));
   assert.equal(JSON.stringify(charts), before);
+});
+
+test('block source order omits profile and combines the regional market panels', async t => {
+  const urls = [];
+  t.mock.method(globalThis, 'fetch', async url => { urls.push(String(url)); return Response.json(blockFixtures.response(url)); });
+  assert.deepEqual(demoBlockSources.map(source => source.id), ['domrf', 'sales', 'annual', 'operational', 'linear', 'permits', 'mortgage', 'preferential', 'accounts', 'ipc', 'salary']);
+  const charts = demoMainCharts(await demoBlockSources.find(source => source.id === 'sales').load(new AbortController().signal, { region: 'rf' }));
+  const blocks = demoBlocks(charts);
+  assert.equal(blocks.length, 1); assert.equal(blocks[0].layout, 'pair');
+  assert.deepEqual(blocks[0].charts.map(chart => chart.id), ['sales/monthly_percent', 'apartments/distribution']);
+  assert.ok(charts.every(chart => chart.scope === 'market/rf'));
+  assert.ok(urls.some(url => url.includes('/sales?') && url.includes('region=rf')));
+  assert.ok(urls.some(url => url.includes('/apartments?') && url.includes('region=rf')));
+  assert.ok(!urls.some(url => url.includes('/profile')));
+});
+
+test('realization is one atomic choice with all three rings, including an explicit missing panel', async t => {
+  t.mock.method(globalThis, 'fetch', async url => Response.json(blockFixtures.response(url)));
+  const charts = demoMainCharts(await demoBlockSources.find(source => source.id === 'domrf').load(new AbortController().signal));
+  const before = JSON.stringify(charts), blocks = demoBlocks(charts), block = blocks.find(block => block.id === 'domrf/realization-structure');
+  assert.deepEqual(block.charts.map(chart => chart.id), ['domrf/realization', 'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open']);
+  assert.equal(block.layout, 'focus'); assert.equal(block.charts[2].empty, false); assert.equal(block.charts[3].empty, true);
+  assert.deepEqual(demoBlockSelection(blocks, new Set(['domrf/sold'])), []);
+  assert.deepEqual(demoBlockSelection(blocks, new Set([block.id])), [block]);
+  assert.deepEqual(demoBlockSelection(blocks, new Set()), []);
+  assert.equal(JSON.stringify(charts), before);
+  const empty = demoBlocks(charts.map(chart => ({ ...chart, empty: true })));
+  assert.equal(empty.length, 2); assert.deepEqual(demoBlockSelection(empty, new Set(empty.map(block => block.id))), []);
+});
+
+test('the six linear metrics and three permit structures are indivisible screens', async t => {
+  t.mock.method(globalThis, 'fetch', async url => Response.json(blockFixtures.response(url)));
+  for (const [id, count] of [['linear', 6], ['permits', 3]]) {
+    const charts = demoMainCharts(await demoBlockSources.find(source => source.id === id).load(new AbortController().signal));
+    const blocks = demoBlocks(charts);
+    assert.equal(blocks.length, 1); assert.equal(blocks[0].charts.length, count);
+    assert.ok(!blocks[0].charts.some(chart => chart.id === 'permits/main'));
+    assert.deepEqual(demoBlockSelection(blocks, new Set(charts.map(chart => chart.id))), []);
+    assert.equal(demoBlockSelection(blocks, new Set([blocks[0].id]))[0].charts.length, count);
+  }
+});
+
+test('demo permit display converts area only, preserving coverage months, percentages and raw export rows', async () => {
+  const { demoPermitOption } = await import('./demoPermitOption.ts');
+  const { breakdownOption } = await import('./permitPresentation.ts');
+  const chart = blockFixtures.response('/api/v1/construction/permits').breakdowns[1];
+  chart.rows.at(-1).actualMonth = 10;
+  chart.rows.at(-1).periodComplete = false;
+  const before = JSON.stringify(chart), original = breakdownOption(chart, 'light', { includeGrowth: true });
+  const display = demoPermitOption(chart, 'light', { includeGrowth: true });
+  const bars = option => option.series.filter(series => series.type === 'bar').map(series => series.data);
+  assert.deepEqual(bars(display), bars(original).map(data => data.map(value => value === null ? null : value / 1000)));
+  const growth = option => option.series.find(series => series.type === 'line').data;
+  growth(display).forEach((value, index) => value === null ? assert.equal(growth(original)[index], null) : assert.ok(Math.abs(value - growth(original)[index]) < 1e-10));
+  assert.ok(display.yAxis.some(axis => axis.name === 'млн м²'));
+  assert.ok(display.tooltip.formatter({ dataIndex: 15, seriesIndex: 0 }).includes('млн м²'));
+  assert.ok(!display.tooltip.formatter({ dataIndex: 15, seriesIndex: 0 }).includes('undefined'));
+  assert.equal(JSON.stringify(chart), before);
 });
 
 test('grouped screens keep section identity, selected-only panels, paired units and input data intact', () => {
@@ -352,11 +413,11 @@ test('demo program palette is isolated from ordinary charts and preserves source
   assert.equal(demoSummaryText({ value: 5.91566, unit: '%', context: '', digits: 2 }), '5,92');
 });
 
-test('DOM.RF focus joins current structure to its matching history only', async t => {
+test('DOM.RF stays an atomic block and identifies each period when history lags the current snapshot', async t => {
   let mismatched = false;
   t.mock.method(globalThis, 'fetch', async url => {
     const data = structuredClone(fixtures.response(url));
-    if (mismatched) data.sales.history[0].period = '2026-04';
+    if (mismatched) { data.sales.history[0].period = '2026-04'; data.sales.history[0].label = 'Апрель 2026'; }
     return Response.json(data);
   });
   const adapter = demoSources.find(source => source.id === 'domrf');
@@ -364,7 +425,11 @@ test('DOM.RF focus joins current structure to its matching history only', async 
   assert.equal(slide.primaryId, 'domrf/realization');
   assert.deepEqual(slide.charts.map(chart => chart.id), ['domrf/realization', 'domrf/sold', 'domrf/unsold']);
   mismatched = true;
-  assert.ok((await adapter.load(new AbortController().signal)).every(chart => !chart.focus));
+  const lagged = demoBlocks(demoMainCharts(await adapter.load(new AbortController().signal))).find(block => block.id === 'domrf/realization-structure');
+  assert.equal(lagged.charts.length, 4);
+  assert.ok(lagged.charts[0].context.includes('Апрель 2026'));
+  assert.ok(lagged.charts[1].context.includes('Май 2026'));
+  assert.equal(lagged.context, 'Москва');
 });
 
 test('permit demo sends one explicit period to the main chart and its breakdown', async t => {
@@ -414,18 +479,19 @@ test('demo starts with no selection, a disabled start action, and named section 
   const { createElement } = await import('react'), { renderToStaticMarkup } = await import('react-dom/server');
   const { default: DemoPage } = await import('./DemoPage.tsx');
   const html = renderToStaticMarkup(createElement(DemoPage, { theme: 'light' }));
-  assert.match(html, /Выбрано: 0 \/ 0/);
+  assert.match(html, /Блоков: 0 \/ 0/);
   assert.match(html, /<button[^>]*class="demo-start"[^>]*disabled=""/);
   assert.equal((html.match(/checked=""/g) ?? []).length, 1, 'only browser fullscreen is checked by default');
-  for (const source of demoSources) assert.ok(html.includes(`aria-label="Все графики раздела: ${source.title}"`));
+  for (const source of demoBlockSources) assert.ok(html.includes(`aria-label="Все блоки раздела: ${source.title}"`));
+  assert.ok(!html.includes('data-demo-source="profile"'));
 });
 
-test('presentation adapts the measured canvas only in the viewer, without extra growth canvases or progress UI', () => {
+test('preview and viewer share the presentation renderer, without extra growth canvases or progress UI', () => {
   const source = readFileSync(new URL('./DemoPage.tsx', import.meta.url), 'utf8');
   assert.match(source, /canvas \?\? element/);
-  assert.match(source, /width = Math\.round\(bounds\.width\), height = Math\.round\(bounds\.height\)/);
+  assert.match(source, /width = surface\.clientWidth, height = surface\.clientHeight/);
   assert.match(source, /entry\.option\(theme, Math\.max\(240, width\), \[\.\.\.activeHidden\], height\)/);
-  assert.match(source, /preview \? built : demoPresentationOption\(built, width, height, activeHidden, entry\.id\)/);
+  assert.match(source, /const presented = demoPresentationOption\(built, width, height, activeHidden, entry\.id\)/);
   assert.match(source, /useSlideClock\(step, seconds, paused, next\)/);
   assert.doesNotMatch(source, /demo-growth-chart|permitGrowthOption|demo-progress|progressbar/);
   const css = readFileSync(new URL('./demo.css', import.meta.url), 'utf8');

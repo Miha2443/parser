@@ -5,7 +5,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require('playwright');
-const fixtures = require('./demoFixtures.cjs');
+const fixtures = require('./demoBlockFixtures.cjs');
 const quietCharts = ['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates'];
 const characteristicMetrics = ['averageAmountMln', 'ratePct', 'termMonths', 'ownFundsPct', 'areaM2', 'priceThousandM2'];
 
@@ -66,7 +66,7 @@ async function inspect(page, chartId) {
       titleSize: parseFloat(getComputedStyle(document.querySelector('#demo-slide-title')).fontSize),
       overflow: document.documentElement.scrollWidth > innerWidth + 1 || document.querySelector('.demo-viewer').scrollWidth > innerWidth + 1,
       values: option.series.map(series => ({ name: series.name, data: series.data })),
-      series: option.series.map(series => ({ name: series.name, type: series.type, barWidth: series.barWidth, labelSize: series.label?.fontSize, labelVisible: series.label?.show,
+      series: option.series.map(series => ({ name: series.name, type: series.type, dataLength: series.data?.length, barWidth: series.barWidth, labelSize: series.label?.fontSize, labelVisible: series.label?.show,
         totals: (series.markPoint?.data || []).map(point => ({ coord: point.coord, text: typeof point.label?.formatter === 'function' ? point.label.formatter() : null })) })),
       axes: option.yAxis?.map(axis => ({ name: axis.name, gridIndex: axis.gridIndex })),
     };
@@ -115,11 +115,11 @@ async function main() {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base + '/demo');
-    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, undefined, { timeout: 180000 });
+    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11, undefined, { timeout: 180000 });
     if ((backend || process.env.DEMO_PRESENTATION_API) && await page.locator('.demo-error').count()) {
       console.log(JSON.stringify({ coldSourceErrors: await page.locator('.demo-error').allTextContents() }));
       await page.locator('.demo-error button').evaluateAll(buttons => buttons.forEach(button => button.click()));
-      await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, undefined, { timeout: 90000 });
+      await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11, undefined, { timeout: 90000 });
     }
     assert.deepEqual(await page.locator('.demo-error').allTextContents(), []);
     if (process.env.DEMO_ONLY_PLAYBACK === '1') {
@@ -127,32 +127,21 @@ async function main() {
       await require('./demo.browser.cjs').main();
       return;
     }
-    const ids = ['profile/annual', 'profile/structure/1', 'profile/structure/2', 'permits/main',
-      'annual/b1', 'annual/b2_1', 'operational/housing', 'operational/nonres', 'accounts/na_block1', 'accounts/na_block3',
-      'domrf/sold', 'domrf/unsold', 'domrf/sales_not_open', 'domrf/realization',
-      'mortgage/volume/annual', 'mortgage/count/annual',
-      'preferential/volumeMln/annual', 'preferential/count/annual', 'preferential/volumeMln/cumulative', 'preferential/count/cumulative',
-      ...quietCharts,
-      ...['annual', 'cumulative'].flatMap(period => characteristicMetrics.map(metric => `preferential/${metric}/${period}`))];
-    const available = [];
-    for (const id of ids) {
-      const card = page.locator(`.demo-chart-choice:has([data-demo-chart="${id}"])`);
-      if (await card.count() && await card.getByRole('checkbox').isEnabled()) { await card.getByRole('checkbox').check(); available.push(id); }
-    }
-    assert.ok(available.length >= 7);
+    const available = await page.locator('.demo-block-choice input:enabled').count();
+    await page.getByRole('checkbox', { name: 'Все блоки', exact: true }).check();
     await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Начать показ', exact: true }).click();
     await page.getByRole('dialog').waitFor();
     await page.getByRole('button', { name: 'Приостановить показ', exact: true }).click();
     const slideCount = Number((await page.locator('.demo-slide-count').innerText()).split('/')[1]);
-    assert.ok(slideCount < available.length, 'Related measurements must share screens');
+    assert.equal(slideCount, available, 'One choice always represents an entire screen');
     const snapshots = new Map();
     for (const viewport of [{ width: 1920, height: 1080 }, { width: 3840, height: 2160 }, { width: 390, height: 844 }, { width: 1440, height: 900 }, { width: 1000, height: 560 }, { width: 1920, height: 800 }]) {
       await page.setViewportSize(viewport);
       const seen = new Set();
       for (let i = 0; i < slideCount; i++) {
         const slide = await page.locator('.demo-stage').getAttribute('data-demo-slide'); seen.add(slide);
-        const panelIds = await page.locator('.demo-full-chart').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
+        const panelIds = await page.locator('.demo-full-chart:has(canvas)').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
         if (slide.startsWith('preferential/characteristics/')) {
           const period = slide.split('/')[2];
           assert.deepEqual([...panelIds].sort(), characteristicMetrics.map(metric => `preferential/${metric}/${period}`).sort(), 'Six characteristics must share their own annual or cumulative screen');
@@ -171,8 +160,8 @@ async function main() {
         for (const bar of state.bars.filter(bar => bar.band)) assert.ok(bar.x >= bar.center - bar.band / 2 - 2 && bar.x + bar.width <= bar.center + bar.band / 2 + 2, `${id} bar exceeds category band at ${viewport.width}`);
         if (snapshots.has(id)) assert.deepEqual(state.values, snapshots.get(id), `${id} data changed while resizing`); else snapshots.set(id, state.values);
         if (quietCharts.includes(id)) {
-          assert.ok(state.series.filter(series => series.type === 'line').every(series => series.labelVisible === false && series.totals.length === 0), `${id}: persistent line values restored`);
-          assert.ok(!state.texts.some(text => /600/.test(text.font) && /^[+−-]?[\d\s.,]+\s*%?$/.test(String(text.text))), `${id}: rendered persistent value labels`);
+          assert.ok(state.series.filter(series => series.type === 'line').every(series => series.labelVisible === false && series.totals.length <= 1), `${id}: historical labels restored`);
+          assert.ok(state.series.filter(series => series.type === 'line').every(series => series.totals.every(point => point.coord[0] === series.dataLength - 1)), `${id}: label is not the latest month`);
           if (viewport.width === 1920 && viewport.height === 1080) await checkTooltip(page, id);
         }
         if (viewport.width >= 1900 && viewport.height >= 1000) {

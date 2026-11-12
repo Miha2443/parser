@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require('playwright');
-const fixtures = require('./demoFixtures.cjs');
+const fixtures = require('./demoBlockFixtures.cjs');
 const base = (process.env.DEMO_TEST_URL || 'http://127.0.0.1:5173').replace(/\/$/, '');
 const output = path.join(os.tmpdir(), 'dashboard-demo-checks');
 fs.mkdirSync(output, { recursive: true });
@@ -22,7 +22,7 @@ async function painted(page) {
   return canvas.evaluate(node => ({ width: node.width, cssWidth: node.getBoundingClientRect().width, height: node.height, cssHeight: node.getBoundingClientRect().height }));
 }
 async function noOverflow(page) {
-  const overflow = await page.evaluate(() => ({ width: innerWidth, document: document.documentElement.scrollWidth, viewer: document.querySelector('.demo-viewer')?.scrollWidth, nodes: [...document.querySelectorAll('.demo-page *, .demo-viewer *')].filter(node => { const rect = node.getBoundingClientRect(); return rect.width && (rect.x < -1 || rect.right > innerWidth + 1); }).slice(0, 10).map(node => ({ class: node.className, width: node.getBoundingClientRect().width, right: node.getBoundingClientRect().right })) }));
+  const overflow = await page.evaluate(() => ({ width: innerWidth, document: document.documentElement.scrollWidth, viewer: document.querySelector('.demo-viewer[role="dialog"]')?.scrollWidth, nodes: [...document.querySelectorAll('.demo-page *, .demo-viewer[role="dialog"] *')].filter(node => !node.closest('.demo-miniature')).filter(node => { const rect = node.getBoundingClientRect(); return rect.width && (rect.x < -1 || rect.right > innerWidth + 1); }).slice(0, 10).map(node => ({ class: node.className, width: node.getBoundingClientRect().width, right: node.getBoundingClientRect().right })) }));
   if (overflow.document > overflow.width + 1 || overflow.viewer > overflow.width + 1) await page.screenshot({ path: path.join(output, 'overflow.png') });
   assert.ok(overflow.document <= overflow.width + 1 && !(overflow.viewer > overflow.width + 1), JSON.stringify(overflow));
 }
@@ -61,36 +61,46 @@ async function main() {
     assert.equal(await page.locator('[data-demo-source="permits"] .demo-source-selection input').isDisabled(), true);
     assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0, 'sources arriving asynchronously must not be selected');
     releasePermits();
-    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11, { timeout: 30000 });
     assert.equal(await page.locator('.demo-error').count(), 0);
     assert.deepEqual(await page.locator('.demo-source').evaluateAll(nodes => nodes.map(node => node.dataset.demoSource)), [
-      'domrf', 'sales', 'apartments', 'annual', 'operational', 'linear', 'permits',
-      'mortgage', 'preferential', 'accounts', 'ipc', 'salary', 'profile',
+      'domrf', 'sales', 'annual', 'operational', 'linear', 'permits',
+      'mortgage', 'preferential', 'accounts', 'ipc', 'salary',
     ]);
-    const offered = await page.locator('.demo-chart-choice [data-demo-chart]').evaluateAll(nodes => nodes.map(node => node.dataset.demoChart));
-    for (const id of ['annual/b1', 'annual/b2_1', 'operational/housing', 'operational/nonres',
-      'linear/roads', 'linear/metro_stations', 'accounts/na_block1', 'accounts/na_block3']) assert.ok(offered.includes(id), id);
-    for (const id of ['annual/b3_3', 'sales/forecast', 'apartments/rooms', 'linear/bridges', 'linear/metro_tunnels', 'mortgage/count/monthly', 'accounts/na_block2', 'profile/structure/0', 'profile/construction']) assert.ok(!offered.includes(id), id);
+    const offered = await page.locator('[data-demo-block]').evaluateAll(nodes => nodes.map(node => node.dataset.demoBlock));
+    for (const id of ['domrf/realization-structure', 'annual/overview', 'operational/commissioning', 'linear/overview', 'permits/area-structure', 'accounts/overview']) assert.ok(offered.includes(id), id);
+    for (const id of ['domrf/sold', 'permits/main', 'linear/roads', 'profile/annual']) assert.ok(!offered.includes(id), id);
+    assert.equal(await page.locator('[data-demo-block="domrf/realization-structure"] input').count(), 1);
+    const realization = page.locator('[data-demo-block="domrf/realization-structure"]');
+    await realization.scrollIntoViewIfNeeded();
+    await realization.locator('.demo-miniature .demo-panel').nth(3).waitFor({ state: 'attached' });
+    assert.equal(await realization.locator('.demo-miniature .demo-panel').count(), 4);
+    await realization.locator('.demo-block-picture').click();
+    assert.equal(await realization.locator('input').isChecked(), true);
+    await realization.locator('.demo-block-picture').click();
+    assert.equal(await realization.locator('input').isChecked(), false);
     assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
     assert.equal(await page.getByRole('slider', { name: 'Интервал показа' }).inputValue(), '120');
     assert.equal(await page.locator('.demo-page iframe').count(), 0);
-    assert.ok(await page.locator('.demo-page canvas').count() < await page.locator('.demo-chart-choice').count());
+    assert.ok(await page.locator('.demo-miniature').count() < await page.locator('.demo-chart-choice').count());
     await noOverflow(page);
     await page.screenshot({ path: path.join(output, 'configuration-desktop.png') });
-    checks.push('13 API sources, real lazy live previews, default interval, no iframes, asynchronously loaded charts unselected');
+    checks.push('11 source sections, atomic block choices with shared lazy live thumbnails, default interval and empty initial selection');
 
-    const profileSection = page.locator('[data-demo-source="profile"]');
-    const another = fixtures.response('/api/v1/catalog').controls.developers.find(row => row.developerKey === 'самолет');
-    assert.ok(another);
-    const otherRequests = apiCalls.filter(url => !/\/api\/v1\/(?:catalog|profile)(?:\?|$)/.test(url)).length;
-    const company = profileSection.getByRole('combobox', { name: 'Группа компаний', exact: true });
-    await company.fill('САМОЛ');
-    await profileSection.getByRole('option', { name: 'САМОЛЕТ', exact: true }).click();
-    await profileSection.locator('.demo-context').first().filter({ hasText: 'САМОЛЕТ' }).waitFor();
-    assert.ok(apiCalls.some(url => new URL(url).pathname === '/api/v1/profile' && new URL(url).searchParams.get('developer') === another.developerKey));
-    assert.equal(apiCalls.filter(url => !/\/api\/v1\/(?:catalog|profile)(?:\?|$)/.test(url)).length, otherRequests, 'changing the developer reloads only the profile section');
+    assert.equal(await page.locator('[data-demo-source="profile"]').count(), 0);
+    assert.equal(apiCalls.filter(url => new URL(url).pathname === '/api/v1/profile').length, 0);
+    const sourceSection = page.locator('[data-demo-source="sales"]');
+    const otherRequests = apiCalls.filter(url => !/\/api\/v1\/(?:sales|apartments)(?:\/|\?|$)/.test(url)).length;
+    await sourceSection.getByRole('combobox').selectOption('rf');
+    await page.waitForFunction(() => document.querySelector('[data-demo-source="sales"]').getAttribute('aria-busy') === 'false');
+    assert.equal(await sourceSection.locator('.demo-error').count(), 0);
+    assert.ok(apiCalls.some(url => new URL(url).pathname === '/api/v1/sales' && new URL(url).searchParams.get('region') === 'rf'));
+    assert.ok(apiCalls.some(url => new URL(url).pathname === '/api/v1/apartments' && new URL(url).searchParams.get('region') === 'rf'));
+    assert.equal(apiCalls.filter(url => !/\/api\/v1\/(?:sales|apartments)(?:\/|\?|$)/.test(url)).length, otherRequests);
     assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
-    checks.push('searchable alternative developer selection reloads only its source and leaves the playlist unselected');
+    await sourceSection.getByRole('combobox').selectOption('msk');
+    await page.waitForFunction(() => document.querySelector('[data-demo-source="sales"]').getAttribute('aria-busy') === 'false');
+    checks.push('profile excluded, joint market region updates both panels without reloading unrelated sources');
 
     // Home is outside the only scrollable navigation region, including compact/mobile.
     const pinned = page.locator('.navigation-home'), market = page.getByRole('button', { name: 'Рынок недвижимости', exact: true });
@@ -106,7 +116,7 @@ async function main() {
     const homeTab = await newTab; await homeTab.waitForLoadState(); assert.ok(homeTab.url().endsWith('/home')); await homeTab.close(); assert.ok(page.url().endsWith('/demo'));
     checks.push('pinned accessible Home, compact mode and modified brand click');
 
-    const all = page.getByRole('checkbox', { name: 'Все графики', exact: true });
+    const all = page.getByRole('checkbox', { name: 'Все блоки', exact: true });
     assert.equal(await all.isChecked(), false);
     assert.equal(await page.getByRole('button', { name: 'Начать показ', exact: true }).isEnabled(), false);
     assert.equal(await page.locator('.demo-chart-choice input:checked').count(), 0);
@@ -227,14 +237,15 @@ async function main() {
       const chart = page.locator('.demo-full-chart').first(), id = await chart.getAttribute('data-demo-chart');
       seen.add(await page.locator('.demo-stage').getAttribute('data-demo-slide'));
       for (const panel of await page.locator('.demo-full-chart').all()) {
+        if (await panel.locator('.demo-state').count()) continue;
         await panel.locator(':scope > .chart-block canvas').waitFor();
         assert.ok(await panel.locator(':scope > .chart-block canvas').evaluate(node => node.width > 0 && node.height > 0));
       }
       assert.ok((await page.locator('.demo-slide-source').innerText()).length > 4);
       assert.equal(await page.locator('.demo-page').count(), 0);
-      if (id === 'permits/main') {
+      if (id === 'permits/area_composition') {
         assert.equal(await page.locator('.demo-growth-chart canvas').count(), 0);
-        assert.equal(await page.locator('.demo-stage canvas').count(), 1, 'permits and YoY share one live canvas');
+        assert.equal(await page.locator('.demo-stage canvas').count(), 3, 'one complete three-panel permit block');
         await painted(page); await page.screenshot({ path: path.join(output, 'viewer-permits-live-yoy.png') });
       }
       if (id === 'preferential/volumeMln/annual') {
@@ -245,10 +256,10 @@ async function main() {
       }
       await page.keyboard.press('ArrowRight');
     }
-    assert.equal(seen.size, count); assert.equal(new Set([...seen].map(id => id.split('/')[0])).size, 13);
+    assert.equal(seen.size, count); assert.equal(new Set([...seen].map(id => id.split('/')[0])).size, 11);
     const sourceOrder = [...seen].map(id => id.split('/')[0]).filter((id, index, ids) => index === 0 || id !== ids[index - 1]);
-    assert.deepEqual(sourceOrder, ['domrf', 'sales', 'apartments', 'annual', 'operational', 'linear', 'permits',
-      'mortgage', 'preferential', 'accounts', 'ipc', 'salary', 'profile']);
+    assert.deepEqual(sourceOrder, ['domrf', 'sales', 'annual', 'operational', 'linear', 'permits',
+      'mortgage', 'preferential', 'accounts', 'ipc', 'salary']);
     await page.keyboard.press('Escape');
     await all.uncheck(); await choices.first().check();
     checks.push(`all ${count} curated screens render in editorial order, permits use one live canvas, preferential legend restores`);
@@ -276,7 +287,7 @@ async function main() {
         await page.locator('.navigation-home a').click(); await page.locator('.home-page').waitFor(); assert.ok(page.url().endsWith('/home'));
         assert.equal(await page.getByText('Последнее обновление', { exact: true }).count(), 0);
         await page.locator('.home-service a[href="/demo"]').click(); await page.locator('.demo-page').waitFor();
-        await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13);
+        await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11);
         await all.check(); await all.uncheck(); await choices.first().check(); await page.getByRole('checkbox', { name: 'Полный экран браузера', exact: true }).uncheck();
       }
     }
@@ -284,12 +295,12 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     failIpc = true; emptyLinear = true; emptySalary = true;
-    await page.reload(); await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 13);
+    await page.reload(); await page.waitForFunction(() => document.querySelectorAll('.demo-source[aria-busy="false"]').length === 11);
     await page.locator('[data-demo-source="ipc"] [role="alert"]').waitFor();
-    assert.equal(await page.locator('[data-demo-source="linear"] .demo-chart-choice input:disabled').count(), 2);
+    assert.equal(await page.locator('[data-demo-source="linear"] .demo-chart-choice input:disabled').count(), 1);
     assert.equal(await page.locator('[data-demo-source="linear"] .demo-source-selection input').isDisabled(), true);
     assert.equal(await page.locator('[data-demo-source="salary"] .demo-source-selection input').isDisabled(), true);
-    assert.match(await page.locator('[data-demo-source="salary"]').innerText(), /Нет доступных графиков/);
+    assert.match(await page.locator('[data-demo-source="salary"]').innerText(), /Нет доступных блоков/);
     failIpc = false;
     await page.getByRole('button', { name: 'Повторить: ИПЦ', exact: true }).click();
     await page.locator('[data-demo-source="ipc"] .demo-chart-choice').first().waitFor();

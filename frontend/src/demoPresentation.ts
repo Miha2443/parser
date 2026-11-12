@@ -3,6 +3,7 @@ import { chartNumberFormatter } from './format.ts';
 
 type Settings = Record<string, unknown>;
 const unlabelledLineCharts = new Set(['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates']);
+const latestLineCharts = new Set(['domrf/construction', 'sales/monthly_percent', 'ipc/ipc_month', 'salary/salary_month', 'mortgage/rates']);
 const record = (value: unknown): Settings => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Settings : {};
 const list = (value: unknown): Settings[] => (Array.isArray(value) ? value : value ? [value] : []).map(record);
 const numeric = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -164,7 +165,7 @@ function sparseIndices(values: Map<number, number>, count: number, space: number
   for (const index of [...values.keys()].sort((a, b) => b - a)) if (last - index >= step) { selected.add(index); last = index; }
   return selected;
 }
-function demoLabels(option: Settings, areas: Plot[], width: number, height: number, scale: number, hidden: readonly string[], showLineValues: boolean) {
+function demoLabels(option: Settings, areas: Plot[], width: number, height: number, scale: number, hidden: readonly string[], showLineValues: boolean, latestOnly = false) {
   const all = cartesianSeries(option), visible = visibleSeries(option, hidden), shown = all.filter(s => visible(s.item));
   const groups = barGroups(shown), ends = groups.flatMap(barLabels);
   const format = chartNumberFormatter([...shown.flatMap(s => s.values), ...ends.map(end => end.value)]);
@@ -222,7 +223,7 @@ function demoLabels(option: Settings, areas: Plot[], width: number, height: numb
         y: Math.max(4, Math.min(top, height - rect.height - 4)) + (point.verticalAlign === 'middle' ? rect.height / 2 : point.verticalAlign === 'bottom' ? rect.height : 0) };
     };
   }
-  if (showLineValues) lineLabels(shown.filter(s => s.item.type === 'line'), areas, width, height, scale, format);
+  if (showLineValues) lineLabels(shown.filter(s => s.item.type === 'line'), areas, width, height, scale, format, latestOnly);
   for (const entry of all) {
     if (entry.item.type === 'line' && (!showLineValues || !visible(entry.item))) {
       entry.item.label = { ...record(entry.item.label), show: false };
@@ -292,6 +293,17 @@ function placeLineCaptions(captions: LineCaption[], areas: Plot[], width: number
     if (w > right - left) continue;
     const center = Math.max(left + w / 2, Math.min(right - w / 2, x));
     const gap = numeric(label.distance, 6), top = Math.max(4, area.top - size * 1.6), bottom = Math.min(height - 4, area.top + area.height - 2);
+    if (mark.demoTerminal && x + gap + w < width - 4) {
+      let found = false;
+      for (const shift of [0, -h - padding, h + padding, -2 * (h + padding), 2 * (h + padding)]) {
+        const yCenter = Math.max(top + h / 2, Math.min(bottom - h / 2, y + shift));
+        const rect = { x: x + gap, y: yCenter - h / 2, width: w, height: h, grid: entry.grid };
+        if (placed.some(other => other.grid === rect.grid && rect.x < other.x + other.width + padding && rect.x + w + padding > other.x && rect.y < other.y + other.height + padding && rect.y + h + padding > other.y)) continue;
+        label.show = true; label.position = 'right'; label.align = 'left'; label.verticalAlign = 'middle'; label.offset = [0, yCenter - y];
+        placed.push(rect); found = true; break;
+      }
+      if (found) continue;
+    }
     for (const below of caption.low ? [true, false] : [false, true]) {
       const rect = { x: center - w / 2, y: below ? y + gap : y - gap - h, width: w, height: h, grid: entry.grid };
       if (rect.x < 2 || rect.x + w > width - 2 || rect.y < top || rect.y + h > bottom) continue;
@@ -324,16 +336,16 @@ function provisionalLineProjection(series: CartesianSeries[], areas: Plot[]) {
     return [area.left + (entry.axis.inverse ? 1 - fraction : fraction) * area.width, area.top + (axis.inverse ? y : 1 - y) * area.height];
   };
 }
-function lineLabels(series: CartesianSeries[], areas: Plot[], width: number, height: number, scale: number, format: ReturnType<typeof chartNumberFormatter>) {
+function lineLabels(series: CartesianSeries[], areas: Plot[], width: number, height: number, scale: number, format: ReturnType<typeof chartNumberFormatter>, latestOnly = false) {
   const candidates: LineCaption[] = series.flatMap(entry => {
     entry.item.label = { ...record(entry.item.label), show: false };
     // A stacked/step line's displayed turning geometry is not its raw measurement.
     if (entry.item.stack || entry.item.step || entry.horizontal || !areas[entry.grid]) return [];
     const area = areas[entry.grid], size = Math.round(11 * labelScale(area, width, height, scale));
     const turns = new Map(extrema(entry.values).map(point => [point.index, point]));
-    const mark = record(entry.item.markPoint), data = list(mark.data).filter(point => !generatedCaption(point));
+    const mark = record(entry.item.markPoint), data = list(mark.data).filter(point => !generatedCaption(point)).map(point => latestOnly ? { ...point, label: { ...record(point.label), show: false } } : point);
     const points = entry.values.flatMap((value, index) => {
-      if (value === null) return [];
+      if (value === null || latestOnly && index !== entry.values.length - 1) return [];
       const turn = turns.get(index), low = turn?.low ?? false;
       const provider = record(entry.item.label).formatter;
       const sourceIndex = entry.categories.indexOf(index);
@@ -341,9 +353,9 @@ function lineLabels(series: CartesianSeries[], areas: Plot[], width: number, hei
         seriesName: entry.item.name, name: (entry.axis.data as unknown[])[index] }) ?? '') : typeof provider === 'string' ? provider : '';
       const percent = /%/.test(`${caption} ${entry.valueAxis.name ?? ''} ${entry.item.name ?? ''}`);
       const text = `${value > 0 && caption.includes('+') ? '+' : ''}${format(value)}${percent ? '%' : ''}`;
-      const score = turn ? 2 + turn.score : index === entry.values.length - 1 ? 1 : index === 0 ? .5 : 0;
+      const score = latestOnly ? 10 : turn ? 2 + turn.score : index === entry.values.length - 1 ? 1 : index === 0 ? .5 : 0;
       const point = { name: `demo-${turn ? 'extremum' : 'value'}-${entry.index}-${index}`, coord: [index, value], value, symbolSize: 0,
-        demoPriority: score, demoBelow: low,
+        demoPriority: score, demoBelow: low, demoTerminal: latestOnly,
         label: { show: true, formatter: () => text, position: low ? 'bottom' : 'top', distance: Math.round(6 * Math.sqrt(scale)),
           fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: size, fontWeight: 600, lineHeight: Math.ceil(size * 1.2), padding: 0,
           color: record(entry.item.lineStyle).color ?? record(entry.item.itemStyle).color ?? record(entry.valueAxis.axisLabel).color } };
@@ -382,6 +394,55 @@ export function layoutDemoLineLabels(chart: ECharts) {
   chart.setOption({ series: list(option.series).map(item => item.type === 'line' ? { markPoint: item.markPoint } : {}) }, { silent: true });
 }
 
+function stackValueLabels(option: Settings, original: Settings, areas: Plot[], width: number, height: number, scale: number, hidden: readonly string[], chartId: string) {
+  const operational = chartId.startsWith('operational/');
+  if (!operational && !chartId.startsWith('annual/') && !chartId.startsWith('permits/')) return;
+  if (chartId === 'permits/main') return;
+  const visible = visibleSeries(option, hidden), series = cartesianSeries(option).filter(entry => entry.item.type === 'bar');
+  const format = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
+  const caption = (value: number) => value !== 0 && format.format(value) === '0' ? '' : format.format(value);
+  for (const entry of series) {
+    const item = entry.item, mark = record(item.markPoint);
+    const area = areas[entry.grid];
+    if (!area) continue;
+    mark.data = list(mark.data).filter(point => !String(point.name).startsWith('demo-native-total-'));
+    if (item.markPoint) item.markPoint = mark;
+    const inside = visible(item) && (operational ? entry.index === 0 : item.name !== 'Прогноз');
+    const color = String(record(item.itemStyle).color ?? '#367ba4');
+    const rgb = /^#[\da-f]{6}$/i.test(color) ? [1, 3, 5].map(index => Number.parseInt(color.slice(index, index + 2), 16)) : [0, 0, 0];
+    const darkText = rgb[0] * .299 + rgb[1] * .587 + rgb[2] * .114 > 165;
+    const size = Math.round(10 * labelScale(area, width, height, scale));
+    const maximum = Math.max(1, ...barGroups(series.filter(other => visible(other.item) && other.y === entry.y)).flatMap(barLabels).map(end => Math.abs(end.value)));
+    const source = list(original.series)[entry.index], provider = record(source?.label).formatter;
+    item.label = { ...record(item.label), show: inside, position: 'inside', rotate: 0, fontSize: size, fontWeight: 600,
+      color: darkText ? '#252a33' : '#ffffff', formatter: (point: { dataIndex: number; value: number }) => {
+        if (!inside) return '';
+        const value = entry.values[entry.categories[point.dataIndex]];
+        if (value === null || value === 0) return '';
+        if (operational && typeof provider === 'function' && !provider(point)) return '';
+        const text = caption(value), band = numeric(item.barWidth, area.width / entry.values.length * .7);
+        const measured = echartsFormat.getTextRect(text, `600 ${size}px Segoe UI, Arial, sans-serif`);
+        return band >= measured.width + 3 && Math.abs(value) / maximum * area.height * .8 >= size * 1.2 + 3 ? text : '';
+      } };
+    item.labelLayout = { hideOverlap: true };
+  }
+  for (const group of barGroups(series.filter(entry => visible(entry.item)))) {
+    const ends = barLabels(group), area = areas[group[0].grid];
+    if (!area) continue;
+    const size = Math.round(11 * labelScale(area, width, height, scale));
+    const textWidth = Math.max(1, ...ends.map(end => echartsFormat.getTextRect(caption(end.value), `600 ${size}px Segoe UI, Arial, sans-serif`).width));
+    const indices = sparseIndices(new Map(ends.map(end => [end.index, end.value])), group[0].values.length, area.width, textWidth + 4);
+    for (const end of ends) {
+      if (!indices.has(end.index)) continue;
+      const item = end.series.item, mark = record(item.markPoint), points = list(mark.data);
+      points.push({ name: `demo-stack-total-${end.series.index}-${end.index}`, coord: [end.index, end.value], value: end.value, symbolSize: 0,
+        label: { show: true, position: 'top', distance: 7, fontSize: size, fontWeight: 600,
+          color: record(end.series.valueAxis.axisLabel).color ?? '#737b87', formatter: () => caption(end.value) } });
+      item.markPoint = { ...mark, silent: true, data: points };
+    }
+  }
+}
+
 export function demoPresentationOption(option: EChartsCoreOption, width: number, height: number, hidden: readonly string[] = [], chartId = ''): EChartsCoreOption {
   const result = copy(option) as Settings, scale = demoPresentationScale(width, height);
   // Native labels must settle immediately when the viewer changes canvas size or screen.
@@ -395,7 +456,24 @@ export function demoPresentationOption(option: EChartsCoreOption, width: number,
       grid[key] = Math.round(grid[key] * factor);
     }
   }
+  if (latestLineCharts.has(chartId)) for (const grid of grids) grid.right = Math.max(numeric(grid.right, 0), Math.round((chartId.startsWith('salary/') ? 88 : 70) * Math.sqrt(scale)));
   const main = grids.at(-1);
+  if (main && chartId.startsWith('permits/') && chartId !== 'permits/main' && grids.length > 1 && height < 400) {
+    grids[0].top = 20;
+    grids[0].height = 44;
+    main.top = 104;
+  }
+  if (main && chartId.startsWith('linear/') && width < 1300 && height < 650) {
+    main.top = Math.round(24 + 16 * scale);
+    for (const axis of list(result.yAxis)) axis.splitNumber = 3;
+    for (const axis of list(result.xAxis)) {
+      const label = record(axis.axisLabel);
+      axis.axisLabel = { ...label, fontSize: 10, formatter: (value: string) => value.replace('прогноз', 'пр.').replace('факт', 'ф.') };
+    }
+    for (const media of list(result.media)) list(record(media.option).xAxis).forEach(axis => {
+      axis.axisLabel = { ...record(axis.axisLabel), formatter: (value: string) => value.replaceAll('\n', ' ').replace('прогноз', 'пр.').replace('факт', 'ф.') };
+    });
+  }
   if (main && plot(main, width, height).height < 64) {
     main.bottom = Math.min(numeric(main.bottom, 0), height * .25);
     main.top = Math.max(12, height - numeric(main.bottom, 0) - 64);
@@ -443,7 +521,8 @@ export function demoPresentationOption(option: EChartsCoreOption, width: number,
     item.barCategoryGap = '30%';
     item.barGap ??= '15%';
   }
-  demoLabels(result, after, width, height, scale, hidden, !unlabelledLineCharts.has(chartId));
+  demoLabels(result, after, width, height, scale, hidden, !unlabelledLineCharts.has(chartId) || latestLineCharts.has(chartId), latestLineCharts.has(chartId));
+  stackValueLabels(result, option as Settings, after, width, height, scale, hidden, chartId);
   // Keep the unit available while building captions, then avoid the duplicate upper-grid caption.
   for (const axis of [...xAxes, ...yAxes]) if (grids.length > 1 && numeric(axis.gridIndex, 0) === 0 && axis.name === '%') axis.name = '';
   const tooltip = record(result.tooltip);

@@ -5,21 +5,19 @@ import { LineChart } from 'echarts/charts';
 import { DataZoomComponent, MarkLineComponent, MarkPointComponent } from 'echarts/components';
 import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, Maximize, Minimize, Pause, Pin, PinOff, Play, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
 import { Chart } from './Chart';
-import DeveloperSelect from './DeveloperSelect';
-import { loadCatalog, selectFilters } from './data';
 import { demoPresentationOption, layoutDemoLineLabels } from './demoPresentation';
-import { demoMainCharts } from './demoCatalog';
-import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames, demoSelection, demoSources } from './demoData';
+import { demoBlocks, demoBlockSelection, demoBlockSources, demoMainCharts, type DemoBlock } from './demoCatalog';
+import { DEMO_DEFAULT_SECONDS, DEMO_MAX_SECONDS, DEMO_MIN_SECONDS, demoIndex, demoInterval, demoIntervalLabel, demoMonthNames } from './demoData';
 import type { DemoChart as DemoChartEntry, DemoOptions, DemoSource } from './demoData';
-import { demoPanelContext, demoPanelTitle, demoSlides } from './demoSlides';
+import { demoPanelContext, demoPanelTitle } from './demoSlides';
 import { commonDemoLegend, demoPalette, demoSummaryText } from './demoComposition';
 import type { DemoSlide } from './demoSlides';
-import type { Catalog, Theme } from './types';
+import type { Theme } from './types';
 import './demo.css';
 
 echarts.use([LineChart, DataZoomComponent, MarkLineComponent, MarkPointComponent]);
 type SourceState = { loading: boolean; charts: DemoChartEntry[]; error: string; optionsKey: string };
-const initialSources = () => Object.fromEntries(demoSources.map(source => [source.id, { loading: true, charts: [], error: '', optionsKey: '{}' }])) as Record<string, SourceState>;
+const initialSources = () => Object.fromEntries(demoBlockSources.map(source => [source.id, { loading: true, charts: [], error: '', optionsKey: '{}' }])) as Record<string, SourceState>;
 
 function useDemoSources(options: Record<string, DemoOptions>) {
   const [states, setStates] = useState(initialSources), jobs = useRef(new Map<string, AbortController>()), alive = useRef(false);
@@ -41,19 +39,19 @@ function useDemoSources(options: Record<string, DemoOptions>) {
   useEffect(() => {
     alive.current = true;
     let next = 0, cancelled = false;
-    const worker = async () => { while (!cancelled && next < demoSources.length) await load(demoSources[next++]); };
+    const worker = async () => { while (!cancelled && next < demoBlockSources.length) await load(demoBlockSources[next++]); };
     // Bound API pressure; each source shares its report between every preview and the viewer.
     for (let i = 0; i < 3; i++) void worker();
     return () => { cancelled = true; alive.current = false; for (const controller of jobs.current.values()) controller.abort(); };
   }, [load]);
   useEffect(() => {
-    for (const source of demoSources) {
+    for (const source of demoBlockSources) {
       const key = JSON.stringify(options[source.id] ?? {}), previous = previousFilters.current[source.id] ?? '{}';
       previousFilters.current[source.id] = key;
       if (key !== previous) void load(source);
     }
   }, [options, load]);
-  const current = Object.fromEntries(demoSources.map(source => {
+  const current = Object.fromEntries(demoBlockSources.map(source => {
     const key = JSON.stringify(options[source.id] ?? {}), state = states[source.id];
     return [source.id, state.optionsKey === key ? state : { loading: true, charts: [], error: '', optionsKey: key }];
   }));
@@ -61,22 +59,11 @@ function useDemoSources(options: Record<string, DemoOptions>) {
 }
 
 function SourceOptions({ source, value, change }: { source: DemoSource; value: DemoOptions; change: (patch: DemoOptions) => void }) {
-  const [catalog, setCatalog] = useState<Catalog | null>(null), [error, setError] = useState('');
-  useEffect(() => {
-    if (source.id !== 'profile') return;
-    const controller = new AbortController();
-    void loadCatalog(import.meta.env?.VITE_DATA_MODE === 'snapshot' ? 'snapshot' : 'api', controller.signal).then(setCatalog).catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Каталог профилей недоступен.'); });
-    return () => controller.abort();
-  }, [source.id]);
-  const profile = selectFilters(catalog, new URLSearchParams({ ...(value.developer ? { developer: value.developer } : {}), region: value.region ?? 'msk' }));
-  const regions = ['domrf', 'sales', 'annual', 'apartments', 'mortgage', 'preferential'].includes(source.id) ? ['msk', 'rf'] as const : [];
+  const regions = ['domrf', 'sales', 'annual', 'mortgage', 'preferential'].includes(source.id) ? ['msk', 'rf'] as const : [];
   const hasMonth = ['permits', 'operational', 'mortgage', 'preferential'].includes(source.id);
-  if (source.id !== 'profile' && !regions.length && !hasMonth) return null;
+  if (!regions.length && !hasMonth) return null;
   return <div className="demo-source-options">
-    {source.id === 'profile' && <div className="demo-profile-filter"><span>Группа компаний</span>{catalog && profile.developer ? <DeveloperSelect developers={catalog.developers} value={profile.developer.id} onChange={developer => change({ developer, region: undefined })} /> : error ? <span role="alert">{error}</span> : <span role="status">Загрузка профилей…</span>}</div>}
-    {regions.length > 0 && <label><span>Регион</span><select aria-label={`Регион демонстрации: ${source.title}`} value={source.id === 'profile' ? profile.region : value.region ?? 'msk'} onChange={event => change({ region: event.target.value as 'msk' | 'rf' })}>{regions.map(region => <option key={region} value={region}>{region === 'msk' ? 'Москва' : 'Российская Федерация'}</option>)}</select></label>}
-    {source.id === 'permits' && <label><span>Вид недвижимости</span><select aria-label="Вид недвижимости в демонстрации РС" value={value.permitKind ?? 'total'} onChange={event => change({ permitKind: event.target.value as DemoOptions['permitKind'] })}><option value="total">Всего</option><option value="housing">Жильё</option><option value="nonresidential">Нежильё</option></select></label>}
-    {source.id === 'permits' && value.permitKind !== 'nonresidential' && <div className="demo-area-options" role="group" aria-label="Площадь в демонстрации РС"><button type="button" aria-pressed={value.livingOnly !== false} onClick={() => change({ livingOnly: true })}>Жилая площадь</button><button type="button" aria-pressed={value.livingOnly === false} onClick={() => change({ livingOnly: false })}>Общая площадь в жилье</button></div>}
+    {regions.length > 0 && <label><span>Регион</span><select aria-label={`Регион демонстрации: ${source.title}`} value={value.region ?? 'msk'} onChange={event => change({ region: event.target.value as 'msk' | 'rf' })}>{regions.map(region => <option key={region} value={region}>{region === 'msk' ? 'Москва' : 'Российская Федерация'}</option>)}</select></label>}
     {hasMonth && <label><span>Накопленный период</span><select aria-label={`Период демонстрации: ${source.title}`} value={value.month ?? ''} onChange={event => change({ month: event.target.value ? Number(event.target.value) : undefined })}><option value="">Актуальный месяц</option>{demoMonthNames.map((month, index) => <option key={month} value={index + 1}>{index ? `январь–${month}` : month}</option>)}</select></label>}
   </div>;
 }
@@ -87,40 +74,67 @@ class ChartBoundary extends Component<{ children: ReactNode; resetKey: string },
   componentDidUpdate(previous: Readonly<{ children: ReactNode; resetKey: string }>) { if (previous.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
   render() { return this.state.failed ? <div className="demo-state" role="alert"><AlertCircle size={20} /><span>Не удалось построить график.</span><button type="button" className="icon-button" title="Повторить построение графика" aria-label="Повторить построение графика" onClick={() => this.setState({ failed: false })}><RefreshCw size={16} /></button></div> : this.props.children; }
 }
-function LiveChart({ entry, theme, preview = false, sharedHidden, sharedLegend = false }: { entry: DemoChartEntry; theme: Theme; preview?: boolean; sharedHidden?: readonly string[]; sharedLegend?: boolean }) {
-  const previewHeight = entry.id.startsWith('permits/') ? 280 : 190;
-  const container = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(!preview), [size, setSize] = useState({ width: 600, height: preview ? previewHeight : 500 }), [hidden, setHidden] = useState<string[]>([]);
+function LiveChart({ entry, theme, sharedHidden, sharedLegend = false }: { entry: DemoChartEntry; theme: Theme; sharedHidden?: readonly string[]; sharedLegend?: boolean }) {
+  const container = useRef<HTMLDivElement>(null), [size, setSize] = useState({ width: 600, height: 500 }), [hidden, setHidden] = useState<string[]>([]);
   const { width, height } = size, activeHidden = sharedHidden ?? hidden;
   useLayoutEffect(() => {
     if (!container.current) return;
     const element = container.current, canvas = element.querySelector<HTMLElement>(':scope > .chart-block > .chart-canvas');
     const measure = () => {
-      const bounds = (canvas ?? element).getBoundingClientRect(), width = Math.round(bounds.width), height = Math.round(bounds.height);
+      const surface = canvas ?? element, width = surface.clientWidth, height = surface.clientHeight;
       if (width > 0 && height > 0) setSize(previous => previous.width === width && previous.height === height ? previous : { width, height });
     };
     const observer = new ResizeObserver(measure);
     measure();
     observer.observe(element);
     if (canvas) observer.observe(canvas);
-    if (!preview) return () => observer.disconnect();
-    const intersection = new IntersectionObserver(entries => setVisible(entries.some(item => item.isIntersecting)), { rootMargin: '160px' });
-    intersection.observe(element);
-    return () => { observer.disconnect(); intersection.disconnect(); };
-  }, [preview, visible]);
+    return () => observer.disconnect();
+  }, []);
   const option = useMemo(() => {
     const built = demoPalette(entry.option(theme, Math.max(240, width), [...activeHidden], height), entry.id, theme);
-    const presented = preview ? built : demoPresentationOption(built, width, height, activeHidden, entry.id);
+    const presented = demoPresentationOption(built, width, height, activeHidden, entry.id);
     const tooltip = presented.tooltip && typeof presented.tooltip === 'object' && !Array.isArray(presented.tooltip) ? presented.tooltip : {};
     return { ...presented, tooltip: { ...tooltip, appendTo: undefined, appendToBody: false, confine: true } };
-  }, [entry, theme, width, height, activeHidden, preview]);
-  return <div ref={container} className={preview ? `demo-live demo-preview${previewHeight > 190 ? ' demo-preview-tall' : ''}` : 'demo-live demo-full-chart'} data-demo-chart={entry.id}>
-    {entry.empty ? <div className="demo-state">Нет данных</div> : visible ? <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={preview ? previewHeight : 500} onLegendChange={setHidden} hiddenSeries={sharedHidden} showLegend={!sharedLegend} afterLayout={preview ? undefined : layoutDemoLineLabels} /> : <div className="demo-preview-placeholder" aria-hidden="true" />}
+  }, [entry, theme, width, height, activeHidden]);
+  return <div ref={container} className="demo-live demo-full-chart" data-demo-chart={entry.id}>
+    {entry.empty ? <div className="demo-state">Нет данных</div> : <Chart theme={theme} label={entry.title} option={option} rows={entry.rows} filename={`demo-${entry.id.replaceAll('/', '-')}`} height={500} onLegendChange={setHidden} hiddenSeries={sharedHidden} showLegend={!sharedLegend} afterLayout={layoutDemoLineLabels} />}
   </div>;
 }
-function Preview({ entry, checked, toggle, theme }: { entry: DemoChartEntry; checked: boolean; toggle: () => void; theme: Theme }) {
-  return <article className={`demo-chart-choice ${checked ? 'is-selected' : ''} ${entry.empty ? 'is-empty' : ''}`}>
-    <div className="demo-choice-heading"><label><input type="checkbox" checked={checked} disabled={entry.empty} onChange={toggle} /><span>{entry.title}</span></label><a href={entry.href} title={`Открыть раздел: ${entry.title}`} aria-label={`Открыть раздел: ${entry.title}`}><ExternalLink size={15} /></a></div>
-    <ChartBoundary resetKey={entry.id}><LiveChart entry={entry} theme={theme} preview /></ChartBoundary><p className="demo-context">{entry.context}</p>
+function DemoSlideContent({ entry, theme, sharedHidden = [], onLegendChange, resetKey = '', notice = '', miniature = false }: {
+  entry: DemoSlide; theme: Theme; sharedHidden?: readonly string[]; onLegendChange?: (hidden: string[]) => void; resetKey?: string; notice?: string; miniature?: boolean;
+}) {
+  const legend = useMemo(() => commonDemoLegend(entry.charts, theme), [entry, theme]);
+  const hasSummaries = entry.charts.length > 1 && entry.charts.some(chart => chart.summary !== undefined);
+  return <>
+    <div className="demo-slide-heading"><div aria-live={miniature ? undefined : 'polite'} aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id={miniature ? undefined : 'demo-slide-title'}>{entry.title}</h1><p id={miniature ? undefined : 'demo-slide-context'}>{entry.context}</p>{notice && <p role="status" className="demo-screen-error">{notice}</p>}</div>
+      {legend.length > 0 && <div className="legend demo-shared-legend" role="group" aria-label="Общая легенда экрана">{legend.map(item => <button type="button" key={item.name} className={sharedHidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!sharedHidden.includes(item.name)} title={`${sharedHidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onClick={() => onLegendChange?.(sharedHidden.includes(item.name) ? sharedHidden.filter(name => name !== item.name) : [...sharedHidden, item.name])}><i style={{ background: item.color, ...(item.borderType === 'dashed' ? { border: `1px dashed ${item.color ?? 'currentColor'}`, backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, currentColor 2px, currentColor 3px)' } : {}) }} />{item.name}</button>)}</div>}
+    </div>
+    <div className={`demo-stage demo-layout-${entry.layout}${hasSummaries ? ' demo-has-summaries' : ''}`} data-demo-slide={entry.id} data-demo-panels={entry.charts.length} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length), '--demo-focus-rows': Math.max(1, entry.charts.length - 1) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}${entry.layout === 'focus' ? chart.id === entry.primaryId ? ' demo-panel-primary' : ' demo-panel-detail' : ''}`} key={chart.id} aria-label={chart.title} data-demo-role={entry.layout === 'focus' ? chart.id === entry.primaryId ? 'primary' : 'detail' : 'peer'}>
+      {entry.charts.length > 1 && <h2>{demoPanelTitle(chart, entry)}</h2>}
+      {entry.charts.length > 1 && !(hasSummaries && entry.layout === 'grid') && demoPanelContext(chart, entry) && demoPanelContext(chart, entry) !== chart.summary?.unit && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
+      {chart.summary && <div className="demo-summary"><div><strong>{demoSummaryText(chart.summary)}</strong><span>{chart.summary.unit}</span></div><p>{chart.summary.context}</p></div>}
+      {chart.highlights && <div className="demo-highlights">{chart.highlights.map(highlight => <div key={highlight.label}><span>{highlight.label}</span><div><strong style={{ color: highlight.color }}>{demoSummaryText(highlight)}</strong><span>{highlight.unit}</span></div><small>{highlight.context}</small></div>)}</div>}
+      {!chart.summary && hasSummaries && entry.layout === 'grid' && <div className="demo-summary demo-summary-placeholder"><span>{demoPanelContext(chart, entry)}</span></div>}
+      <ChartBoundary resetKey={`${chart.id}-${resetKey}`}><LiveChart entry={chart} theme={theme} sharedLegend={legend.length > 0} sharedHidden={legend.length ? sharedHidden : undefined} /></ChartBoundary>
+    </section>)}</div>
+  </>;
+}
+function BlockPreview({ entry, checked, toggle, theme }: { entry: DemoBlock; checked: boolean; toggle: () => void; theme: Theme }) {
+  const root = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(false), [width, setWidth] = useState(600);
+  const inputId = `demo-block-${encodeURIComponent(entry.id)}`;
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const measure = () => setWidth(element.clientWidth);
+    const resize = new ResizeObserver(measure), intersection = new IntersectionObserver(entries => setVisible(entries.some(entry => entry.isIntersecting)), { rootMargin: '200px' });
+    measure(); resize.observe(element); intersection.observe(element);
+    return () => { resize.disconnect(); intersection.disconnect(); };
+  }, []);
+  return <article className={`demo-chart-choice demo-block-choice ${checked ? 'is-selected' : ''} ${entry.empty ? 'is-empty' : ''}`} data-demo-block={entry.id}>
+    <div className="demo-choice-heading"><label htmlFor={inputId}><input id={inputId} type="checkbox" checked={checked} disabled={entry.empty} onChange={toggle} /><span>{entry.title}</span></label><a href={entry.charts[0].href} title={`Открыть раздел: ${entry.title}`} aria-label={`Открыть раздел: ${entry.title}`}><ExternalLink size={15} /></a></div>
+    <label htmlFor={inputId} className="demo-block-picture"><div ref={root} className="demo-block-preview" aria-hidden="true">
+      {visible ? <div className="demo-viewer demo-miniature" ref={node => { if (node) node.inert = true; }} style={{ transform: `scale(${width / 1600})` }}><DemoSlideContent entry={entry} theme={theme} miniature /></div> : <div className="demo-block-placeholder" />}
+    </div></label><p className="demo-context">{entry.context}</p>
   </article>;
 }
 function useSlideClock(step: number, seconds: number, paused: boolean, next: () => void) {
@@ -143,9 +157,7 @@ function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { sli
   const [hiddenBySlide, setHiddenBySlide] = useState<Record<string, string[]>>({});
   const exitButton = useRef<HTMLButtonElement>(null), controls = useRef<HTMLElement>(null), hideTimer = useRef<number>(), enteredFullscreen = useRef(false), index = demoIndex(step, slides.length), entry = slides[index];
   const next = useCallback(() => setStep(value => value + 1), []), previous = useCallback(() => setStep(value => value - 1), []);
-  const legend = useMemo(() => commonDemoLegend(entry.charts, theme), [entry, theme]);
   const sharedHidden = useMemo(() => hiddenBySlide[entry.id] ?? [], [hiddenBySlide, entry.id]);
-  const hasSummaries = entry.charts.length > 1 && entry.charts.some(chart => chart.summary !== undefined);
   useSlideClock(step, seconds, paused, next);
   const scheduleHide = useCallback(() => {
     window.clearTimeout(hideTimer.current);
@@ -199,25 +211,17 @@ function DemoViewer({ slides, seconds, theme, onExit, viewerRef, notice }: { sli
   }
   return createPortal(<div ref={viewerRef} className="demo-viewer" role="dialog" aria-modal="true" aria-labelledby="demo-slide-title" aria-describedby="demo-slide-context" onPointerMove={event => { if (event.pointerType === 'mouse' && event.clientY >= event.currentTarget.getBoundingClientRect().bottom - 120) revealControls(); }} onPointerDown={event => { if (event.pointerType === 'touch' && !(event.target instanceof Element && event.target.closest('button, a, input'))) revealControls(); }}>
     <header className="demo-viewer-header"><div className="demo-wordmark"><img src="/brand-moscow.svg" alt="" /><strong>Аналитика Москвы</strong></div><div className="institutional-brand"><img src="/brand-gk.svg" alt="" /><span>Градостроительный<br />комплекс Москвы</span><img src="/brand-dgp.svg" alt="" /><span>Департамент градостроительной<br />политики города Москвы</span></div><div className="demo-header-actions"><button type="button" className="icon-button" title={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-label={controlsVisible ? 'Скрыть управление' : 'Показать управление'} aria-controls="demo-playback-controls" aria-expanded={controlsVisible} onClick={toggleControls}><SlidersHorizontal size={19} /></button><button ref={exitButton} type="button" className="icon-button" title="Завершить демонстрацию (Esc)" aria-label="Завершить демонстрацию" onClick={onExit}><X size={19} /></button></div></header>
-    <div className="demo-slide-heading"><div aria-live="polite" aria-atomic="true"><p className="demo-slide-source">{entry.sourceTitle}</p><h1 id="demo-slide-title">{entry.title}</h1><p id="demo-slide-context">{entry.context}</p>{screenError && <p role="status" className="demo-screen-error">{screenError}</p>}</div>
-      {legend.length > 0 && <div className="legend demo-shared-legend" role="group" aria-label="Общая легенда экрана">{legend.map(item => <button type="button" key={item.name} className={sharedHidden.includes(item.name) ? 'legend-off' : ''} aria-pressed={!sharedHidden.includes(item.name)} title={`${sharedHidden.includes(item.name) ? 'Показать' : 'Скрыть'}: ${item.name}`} onClick={() => setHiddenBySlide(previous => ({ ...previous, [entry.id]: sharedHidden.includes(item.name) ? sharedHidden.filter(name => name !== item.name) : [...sharedHidden, item.name] }))}><i style={{ background: item.color, ...(item.borderType === 'dashed' ? { border: `1px dashed ${item.color ?? 'currentColor'}`, backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, currentColor 2px, currentColor 3px)' } : {}) }} />{item.name}</button>)}</div>}
-    </div>
-    <div className={`demo-stage demo-layout-${entry.layout}${hasSummaries ? ' demo-has-summaries' : ''}`} data-demo-slide={entry.id} data-demo-panels={entry.charts.length} style={{ '--demo-ring-columns': Math.max(1, entry.charts.filter(chart => !chart.id.endsWith('/annual') && chart.id !== 'domrf/realization').length), '--demo-focus-rows': Math.max(1, entry.charts.length - 1) } as import('react').CSSProperties}>{entry.charts.map(chart => <section className={`demo-panel ${entry.layout === 'overview' && (chart.id.endsWith('/annual') || chart.id === 'domrf/realization') ? 'demo-panel-history' : ''}${entry.layout === 'focus' ? chart.id === entry.primaryId ? ' demo-panel-primary' : ' demo-panel-detail' : ''}`} key={chart.id} aria-label={chart.title} data-demo-role={entry.layout === 'focus' ? chart.id === entry.primaryId ? 'primary' : 'detail' : 'peer'}>
-      {entry.charts.length > 1 && <h2>{demoPanelTitle(chart, entry)}</h2>}
-      {entry.charts.length > 1 && !(hasSummaries && entry.layout === 'grid') && demoPanelContext(chart, entry) && demoPanelContext(chart, entry) !== chart.summary?.unit && <p className="demo-panel-context">{demoPanelContext(chart, entry)}</p>}
-      {chart.summary && <div className="demo-summary"><div><strong>{demoSummaryText(chart.summary)}</strong><span>{chart.summary.unit}</span></div><p>{chart.summary.context}</p></div>}
-      {!chart.summary && hasSummaries && entry.layout === 'grid' && <div className="demo-summary demo-summary-placeholder"><span>{demoPanelContext(chart, entry)}</span></div>}
-      <ChartBoundary resetKey={`${chart.id}-${step}`}><LiveChart entry={chart} theme={theme} sharedLegend={legend.length > 0} sharedHidden={legend.length ? sharedHidden : undefined} /></ChartBoundary>
-    </section>)}</div>
+    <DemoSlideContent entry={entry} theme={theme} sharedHidden={sharedHidden} onLegendChange={hidden => setHiddenBySlide(previous => ({ ...previous, [entry.id]: hidden }))} resetKey={String(step)} notice={screenError} />
     <footer ref={controls} id="demo-playback-controls" className="demo-viewer-controls" hidden={!controlsVisible} onFocusCapture={() => window.clearTimeout(hideTimer.current)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) scheduleHide(); }}><span className="demo-slide-count" aria-label={`График ${index + 1} из ${slides.length}`}>{index + 1} / {slides.length}</span><button type="button" className="icon-button" title="Предыдущий график (←)" aria-label="Предыдущий график" onClick={previous}><ChevronLeft size={19} /></button><button type="button" className="icon-button" title={paused ? 'Продолжить показ' : 'Приостановить показ'} aria-label={paused ? 'Продолжить показ' : 'Приостановить показ'} onClick={() => setPaused(value => !value)}>{paused ? <Play size={18} /> : <Pause size={18} />}</button><button type="button" className="icon-button" title="Следующий график (→)" aria-label="Следующий график" onClick={next}><ChevronRight size={19} /></button><span className="demo-time">{demoIntervalLabel(seconds)}</span><button type="button" className="icon-button demo-pin-button" title={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-label={controlsPinned ? 'Открепить управление' : 'Закрепить управление'} aria-pressed={controlsPinned} onClick={() => setControlsPinned(value => !value)}>{controlsPinned ? <PinOff size={17} /> : <Pin size={17} />}</button><button type="button" className="icon-button demo-fullscreen-button" title={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} aria-label={fullscreen ? 'Выйти из полного экрана' : 'Полный экран браузера'} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={17} /> : <Maximize size={17} />}</button></footer>
   </div>, document.body);
 }
 
 export default function DemoPage({ theme }: { theme: Theme }) {
   const [options, setOptions] = useState<Record<string, DemoOptions>>({});
-  const { states, retry } = useDemoSources(options), [selected, setSelected] = useState<Set<string> | null>(() => new Set()), [seconds, setSeconds] = useState(DEMO_DEFAULT_SECONDS), [browserFullscreen, setBrowserFullscreen] = useState(true), [slides, setSlides] = useState<DemoSlide[]>([]), [notice, setNotice] = useState('');
+  const { states, retry } = useDemoSources(options), [selected, setSelected] = useState<Set<string>>(() => new Set()), [seconds, setSeconds] = useState(DEMO_DEFAULT_SECONDS), [browserFullscreen, setBrowserFullscreen] = useState(true), [slides, setSlides] = useState<DemoSlide[]>([]), [notice, setNotice] = useState('');
   const viewerRef = useRef<HTMLDivElement>(null), startButton = useRef<HTMLButtonElement>(null), wasRunning = useRef(false);
-  const charts = demoSources.flatMap(source => states[source.id].charts), chosen = demoSelection(charts, selected), queue = demoSlides(chosen), available = charts.filter(chart => !chart.empty), loading = demoSources.filter(source => states[source.id].loading).length;
+  const blocksBySource = demoBlockSources.map(source => ({ source, state: states[source.id], blocks: demoBlocks(states[source.id].charts) }));
+  const blocks = blocksBySource.flatMap(source => source.blocks), available = blocks.filter(block => !block.empty), queue = demoBlockSelection(blocks, selected), loading = demoBlockSources.filter(source => states[source.id].loading).length;
   const exit = useCallback(() => {
     if (document.fullscreenElement === viewerRef.current) void document.exitFullscreen().catch(() => {});
     setSlides([]);
@@ -227,10 +231,10 @@ export default function DemoPage({ theme }: { theme: Theme }) {
     wasRunning.current = !!slides.length;
   }, [slides.length]);
   useEffect(() => () => { if (document.fullscreenElement === viewerRef.current) void document.exitFullscreen().catch(() => {}); }, []);
-  function toggle(id: string) { setSelected(previous => { const next = new Set(previous ?? available.map(chart => chart.id)); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
-  function toggleSource(entries: DemoChartEntry[], checked: boolean) {
+  function toggle(id: string) { setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
+  function toggleSource(entries: DemoBlock[], checked: boolean) {
     setSelected(previous => {
-      const next = new Set(previous ?? available.map(chart => chart.id));
+      const next = new Set(previous);
       for (const entry of entries) if (!entry.empty) { if (checked) next.add(entry.id); else next.delete(entry.id); }
       return next;
     });
@@ -244,12 +248,12 @@ export default function DemoPage({ theme }: { theme: Theme }) {
     }
   }
   if (slides.length) return <DemoViewer slides={slides} seconds={seconds} theme={theme} onExit={exit} viewerRef={viewerRef} notice={notice} />;
-  return <main className="demo-page"><div className="page-heading"><div><div className="eyebrow">СЕРВИС</div><h1>Демонстрация</h1></div><span className="demo-selection-count" role="status">Выбрано: {chosen.length} / {available.length} · Экранов: {queue.length}</span></div>
+  return <main className="demo-page"><div className="page-heading"><div><div className="eyebrow">СЕРВИС</div><h1>Демонстрация</h1></div><span className="demo-selection-count" role="status">Блоков: {queue.length} / {available.length}</span></div>
     <div className="demo-settings"><label className="demo-interval"><span>Интервал</span><input type="range" min={DEMO_MIN_SECONDS} max={DEMO_MAX_SECONDS} step={15} value={seconds} aria-label="Интервал показа" aria-valuetext={demoIntervalLabel(seconds)} onChange={event => setSeconds(demoInterval(Number(event.target.value)))} /><output>{demoIntervalLabel(seconds)}</output></label><label className="demo-fullscreen-choice"><input type="checkbox" checked={browserFullscreen} onChange={event => setBrowserFullscreen(event.target.checked)} /><span>Полный экран браузера</span></label><button ref={startButton} className="demo-start" type="button" disabled={!queue.length} onClick={() => void start()}><Play size={17} />Начать показ</button></div>
-    <div className="demo-selection-tools"><label><input type="checkbox" checked={available.length > 0 && chosen.length === available.length} ref={node => { if (node) node.indeterminate = chosen.length > 0 && chosen.length < available.length; }} disabled={!available.length} onChange={event => setSelected(event.target.checked ? null : new Set())} /><span>Все графики</span></label>{loading > 0 && <span role="status">Загрузка разделов: {loading}</span>}</div>
-    {demoSources.map(source => { const state = states[source.id], available = state.charts.filter(chart => !chart.empty), count = demoSelection(available, selected).length; return <section className="demo-source" key={source.id} aria-labelledby={`demo-source-${source.id}`} aria-busy={state.loading} data-demo-source={source.id}><div className="demo-source-heading"><h2 id={`demo-source-${source.id}`}>{source.title}</h2><div className="demo-source-actions"><label className="demo-source-selection"><input type="checkbox" aria-label={`Все графики раздела: ${source.title}`} checked={available.length > 0 && count === available.length} ref={node => { if (node) node.indeterminate = count > 0 && count < available.length; }} disabled={state.loading || !available.length} onChange={event => toggleSource(state.charts, event.target.checked)} /><span>Все в разделе</span><span className="demo-source-count">{count} / {available.length}</span></label><button className="icon-button" type="button" title={`Обновить: ${source.title}`} aria-label={`Обновить: ${source.title}`} disabled={state.loading} onClick={() => void retry(source)}><RefreshCw size={16} /></button></div></div>
+    <div className="demo-selection-tools"><label><input type="checkbox" checked={available.length > 0 && queue.length === available.length} ref={node => { if (node) node.indeterminate = queue.length > 0 && queue.length < available.length; }} disabled={!available.length} onChange={event => setSelected(new Set(event.target.checked ? available.map(block => block.id) : []))} /><span>Все блоки</span></label>{loading > 0 && <span role="status">Загрузка разделов: {loading}</span>}</div>
+    {blocksBySource.map(({ source, state, blocks }) => { const available = blocks.filter(block => !block.empty), count = demoBlockSelection(available, selected).length; return <section className="demo-source" key={source.id} aria-labelledby={`demo-source-${source.id}`} aria-busy={state.loading} data-demo-source={source.id}><div className="demo-source-heading"><h2 id={`demo-source-${source.id}`}>{source.title}</h2><div className="demo-source-actions"><label className="demo-source-selection"><input type="checkbox" aria-label={`Все блоки раздела: ${source.title}`} checked={available.length > 0 && count === available.length} ref={node => { if (node) node.indeterminate = count > 0 && count < available.length; }} disabled={state.loading || !available.length} onChange={event => toggleSource(blocks, event.target.checked)} /><span>Все в разделе</span><span className="demo-source-count">{count} / {available.length}</span></label><button className="icon-button" type="button" title={`Обновить: ${source.title}`} aria-label={`Обновить: ${source.title}`} disabled={state.loading} onClick={() => void retry(source)}><RefreshCw size={16} /></button></div></div>
       <SourceOptions source={source} value={options[source.id] ?? {}} change={patch => { setOptions(previous => ({ ...previous, [source.id]: { ...previous[source.id], ...patch } })); }} />
-      {state.loading ? <div className="demo-state" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка графиков…</span></div> : state.error ? <div className="demo-state demo-error" role="alert"><AlertCircle size={19} /><span>{state.error}</span><button type="button" title={`Повторить: ${source.title}`} aria-label={`Повторить: ${source.title}`} className="icon-button" onClick={() => void retry(source)}><RefreshCw size={16} /></button></div> : !state.charts.length ? <div className="demo-state">Нет доступных графиков</div> : <div className="demo-chart-grid">{state.charts.map(entry => <Preview key={entry.id} entry={entry} checked={!entry.empty && (selected === null || selected.has(entry.id))} toggle={() => toggle(entry.id)} theme={theme} />)}</div>}
+      {state.loading ? <div className="demo-state" role="status"><RefreshCw size={18} className="loading-icon" /><span>Загрузка блоков…</span></div> : state.error ? <div className="demo-state demo-error" role="alert"><AlertCircle size={19} /><span>{state.error}</span><button type="button" title={`Повторить: ${source.title}`} aria-label={`Повторить: ${source.title}`} className="icon-button" onClick={() => void retry(source)}><RefreshCw size={16} /></button></div> : !blocks.length ? <div className="demo-state">Нет доступных блоков</div> : <div className="demo-chart-grid">{blocks.map(entry => <BlockPreview key={entry.id} entry={entry} checked={!entry.empty && selected.has(entry.id)} toggle={() => toggle(entry.id)} theme={theme} />)}</div>}
     </section>; })}
   </main>;
 }

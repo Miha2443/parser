@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeIds, constructionTreeLabels, loadConstructionTree, loadConstructionTreeHistory, readConstructionTree, watchConstructionTree } from './constructionTreeData.ts';
+import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeIds, constructionTreeLabels, constructionTreeRows, loadConstructionTree, loadConstructionTreeHistory, readConstructionTree, watchConstructionTree } from './constructionTreeData.ts';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -25,6 +25,20 @@ const fixture = () => ({
 const snapshot = () => ({ date: '2026-11-01', capturedAt: '2026-11-02T04:00:00Z', publishedAt: '2026-10-30T14:00:00Z', release: 'releases/friday', delayedCapture: false, sha256: 'a'.repeat(64) });
 const sectors = () => ({ status: 'available', sheet: 'Реестр ОКС', filters: { 'Назначение': 'Нежилье', 'Статус объекта': 'Строящийся', 'Статус РС': 'Действует' }, areaColumn: 'Q', sectorColumn: 'AR', canonicalValue: 13.73172749, registryValue: 13.73172749,
   items: [{ id: 'sector-1', label: '03 ДОУ', value: 13.73172749, rows: [5, 8], count: 2 }] });
+
+test('Excel source rows preserve numeric precision, missing values, sectors and snapshot metadata', () => {
+  const data = { ...fixture(), snapshot: snapshot(), nonresidentialSectors: sectors() };
+  const before = structuredClone(data), rows = constructionTreeRows(data);
+  assert.equal(rows.length, 12);
+  assert.equal(rows[1][3], 51.65728716);
+  assert.equal(typeof rows[1][3], 'number');
+  assert.equal(rows[10][3], null);
+  assert.equal(rows[11][3], 13.73172749);
+  assert.equal(rows[11][4], '5,8');
+  assert.equal(rows[11][6], 'Реестр ОКС');
+  assert.deepEqual(rows[1].slice(12), [snapshot().date, snapshot().publishedAt, snapshot().capturedAt]);
+  assert.deepEqual(data, before);
+});
 
 test('READY tree preserves all ten original values, source labels, cell addresses and metadata', () => {
   const raw = fixture(), before = structuredClone(raw), parsed = readConstructionTree(raw);

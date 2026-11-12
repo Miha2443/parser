@@ -1,7 +1,8 @@
 import { AnalystOnly, useAccess } from './auth';
+import { ExcelExportButton } from './ExcelExport';
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Building2, Database, Download, Info, RefreshCw } from 'lucide-react';
-import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeLabels, loadConstructionTreeHistory, watchConstructionTree } from './constructionTreeData';
+import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constructionTreeExact, constructionTreeFilename, constructionTreeLabels, constructionTreeRows, loadConstructionTreeHistory, watchConstructionTree } from './constructionTreeData';
 import type { ConstructionTreeData, ConstructionTreeId, ConstructionTreeSnapshot, ConstructionTreeState } from './constructionTreeData';
 import './construction-tree.css';
 
@@ -25,7 +26,7 @@ function SourceData({ data }: { data: ConstructionTreeData }) {
   };
   return <AnalystOnly><details className="ct-source">
     <summary><Database size={16} aria-hidden="true" /><span>Данные и источник</span></summary>
-    <div className="ct-source-toolbar"><h2>Исходные значения · млн м²</h2><button type="button" onClick={download}><Download size={15} aria-hidden="true" />Скачать CSV</button></div>
+    <div className="ct-source-toolbar"><h2>Исходные значения · млн м²</h2><div className="chart-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}><button type="button" onClick={download}><Download size={15} aria-hidden="true" />Скачать CSV</button><ExcelExportButton rows={constructionTreeRows(data)} filename={constructionTreeFilename(data)} label="Скачать исходные значения Excel" /></div></div>
     <dl className="ct-metadata">
       <div><dt>Файл</dt><dd>{data.source.file}</dd></div>
       <div><dt>Лист / колонка</dt><dd>«{data.source.sheet}» / «{data.source.column}»</dd></div>

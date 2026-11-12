@@ -14,13 +14,14 @@ const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.startsWith(sourceRoot) && specifier === './Chart') return nextResolve('./Chart.tsx', context);
     if (context.parentURL?.startsWith(sourceRoot) && specifier === './auth') return nextResolve('./auth.tsx', context);
+    if (context.parentURL?.startsWith(sourceRoot) && specifier === './ExcelExport') return nextResolve('./ExcelExport.tsx', context);
     if (context.parentURL?.startsWith(sourceRoot) && /^\.\.?\/[^.]+$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
     if (['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'].includes(specifier)) return nextResolve(`${specifier}.js`, context);
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
     if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: '' };
-    if (url.endsWith('/Chart.tsx') || url.endsWith('/ProfileStructure.tsx') || url.endsWith('/DemoProfileCharts.tsx') || url.endsWith('/auth.tsx')) return { format: 'module', shortCircuit: true, source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), {
+    if (url.endsWith('/Chart.tsx') || url.endsWith('/ProfileStructure.tsx') || url.endsWith('/DemoProfileCharts.tsx') || url.endsWith('/auth.tsx') || url.endsWith('/ExcelExport.tsx')) return { format: 'module', shortCircuit: true, source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }, fileName: 'Chart.tsx',
     }).outputText };
     return nextLoad(url, context);

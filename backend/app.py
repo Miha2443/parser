@@ -62,6 +62,8 @@ def create_app(service=None, apartments_service=None, sales_service=None, *, aut
     app.include_router(create_construction_tree_router(context, call))
     from backend.construction_pages_routes import create_router as create_construction_pages_router
     app.include_router(create_construction_pages_router(context, call))
+    from backend.table_export import create_router as create_table_export_router
+    app.include_router(create_table_export_router())
     from backend.annual_routes import create_router as create_annual_router
     app.include_router(create_annual_router(DataContext.from_environment(), call))
     from backend.economics_routes import create_router as create_economics_router

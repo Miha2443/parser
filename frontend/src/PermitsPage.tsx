@@ -1,4 +1,5 @@
 import { AnalystOnly, useAccess } from './auth';
+import { ExcelExportButton } from './ExcelExport';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, ChevronDown, Database, Download, FileSpreadsheet, ImageDown, RefreshCw, RotateCcw } from 'lucide-react';
 import * as echarts from 'echarts/core';
@@ -22,7 +23,7 @@ import './permits.css';
 
 echarts.use([BarChart, LineChart, AriaComponent, GraphicComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 510 }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number }) {
+function PermitChart({ buildOption, theme, label, rows, filename, growth, growthLabel, height = 510, excelAction }: { buildOption: (view: PermitChartView) => echarts.EChartsCoreOption; theme: Theme; label: string; rows: Cell[][]; filename: string; growth: PermitGrowthPoint[]; growthLabel: string; height?: number; excelAction?: ReactNode }) {
   const { canAnalyze } = useAccess();
   const container = useRef<HTMLDivElement>(null), instance = useRef<echarts.ECharts>();
   const [width, setWidth] = useState(600), [hidden, setHidden] = useState<string[]>([]), [showData, setShowData] = useState(false);
@@ -58,7 +59,7 @@ function PermitChart({ buildOption, theme, label, rows, filename, growth, growth
     <div ref={container} className="chart-canvas" style={{ height }} role="img" aria-label={`${label}; изменение к прошлому году, ${growthLabel}`} />
     <div className="permit-growth-accessible"><table><caption>К прошлому году, % · {growthLabel}</caption><thead><tr>{growth.map(point => <th key={point.year} scope="col">{point.year}</th>)}</tr></thead><tbody><tr>{growth.map(point => <td key={point.year}>{point.value === null ? `н/д: ${point.reason}` : `${point.value > 0 ? '+' : ''}${number(point.value, 1)} %`}</td>)}</tr></tbody></table></div>
     <AnalystOnly><div className="chart-data"><button type="button" className="data-toggle" onClick={() => { if (canAnalyze) setShowData(value => !value); }} aria-expanded={showData}><ChevronDown size={13} className={showData ? 'chevron expanded' : 'chevron'} />Данные и скачивание</button></div>
-    {canAnalyze && showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => { if (canAnalyze) exportCsv(rows, `${filename}.csv`); }}><Download size={15} />CSV</button><button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}</AnalystOnly>
+    {canAnalyze && showData && <div className="chart-data-panel"><div className="export-actions"><button type="button" onClick={() => { if (canAnalyze) exportCsv(rows, `${filename}.csv`); }}><Download size={15} />CSV</button>{excelAction ?? <ExcelExportButton rows={rows} filename={filename} label={`Скачать Excel: ${label}`} text />}<button type="button" onClick={exportPng}><ImageDown size={15} />PNG</button></div><div className="table-wrap"><table><thead><tr>{rows[0]?.map((cell, i) => <th key={i}>{cell}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{typeof cell === 'number' ? number(cell, 2) : cell ?? '—'}</td>)}</tr>)}</tbody></table></div></div>}</AnalystOnly>
   </div>;
 }
 
@@ -99,7 +100,7 @@ export function ConstructionLoadState({ error, retry, label }: { error: string; 
 }
 export function ConstructionEmpty({ children = 'Нет наблюдений в источнике.' }: { children?: ReactNode }) { return <p className="cp-empty"><Database size={17} />{children}</p>; }
 
-export function ConstructionExport({ url, filename, label, refresh }: { url: string; filename: string; label: string; refresh: () => void }) {
+export function ConstructionExport({ url, filename, label, refresh, text = false }: { url: string; filename: string; label: string; refresh: () => void; text?: boolean }) {
   const { canAnalyze } = useAccess(), allowed = useRef(canAnalyze); allowed.current = canAnalyze;
   const active = useRef<AbortController>();
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [mismatch, setMismatch] = useState(false);
@@ -122,7 +123,7 @@ export function ConstructionExport({ url, filename, label, refresh }: { url: str
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
   if (!canAnalyze) return null;
-  return <div className="cp-export"><button type="button" className="icon-button" title={label} aria-label={label} disabled={busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}</button>{error && <span className="warning-text" role="alert">{error}</span>}{mismatch && <button type="button" className="icon-button" title="Обновить данные источника" aria-label="Обновить данные источника" onClick={refresh}><RefreshCw size={17} /></button>}</div>;
+  return <div className="cp-export"><button type="button" className={text ? undefined : 'icon-button'} title={label} aria-label={label} disabled={busy} onClick={download}>{busy ? <RefreshCw size={17} className="loading-icon" /> : <FileSpreadsheet size={17} />}{text && 'Excel'}</button>{error && <span className="warning-text" role="alert">{error}</span>}{mismatch && <button type="button" className="icon-button" title="Обновить данные источника" aria-label="Обновить данные источника" onClick={refresh}><RefreshCw size={17} /></button>}</div>;
 }
 export function ConstructionSource({ metadata, label, notes = [], children }: { metadata: ConstructionPagesMetadata; label: string; notes?: string[]; children?: ReactNode }) {
   if (!useAccess().canAnalyze) return null;
@@ -160,13 +161,13 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
     <p className="cp-context">Москва</p>
     {error || !data ? <><ConstructionLoadState error={error} retry={retry} label="разрешения на строительство" />{error && <div className="permit-recovery"><button type="button" onClick={() => change({ month: null, ...Object.fromEntries(Object.values(permitStructureParams).map(key => [key, null])) })}><RotateCcw size={15} />Сбросить фильтры разрешений</button></div>}</> : <>
       <section className="permit-main cp-section" aria-labelledby="permit-main-title">
-        <div className="cp-section-heading"><div><h2 id="permit-main-title">Выдача разрешений по годам</h2><p>{data.permits.region} · {data.permits.unit} · {date(data.source.date)}</p></div><ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}.xlsx`} label="Скачать разрешения Excel: единая база и оба варианта площади" refresh={retry} /></div>
+        <div className="cp-section-heading"><div><h2 id="permit-main-title">Выдача разрешений по годам</h2><p>{data.permits.region} · {data.permits.unit} · {date(data.source.date)}</p></div><ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}.xlsx`} label="Скачать разрешения Excel: итоги и объекты 2011–2021" refresh={retry} /></div>
         <div className="cp-controls permit-controls"><label><span>Вид объектов</span><select aria-label="Вид объектов" value={data.selection.permitKind} onChange={e => change(permitKindChange(data.controls, data.selection.month, permitKind(e.target.value)))}>{data.controls.permitKinds.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}</select></label><label><span>Накопленный период</span><select aria-label="Месяц разрешений" value={data.selection.month} disabled={!data.controls.monthsByKind[data.selection.permitKind].length} onChange={e => change({ month: e.target.value })}>{data.controls.monthsByKind[data.selection.permitKind].map(m => <option key={m} value={m}>{months[m - 1]}</option>)}</select></label><span className="cp-period-label">{data.permits.periodLabel}</span></div>
         {data.selection.permitKind !== 'nonresidential' && <div className="permit-area-toggle" role="group" aria-label="Площадь разрешений">
           <button type="button" aria-pressed={livingOnly} onClick={() => change({ permit_living_only: null })}>Жилая площадь</button>
           <button type="button" aria-pressed={!livingOnly} onClick={() => change({ permit_living_only: '0' })}>Общая площадь в жилье</button>
         </div>}
-        {presentation.some(r => r.selected !== null || r.annualForecast !== null) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${data.selection.month}-${livingOnly}`} buildOption={view => permitsMainOption(data, theme, view)} theme={theme} label="Разрешения по годам: выбранный период и остаток до годового прогноза или подтверждённого итога в одном столбце" rows={permitsMainRows(data)} filename={filename} growth={permitMainGrowth(data)} growthLabel={data.permits.periodLabel} /> : <ConstructionEmpty>Нет данных о выдаче разрешений за выбранный период.</ConstructionEmpty>}
+        {presentation.some(r => r.selected !== null || r.annualForecast !== null) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${data.selection.month}-${livingOnly}`} buildOption={view => permitsMainOption(data, theme, view)} theme={theme} label="Разрешения по годам: выбранный период и остаток до годового прогноза или подтверждённого итога в одном столбце" rows={permitsMainRows(data)} filename={filename} growth={permitMainGrowth(data)} growthLabel={data.permits.periodLabel} excelAction={<ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}.xlsx`} label="Скачать Excel графика РС с объектами 2011–2021" refresh={retry} text />} /> : <ConstructionEmpty>Нет данных о выдаче разрешений за выбранный период.</ConstructionEmpty>}
       </section>
       <section className="permit-breakdowns cp-section" aria-labelledby="permit-breakdowns-title"><div className="cp-section-heading"><div><h2 id="permit-breakdowns-title">Структура разрешённой площади</h2><p>Москва · тыс. м² · {date(data.source.date)}</p></div></div>
         <div className="cp-controls permit-structure-controls">
@@ -175,7 +176,7 @@ export default function PermitsPage({ theme, query, change }: { theme: Theme; qu
         </div>
         {data.breakdowns.length ? data.breakdowns.map(b => {
           return <div className="cp-subsection" key={b.id}><div className="cp-section-heading"><div><h3>{b.title}</h3><p>Москва · {b.unit} · {date(data.source.date)}</p></div></div>
-            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={470} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
+            {b.series.some(s => s.points.some(p => p.y !== null)) ? <PermitChart key={`${data.version}-${data.selection.permitKind}-${b.id}-${JSON.stringify(data.selection.structure)}`} buildOption={view => breakdownOption(b, theme, view)} theme={theme} label={b.title} rows={permitBreakdownRows(b, data.version)} filename={`${filename}-${b.id}`} height={470} growth={permitBreakdownGrowth(b)} growthLabel={b.periodLabel} excelAction={<ConstructionExport url={permitsUrl(data.selection, data.version)} filename={`${filename}-${b.id}.xlsx`} label={`Скачать Excel: ${b.title}, объекты 2011–2021`} refresh={retry} text />} /> : <ConstructionEmpty>Нет подтверждённых данных за выбранный интервал.</ConstructionEmpty>}
             <AnalystOnly><details className="cp-source cp-breakdown-source"><summary>Источник и основание: {b.title}</summary><div className="cp-source-content">{b.notes.map((note, i) => <p className="cp-note" key={i}>{note}</p>)}</div></details></AnalystOnly></div>;
         }) : <ConstructionEmpty>Детализация отсутствует в источнике.</ConstructionEmpty>}
       </section>

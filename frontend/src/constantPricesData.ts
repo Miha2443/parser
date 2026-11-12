@@ -225,3 +225,17 @@ export function calculationCsv(sheet: Sheet, frequency: Frequency, results: (Dec
     ...sheet.rows.map((row, i) => [periodLabel(row.period, frequency), ...row.values.map(value => parseAmount(value).value?.toFixed().replace('.', ',') ?? ''), coefficients[i]?.toFixed().replace('.', ',') ?? '', ...results[i].map(value => resultText(value, digits))])];
   return '\uFEFF' + Papa.unparse(rows, { delimiter: ';', newline: '\r\n' });
 }
+
+function exactExcelDecimal(value: Decimal | null): string | number | null {
+  if (value === null) return null;
+  const numeric = value.toNumber();
+  // Excel keeps at most 15 significant decimal digits in numeric cells.
+  return value.sd() <= 15 && Number.isFinite(numeric) && new Money(numeric).eq(value)
+    ? numeric : value.toFixed();
+}
+
+export function calculationExcelRows(sheet: Sheet, frequency: Frequency, results: (Decimal | null)[][], coefficients: (Decimal | null)[], baseLabel: string): (string | number | null)[][] {
+  return [['Период', ...sheet.columns.map(name => `${name} · исходное`), 'Коэффициент', ...sheet.columns.map(name => `${name} · цены ${baseLabel}`)],
+    ...sheet.rows.map((row, i) => [periodLabel(row.period, frequency), ...row.values.map(value => exactExcelDecimal(parseAmount(value).value)),
+      exactExcelDecimal(coefficients[i] ?? null), ...results[i].map(exactExcelDecimal)])];
+}

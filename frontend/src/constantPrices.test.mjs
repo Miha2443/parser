@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import Decimal from 'decimal.js';
 import fixtures from './constantPricesFixtures.cjs';
-import { buildPriceSeries, calculationCsv, conversion, copyResults, displayResult, importedPeriod, importSheet, loadPriceData, makeSheet, monthlyCpi, nextPeriod, parseAmount, parseExcel, pasteValues, periodKey, periodLabel, priceLevel, pricePeriods, readPriceData, resultText } from './constantPricesData.ts';
+import { buildPriceSeries, calculationCsv, calculationExcelRows, conversion, copyResults, displayResult, importedPeriod, importSheet, loadPriceData, makeSheet, monthlyCpi, nextPeriod, parseAmount, parseExcel, pasteValues, periodKey, periodLabel, priceLevel, pricePeriods, readPriceData, resultText } from './constantPricesData.ts';
 
 const near = (value, expected) => assert.ok(Math.abs(value.toNumber() - expected) < 1e-10, `${value} != ${expected}`);
 const months = values => values.map((value, i) => ({ year: 2024 + Math.floor(i / 12), month: i % 12 + 1, value }));
@@ -176,4 +176,20 @@ test('CSV preserves exact input precision and negative numeric values, neutraliz
 test('service navigation and route point to a lazy calculator, not the developer profile', () => {
   for (const file of ['App.tsx', 'Sidebar.tsx', 'ServicePages.tsx']) assert.match(readFileSync(new URL(file, import.meta.url), 'utf8'), /\/service\/constant-prices/);
   assert.match(readFileSync(new URL('App.tsx', import.meta.url), 'utf8'), /lazy\(\(\) => import\('\.\/ConstantPrices'\)\)/);
+});
+
+test('Excel rows keep ordinary numbers numeric and longer decimals exact without display rounding', () => {
+  const sheet = { columns: ['A', '=heading', 'C'], rows: [
+    { period: '2024', values: ['-1,125', '12345678901234567890,12345', ''] },
+    { period: '2025', values: ['0', 'invalid', '42'] },
+  ] };
+  const exact = new Decimal('1.2345678901234567890123456789');
+  const results = [[new Decimal('-1.265625'), exact, null], [new Decimal(0), null, new Decimal(42)]];
+  const before = JSON.stringify(sheet), rows = calculationExcelRows(sheet, 'year', results, [new Decimal('1.125'), exact], '2024');
+  assert.equal(rows[0][2], '=heading · исходное');
+  assert.deepEqual(rows[1], ['2024', -1.125, '12345678901234567890.12345', null, 1.125, -1.265625, exact.toFixed(), null]);
+  assert.deepEqual(rows[2], ['2025', 0, null, 42, exact.toFixed(), 0, null, 42]);
+  assert.equal(JSON.stringify(sheet), before);
+  const component = readFileSync(new URL('ConstantPrices.tsx', import.meta.url), 'utf8');
+  assert.ok(component.split('<ExcelExportButton')[1].split('/>')[0].includes('disabled={!canExport}'));
 });

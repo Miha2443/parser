@@ -1,5 +1,6 @@
 """Complete version-pinned construction workbooks, without display rounding."""
 from io import BytesIO
+from datetime import date, datetime
 
 from openpyxl import Workbook
 
@@ -21,7 +22,7 @@ def _leaves(value, path=""):
         yield [path, kind, None if isinstance(value, (dict, list)) else value]
 
 
-def export_workbook(payload):
+def export_workbook(payload, permit_details=None):
     book = Workbook()
     book.remove(book.active)
 
@@ -35,6 +36,23 @@ def export_workbook(payload):
         for column in tab.columns:
             tab.column_dimensions[column[0].column_letter].width = 30
         return tab
+
+    if "permits" in payload and permit_details is not None:
+        descriptions = []
+        for scope, title in (("main", "РС объекты 2011-2021"), ("structure", "РС структура 2011-2021")):
+            details = permit_details[scope]
+            raw_tab = sheet(title, details["headers"], details["rows"])
+            for row in raw_tab:
+                for cell in row:
+                    if isinstance(cell.value, (date, datetime)):
+                        cell.number_format = "dd.mm.yyyy"
+            descriptions.extend([[scope, path.lstrip("/").replace("/", "."), value]
+                                 for path, _, value in _leaves({
+                                     "sheet": title, "source": details["source"],
+                                     "selection": details["selection"], "rows": len(details["rows"]),
+                                     "notes": details["notes"],
+                                 })])
+        sheet("РС расшифровка", ["Область", "Параметр", "Значение"], descriptions)
 
     sheet("Report", ["Field", "Value"], [[field, payload[field]] for field in ("schemaVersion", "version", "generatedAt")])
     source = payload["source"]

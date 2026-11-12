@@ -175,14 +175,18 @@ export function constructionTreeDate(value: string | null): string {
   return `${day}.${month}.${year}`;
 }
 
-export function constructionTreeCsv(data: ConstructionTreeData): string {
+export function constructionTreeRows(data: ConstructionTreeData): (string | number | null)[][] {
   const header = ['ID', 'Показатель', 'Подпись источника', 'Значение, млн м²', 'Ячейка / строки', 'Файл', 'Лист', 'Колонка', 'Версия', 'Выгрузка мониторинга', 'Дата файла', 'Сформировано API', 'Дата снимка', 'Опубликовано', 'Снимок сохранён'];
   const metadata = [data.version, data.source.downloadedAt, data.source.fileDate ?? '', data.generatedAt, data.snapshot?.date ?? '', data.snapshot?.publishedAt ?? '', data.snapshot?.capturedAt ?? ''];
-  const rows = data.metrics.map(m => [m.id, constructionTreeLabels[m.id], m.label, m.value === null ? '' : String(m.value), m.cell, data.source.file, data.source.sheet, data.source.column, ...metadata]);
-  for (const item of data.nonresidentialSectors?.items ?? []) rows.push([item.id, item.label, item.label, String(item.value), item.rows.join(','), data.source.file, data.nonresidentialSectors!.sheet!, data.nonresidentialSectors!.areaColumn!, ...metadata]);
+  const rows = data.metrics.map(m => [m.id, constructionTreeLabels[m.id], m.label, m.value, m.cell, data.source.file, data.source.sheet, data.source.column, ...metadata]);
+  for (const item of data.nonresidentialSectors?.items ?? []) rows.push([item.id, item.label, item.label, item.value, item.rows.join(','), data.source.file, data.nonresidentialSectors!.sheet!, data.nonresidentialSectors!.areaColumn!, ...metadata]);
+  return [header, ...rows];
+}
+
+export function constructionTreeCsv(data: ConstructionTreeData): string {
   // Prevent source-controlled strings from becoming formulas in spreadsheet apps.
   const escape = (value: string) => `"${(/^[\s\uFEFF]*[=+@-]/.test(value) ? `'${value}` : value).replaceAll('"', '""')}"`;
-  return '\uFEFF' + [header, ...rows].map(row => row.map(escape).join(';')).join('\r\n');
+  return '\uFEFF' + constructionTreeRows(data).map(row => row.map(value => escape(value === null ? '' : String(value))).join(';')).join('\r\n');
 }
 
 export function constructionTreeFilename(data: ConstructionTreeData): string {

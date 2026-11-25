@@ -99,6 +99,18 @@ class MortgagePublicationTests(unittest.TestCase):
         self.write(self.candidate, document)
         self.assertEqual(select_source(self.candidate)["state"], "unavailable")
 
+    def test_older_working_history_cannot_erase_newer_served_months_after_manual_import(self):
+        old = self.write(self.candidate)
+        prior = self.write(self.previous, source([observation(period, region=region)
+                           for period in ("2026-01", "2026-02") for region in ("rf", "msk")]))
+        expected = prior.read_bytes()
+        result = select_source(self.candidate, self.previous)
+        self.assertEqual(result["state"], "retained")
+        self.assertEqual(result["currentError"], "CurrentHistoryOlderOrIncomplete")
+        self.assertEqual(old.read_bytes(), expected)
+        self.assertEqual(prior.read_bytes(), expected)
+        verify_snapshot(self.candidate, result)
+
     def test_invalid_optional_source_cannot_erase_other_sources(self):
         monitoring = self.candidate / "data/raw/realty/nashdom/monitoring_2_0.xlsx"
         monitoring.parent.mkdir(parents=True, exist_ok=True)

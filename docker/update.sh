@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 test -f .env || { echo '.env is required' >&2; exit 1; }
 mode="${1:-update}"
-[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --mortgage || "$mode" == --preferential-mortgage || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
-  echo 'Usage: bash docker/update.sh [--publish-existing|--construction-current|--construction-history|--mortgage|--preferential-mortgage|--upgrade-code|--recover]' >&2; exit 1;
+[[ "$mode" == update || "$mode" == --publish-existing || "$mode" == --domrf-import || "$mode" == --construction-current || "$mode" == --construction-history || "$mode" == --mortgage || "$mode" == --preferential-mortgage || "$mode" == --upgrade-code || "$mode" == --recover ]] || {
+  echo 'Usage: bash docker/update.sh [--publish-existing|--domrf-import|--construction-current|--construction-history|--mortgage|--preferential-mortgage|--upgrade-code|--recover]' >&2; exit 1;
 }
 mkdir -p state logs runtime/releases
 exec 9>state/.docker-update.lock
@@ -206,6 +206,8 @@ history_partial=0
 preferential_retained=0
 if [[ "$mode" == --publish-existing ]]; then
   run_updater() { control publish; }
+elif [[ "$mode" == --domrf-import ]]; then
+  run_updater() { control import-domrf; }
 elif [[ "$mode" == --construction-current ]]; then
   run_updater() {
     event construction_current 'collect ordinary current pages only; history is independent'

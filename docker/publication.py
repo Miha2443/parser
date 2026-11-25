@@ -401,12 +401,14 @@ def swap(runtime, target):
         (runtime / "live").unlink()
 
 
-def publish(root, runtime, *, run_status=None, collector_returncode=None, baseline=None):
+def publish(root, runtime, *, run_status=None, collector_returncode=None, baseline=None, domrf_import=False):
     if run_status is not None:
         require_success(run_status, None, datetime.fromisoformat(run_status["started_at"]).timestamp(),
                         expected_sources=SOURCES, returncode=collector_returncode, allow_partial=True)
     runtime.mkdir(parents=True, exist_ok=True)
     previous = live_target(runtime)
+    if domrf_import and not previous:
+        raise RuntimeError("DOM.RF manual import requires an existing published release")
     if (runtime / "pending.json").exists():
         raise RuntimeError("Unfinished restart transaction; run docker/update.sh for recovery")
     from pipeline.construction_tree_history import prepare as prepare_tree_history
@@ -419,9 +421,18 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
     candidate = releases / (".building-" + identifier)
     candidate.mkdir()
     try:
+        source_root = runtime / previous if domrf_import else root
         for relative in TREES:
-            copy_tree(root / relative, candidate / relative)
-        if run_status and run_status.get("source_outcomes"):
+            copy_tree(source_root / relative, candidate / relative)
+        if domrf_import:
+            from docker.domrf_import import apply, publication_metadata
+            results = apply(candidate, root)
+            metadata = publication_metadata(candidate, results)
+            (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
+            build_candidate_processed(candidate, {alias for alias, row in results.items()
+                                                 if row["state"] == "fresh" and alias in SOURCES})
+            selection = None
+        elif run_status and run_status.get("source_outcomes"):
             metadata = select_candidate_sources(candidate, run_status, runtime / previous if previous else baseline,
                                                 collector_returncode=collector_returncode)
             (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
@@ -558,6 +569,8 @@ def run_action(action, root, runtime):
     elif action == "publish":
         # Offline import builds only the normalized private candidate.
         publish(root, runtime)
+    elif action == "import-domrf":
+        publish(root, runtime, domrf_import=True)
     elif action == "build-required-processed":
         from scripts.update_realty import select_processed_indicators
         subprocess.run([sys.executable, "pipeline/orchestrator.py", "--skip-download", "--no-notify", "--only",
@@ -591,7 +604,7 @@ def run_action(action, root, runtime):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["update", "seed", "publish", "build-required-processed", "validate-api", "rollback", "ack", "archive", "recovery-info", "activate-next", "prepare-tree-history"])
+    parser.add_argument("action", choices=["update", "seed", "publish", "import-domrf", "build-required-processed", "validate-api", "rollback", "ack", "archive", "recovery-info", "activate-next", "prepare-tree-history"])
     args = parser.parse_args()
     root, runtime = Path("/app"), Path("/runtime")
     if args.action == "validate-api":

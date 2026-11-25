@@ -22,6 +22,8 @@ data/*
 !data/imports
 data/imports/*
 !data/imports/preferential-mortgage-2026-10-11.json
+!data/imports/domrf-2026-11-25.json
+!data/imports/domrf-2026-11-25.zip
 !data/derived
 data/derived/*
 !data/derived/missing_geocode_addresses.csv

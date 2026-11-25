@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -99,6 +100,19 @@ def select_source(candidate, previous=None):
             error = type(exc).__name__
             continue
         if verified:
+            if name == "current" and previous is not None:
+                try:
+                    prior = _verified(previous)
+                except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+                    prior = None
+                try:
+                    extends_previous = prior is None or extends_history(verified["path"], prior["path"])
+                except (OSError, ValueError, KeyError, TypeError):
+                    extends_previous = False
+                if prior and not extends_previous:
+                    selected, origin = prior, "previous"
+                    error = "CurrentHistoryOlderOrIncomplete"
+                    break
             selected, origin = verified, name
             break
     destination = _path(candidate)
@@ -115,6 +129,21 @@ def select_source(candidate, previous=None):
                 "currentError": error}
     return {"state": "unavailable", "selection": None, "file": None,
             "reason": "mortgage_history_missing_or_invalid", "currentError": error}
+
+
+def extends_history(current, previous):
+    """A failed download after a manual import cannot roll back served months."""
+    from pipeline.mortgage_history import METRICS
+    new = json.loads(Path(current).read_text(encoding="utf-8"))
+    old = json.loads(Path(previous).read_text(encoding="utf-8"))
+    if datetime.fromisoformat(new["collectedAt"].replace("Z", "+00:00")) < datetime.fromisoformat(old["collectedAt"].replace("Z", "+00:00")):
+        return False
+    def records(document):
+        return {(r["region"], r["period"], r["segment"]): r for r in document["records"]}
+    incoming, baseline = records(new), records(old)
+    return baseline.keys() <= incoming.keys() and all(
+        row.get(metric) is None or incoming[key].get(metric) is not None
+        for key, row in baseline.items() for metric in METRICS)
 
 
 def verify_snapshot(root, declaration):

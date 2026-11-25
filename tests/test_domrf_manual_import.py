@@ -177,8 +177,9 @@ class DomrfManualImportTests(unittest.TestCase):
                 (base / "downloads/marker.txt").write_text(text)
                 (base / "data/processed").mkdir(parents=True)
             observed = []
-            def apply(candidate, source):
+            def apply(candidate, source, **kwargs):
                 self.assertEqual(source, root)
+                self.assertTrue(kwargs["allow_unchanged"])
                 self.assertEqual((candidate / "downloads/marker.txt").read_text(), 'live verified baseline')
                 observed.append(candidate)
                 return {"monitoring": {"state": "fresh", "reason": "manual"}}
@@ -214,6 +215,53 @@ class DomrfManualImportTests(unittest.TestCase):
             swap.assert_not_called()
             self.assertFalse((runtime / "pending.json").exists())
             self.assertEqual(list((runtime / "releases").iterdir()), [runtime / "releases/prior"])
+
+    def test_tree_revision_can_publish_already_imported_data_but_repeat_is_noop(self):
+        from docker import publication as p
+        from pipeline import construction_tree_history as history
+        from backend.construction_tree_service import ConstructionTreeService
+        from pipeline.data_access import DataContext
+        from tests.test_construction_tree_history import tree_book
+        from openpyxl import load_workbook
+        for changed in (True, False):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "working"
+                runtime = Path(directory) / "runtime"
+                previous = runtime / "releases/prior"
+                tree_book(previous, 51)
+                workbook = next((previous / d.RAW).glob('monitoring_*.xlsx'))
+                book = load_workbook(workbook)
+                book['Дерево текущ стр во']['C18'] = 'ДДУ Фонд Реновации'
+                book['Дерево текущ стр во']['D18'] = 0.188
+                book.save(workbook)
+                book.close()
+                history.stage(previous, runtime)
+                if changed:
+                    old = history.read_current(previous)
+                    old['version'] = 'old-tree-before-ddu'
+                    old['metrics'] = [m for m in old['metrics'] if m['id'] != 'renovation_ddu']
+                    history._write(previous / history.DIRECTORY / 'current.json', old)
+                    history._write(previous / history.DIRECTORY / 'current-proof.json', {'sha256': history.digest(old)})
+                result = {"monitoring": {"state": "retained", "reason": "already imported"}}
+                with patch.object(p, 'live_target', return_value='releases/prior'), \
+                     patch('pipeline.construction_tree_history.prepare'), \
+                     patch.object(d, 'apply', return_value=result), \
+                     patch.object(p, 'build_candidate_processed'), patch.object(p, 'build_candidate'), \
+                     patch.object(p, 'validate'), patch.object(p, 'swap') as swap, \
+                     patch('docker.mortgage.select_source', return_value={'state': 'unavailable'}), \
+                     patch('docker.preferential.select_source', return_value={'state': 'unavailable'}), \
+                     patch('docker.preferential.verify_snapshot'):
+                    if changed:
+                        p.publish(root, runtime, domrf_import=True)
+                        next_release = json.loads((runtime / 'pending.json').read_text())['next']
+                        new = history.read_current(runtime / next_release)
+                        self.assertEqual(next(m['value'] for m in new['metrics'] if m['id'] == 'renovation_ddu'), 0.188)
+                        swap.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'No new verified'):
+                            p.publish(root, runtime, domrf_import=True)
+                        swap.assert_not_called()
+                        self.assertFalse((runtime / 'pending.json').exists())
 
 
 if __name__ == "__main__":

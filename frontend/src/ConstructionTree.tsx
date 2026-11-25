@@ -6,8 +6,8 @@ import { constructionTreeArea, constructionTreeCsv, constructionTreeDate, constr
 import type { ConstructionTreeData, ConstructionTreeId, ConstructionTreeSnapshot, ConstructionTreeState } from './constructionTreeData';
 import './construction-tree.css';
 
-function Area({ value }: { value: number | null }) {
-  return <span className="ct-area"><strong>{constructionTreeArea(value)}</strong><span>млн м²</span></span>;
+function Area({ value, digits = 2 }: { value: number | null; digits?: 2 | 3 }) {
+  return <span className="ct-area"><strong>{constructionTreeArea(value, digits)}</strong><span>млн м²</span></span>;
 }
 
 function SourceData({ data }: { data: ConstructionTreeData }) {
@@ -35,12 +35,12 @@ function SourceData({ data }: { data: ConstructionTreeData }) {
       <div><dt>Дата файла</dt><dd>{constructionTreeDate(data.source.fileDate)}</dd></div>
       <div><dt>Сформировано API</dt><dd><time dateTime={data.generatedAt}>{data.generatedAt}</time></dd></div>
       {data.snapshot && <><div><dt>Последняя публикация перед закрытием недели</dt><dd>{data.snapshot.publishedAt}</dd></div><div><dt>Снимок сохранён</dt><dd>{data.snapshot.capturedAt}{data.snapshot.delayedCapture ? ' · после пропущенного понедельника' : ''}</dd></div></>}
-      <div><dt>Итоги</dt><dd>Значения колонки «Итог» исходного листа, без пересчёта и суммирования.</dd></div>
+      <div><dt>Итоги</dt><dd>Значения колонки «Итог» исходного листа, без пересчёта и суммирования. Ветвь «в том числе по ДДУ» — отдельная ячейка «ДДУ Фонд Реновации» на том же листе.</dd></div>
       <div><dt>Справочное нежильё</dt><dd>Повтор показателя «Нежилье в жилье». Не прибавляется к нежилым объектам или общей площади.</dd></div>
       {data.nonresidentialSectors?.status === 'available' && <div><dt>Отрасли нежилых объектов</dt><dd>«{data.nonresidentialSectors.sheet}»: {Object.entries(data.nonresidentialSectors.filters!).map(([key, value]) => `${key}: ${value}`).join('; ')}. Площадь: {data.nonresidentialSectors.areaColumn}; отрасль: {data.nonresidentialSectors.sectorColumn}. Сумма сверена с каноническим итогом нежилья.</dd></div>}
     </dl>
     <table className="ct-source-table">
-      <caption>Все 10 показателей колонки «Итог», без округления</caption>
+      <caption>Исходные показатели листа, без округления</caption>
       <thead><tr><th scope="col">Показатель / подпись источника</th><th scope="col">млн м²</th><th scope="col">Ячейка</th></tr></thead>
       <tbody>{data.metrics.map(metric => <tr key={metric.id}>
         <th scope="row" data-column="Показатель"><span>{constructionTreeLabels[metric.id]}</span><small>{metric.label}</small></th>
@@ -53,7 +53,8 @@ function SourceData({ data }: { data: ConstructionTreeData }) {
 
 function ReadyTree({ data }: { data: ConstructionTreeData }) {
   const values = Object.fromEntries(data.metrics.map(metric => [metric.id, metric.value])) as Record<ConstructionTreeId, number | null>;
-  const leaf = (id: ConstructionTreeId, label = constructionTreeLabels[id]) => <div className="ct-node" data-metric={id}><span className="ct-node-label">{label}</span><Area value={values[id]} /></div>;
+  const leaf = (id: ConstructionTreeId, label = constructionTreeLabels[id]) => <div className="ct-node" data-metric={id}><span className="ct-node-label">{label}</span><Area value={values[id]} digits={id === 'renovation_ddu' ? 3 : 2} /></div>;
+  const hasRenovationDdu = data.metrics.some(metric => metric.id === 'renovation_ddu');
   return <>
     <section className="ct-diagram" aria-label="Структура текущего строительства">
       <div className="ct-total" data-metric="total"><div><span className="ct-kicker">Текущее строительство</span><h2>Общая площадь</h2></div><Area value={values.total} /></div>
@@ -62,7 +63,9 @@ function ReadyTree({ data }: { data: ConstructionTreeData }) {
           <div className="ct-branch-heading" data-metric="housing"><h3><Building2 size={19} aria-hidden="true" />Жилые объекты</h3><Area value={values.housing} /></div>
           <ul className="ct-children">
             <li>{leaf('living')}
-              <ul className="ct-children ct-living-children"><li>{leaf('investors')}</li><li>{leaf('renovation')}</li></ul>
+              <ul className="ct-children ct-living-children"><li>{leaf('investors')}</li><li>{leaf('renovation')}
+                {hasRenovationDdu && <ul className="ct-children ct-renovation-children"><li>{leaf('renovation_ddu')}</li></ul>}
+              </li></ul>
             </li>
             <li>{leaf('embedded')}</li>
             <li>{leaf('mop', 'Места общего пользования (МОП)')}</li>

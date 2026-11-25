@@ -65,11 +65,14 @@ def _validate_payload(payload):
     if (not isinstance(payload, dict) or payload.get("schemaVersion") != 1
             or payload.get("unit") != "million_m2" or not payload.get("version")
             or not isinstance(payload.get("source"), dict) or not isinstance(payload.get("metrics"), list)
-            or len(payload["metrics"]) != 10 or not all(isinstance(m, dict) for m in payload["metrics"])):
+            or not all(isinstance(m, dict) for m in payload["metrics"])):
         raise RuntimeError("Invalid published construction tree")
-    from backend.construction_tree_service import METRICS
+    from backend.construction_tree_service import METRICS, OPTIONAL_METRICS
     metrics = payload["metrics"]
-    if {m.get("id") for m in metrics} != {identifier for identifier, _ in METRICS}:
+    ids = [m.get("id") for m in metrics]
+    required = {identifier for identifier, _ in METRICS}
+    allowed = required | {identifier for identifier, _ in OPTIONAL_METRICS}
+    if len(set(ids)) != len(ids) or not required <= set(ids) <= allowed:
         raise RuntimeError("Invalid published construction tree metrics")
     for metric in metrics:
         value = metric.get("value")

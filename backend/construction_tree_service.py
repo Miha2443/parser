@@ -33,7 +33,7 @@ else:
 
 SHEET = "\u0414\u0435\u0440\u0435\u0432\u043e \u0442\u0435\u043a\u0443\u0449 \u0441\u0442\u0440 \u0432\u043e"
 COLUMN = "\u0418\u0442\u043e\u0433"
-VERSION_DOMAIN = b"tree-v2-sectors\x00"
+VERSION_DOMAIN = b"tree-v3-renovation-ddu\x00"
 METRICS = (
     ("total", "\u0412\u0441\u0435\u0433\u043e"),
     ("housing", "\u0416\u0438\u043b\u044c\u0435"),
@@ -46,6 +46,7 @@ METRICS = (
     ("budget", "\u0411\u044e\u0434\u0436\u0435\u0442"),
     ("nonbudget", "\u0412\u043d\u0435\u0431\u044e\u0434\u0436\u0435\u0442"),
 )
+OPTIONAL_METRICS = (("renovation_ddu", "ДДУ Фонд Реновации"),)
 
 
 def _normalize(value):
@@ -93,7 +94,20 @@ def _read_metrics(path):
                 raise SourceUnavailable("Construction tree metric labels are incomplete")
             if all(metric["value"] is None for metric in found.values()):
                 raise SourceUnavailable("Construction tree has no cached values")
-            return [found[identifier] for identifier, _ in METRICS]
+            # This source cell is a separate labelled block, outside «Итог».
+            # Old weekly snapshots/workbooks legitimately have no DDU branch.
+            for identifier, label in OPTIONAL_METRICS:
+                cells = [cell for row in sheet.iter_rows() for cell in row
+                         if _normalize(cell.value) == _normalize(label)]
+                if len(cells) > 1:
+                    raise SourceUnavailable(f"Duplicate construction tree label: {identifier}")
+                if cells:
+                    cell = cells[0]
+                    value = sheet.cell(row=cell.row, column=cell.column + 1)
+                    found[identifier] = {"id": identifier, "label": " ".join(cell.value.split()),
+                                         "value": _metric_value(value),
+                                         "cell": f"{get_column_letter(cell.column + 1)}{cell.row}"}
+            return [found[identifier] for identifier, _ in (*METRICS, *OPTIONAL_METRICS) if identifier in found]
         finally:
             book.close()
 

@@ -182,6 +182,34 @@ class ConstructionTreeTests(unittest.TestCase):
         self.cached_xml("I2", "51.65728716")
         self.assertEqual(self.service.report()["metrics"][0]["value"], 51.65728716)
 
+    def test_renovation_ddu_is_read_from_its_own_label_not_the_total_column(self):
+        self.edit_book({"C18": "ДДУ Фонд Реновации", "D18": 0.188, "I18": 999})
+        payload = self.service.report()
+        row = next(m for m in payload["metrics"] if m["id"] == "renovation_ddu")
+        self.assertEqual(row, {"id": "renovation_ddu", "label": "ДДУ Фонд Реновации", "value": 0.188, "cell": "D18"})
+        self.assertEqual(next(m["value"] for m in payload["metrics"] if m["id"] == "renovation"), 6.4)
+        self.edit_book({"C18": None, "D18": None, "E35": "  ДДУ   Фонд Реновации ", "F35": 0.234})
+        moved = next(m for m in self.service.report()["metrics"] if m["id"] == "renovation_ddu")
+        self.assertEqual(moved["value"], 0.234)
+        self.assertEqual(moved["cell"], "F35")
+
+    def test_renovation_ddu_keeps_null_zero_and_cached_formula_distinct(self):
+        self.edit_book({"C18": "ДДУ Фонд Реновации", "D18": "=99999"})
+        self.cached_xml("D18", "0.188")
+        self.assertEqual(self.service.report()["metrics"][-1]["value"], 0.188)
+        for value in (None, 0):
+            self.edit_book({"D18": value})
+            self.assertEqual(self.service.report()["metrics"][-1]["value"], value)
+
+    def test_duplicate_or_invalid_renovation_ddu_never_becomes_zero(self):
+        for value in (-1, True, "0,188"):
+            self.edit_book({"C18": "ДДУ Фонд Реновации", "D18": value})
+            with self.subTest(value=value), self.assertRaises(SourceUnavailable):
+                self.service.report()
+        self.edit_book({"D18": 0.188, "E35": "ДДУ Фонд Реновации", "F35": 0.188})
+        with self.assertRaises(SourceUnavailable):
+            self.service.report()
+
     def test_missing_formula_cache_is_null_not_recalculated(self):
         self.edit_book({"I2": "=999999"})
         metric = self.service.report()["metrics"][0]

@@ -1,7 +1,9 @@
 import { request } from './data.ts';
 
 export const constructionTreeIds = ['total', 'housing', 'embedded', 'mop', 'living', 'investors', 'renovation', 'nonresidential', 'budget', 'nonbudget'] as const;
-export type ConstructionTreeId = typeof constructionTreeIds[number];
+export const constructionTreeOptionalIds = ['renovation_ddu'] as const;
+export type ConstructionTreeId = typeof constructionTreeIds[number] | typeof constructionTreeOptionalIds[number];
+const allowedTreeIds: readonly string[] = [...constructionTreeIds, ...constructionTreeOptionalIds];
 export type ConstructionTreeMetric = { id: ConstructionTreeId; label: string; value: number | null; cell: string };
 export type ConstructionTreeSnapshot = { date: string; capturedAt: string; publishedAt: string; release: string; delayedCapture: boolean; sha256: string };
 export type ConstructionTreeSector = { id: string; label: string; value: number; rows: number[]; count: number };
@@ -26,6 +28,7 @@ export const constructionTreeLabels: Record<ConstructionTreeId, string> = {
   living: 'Жилая площадь',
   investors: 'Инвесторы с ДДУ',
   renovation: 'Реновация',
+  renovation_ddu: 'в том числе по ДДУ',
   nonresidential: 'Нежилые объекты',
   budget: 'Бюджетное строительство',
   nonbudget: 'Внебюджетное строительство',
@@ -67,10 +70,10 @@ export function readConstructionTree(value: unknown): ConstructionTreeData {
   if (raw.schemaVersion !== 1 || raw.unit !== 'million_m2' || source.sheet !== 'Дерево текущ стр во' || source.column !== 'Итог' || !Array.isArray(raw.metrics)) throw invalid();
   const metrics = raw.metrics.map(value => {
     const metric = record(value), id = text(metric.id) as ConstructionTreeId;
-    if (!constructionTreeIds.includes(id) || metric.value !== null && (typeof metric.value !== 'number' || !Number.isFinite(metric.value) || metric.value < 0)) throw invalid();
+    if (!allowedTreeIds.includes(id) || metric.value !== null && (typeof metric.value !== 'number' || !Number.isFinite(metric.value) || metric.value < 0)) throw invalid();
     return { id, label: text(metric.label), value: metric.value as number | null, cell: cellAddress(metric.cell) };
   });
-  if (metrics.length !== constructionTreeIds.length || new Set(metrics.map(m => m.id)).size !== constructionTreeIds.length) throw invalid();
+  if (new Set(metrics.map(m => m.id)).size !== metrics.length || constructionTreeIds.some(id => !metrics.some(m => m.id === id))) throw invalid();
   const result: ConstructionTreeData = {
     schemaVersion: 1, version: text(raw.version), generatedAt: timestamp(raw.generatedAt), unit: 'million_m2',
     source: { file: text(source.file), sheet: source.sheet, column: 'Итог', downloadedAt: timestamp(source.downloadedAt), fileDate: source.fileDate === null ? null : calendarDate(source.fileDate) },
@@ -167,7 +170,8 @@ export function watchConstructionTree(update: (state: ConstructionTreeState) => 
 }
 
 const areaFormat = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-export const constructionTreeArea = (value: number | null) => value === null ? '—' : areaFormat.format(value);
+const detailAreaFormat = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+export const constructionTreeArea = (value: number | null, digits: 2 | 3 = 2) => value === null ? '—' : (digits === 3 ? detailAreaFormat : areaFormat).format(value);
 export const constructionTreeExact = (value: number | null) => value === null ? '—' : String(value);
 export function constructionTreeDate(value: string | null): string {
   if (value === null) return 'не указана';
@@ -178,7 +182,7 @@ export function constructionTreeDate(value: string | null): string {
 export function constructionTreeRows(data: ConstructionTreeData): (string | number | null)[][] {
   const header = ['ID', 'Показатель', 'Подпись источника', 'Значение, млн м²', 'Ячейка / строки', 'Файл', 'Лист', 'Колонка', 'Версия', 'Выгрузка мониторинга', 'Дата файла', 'Сформировано API', 'Дата снимка', 'Опубликовано', 'Снимок сохранён'];
   const metadata = [data.version, data.source.downloadedAt, data.source.fileDate ?? '', data.generatedAt, data.snapshot?.date ?? '', data.snapshot?.publishedAt ?? '', data.snapshot?.capturedAt ?? ''];
-  const rows = data.metrics.map(m => [m.id, constructionTreeLabels[m.id], m.label, m.value, m.cell, data.source.file, data.source.sheet, data.source.column, ...metadata]);
+  const rows = data.metrics.map(m => [m.id, constructionTreeLabels[m.id], m.label, m.value, m.cell, data.source.file, data.source.sheet, m.id === 'renovation_ddu' ? m.cell.replace(/[^A-Z]/g, '') : data.source.column, ...metadata]);
   for (const item of data.nonresidentialSectors?.items ?? []) rows.push([item.id, item.label, item.label, item.value, item.rows.join(','), data.source.file, data.nonresidentialSectors!.sheet!, data.nonresidentialSectors!.areaColumn!, ...metadata]);
   return [header, ...rows];
 }

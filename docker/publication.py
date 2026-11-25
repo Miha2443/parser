@@ -426,7 +426,7 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
             copy_tree(source_root / relative, candidate / relative)
         if domrf_import:
             from docker.domrf_import import apply, publication_metadata
-            results = apply(candidate, root)
+            results = apply(candidate, root, allow_unchanged=True)
             metadata = publication_metadata(candidate, results)
             (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
             build_candidate_processed(candidate, {alias for alias, row in results.items()
@@ -462,6 +462,11 @@ def publish(root, runtime, *, run_status=None, collector_returncode=None, baseli
         (candidate / "data/processed/publication_status.json").write_text(json.dumps(metadata), encoding="utf-8")
         from pipeline.construction_tree_history import stage as stage_tree_history
         stage_tree_history(candidate, runtime)
+        if domrf_import and not any(row["state"] == "fresh" for row in results.values()):
+            from pipeline.construction_tree_history import read_current
+            before_tree, next_tree = read_current(runtime / previous), read_current(candidate)
+            if (before_tree or {}).get("version") == (next_tree or {}).get("version"):
+                raise RuntimeError("No new verified DOM.RF data or tree revision; current site left unchanged")
         print("Candidate sources: " + json.dumps({key: {"state": row["state"], "reason_code": row["reason_code"]}
               for key, row in metadata.get("sources", {}).items()} if "sources" in metadata else selection), flush=True)
         validate(candidate)

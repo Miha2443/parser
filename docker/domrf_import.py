@@ -283,7 +283,7 @@ def import_mortgage(candidate, capture):
     return result != previous
 
 
-def apply(candidate, root):
+def apply(candidate, root, *, allow_unchanged=False):
     """Independent source transactions; only the caller's private candidate changes."""
     candidate, root = Path(candidate), Path(root)
     capture = load_capture(root)
@@ -325,7 +325,7 @@ def apply(candidate, root):
         print("DOMRF import " + alias + ": " + json.dumps(results[alias], ensure_ascii=False), flush=True)
     (candidate / "logs").mkdir(exist_ok=True)
     write_json(candidate / "logs/domrf-import-2026-11-25.json", results)
-    if not any(row["state"] == "fresh" for row in results.values()):
+    if not allow_unchanged and not any(row["state"] == "fresh" for row in results.values()):
         raise RuntimeError("No new validated DOM.RF data to publish; current site left unchanged. " + json.dumps(results, ensure_ascii=False))
     return results
 

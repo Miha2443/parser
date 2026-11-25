@@ -72,6 +72,25 @@ test('only supplied totals are used, including inconsistent totals, missing valu
   assert.equal(constructionTreeExact(0), '0');
 });
 
+test('renovation DDU is optional for old snapshots, exact in exports and displayed to thousandths', () => {
+  const old = fixture();
+  assert.equal(readConstructionTree(old).metrics.some(row => row.id === 'renovation_ddu'), false);
+  const raw = fixture();
+  raw.metrics.push({ id: 'renovation_ddu', label: 'ДДУ Фонд Реновации', value: 0.188, cell: 'D18' });
+  const parsed = readConstructionTree(raw);
+  assert.equal(parsed.metrics.find(row => row.id === 'renovation_ddu').value, 0.188);
+  assert.equal(parsed.metrics.find(row => row.id === 'renovation').value, 6.4);
+  assert.equal(constructionTreeArea(0.188, 3), '0,188');
+  assert.equal(constructionTreeArea(0, 3), '0,000');
+  assert.equal(constructionTreeArea(null, 3), '—');
+  const row = constructionTreeRows(parsed).find(row => row[0] === 'renovation_ddu');
+  assert.deepEqual(row.slice(1, 5), ['в том числе по ДДУ', 'ДДУ Фонд Реновации', 0.188, 'D18']);
+  assert.equal(row[7], 'D');
+  assert.ok(constructionTreeCsv(parsed).includes('"0.188";"D18"'));
+  raw.metrics.push({ ...raw.metrics.at(-1) });
+  assert.throws(() => readConstructionTree(raw));
+});
+
 test('wrong schema, source scope, units, duplicate/missing/unknown IDs and nonnumeric values reject', () => {
   const mutations = [
     raw => raw.schemaVersion = 2, raw => raw.schemaVersion = '1',
